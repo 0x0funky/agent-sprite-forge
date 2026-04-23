@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate 2D Sprite"
+  short_description: "General 2D assets, bundles, and transparent GIFs"
+  default_prompt: "Use $generate2dsprite to create a wizard spell bundle with cast, projectile, and impact sprites."
