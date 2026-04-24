@@ -312,3 +312,7 @@ Use  $generate2dsprite to create a Naruto-style rasengan cast sheet in 2x3.
 - 大型 creature 通常比較適合 `3x3 idle`。
 - 小型 spell / projectile 通常比較適合 `1x4`、`2x2` 或 `2x3`。
 - 如果要商用，建議優先使用原創角色或你自己持有權利的 IP。
+
+## 授權
+
+MIT。請見 [LICENSE](./LICENSE)。

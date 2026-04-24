@@ -305,3 +305,7 @@ For player walk sheets, you also get direction strips and per-direction GIFs.
 - Large creatures often work better as `3x3 idle`.
 - Small spells and projectiles often work better as `1x4`, `2x2`, or `2x3`.
 - For commercial projects, prefer original characters or IP that you control.
+
+## License
+
+MIT. See [LICENSE](./LICENSE).
