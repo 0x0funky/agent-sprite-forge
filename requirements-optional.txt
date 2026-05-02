@@ -1,0 +1,10 @@
+# Optional extras for non-Codex hosts (Claude Code, Cursor, generic CLI agents).
+# Only install the line that matches the backend you plan to use with
+# scripts/image_gen.py. Codex users do not need either of these because
+# Codex's built-in image_gen handles generation directly.
+
+# OpenAI Images API (default backend, model: gpt-image-2)
+openai>=1.50
+
+# Google Gemini 2.5 Flash Image
+google-genai>=0.3

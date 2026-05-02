@@ -1,6 +1,6 @@
 ---
 name: generate2dmap
-description: "Generate and revise production-oriented 2D game maps with built-in image generation as the default visual asset source, choosing a visual model, runtime object model, collision model, art direction, and engine/export target. Use when Codex needs to create or integrate RPG maps, monster-taming maps, tactical arenas, battle backgrounds, side-scroller/parallax scenes, tilemaps, layered raster maps, clean HD hand-painted maps, pixel-inspired maps, prop packs, collision zones, walkable areas, or map previews."
+description: "Generate and revise production-oriented 2D game maps with image generation as the default visual asset source, choosing a visual model, runtime object model, collision model, art direction, and engine/export target. Use when an agent (Codex, Claude Code, Cursor, or any CLI agent) needs to create or integrate RPG maps, monster-taming maps, tactical arenas, battle backgrounds, side-scroller/parallax scenes, tilemaps, layered raster maps, clean HD hand-painted maps, pixel-inspired maps, prop packs, collision zones, walkable areas, or map previews."
 ---
 
 # Generate2dmap
@@ -20,7 +20,10 @@ Read [references/map-strategies.md](references/map-strategies.md) when the pipel
 
 ## Image Generation First
 
-This skill is image-generation-first for visual assets. Use built-in `image_gen` as the default creative art source for base maps, dressed references, prop sheets, prop sprites, tileset art, parallax layers, battle backgrounds, and other visible map assets.
+This skill is image-generation-first for visual assets. Use the host agent's image-generation tool as the default creative art source for base maps, dressed references, prop sheets, prop sprites, tileset art, parallax layers, battle backgrounds, and other visible map assets.
+
+- **Codex**: built-in `image_gen`.
+- **Claude Code, Cursor, and other agents without a built-in image tool**: shell out to `scripts/image_gen.py` (see the sibling `generate2dsprite` SKILL.md "Image generation backends" section for backend selection and env vars).
 
 The agent must write the creative image prompts itself. Do not use scripts to generate creative prompts or to procedurally draw final visual art. Scripts may assemble, slice, chroma-key, crop, validate, compose previews, emit JSON metadata, and wire image-generated assets into engine-native files such as Godot `.tscn` scenes.
 
@@ -66,8 +69,8 @@ When unspecified:
    - Treat `hybrid` as a result of combining axes, not as a primary category.
 
 3. Produce assets.
-   - Write the creative prompts manually and use built-in `image_gen` for visible map art unless the user explicitly chose existing assets or procedural placeholders.
-   - For baked raster maps, generate one background with built-in `image_gen`, or edit/use an existing image when supplied, then add optional collision/zones metadata.
+   - Write the creative prompts manually and use the host agent's image-generation tool for visible map art unless the user explicitly chose existing assets or procedural placeholders. On Codex this is built-in `image_gen`; on Claude Code, Cursor, or other agents without a built-in image tool, run `scripts/image_gen.py` (see "Image generation backends" in the `generate2dsprite` SKILL.md).
+   - For baked raster maps, generate one background with the host agent's image tool, or edit/use an existing image when supplied, then add optional collision/zones metadata.
    - For layered raster maps, generate a ground-only base map first. Then show that base image in context and generate a dressed reference from the visible base before making final props and placements.
    - For tilemaps, generate or reuse tileset art first, then follow the engine/editor format for layers, objects, collision, and scene files. Do not script-draw the tileset as the final art source.
    - For parallax scenes, generate background/midground/foreground visual layers first, then produce scroll metadata.
@@ -97,7 +100,7 @@ Prop packs save image-generation calls and prompt overhead, but reduce per-prop 
 For layered maps with generated props, prefer this reference pipeline:
 
 1. Generate `assets/map/<name>-base.png` as ground-only terrain.
-2. Make the base image visible in conversation context. If the base is a local file, use `view_image` before calling built-in `image_gen`; do not rely on a path string as the reference.
+2. Make the base image visible in conversation context. On Codex, use `view_image` for local paths. On other agents, surface the file with the host agent's native file/image read tool, then pass `--reference <path>` to `scripts/image_gen.py`. Do not rely on a path string in the prompt as the reference.
 3. Generate `assets/map/<name>-dressed-reference.png` from the visible base, preserving camera, terrain, size, road/water shapes, anchor pads, and boundaries. Treat this as a planning/reference image, not the final runtime map.
 4. Generate one-by-one props or a prop pack based on the dressed reference.
 5. Place extracted props over the original base and compose a flattened preview.

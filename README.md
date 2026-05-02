@@ -356,7 +356,7 @@ Pipeline:
 image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_zones + Godot_TileMap
 ```
 
-Codex-first 2D game asset skills for game-ready 2D sprites, props, FX, and playable map scenes.
+Agent-portable 2D game asset skills for game-ready 2D sprites, props, FX, and playable map scenes. Works with Codex (built-in image generation), Claude Code, Cursor, and any other agent that can run a Python script (via `scripts/image_gen.py`, default backend `gpt-image-2`).
 
 This repository currently ships two skills:
 
@@ -365,9 +365,9 @@ This repository currently ships two skills:
 
 `$generate2dmap` uses `$generate2dsprite` when the chosen map pipeline needs reusable transparent props. Small environmental props can be batched into `2x2`, `3x3`, or `4x4` prop packs, then extracted into individual transparent props. Simple maps can stay as a single baked image.
 
-When a visual reference is involved, both skills use the same wrapper rule: make the image visible in the conversation first. Attached images and freshly generated images are already visible; local files should be opened with `view_image` before asking built-in image generation to preserve identity, style, map layout, or sprite lineage.
+When a visual reference is involved, both skills use the same wrapper rule: make the image visible in the conversation first. Attached images and freshly generated images are already visible. Local files should be opened with `view_image` on Codex, with the agent's native file-read tool on Claude Code / Cursor (and similar), or surfaced via `scripts/view_image.py` when no native tool exists, so identity, style, map layout, or sprite lineage is preserved before image edit/reference calls.
 
-Codex is the primary target because Codex already has built-in image generation. That lets one agent handle the full loop:
+Codex remains the most ergonomic host because its built-in image generation lets one agent handle the full loop without a separate API call. Other agents reach the same loop via `scripts/image_gen.py`:
 
 1. Plan the asset or map pipeline.
 2. Generate the raw sprite sheet, prop, or map image.
@@ -398,29 +398,27 @@ The current focus is 2D game assets and map scenes, not full game-pack automatio
 - Flattened map previews for QA and showcase
 - Godot-ready editable maps with `TileMapLayer`, separate props, `Area2D` encounter grass, `StaticBody2D` collision, exit zones, and debug player scenes
 
-## Why Codex First
+## Supported Agents
 
-This repo is intentionally Codex-first because Codex can generate images directly inside the same workflow.
+The skills work with any agent that can run Python scripts. Codex is the most ergonomic host because it ships a built-in `image_gen` tool, but other agents are first-class via a small CLI fallback.
 
-That gives you a much cleaner pipeline:
+| Agent       | Image generation                              | Reference handling                              |
+| ----------- | --------------------------------------------- | ----------------------------------------------- |
+| Codex       | built-in `image_gen`                          | built-in `view_image`                           |
+| Claude Code | `scripts/image_gen.py` (OpenAI / Gemini)      | `Read` tool on the file path                    |
+| Cursor      | `scripts/image_gen.py` (OpenAI / Gemini)      | Cursor's native file-read tool                  |
+| Generic CLI | `scripts/image_gen.py` (OpenAI / Gemini)      | `scripts/view_image.py` shim or stdout metadata |
 
-- No separate image API wiring
-- No external sprite backend
-- No extra prompt-builder service
-- One agent decides the asset plan
-- One local processor handles deterministic cleanup and export
+Either way, the agent stays the creative brain (asset type, action, bundle shape, sheet layout, frame count, alignment) and the Python scripts only perform deterministic pixel operations and (when needed) the API call to the image backend.
 
-The script is not the creative brain. The agent decides:
+### Image generation backends
 
-- Asset type
-- Action type
-- Bundle shape
-- Sheet layout
-- Frame count
-- Alignment strategy
-- Whether detached effects should be kept or filtered
+`scripts/image_gen.py` supports two backends:
 
-The Python script only performs deterministic pixel operations.
+- **OpenAI** (default) — model `gpt-image-2` via the Images API. Set `OPENAI_API_KEY`.
+- **Gemini** — Google `gemini-2.5-flash-image`. Set `GEMINI_API_KEY` (or `GOOGLE_API_KEY`).
+
+Override selection with `SPRITE_FORGE_BACKEND=openai|gemini` and the model with `SPRITE_FORGE_MODEL=<id>`. Codex users do not need to install either SDK.
 
 ## Repository Layout
 
@@ -429,6 +427,9 @@ agent-sprite-forge/
   README.md
   README.zh-TW.md
   requirements.txt
+  scripts/
+    image_gen.py        # agent-agnostic image generation wrapper (OpenAI / Gemini)
+    view_image.py       # optional shim for non-Codex hosts
   src/
   skills/
     generate2dmap/
@@ -455,31 +456,43 @@ agent-sprite-forge/
 
 ## Install
 
-### Option 1: Windows PowerShell
-
-Clone the repo, install the local processor dependencies, then copy both skills into your Codex skills directory:
-
-```powershell
-git clone https://github.com/0x0funky/agent-sprite-forge.git
-cd .\agent-sprite-forge
-python -m pip install -r .\requirements.txt
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
-Copy-Item -Recurse -Force `
-  ".\skills\*" `
-  "$env:USERPROFILE\.codex\skills\"
-```
-
-### Option 2: macOS / Linux
+Pick the section that matches your agent. All paths below assume you cloned the repo and ran the dependency install once.
 
 ```bash
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd ./agent-sprite-forge
 python3 -m pip install -r ./requirements.txt
+```
+
+### Codex (macOS / Linux)
+
+```bash
 mkdir -p ~/.codex/skills
 cp -R ./skills/* ~/.codex/skills/
 ```
 
-Start a new Codex session after installation so the skill is loaded cleanly.
+### Codex (Windows PowerShell)
+
+```powershell
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
+Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.codex\skills\"
+```
+
+### Claude Code (macOS / Linux)
+
+```bash
+python3 -m pip install "openai>=1.50"   # or: "google-genai>=0.3" for Gemini
+mkdir -p ~/.claude/skills
+cp -R ./skills/* ~/.claude/skills/
+cp -R ./scripts ~/.claude/skills/_shared/   # or keep scripts/ in $PWD; the SKILL.md uses a relative path
+export OPENAI_API_KEY=<your key>
+```
+
+### Cursor / generic CLI agent
+
+The skills are plain markdown plus Python scripts. Point your agent at `skills/generate2dsprite/SKILL.md` (and `skills/generate2dmap/SKILL.md`) and ensure `scripts/image_gen.py` is on the agent's allowed-tools/PATH. Set `OPENAI_API_KEY` (or `GEMINI_API_KEY`).
+
+Start a new agent session after installation so the skill is loaded cleanly.
 
 ## Python Requirements
 
@@ -495,6 +508,17 @@ They are listed in [`requirements.txt`](./requirements.txt). Codex handles image
 - Bounding-box extraction
 - Alignment and rescaling
 - Transparent GIF and PNG export
+
+### Optional extras for non-Codex agents
+
+If you are running the skill from Claude Code, Cursor, or any other agent without a built-in image tool, install the SDK that matches your chosen backend:
+
+```bash
+pip install "openai>=1.50"        # OpenAI (default, model: gpt-image-2)
+pip install "google-genai>=0.3"   # Gemini 2.5 Flash Image
+```
+
+These are intentionally **not** in `requirements.txt` so Codex users do not need to install them.
 
 ## Suggested Prompts
 
