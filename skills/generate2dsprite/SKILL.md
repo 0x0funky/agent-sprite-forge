@@ -169,9 +169,23 @@ Do not use Three.js, Canvas, SVG, HTML/CSS, PIL drawing, or other code-generated
 
 After generation:
 
-- find the raw PNG under `$CODEX_HOME/generated_images/...`
-- copy or reference it from the working output folder
+- resolve the raw image to a stable local file path before postprocessing
+- prefer an explicit file path returned by `image_gen` when one is available
+- otherwise find the raw PNG under `$CODEX_HOME/generated_images/...` or `~/.codex/generated_images/...`, and only accept files that correspond to the current generation call, not a stale latest file
+- if `image_gen` does not return a stable file path and the generated-images directories do not contain the current output, inspect the current Codex session's `image_generation_call.result` for base64 image data (`b64_json`, a `data:image/...;base64,...` URL, or raw base64), immediately decode it into the current run's `generated_images/` directory, and use that decoded file path
 - keep the original generated image in place
+
+This fallback is especially important on Windows/Codex Desktop sessions, where `image_gen` may display the generated image in chat without writing a current PNG into the expected generated-images directory.
+
+Use the helper when the current result must be decoded:
+
+```bash
+python scripts/save_imagegen_result.py \
+  --input <current-codex-session.jsonl-or-image-generation-result.json> \
+  --output-dir <run-dir>/generated_images
+```
+
+When given a session JSONL, the helper uses the latest `image_generation_call.result` in that file and ignores unrelated data URLs from other tool output. If the result is only available as raw base64 or a data URL, pass it on stdin instead of `--input`. Do not call the local processor with a guessed `/mnt/data/...` path or an older generated image. If neither a current file nor base64 image bytes are available, stop and report that the raw image bytes are inaccessible.
 
 ### 4. Postprocess locally
 
