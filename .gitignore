@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 .DS_Store
 outputs/
+test-output/
+.venv/
+.claude/
