@@ -396,6 +396,20 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 
 Grok Build 安裝請把 skills 複製到 `~/.grok/skills`（見[安裝方式](#安裝方式)）。Codex 仍用 `~/.codex/skills`；若載入了 `$video2dsprite` 但沒有影片工具，agent 應拒絕影片步驟並改建議 `$generate2dsprite`。
 
+#### Case study：Ryo run（16 幀）
+
+流程：**base → image_to_video（6s）→ 去背 → 16 幀 strip**。
+
+| Base | 動作影片 | Sprite 結果 |
+| --- | --- | --- |
+| <img src="./src/video2dsprite-ryo/base.png" alt="Ryo base" width="220" /> | <video src="./src/video2dsprite-ryo/run-6s.mp4" controls width="280" muted loop playsinline></video> | <img src="./src/video2dsprite-ryo/preview-16.gif" alt="Ryo 16-frame loop" width="160" /> |
+
+<p align="center">
+  <img src="./src/video2dsprite-ryo/strip-16.png" alt="Ryo 16-frame strip" width="720" />
+</p>
+
+素材在 `src/video2dsprite-ryo/`（約 **1.7 MB**，不含 raw 145 幀）。
+
 `$generate2dmap` 只有在選定的地圖 pipeline 需要可重用透明 props 時，才會使用 `$generate2dsprite`。小型環境物件可以批次生成為 `2x2`、`3x3` 或 `4x4` prop pack，再切成個別透明 props。簡單地圖可以維持單張 baked image。
 
 當流程需要視覺 reference 時，image skills 遵守同一個 wrapper 規則：先讓圖片出現在對話上下文。使用者上傳的圖片與剛生成的圖片已經在上下文中；local file 則先用 `view_image` 打開，再要求內建 image generation 保留角色 identity、風格、地圖 layout 或 sprite 進化脈絡。

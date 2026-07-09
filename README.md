@@ -396,6 +396,39 @@ Use it when you want **smoother intermediate poses** (e.g. run/walk cycles) by s
 
 Install for Grok Build by copying skills into `~/.grok/skills` (see [Install](#install)). On Codex, install is still `~/.codex/skills`; `$video2dsprite` will load but must refuse the video step if tools are missing.
 
+#### Case study: Ryo run (16 denser frames)
+
+Pipeline: **base still → image_to_video (6s) → chroma key → 16-frame strip**.
+
+| Base still | Motion video | Sprite result |
+| --- | --- | --- |
+| <img src="./src/video2dsprite-ryo/base.png" alt="Ryo base still on magenta" width="220" /> | <video src="./src/video2dsprite-ryo/run-6s.mp4" controls width="280" muted loop playsinline></video> | <img src="./src/video2dsprite-ryo/preview-16.gif" alt="Ryo 16-frame run loop" width="160" /> |
+
+<p align="center">
+  <img src="./src/video2dsprite-ryo/strip-16.png" alt="Ryo 16-frame run strip" width="720" /><br />
+  <em>16-frame strip (feet-aligned, denser than a classic 6–8 pose sheet)</em>
+</p>
+
+Short skill intro (optional):
+
+https://github.com/0x0funky/agent-sprite-forge/raw/main/src/video2dsprite-ryo/intro.mp4
+
+<details>
+<summary>Case assets on disk (~1.7 MB total — safe for git)</summary>
+
+```text
+src/video2dsprite-ryo/
+  base.png         # identity still (docs size)
+  run-6s.mp4       # image_to_video clip (compressed)
+  strip-16.png     # denser sprite strip
+  preview-16.gif   # loop for README
+  intro.mp4        # short skill explainer (optional)
+```
+
+We intentionally **do not** commit raw 145-frame dumps or full-resolution working folders.
+
+</details>
+
 `$generate2dmap` only uses `$generate2dsprite` when the selected map pipeline needs reusable transparent props. Small environmental props can be batched into `2x2`, `3x3`, or `4x4` prop packs, then extracted into individual transparent props. Simple maps can stay as a single baked image.
 
 When a visual reference is involved, the image skills follow the same wrapper rule: make the image visible in the conversation first. Attached images and freshly generated images are already visible; local files should be opened with `view_image` before asking built-in image generation to preserve identity, style, map layout, or sprite lineage.
@@ -515,6 +548,13 @@ agent-sprite-forge/
         prompt-rules.md
       scripts/
         video2dsprite.py
+  src/
+    video2dsprite-ryo/             # README case study (~1.7 MB)
+      base.png
+      run-6s.mp4
+      strip-16.png
+      preview-16.gif
+      intro.mp4
 ```
 
 ## Suggested Prompts
