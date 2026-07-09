@@ -149,10 +149,13 @@ image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_z
 
 ## Included Skills
 
-| Skill | 用途 | 出力 |
-| --- | --- | --- |
-| [`generate2dsprite`](./skills/generate2dsprite) | sprites、animation sheets、props、spell bundles、FX、reference variants、fixed-frame sheets 用 layout guides | raw sheet、cleaned transparent sheet、frames、GIFs、metadata |
-| [`generate2dmap`](./skills/generate2dmap) | baked maps、layered raster maps、clean HD RPG maps、prop packs、collision/zones、Godot-editable scenes、side-scroll/parallax scenes | base map、dressed/stage reference、prop pack、extracted props、preview、scene metadata |
+| Skill | 用途 | 出力 | 実行環境 |
+| --- | --- | --- | --- |
+| [`generate2dsprite`](./skills/generate2dsprite) | sprites、animation sheets、props、spell bundles、FX、reference variants、fixed-frame sheets 用 layout guides | raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex / Grok |
+| [`generate2dmap`](./skills/generate2dmap) | baked maps、layered raster maps、clean HD RPG maps、prop packs、collision/zones、Godot-editable scenes、side-scroll/parallax scenes | base map、dressed/stage reference、prop pack、extracted props、preview、scene metadata | Codex / Grok |
+| [`video2dsprite`](./skills/video2dsprite) | **動画からの密なモーション sprite**：静止画 → `image_to_video` → フレーム抽出 → マゼンタ chroma → 多密度 strip/GIF | video、frames、8/16/24/48 sprites | **Grok Build 専用** |
+
+> **`$video2dsprite` は Grok Build 専用**（`image_to_video` が必要）。`~/.grok/skills` にインストール。硬い pixel の本番 sheet は `$generate2dsprite` を優先。
 
 `$generate2dmap` は、選ばれた map pipeline が再利用可能な透明 props を必要とする場合だけ `$generate2dsprite` を併用します。小さな環境 props は `2x2`、`3x3`、`4x4` の prop pack にできます。一方、platform、floor、bridge、wall、door、long hazard のような collision-critical object は、個別生成または tile/object layer として扱うのが安全です。
 

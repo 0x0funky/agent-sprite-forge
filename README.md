@@ -382,14 +382,23 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 
 ## Included Skills
 
-| Skill | Use it for | Output |
-| --- | --- | --- |
-| [`generate2dsprite`](./skills/generate2dsprite) | Sprites, animation sheets, props, spell bundles, FX, reference variants, optional layout guides for fixed-frame sheets | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata |
-| [`generate2dmap`](./skills/generate2dmap) | Baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes | Base map, dressed reference, prop pack, extracted props, preview, scene metadata |
+| Skill | Use it for | Output | Runtime |
+| --- | --- | --- | --- |
+| [`generate2dsprite`](./skills/generate2dsprite) | Sprites, animation sheets, props, spell bundles, FX, reference variants, optional layout guides for fixed-frame sheets | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex / Grok (image gen) |
+| [`generate2dmap`](./skills/generate2dmap) | Baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes | Base map, dressed reference, prop pack, extracted props, preview, scene metadata | Codex / Grok (image gen) |
+| [`video2dsprite`](./skills/video2dsprite) | **Denser motion sprites from video**: base still → `image_to_video` → frame extract → magenta chroma → multi-density sprite strips/GIFs | Video, raw/clean frames, 8/16/24/48 sprite sets, strips, preview GIFs | **Grok Build only** |
+
+### Grok Build only: `$video2dsprite`
+
+`$video2dsprite` is a **Grok Build exclusive** skill. It depends on Grok's native **`image_gen` / `image_edit` + `image_to_video`** tools (still → short clip). Codex and other agents do not have `image_to_video`, so they cannot run the generation half of this pipeline.
+
+Use it when you want **smoother intermediate poses** (e.g. run/walk cycles) by sampling dense frames from a 6s in-place motion clip. Tradeoffs: softer pixels, possible identity drift, chroma fringe — for crisp production sheets, keep using `$generate2dsprite`.
+
+Install for Grok Build by copying skills into `~/.grok/skills` (see [Install](#install)). On Codex, install is still `~/.codex/skills`; `$video2dsprite` will load but must refuse the video step if tools are missing.
 
 `$generate2dmap` only uses `$generate2dsprite` when the selected map pipeline needs reusable transparent props. Small environmental props can be batched into `2x2`, `3x3`, or `4x4` prop packs, then extracted into individual transparent props. Simple maps can stay as a single baked image.
 
-When a visual reference is involved, both skills follow the same wrapper rule: make the image visible in the conversation first. Attached images and freshly generated images are already visible; local files should be opened with `view_image` before asking built-in image generation to preserve identity, style, map layout, or sprite lineage.
+When a visual reference is involved, the image skills follow the same wrapper rule: make the image visible in the conversation first. Attached images and freshly generated images are already visible; local files should be opened with `view_image` before asking built-in image generation to preserve identity, style, map layout, or sprite lineage.
 
 ## How It Works
 
@@ -414,18 +423,24 @@ The script is not the creative brain. The agent makes the visual and pipeline de
 
 ## Install
 
+Local processors need **Python**, **Pillow**, **numpy**, and (for `$video2dsprite`) **ffmpeg** on `PATH`.
+
 ### Option 1: Windows PowerShell
 
-Clone the repo, install the local processor dependencies, then copy both skills into your Codex skills directory:
+Clone the repo, install dependencies, then copy skills into the agent skills directory you use:
 
 ```powershell
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd .\agent-sprite-forge
 python -m pip install -r .\requirements.txt
+
+# Codex
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
-Copy-Item -Recurse -Force `
-  ".\skills\*" `
-  "$env:USERPROFILE\.codex\skills\"
+Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.codex\skills\"
+
+# Grok Build (required for $video2dsprite video generation)
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.grok\skills" | Out-Null
+Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.grok\skills\"
 ```
 
 ### Option 2: macOS / Linux
@@ -434,20 +449,29 @@ Copy-Item -Recurse -Force `
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd ./agent-sprite-forge
 python3 -m pip install -r ./requirements.txt
+
+# Codex
 mkdir -p ~/.codex/skills
 cp -R ./skills/* ~/.codex/skills/
+
+# Grok Build (required for $video2dsprite video generation)
+mkdir -p ~/.grok/skills
+cp -R ./skills/* ~/.grok/skills/
 ```
 
-Start a new Codex session after installation so the skills are loaded cleanly.
+Start a new Codex or Grok Build session after installation so skills reload.
+
+**Note:** `$generate2dsprite` and `$generate2dmap` work wherever built-in image generation is available. **`$video2dsprite` full pipeline only works in Grok Build** (`image_to_video`). The Python postprocessor can still re-sample already-exported frames on any machine with ffmpeg + Pillow.
 
 ## Python Requirements
 
-The local post-processor depends on:
+The local post-processors depend on:
 
 - `Pillow`
 - `numpy`
+- `ffmpeg` (CLI on `PATH`) for `$video2dsprite` frame extraction
 
-They are listed in [`requirements.txt`](./requirements.txt). Codex handles image generation itself, but these Python packages are still needed for magenta background removal, frame splitting, bounding-box extraction, alignment/rescaling, transparent GIF/PNG export, and prop-pack slicing.
+They are listed in [`requirements.txt`](./requirements.txt) (Python only). Image/video generation is provided by the host agent; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
 
 ## Repository Layout
 
@@ -482,6 +506,15 @@ agent-sprite-forge/
       scripts/
         generate2dsprite.py
         make_layout_guide.py
+    video2dsprite/                 # Grok Build only (image_to_video)
+      SKILL.md
+      agents/
+        openai.yaml
+      references/
+        pipeline.md
+        prompt-rules.md
+      scripts/
+        video2dsprite.py
 ```
 
 ## Suggested Prompts
@@ -502,6 +535,16 @@ Use $generate2dsprite to create a late-Sengoku player_sheet for a wandering fire
 
 ```text
 Use $generate2dsprite to create a wizard spell bundle with cast, projectile, and impact sprites.
+```
+
+### Video → dense sprites (Grok Build only)
+
+```text
+Use $video2dsprite with my existing side-view hero PNG as base. Generate a 6s in-place run on #FF00FF, extract frames, chroma key, and export 8/16/24/48 sprite sets + preview GIFs. Do not wire into the game; just report paths.
+```
+
+```text
+Use $video2dsprite to create a smooth side-scroller walk cycle from a new magenta-background still, 6 seconds, then sample 24 feet-aligned frames.
 ```
 
 ### Map

@@ -382,14 +382,23 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 
 ## Included Skills
 
-| Skill | 適合用途 | 輸出 |
-| --- | --- | --- |
-| [`generate2dsprite`](./skills/generate2dsprite) | Sprites、animation sheets、props、spell bundles、FX、reference variants、固定 frame sheet 可選 layout guides | Raw sheet、cleaned transparent sheet、frames、GIFs、metadata |
-| [`generate2dmap`](./skills/generate2dmap) | Baked maps、layered raster maps、clean HD RPG maps、prop packs、collision / zones、Godot-editable scenes | Base map、dressed reference、prop pack、extracted props、preview、scene metadata |
+| Skill | 適合用途 | 輸出 | 執行環境 |
+| --- | --- | --- | --- |
+| [`generate2dsprite`](./skills/generate2dsprite) | Sprites、animation sheets、props、spell bundles、FX、reference variants、固定 frame sheet 可選 layout guides | Raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex / Grok（需 image gen） |
+| [`generate2dmap`](./skills/generate2dmap) | Baked maps、layered raster maps、clean HD RPG maps、prop packs、collision / zones、Godot-editable scenes | Base map、dressed reference、prop pack、extracted props、preview、scene metadata | Codex / Grok（需 image gen） |
+| [`video2dsprite`](./skills/video2dsprite) | **用影片做更密的動作 sprite**：靜止圖 → `image_to_video` → 抽幀 → 洋紅去背 → 多密度 strip / GIF | 影片、raw/clean 幀、8/16/24/48 sprite、strip、預覽 GIF | **僅 Grok Build** |
+
+### 僅 Grok Build：`$video2dsprite`
+
+`$video2dsprite` 是 **Grok Build 專用** skill。它依賴 Grok 內建的 **`image_gen` / `image_edit` + `image_to_video`**（先靜止圖再短片）。Codex 等環境沒有 `image_to_video`，無法跑完整生成流程。
+
+適合想要 **更密的中間姿勢、跑步/走路更順** 的實驗或 locomotion 素材。代價是像素較軟、identity 可能漂移、邊緣 chroma fringe——正式乾淨 pixel sheet 仍優先用 `$generate2dsprite`。
+
+Grok Build 安裝請把 skills 複製到 `~/.grok/skills`（見[安裝方式](#安裝方式)）。Codex 仍用 `~/.codex/skills`；若載入了 `$video2dsprite` 但沒有影片工具，agent 應拒絕影片步驟並改建議 `$generate2dsprite`。
 
 `$generate2dmap` 只有在選定的地圖 pipeline 需要可重用透明 props 時，才會使用 `$generate2dsprite`。小型環境物件可以批次生成為 `2x2`、`3x3` 或 `4x4` prop pack，再切成個別透明 props。簡單地圖可以維持單張 baked image。
 
-當流程需要視覺 reference 時，兩個 skills 都遵守同一個 wrapper 規則：先讓圖片出現在對話上下文。使用者上傳的圖片與剛生成的圖片已經在上下文中；local file 則先用 `view_image` 打開，再要求內建 image generation 保留角色 identity、風格、地圖 layout 或 sprite 進化脈絡。
+當流程需要視覺 reference 時，image skills 遵守同一個 wrapper 規則：先讓圖片出現在對話上下文。使用者上傳的圖片與剛生成的圖片已經在上下文中；local file 則先用 `view_image` 打開，再要求內建 image generation 保留角色 identity、風格、地圖 layout 或 sprite 進化脈絡。
 
 ## 運作方式
 
@@ -414,18 +423,24 @@ Script 不是創意大腦。Agent 負責美術與 pipeline 決策，Python tools
 
 ## 安裝方式
 
+本地 processor 需要 **Python**、**Pillow**、**numpy**；`$video2dsprite` 抽幀還需要 **ffmpeg** 在 `PATH` 上。
+
 ### Option 1: Windows PowerShell
 
-先 clone repo，安裝本地 processor 依賴，再把兩個 skills 複製到 Codex skills 目錄：
+先 clone repo，安裝依賴，再依你用的 agent 複製 skills：
 
 ```powershell
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd .\agent-sprite-forge
 python -m pip install -r .\requirements.txt
+
+# Codex
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
-Copy-Item -Recurse -Force `
-  ".\skills\*" `
-  "$env:USERPROFILE\.codex\skills\"
+Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.codex\skills\"
+
+# Grok Build（$video2dsprite 影片生成需要）
+New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.grok\skills" | Out-Null
+Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.grok\skills\"
 ```
 
 ### Option 2: macOS / Linux
@@ -434,11 +449,19 @@ Copy-Item -Recurse -Force `
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd ./agent-sprite-forge
 python3 -m pip install -r ./requirements.txt
+
+# Codex
 mkdir -p ~/.codex/skills
 cp -R ./skills/* ~/.codex/skills/
+
+# Grok Build（$video2dsprite 影片生成需要）
+mkdir -p ~/.grok/skills
+cp -R ./skills/* ~/.grok/skills/
 ```
 
-安裝完後建議重新開一個新的 Codex session，讓 skills 重新載入。
+安裝完後建議重新開 Codex 或 Grok Build session，讓 skills 重新載入。
+
+**注意：** `$generate2dsprite` / `$generate2dmap` 在有 image gen 的環境都能用。**完整 `$video2dsprite` 流程只有 Grok Build**（`image_to_video`）。若已有抽出的 frames，任何有 ffmpeg + Pillow 的機器都能用 script 重抽 sample。
 
 ## Python 依賴
 
@@ -446,8 +469,9 @@ cp -R ./skills/* ~/.codex/skills/
 
 - `Pillow`
 - `numpy`
+- `ffmpeg`（CLI，`$video2dsprite` 抽幀用）
 
-這些都列在 [`requirements.txt`](./requirements.txt)。雖然 Codex 本身負責生圖，但你仍然需要這些 Python 套件完成洋紅去背、切格、主體 bbox 偵測、對齊 / 縮放、透明 PNG / GIF 輸出，以及 prop-pack slicing。
+Python 套件列在 [`requirements.txt`](./requirements.txt)。生圖 / 生影片由 host agent 負責；這些工具負責洋紅去背、切格、對齊、透明 PNG / GIF、prop-pack slicing，以及影片幀採樣。
 
 ## Repo 結構
 
@@ -479,6 +503,15 @@ agent-sprite-forge/
       scripts/
         generate2dsprite.py
         make_layout_guide.py
+    video2dsprite/                 # 僅 Grok Build（image_to_video）
+      SKILL.md
+      agents/
+        openai.yaml
+      references/
+        pipeline.md
+        prompt-rules.md
+      scripts/
+        video2dsprite.py
 ```
 
 ## 建議 Prompt
@@ -499,6 +532,16 @@ Use $generate2dsprite to create a late-Sengoku player_sheet for a wandering fire
 
 ```text
 Use $generate2dsprite to create a wizard spell bundle with cast, projectile, and impact sprites.
+```
+
+### 影片 → 密集 sprite（僅 Grok Build）
+
+```text
+Use $video2dsprite with my existing side-view hero PNG as base. Generate a 6s in-place run on #FF00FF, extract frames, chroma key, and export 8/16/24/48 sprite sets + preview GIFs. Do not wire into the game; just report paths.
+```
+
+```text
+Use $video2dsprite to create a smooth side-scroller walk cycle from a new magenta-background still, 6 seconds, then sample 24 feet-aligned frames.
 ```
 
 ### Map

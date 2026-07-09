@@ -1,0 +1,4 @@
+interface:
+  display_name: "Video → 2D Sprite (Grok Build only)"
+  short_description: "Base still → image_to_video → frames → chroma → dense sprites. Grok Build exclusive."
+  default_prompt: "Use $video2dsprite on Grok Build only. This skill requires Grok native image_gen/image_edit plus image_to_video; do not run the video generation step on Codex/Claude. Workflow: (1) stage a full-body side-view base still on solid #FF00FF, (2) image_to_video for 6s in-place run/walk with locked camera and magenta background, (3) python skills/video2dsprite/scripts/video2dsprite.py process --video <mp4> --out-dir <dir> --frame-counts 8,16,24,48, (4) QC preview GIFs and report paths without integrating into a game unless asked. Prefer $generate2dsprite for crisp production pixel sheets."

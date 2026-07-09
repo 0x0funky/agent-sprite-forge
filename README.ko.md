@@ -149,10 +149,13 @@ image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_z
 
 ## Included Skills
 
-| Skill | 용도 | 출력 |
-| --- | --- | --- |
-| [`generate2dsprite`](./skills/generate2dsprite) | sprites, animation sheets, props, spell bundles, FX, reference variants, fixed-frame sheets용 layout guides | raw sheet, cleaned transparent sheet, frames, GIFs, metadata |
-| [`generate2dmap`](./skills/generate2dmap) | baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes, side-scroll/parallax scenes | base map, dressed/stage reference, prop pack, extracted props, preview, scene metadata |
+| Skill | 용도 | 출력 | 런타임 |
+| --- | --- | --- | --- |
+| [`generate2dsprite`](./skills/generate2dsprite) | sprites, animation sheets, props, spell bundles, FX, reference variants, fixed-frame sheets용 layout guides | raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex / Grok |
+| [`generate2dmap`](./skills/generate2dmap) | baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes, side-scroll/parallax scenes | base map, dressed/stage reference, prop pack, extracted props, preview, scene metadata | Codex / Grok |
+| [`video2dsprite`](./skills/video2dsprite) | **영상 기반 고밀도 모션 sprite**: still → `image_to_video` → 프레임 추출 → magenta chroma → multi-density strip/GIF | video, frames, 8/16/24/48 sprites | **Grok Build 전용** |
+
+> **`$video2dsprite`는 Grok Build 전용**입니다 (`image_to_video` 필요). `~/.grok/skills`에 설치하세요. 선명한 픽셀 프로덕션 sheet는 `$generate2dsprite`를 우선하세요.
 
 `$generate2dmap`는 선택된 map pipeline이 재사용 가능한 투명 props를 필요로 할 때만 `$generate2dsprite`를 함께 사용합니다. 작은 환경 props는 `2x2`, `3x3`, `4x4` prop packs로 묶을 수 있습니다. platform, floor, bridge, wall, door, long hazard처럼 collision이 중요한 오브젝트는 개별 생성하거나 tile/object layer로 표현하는 것이 안전합니다.
 
