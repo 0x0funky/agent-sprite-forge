@@ -400,29 +400,30 @@ Install for Grok Build by copying skills into `~/.grok/skills` (see [Install](#i
 
 Pipeline: **base still → image_to_video (6s) → chroma key → 16-frame strip**.
 
-| Base still | Motion video | Sprite result |
+> **Note:** GitHub README does **not** reliably render `<video>` tags (especially inside tables). Motion is shown as **GIF** previews; MP4 files are still in the repo for download / local play.
+
+| Base still | Motion (`image_to_video`) | Sprite result (16f) |
 | --- | --- | --- |
-| <img src="./src/video2dsprite-ryo/base.png" alt="Ryo base still on magenta" width="220" /> | <video src="./src/video2dsprite-ryo/run-6s.mp4" controls width="280" muted loop playsinline></video> | <img src="./src/video2dsprite-ryo/preview-16.gif" alt="Ryo 16-frame run loop" width="160" /> |
+| <img src="./src/video2dsprite-ryo/base.png" alt="Ryo base still on magenta" width="220" /> | <img src="./src/video2dsprite-ryo/run-6s-preview.gif" alt="Ryo 6s run video preview" width="240" /><br />[Download MP4](./src/video2dsprite-ryo/run-6s.mp4) | <img src="./src/video2dsprite-ryo/preview-16.gif" alt="Ryo 16-frame run loop" width="160" /> |
 
 <p align="center">
   <img src="./src/video2dsprite-ryo/strip-16.png" alt="Ryo 16-frame run strip" width="720" /><br />
   <em>16-frame strip (feet-aligned, denser than a classic 6–8 pose sheet)</em>
 </p>
 
-Short skill intro (optional):
-
-https://github.com/0x0funky/agent-sprite-forge/raw/main/src/video2dsprite-ryo/intro.mp4
+Short skill intro (MP4, open file): [intro.mp4](./src/video2dsprite-ryo/intro.mp4)
 
 <details>
-<summary>Case assets on disk (~1.7 MB total — safe for git)</summary>
+<summary>Case assets on disk (~2–3 MB — safe for git)</summary>
 
 ```text
 src/video2dsprite-ryo/
-  base.png         # identity still (docs size)
-  run-6s.mp4       # image_to_video clip (compressed)
-  strip-16.png     # denser sprite strip
-  preview-16.gif   # loop for README
-  intro.mp4        # short skill explainer (optional)
+  base.png              # identity still (docs size)
+  run-6s.mp4            # image_to_video clip (compressed)
+  run-6s-preview.gif    # same motion as GIF for README display
+  strip-16.png          # denser sprite strip
+  preview-16.gif        # sprite loop for README
+  intro.mp4             # short skill explainer
 ```
 
 We intentionally **do not** commit raw 145-frame dumps or full-resolution working folders.
@@ -549,9 +550,10 @@ agent-sprite-forge/
       scripts/
         video2dsprite.py
   src/
-    video2dsprite-ryo/             # README case study (~1.7 MB)
+    video2dsprite-ryo/             # README case study (~2–3 MB)
       base.png
       run-6s.mp4
+      run-6s-preview.gif           # motion GIF (GitHub-safe)
       strip-16.png
       preview-16.gif
       intro.mp4

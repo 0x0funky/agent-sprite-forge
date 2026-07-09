@@ -400,15 +400,18 @@ Grok Build 安裝請把 skills 複製到 `~/.grok/skills`（見[安裝方式](#�
 
 流程：**base → image_to_video（6s）→ 去背 → 16 幀 strip**。
 
-| Base | 動作影片 | Sprite 結果 |
+> **說明：** GitHub README **無法穩定顯示** `<video>`（表格裡更不行）。動作預覽改用 **GIF**；MP4 仍在 repo 可下載。
+
+| Base | 動作（image_to_video） | Sprite 結果（16f） |
 | --- | --- | --- |
-| <img src="./src/video2dsprite-ryo/base.png" alt="Ryo base" width="220" /> | <video src="./src/video2dsprite-ryo/run-6s.mp4" controls width="280" muted loop playsinline></video> | <img src="./src/video2dsprite-ryo/preview-16.gif" alt="Ryo 16-frame loop" width="160" /> |
+| <img src="./src/video2dsprite-ryo/base.png" alt="Ryo base" width="220" /> | <img src="./src/video2dsprite-ryo/run-6s-preview.gif" alt="Ryo 6s run preview" width="240" /><br />[下載 MP4](./src/video2dsprite-ryo/run-6s.mp4) | <img src="./src/video2dsprite-ryo/preview-16.gif" alt="Ryo 16-frame loop" width="160" /> |
 
 <p align="center">
   <img src="./src/video2dsprite-ryo/strip-16.png" alt="Ryo 16-frame strip" width="720" />
 </p>
 
-素材在 `src/video2dsprite-ryo/`（約 **1.7 MB**，不含 raw 145 幀）。
+介紹片 MP4：[intro.mp4](./src/video2dsprite-ryo/intro.mp4)  
+素材在 `src/video2dsprite-ryo/`（約 2–3 MB，不含 raw 145 幀）。
 
 `$generate2dmap` 只有在選定的地圖 pipeline 需要可重用透明 props 時，才會使用 `$generate2dsprite`。小型環境物件可以批次生成為 `2x2`、`3x3` 或 `4x4` prop pack，再切成個別透明 props。簡單地圖可以維持單張 baked image。
 
