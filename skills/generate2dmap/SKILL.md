@@ -184,6 +184,9 @@ For a fixed grid, tactical board, card-board arena, or project-native 2.5D tile 
 - Use `edge_policy=isolated` when visible gaps or individual tile meshes separate cells. Use `seamless` only when adjacent tiles must visually join.
 - Preserve one surface scale, lighting direction, grain density, and palette relationship across every terrain family.
 - Extract and validate the atlas with `scripts/extract_terrain_tiles.py`. The script writes portable relative paths, per-variant luminance/contrast metrics, variant-difference QC, material hints, and a Godot mesh-top runtime contract.
+- Keep animated terrain states such as flame tongues, smoke, frost glints, corruption pulses, and void wisps separate from the opaque surface atlas. Generate them as transparent body/FX sheets with `$generate2dsprite`, preserve a fixed ground-contact anchor and shared silhouette envelope, and reference the generated runtime animation contract from the terrain metadata.
+- For a 2.5D `Sprite3D` status overlay on a horizontal tile mesh, record and validate `ground_lift`, `depth_policy`, `render_priority`, and `occupantPolicy`. A correct pixel-size/offset contract alone does not prove that the vertical card will survive intersection with the horizontal surface.
+- The safe default for a walkable animated status is: render above the tile surface, behind unit sprites, and apply `rear_shift_and_fade` while occupied. Do not solve tile clipping by drawing the FX over every actor.
 
 ```bash
 python scripts/extract_terrain_tiles.py \
@@ -447,6 +450,7 @@ Always validate what the chosen pipeline requires:
 - `side_scroll_mode` platforms and terrain use explicit platform/object metadata plus a shared platform strip, tile, or terrain-chunk library; they are not taken from a generic square prop pack
 - `grid_mode` outputs include grid dimensions, cell size, cell metadata, object layers, and validation of critical walkable/buildable cells
 - terrain tile bundles use portable paths, cover every declared atlas row exactly once, contain the expected number of variants, and pass contrast/variant-difference QC
+- animated terrain overlays pass both standalone FX QC and an engine-level Hybrid preview: visible above the tile, not depth-clipped, behind actors, readable at gameplay zoom, and safe while a representative actor occupies the cell
 - `room_chunk_mode` outputs include chunk dimensions, exits/connection sockets, seam validation, collision, and at least one assembled or per-chunk preview
 - stage-reference maps preserve the background dimensions and their object plan matches the final object/collision metadata
 - stage-reference and dressed-reference mockups contain no more than 9 distinct visible runtime prop/object candidates unless the user explicitly requested a larger pass
