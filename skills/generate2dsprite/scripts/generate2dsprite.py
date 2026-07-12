@@ -531,6 +531,188 @@ def bbox_touches_edge(
     return x0 <= margin or y0 <= margin or x1 >= width - margin or y1 >= height - margin
 
 
+def alpha_area(img: Image.Image) -> int:
+    return int(np.count_nonzero(np.asarray(img.getchannel("A"))))
+
+
+def alpha_core_area(img: Image.Image, horizontal_fraction: float = 0.5) -> int:
+    alpha = np.asarray(img.getchannel("A"))
+    half_width = max(1, int(round(img.width * horizontal_fraction / 2)))
+    center_x = img.width // 2
+    x0 = max(0, center_x - half_width)
+    x1 = min(img.width, center_x + half_width)
+    return int(np.count_nonzero(alpha[:, x0:x1]))
+
+
+def estimate_anchor(
+    img: Image.Image,
+    bbox: tuple[int, int, int, int] | None,
+    align: str,
+) -> tuple[float, float]:
+    if not bbox:
+        return (img.width / 2, img.height / 2)
+
+    x0, y0, x1, y1 = bbox
+    if align == "center":
+        return ((x0 + x1) / 2, (y0 + y1) / 2)
+
+    alpha = np.asarray(img.getchannel("A"))
+    ys, xs = np.nonzero(alpha > 0)
+    inside = (xs >= x0) & (xs < x1) & (ys >= y0) & (ys < y1)
+    xs = xs[inside]
+    ys = ys[inside]
+    if xs.size == 0:
+        return ((x0 + x1) / 2, float(y1))
+
+    central = (xs >= img.width * 0.2) & (xs <= img.width * 0.8)
+    if int(np.count_nonzero(central)) >= 8:
+        xs = xs[central]
+        ys = ys[central]
+
+    lower_cutoff = float(np.percentile(ys, 85))
+    lower = ys >= lower_cutoff
+    lower_xs = xs[lower]
+    anchor_x = float(np.median(lower_xs)) if lower_xs.size else float(np.median(xs))
+    anchor_y = float(np.percentile(ys, 98))
+    return (anchor_x, anchor_y)
+
+
+def summarize_frame_qc(frame_info: list[dict[str, object]]) -> dict[str, object]:
+    valid = [info for info in frame_info if not bool(info.get("is_empty"))]
+    scale_proxy = np.asarray(
+        [math.sqrt(float(info.get("body_area_fraction", 0.0))) for info in valid],
+        dtype=float,
+    )
+    anchor_x = np.asarray(
+        [
+            float(info["anchor_source"][0]) / max(1, int(info["source_frame_size"][0]))
+            for info in valid
+            if info.get("anchor_source")
+        ],
+        dtype=float,
+    )
+    anchor_y = np.asarray(
+        [
+            float(info["anchor_source"][1]) / max(1, int(info["source_frame_size"][1]))
+            for info in valid
+            if info.get("anchor_source")
+        ],
+        dtype=float,
+    )
+
+    scale_mean = float(np.mean(scale_proxy)) if scale_proxy.size else 0.0
+    return {
+        "frame_count": len(frame_info),
+        "valid_frame_count": len(valid),
+        "empty_count": sum(bool(info.get("is_empty")) for info in frame_info),
+        "edge_touch_count": sum(bool(info.get("edge_touch")) for info in frame_info),
+        "paste_clamped_count": sum(bool(info.get("paste_clamped")) for info in frame_info),
+        "body_scale_mean": scale_mean,
+        "body_scale_cv": (
+            float(np.std(scale_proxy) / scale_mean) if scale_proxy.size and scale_mean > 0 else 0.0
+        ),
+        "anchor_x_std": float(np.std(anchor_x)) if anchor_x.size else 0.0,
+        "anchor_y_std": float(np.std(anchor_y)) if anchor_y.size else 0.0,
+        "anchor_y_mean": float(np.mean(anchor_y)) if anchor_y.size else 0.0,
+    }
+
+
+SCALE_PROFILE_VERSION = 1
+SCALE_PROFILE_PROCESSING_KEYS = (
+    "cell_size",
+    "fit_scale",
+    "trim_border",
+    "edge_clean_depth",
+    "align",
+    "shared_scale",
+    "scale_strategy",
+    "component_mode",
+    "component_padding",
+    "min_component_area",
+    "edge_touch_margin",
+)
+
+
+def processing_output_origin(processing: dict[str, object]) -> list[float]:
+    cell_size = int(processing["cell_size"])
+    target_x = cell_size / 2
+    if str(processing["align"]) in {"bottom", "feet"}:
+        fit_scale = float(processing["fit_scale"])
+        output_pad = max(0, int(cell_size * (1 - fit_scale) * 0.5))
+        target_y = cell_size - output_pad
+    else:
+        target_y = cell_size / 2
+    return [target_x, target_y]
+
+
+def build_scale_profile(
+    metadata: dict[str, object],
+    name: str,
+    max_body_scale_drift: float,
+) -> dict[str, object]:
+    qc_summary = dict(metadata.get("qc_summary") or {})
+    body_scale_mean = float(qc_summary.get("body_scale_mean", 0.0))
+    if body_scale_mean <= 0:
+        raise ValueError("Cannot create a scale profile without a valid body-scale mean.")
+
+    processing = {key: metadata[key] for key in SCALE_PROFILE_PROCESSING_KEYS}
+    return {
+        "version": SCALE_PROFILE_VERSION,
+        "name": name,
+        "processing": processing,
+        "output_origin": processing_output_origin(processing),
+        "reference": {
+            "target": metadata.get("target"),
+            "mode": metadata.get("mode"),
+            "rows": metadata.get("rows"),
+            "cols": metadata.get("cols"),
+            "body_scale_mean": body_scale_mean,
+            "body_scale_cv": float(qc_summary.get("body_scale_cv", 0.0)),
+            "anchor_y_mean": float(qc_summary.get("anchor_y_mean", 0.0)),
+        },
+        "qc": {
+            "max_body_scale_drift": max_body_scale_drift,
+        },
+    }
+
+
+def load_scale_profile(path: Path) -> dict[str, object]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if int(payload.get("version", 0)) != SCALE_PROFILE_VERSION:
+        raise ValueError(
+            f"Unsupported scale profile version {payload.get('version')!r}; "
+            f"expected {SCALE_PROFILE_VERSION}."
+        )
+    processing = payload.get("processing")
+    if not isinstance(processing, dict):
+        raise ValueError("Scale profile is missing its processing contract.")
+    missing = [key for key in SCALE_PROFILE_PROCESSING_KEYS if key not in processing]
+    if missing:
+        raise ValueError(f"Scale profile processing contract is missing: {', '.join(missing)}")
+    reference = payload.get("reference")
+    if not isinstance(reference, dict) or float(reference.get("body_scale_mean", 0.0)) <= 0:
+        raise ValueError("Scale profile is missing a valid reference body-scale mean.")
+    if "output_origin" not in payload:
+        payload["output_origin"] = processing_output_origin(processing)
+    return payload
+
+
+def apply_scale_profile(args: argparse.Namespace, profile: dict[str, object]) -> None:
+    processing = dict(profile["processing"])
+    for key in SCALE_PROFILE_PROCESSING_KEYS:
+        setattr(args, key, processing[key])
+
+
+def profile_scale_drift(
+    qc_summary: dict[str, object], profile: dict[str, object]
+) -> float:
+    current = float(qc_summary.get("body_scale_mean", 0.0))
+    reference = float(dict(profile["reference"]).get("body_scale_mean", 0.0))
+    if current <= 0 or reference <= 0:
+        return 0.0
+    return abs(current / reference - 1.0)
+
+
 def center_single_sprite(img: Image.Image, size: int, threshold: int, edge_threshold: int) -> Image.Image:
     cleaned = remove_bg_magenta(img.convert("RGBA"), threshold, edge_threshold)
     bbox = cleaned.getbbox()
@@ -563,6 +745,7 @@ def split_grid(
     component_padding: int = 0,
     min_component_area: int = 1,
     edge_touch_margin: int = 0,
+    scale_strategy: str = "fit",
 ) -> tuple[list[Image.Image], list[dict[str, object]]]:
     cleaned = remove_bg_magenta(img.convert("RGBA"), threshold, edge_threshold)
     width, height = cleaned.size
@@ -577,6 +760,7 @@ def split_grid(
                 frame = trim_border(frame, px=trim_border_px)
             if edge_clean_depth > 0:
                 frame = clean_edges(frame, depth=edge_clean_depth)
+            source_frame_size = frame.size
             components = connected_components(frame, min_area=min_component_area)
             bbox = None
             selected_component = None
@@ -585,8 +769,21 @@ def split_grid(
                 bbox = pad_bbox(tuple(selected_component["bbox"]), component_padding, frame.width, frame.height)
             else:
                 bbox = frame.getbbox()
+            is_empty = bbox is None
+            subject_area = int(selected_component["area"]) if selected_component else alpha_area(frame)
+            body_core_area = alpha_core_area(frame)
+            anchor_bbox = tuple(selected_component["bbox"]) if selected_component else bbox
+            anchor_source = estimate_anchor(frame, anchor_bbox, align) if not is_empty else None
+            source_edge_touch = bbox_touches_edge(
+                bbox,
+                frame.width,
+                frame.height,
+                edge_touch_margin,
+            )
             if bbox:
                 frame = frame.crop(bbox)
+            else:
+                frame = Image.new("RGBA", (1, 1), (0, 0, 0, 0))
             cropped_frames.append(frame)
             frame_info.append(
                 {
@@ -597,14 +794,100 @@ def split_grid(
                     "selected_component_area": int(selected_component["area"]) if selected_component else None,
                     "selected_component_bbox": list(selected_component["bbox"]) if selected_component else None,
                     "crop_bbox": list(bbox) if bbox else None,
-                    "edge_touch": bbox_touches_edge(bbox, cell_width, cell_height, edge_touch_margin),
+                    "source_frame_size": list(source_frame_size),
+                    "is_empty": is_empty,
+                    "subject_area": subject_area,
+                    "body_core_area": body_core_area,
+                    "body_area_fraction": (
+                        body_core_area / max(1, source_frame_size[0] * source_frame_size[1])
+                        if not is_empty
+                        else 0.0
+                    ),
+                    "anchor_source": list(anchor_source) if anchor_source else None,
+                    "source_edge_touch": source_edge_touch,
+                    "output_edge_touch": False,
+                    "edge_touch": source_edge_touch,
                 }
             )
 
+    if scale_strategy == "preserve":
+        target_x = cell_size / 2
+        if align in {"bottom", "feet"}:
+            output_pad = max(0, int(cell_size * (1 - fit_scale) * 0.5))
+            target_y = cell_size - output_pad
+        else:
+            target_y = cell_size / 2
+
+        frames: list[Image.Image] = []
+        for index, frame in enumerate(cropped_frames):
+            info = frame_info[index]
+            canvas = Image.new("RGBA", (cell_size, cell_size), (0, 0, 0, 0))
+            if not bool(info["is_empty"]):
+                source_width, source_height = (int(value) for value in info["source_frame_size"])
+                crop_x0, crop_y0, _crop_x1, _crop_y1 = (int(value) for value in info["crop_bbox"])
+                anchor_x, anchor_y = (float(value) for value in info["anchor_source"])
+                base_scale = min(cell_size / source_width, cell_size / source_height) * fit_scale
+                scale_adjustment = 1.0
+                source_to_output_scale = base_scale * scale_adjustment
+                new_width = max(1, int(round(frame.width * source_to_output_scale)))
+                new_height = max(1, int(round(frame.height * source_to_output_scale)))
+                scaled = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                anchor_in_crop_x = (anchor_x - crop_x0) * source_to_output_scale
+                anchor_in_crop_y = (anchor_y - crop_y0) * source_to_output_scale
+                paste_x = int(round(target_x - anchor_in_crop_x))
+                paste_y = int(round(target_y - anchor_in_crop_y))
+                unclamped_paste = [paste_x, paste_y]
+                paste_x = max(0, min(cell_size - new_width, paste_x))
+                paste_y = max(0, min(cell_size - new_height, paste_y))
+                paste_clamped = [paste_x, paste_y] != unclamped_paste
+                canvas.paste(scaled, (paste_x, paste_y), scaled)
+                aligned_bbox = canvas.getbbox()
+                output_edge_touch = bbox_touches_edge(
+                    aligned_bbox,
+                    cell_size,
+                    cell_size,
+                    edge_touch_margin,
+                )
+                info["output_size"] = [new_width, new_height]
+                info["preserved_subject_size"] = [new_width, new_height]
+                info["paste_position"] = [paste_x, paste_y]
+                info["unclamped_paste_position"] = unclamped_paste
+                info["paste_clamped"] = paste_clamped
+                info["aligned_bbox"] = list(aligned_bbox) if aligned_bbox else None
+                info["scale_adjustment"] = scale_adjustment
+                info["source_to_output_scale"] = source_to_output_scale
+                info["bbox_scale_applied"] = False
+                info["scale_changed"] = bool(info["bbox_scale_applied"])
+                info["anchor_target"] = [target_x, target_y]
+                info["output_edge_touch"] = output_edge_touch
+                info["edge_touch"] = bool(info["source_edge_touch"]) or output_edge_touch
+            else:
+                info["output_size"] = [0, 0]
+                info["preserved_subject_size"] = [0, 0]
+                info["paste_position"] = [0, 0]
+                info["unclamped_paste_position"] = [0, 0]
+                info["paste_clamped"] = False
+                info["aligned_bbox"] = None
+                info["scale_adjustment"] = 1.0
+                info["source_to_output_scale"] = 0.0
+                info["bbox_scale_applied"] = False
+                info["scale_changed"] = False
+                info["anchor_target"] = [target_x, target_y]
+            frames.append(canvas)
+
+        for info in frame_info:
+            info["scale_strategy"] = scale_strategy
+            info["shared_center_x"] = target_x
+            info["shared_feet_y"] = target_y
+        return frames, frame_info
+
     common_scale = None
     if shared_scale:
-        max_width = max((frame.size[0] for frame in cropped_frames), default=0)
-        max_height = max((frame.size[1] for frame in cropped_frames), default=0)
+        valid_frames = [
+            frame for frame, info in zip(cropped_frames, frame_info) if not bool(info["is_empty"])
+        ]
+        max_width = max((frame.size[0] for frame in valid_frames), default=0)
+        max_height = max((frame.size[1] for frame in valid_frames), default=0)
         if max_width > 0 and max_height > 0:
             common_scale = min(cell_size / max_width, cell_size / max_height) * fit_scale
 
@@ -612,7 +895,8 @@ def split_grid(
     for index, frame in enumerate(cropped_frames):
         frame_width, frame_height = frame.size
         canvas = Image.new("RGBA", (cell_size, cell_size), (0, 0, 0, 0))
-        if frame_width > 0 and frame_height > 0:
+        info = frame_info[index]
+        if not bool(info["is_empty"]):
             scale = common_scale or (min(cell_size / frame_width, cell_size / frame_height) * fit_scale)
             new_width = max(1, int(frame_width * scale))
             new_height = max(1, int(frame_height * scale))
@@ -624,11 +908,30 @@ def split_grid(
             else:
                 paste_y = (cell_size - new_height) // 2
             canvas.paste(frame, (paste_x, paste_y))
-            frame_info[index]["output_size"] = [new_width, new_height]
-            frame_info[index]["paste_position"] = [paste_x, paste_y]
+            output_bbox = canvas.getbbox()
+            output_edge_touch = bbox_touches_edge(
+                output_bbox,
+                cell_size,
+                cell_size,
+                edge_touch_margin,
+            )
+            info["output_size"] = [new_width, new_height]
+            info["paste_position"] = [paste_x, paste_y]
+            info["paste_clamped"] = False
+            info["aligned_bbox"] = list(output_bbox) if output_bbox else None
+            info["output_edge_touch"] = output_edge_touch
+            info["edge_touch"] = bool(info["source_edge_touch"]) or output_edge_touch
+            info["source_to_output_scale"] = scale
+            info["bbox_scale_applied"] = True
         else:
-            frame_info[index]["output_size"] = [0, 0]
-            frame_info[index]["paste_position"] = [0, 0]
+            info["output_size"] = [0, 0]
+            info["paste_position"] = [0, 0]
+            info["paste_clamped"] = False
+            info["aligned_bbox"] = None
+            info["source_to_output_scale"] = 0.0
+            info["bbox_scale_applied"] = False
+        info["scale_strategy"] = "fit"
+        info["scale_changed"] = bool(info["bbox_scale_applied"])
         frames.append(canvas)
     return frames, frame_info
 
@@ -721,6 +1024,16 @@ def cmd_list_options() -> None:
                 "processor": {
                     "component_mode": ["all", "largest"],
                     "align": ["center", "bottom", "feet"],
+                    "scale_strategy": ["fit", "preserve"],
+                    "strict_qc": {
+                        "structural_checks": ["empty", "edge_touch", "paste_clamped"],
+                        "optional_metrics": [
+                            "max_body_scale_cv",
+                            "max_anchor_y_std",
+                            "max_profile_scale_drift",
+                        ],
+                    },
+                    "scale_profile_version": SCALE_PROFILE_VERSION,
                 },
             },
             indent=2,
@@ -752,6 +1065,12 @@ def cmd_process(args: argparse.Namespace) -> None:
         raise ValueError(f"Unknown process target '{args.target}'. Valid targets: {', '.join(PROCESS_TARGETS)}")
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    if args.scale_profile and args.write_scale_profile:
+        raise ValueError("Use either --scale-profile or --write-scale-profile, not both.")
+    scale_profile = load_scale_profile(args.scale_profile) if args.scale_profile else None
+    if scale_profile:
+        apply_scale_profile(args, scale_profile)
 
     raw = Image.open(args.input).convert("RGBA")
     metadata = {
@@ -795,6 +1114,7 @@ def cmd_process(args: argparse.Namespace) -> None:
             component_padding=args.component_padding,
             min_component_area=args.min_component_area,
             edge_touch_margin=args.edge_touch_margin,
+            scale_strategy=args.scale_strategy,
         )
         if has_custom_grid:
             prefix = args.label_prefix or args.mode
@@ -824,6 +1144,7 @@ def cmd_process(args: argparse.Namespace) -> None:
         metadata["edge_clean_depth"] = args.edge_clean_depth
         metadata["align"] = args.align
         metadata["shared_scale"] = args.shared_scale
+        metadata["scale_strategy"] = args.scale_strategy
         metadata["component_mode"] = args.component_mode
         metadata["component_padding"] = args.component_padding
         metadata["min_component_area"] = args.min_component_area
@@ -833,8 +1154,26 @@ def cmd_process(args: argparse.Namespace) -> None:
         metadata["edge_touch_frames"] = [
             info["grid"] for info in frame_qc if bool(info.get("edge_touch"))
         ]
-        if args.reject_edge_touch and metadata["edge_touch_frames"]:
-            raise ValueError(f"Frames touch a cell edge: {metadata['edge_touch_frames']}")
+        metadata["empty_frames"] = [
+            info["grid"] for info in frame_qc if bool(info.get("is_empty"))
+        ]
+        metadata["paste_clamped_frames"] = [
+            info["grid"] for info in frame_qc if bool(info.get("paste_clamped"))
+        ]
+        metadata["qc_summary"] = summarize_frame_qc(frame_qc)
+        valid_origins = [info.get("anchor_target") for info in frame_qc if info.get("anchor_target")]
+        if valid_origins:
+            metadata["output_origin"] = valid_origins[0]
+        if scale_profile:
+            drift = profile_scale_drift(metadata["qc_summary"], scale_profile)
+            metadata["qc_summary"]["profile_body_scale_drift"] = drift
+            metadata["scale_profile"] = {
+                "path": str(args.scale_profile),
+                "version": scale_profile["version"],
+                "name": scale_profile.get("name", ""),
+                "reference_mode": dict(scale_profile["reference"]).get("mode"),
+                "processing_contract_applied": True,
+            }
     else:
         raw.save(out_dir / "raw.png")
         centered = center_single_sprite(raw, args.single_size, args.threshold, args.edge_threshold)
@@ -847,7 +1186,76 @@ def cmd_process(args: argparse.Namespace) -> None:
     elif args.prompt:
         (out_dir / "prompt-used.txt").write_text(args.prompt, encoding="utf-8")
 
+    effective_profile_limit = args.max_profile_scale_drift
+    if effective_profile_limit is None and scale_profile:
+        effective_profile_limit = float(
+            dict(scale_profile.get("qc") or {}).get("max_body_scale_drift", 0.10)
+        )
+    metadata["qc_config"] = {
+        "strict_qc": args.strict_qc,
+        "reject_edge_touch": args.reject_edge_touch,
+        "max_body_scale_cv": args.max_body_scale_cv,
+        "max_anchor_y_std": args.max_anchor_y_std,
+        "max_profile_scale_drift": effective_profile_limit,
+    }
     (out_dir / "pipeline-meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    qc_errors = []
+    if args.reject_edge_touch and metadata.get("edge_touch_frames"):
+        qc_errors.append(f"frames touch a cell edge: {metadata['edge_touch_frames']}")
+    if args.strict_qc:
+        if metadata.get("empty_frames"):
+            qc_errors.append(f"empty frames: {metadata['empty_frames']}")
+        if metadata.get("paste_clamped_frames"):
+            qc_errors.append(f"clamped frames: {metadata['paste_clamped_frames']}")
+        if metadata.get("edge_touch_frames") and not args.reject_edge_touch:
+            qc_errors.append(f"frames touch a cell edge: {metadata['edge_touch_frames']}")
+        qc_summary = metadata.get("qc_summary") or {}
+        if (
+            args.max_body_scale_cv is not None
+            and float(qc_summary.get("body_scale_cv", 0.0)) > args.max_body_scale_cv
+        ):
+            qc_errors.append(
+                f"body scale CV {float(qc_summary['body_scale_cv']):.4f} exceeds "
+                f"{args.max_body_scale_cv:.4f}"
+            )
+        if (
+            args.max_anchor_y_std is not None
+            and float(qc_summary.get("anchor_y_std", 0.0)) > args.max_anchor_y_std
+        ):
+            qc_errors.append(
+                f"anchor Y std {float(qc_summary['anchor_y_std']):.4f} exceeds "
+                f"{args.max_anchor_y_std:.4f}"
+            )
+        if scale_profile:
+            profile_limit = effective_profile_limit
+            if profile_limit is None:
+                profile_limit = 0.10
+            drift = float(qc_summary.get("profile_body_scale_drift", 0.0))
+            if drift > profile_limit:
+                qc_errors.append(
+                    f"profile body-scale drift {drift:.4f} exceeds {profile_limit:.4f}"
+                )
+    if qc_errors:
+        raise ValueError("QC failed: " + "; ".join(qc_errors))
+    if args.write_scale_profile:
+        if "qc_summary" not in metadata:
+            raise ValueError("Scale profiles can only be written from processed grid sheets.")
+        profile_limit = args.max_profile_scale_drift
+        if profile_limit is None:
+            profile_limit = 0.10
+        profile_payload = build_scale_profile(
+            metadata,
+            args.profile_name or sanitize_slug(f"{args.target}-{args.mode}"),
+            profile_limit,
+        )
+        args.write_scale_profile.parent.mkdir(parents=True, exist_ok=True)
+        args.write_scale_profile.write_text(
+            json.dumps(profile_payload, indent=2), encoding="utf-8"
+        )
+        metadata["scale_profile_output"] = str(args.write_scale_profile)
+        (out_dir / "pipeline-meta.json").write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
+        )
     print(str(out_dir.resolve()))
 
 
@@ -885,11 +1293,47 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--edge-clean-depth", type=int, default=3)
     process_parser.add_argument("--align", choices=["center", "bottom", "feet"], default="center")
     process_parser.add_argument("--shared-scale", action="store_true")
+    process_parser.add_argument(
+        "--scale-strategy",
+        choices=["fit", "preserve"],
+        default="fit",
+        help=(
+            "fit crops to the detected bbox and scales it into the output cell; "
+            "preserve applies one uniform raw-cell scale and translates each subject to a shared anchor"
+        ),
+    )
     process_parser.add_argument("--component-mode", choices=["all", "largest"], default="all")
     process_parser.add_argument("--component-padding", type=int, default=0)
     process_parser.add_argument("--min-component-area", type=int, default=1)
     process_parser.add_argument("--edge-touch-margin", type=int, default=0)
     process_parser.add_argument("--reject-edge-touch", action="store_true")
+    process_parser.add_argument("--strict-qc", action="store_true")
+    process_parser.add_argument(
+        "--scale-profile",
+        type=Path,
+        help="Apply one character bundle's locked output scale, anchor, and processor contract.",
+    )
+    process_parser.add_argument(
+        "--write-scale-profile",
+        type=Path,
+        help="Write a reusable character scale profile after this sheet passes QC.",
+    )
+    process_parser.add_argument("--profile-name")
+    process_parser.add_argument(
+        "--max-body-scale-cv",
+        type=float,
+        help="Strict-QC maximum body-scale coefficient of variation, for example 0.08.",
+    )
+    process_parser.add_argument(
+        "--max-anchor-y-std",
+        type=float,
+        help="Strict-QC maximum normalized vertical-anchor standard deviation, for example 0.05.",
+    )
+    process_parser.add_argument(
+        "--max-profile-scale-drift",
+        type=float,
+        help="Strict-QC maximum body-scale drift from --scale-profile, for example 0.10.",
+    )
     process_parser.add_argument("--single-size", type=int, default=256)
     process_parser.add_argument("--duration", type=int, default=200)
 

@@ -21,10 +21,12 @@ Infer these from the user request:
 - `bundle`: `single_asset` | `unit_bundle` | `spell_bundle` | `combat_bundle` | `line_bundle` | `hero_action_bundle` | `engine_atlas`
 - `effect_policy`: `all` | `largest`
 - `anchor`: `center` | `bottom` | `feet`
+- `scale_strategy`: `fit` | `preserve`
+- `scale_profile`: `none` | `create_from_accepted_action` | `reuse_existing`
 - `margin`: `tight` | `normal` | `safe`
 - `art_style`: pixel_art | clean_hd | pixel_inspired | retro_pixel | map_style | project-native
 - `reference`: `none` | `attached_image` | `generated_image` | `local_file`
-- `layout_guide`: `none` | `optional` | `recommended`
+- `layout_guide`: `none` | `geometry` | `character_anchor`
 - `prompt`: the user's theme or visual direction
 - `role`: only when the asset is clearly an NPC role
 - `name`: optional output slug
@@ -38,6 +40,7 @@ Read [references/modes.md](references/modes.md) when the request is ambiguous.
 - For controllable heroes, main characters, and high-value player assets with multiple actions, generate separate per-action grid sheets first, QC each action, then deterministically assemble the engine-required atlas only after the grids pass visual review.
 - For controllable heroes, main characters, and high-value player body actions, default attack/shoot/cast body sheets to body-only. Do not include large slash arcs, muzzle flashes, projectiles, impact bursts, detached dust, long trails, or wide detached FX in the body sheet. Generate those as separate `fx`, `projectile`, or `impact` sheets and layer them in the game.
 - Only include wide attack FX in the same raw body sheet when the target runtime explicitly supports wider per-action cells plus per-action origin/anchor metadata. Otherwise, a wide FX bbox will force the body to shrink inside the fixed cell.
+- When a grounded hero/player attack must keep an integrated weapon in the body sheet and there is no runtime FX layer, process it with `scale_strategy=preserve` and `align=feet` by default. This preserves raw-cell scale, translates frames to a shared feet line, and avoids bbox-fit shrinking from long swords, spears, weapon trails, capes, or wide melee poses.
 - Write the art prompt yourself. Do not default to the prompt-builder script.
 - Use built-in `image_gen` for every raw image.
 - Do not create raw sprite art with Three.js, Canvas, SVG, HTML/CSS drawing, PIL shape drawing, procedural geometry, placeholder primitives, or code-rendered screenshots. Runtime code may display finished generated assets, and scripts may make layout guides or postprocess generated images, but requested sprite art must originate from built-in `image_gen`.
@@ -53,6 +56,8 @@ Read [references/modes.md](references/modes.md) when the request is ambiguous.
 - If a game engine needs a final single-row strip or mixed atlas, first generate and QC the action as a multi-row grid, then assemble the delivery strip/atlas deterministically.
 - In every animated body grid prompt, require the subject body to stay centered in each cell, full body inside the central 60% to 70% safe area, consistent scale across cells, stable feet/bottom anchor line when applicable, and no limbs, weapons, hair, capes, dust, muzzle flashes, or detached FX crossing cell edges.
 - For hero attack body prompts, explicitly require body height and body scale to match the accepted idle/run sheets, stable feet/bottom anchor, weapon kept close enough to avoid widening the body bbox, and no detached slash arc or screen-space attack effect.
+- For high-value grounded player/hero body actions, prefer a character anchor sheet when consistent scale or feet placement matters: repeat one accepted master frame at the intended size and feet line in every cell, then use that sheet as a scale/root template while asking built-in `image_gen` to change only the poses. Do not use a grounded anchor sheet for jumps, knockback, airborne motion, projectiles, or FX.
+- For a multi-action character bundle, create one scale profile from an accepted idle or run sheet, then process every grounded body action with that profile. The profile locks output cell size, one shared raw-cell scale, anchor, trimming, and component rules across actions. Do not choose a new `fit_scale` per action.
 - For map prop packs, classify props before choosing a grid. Square `2x2`, `3x3`, and `4x4` packs are only for compact props. Do not put platforms, floors, bridges, walls, ladders, gates, doors, long hazards, wide/tall props, collision-bearing objects, or tileset/strip pieces into square prop packs; use one-by-one, `1x3`/`1x4` strips, custom wide cells, or a tileset-like atlas instead.
 - Keep the solid `#FF00FF` background rule unless the user explicitly wants a different processing workflow.
 
@@ -110,7 +115,7 @@ Keep the strict parts:
 - solid `#FF00FF` background
 - exact sheet shape
 - same character or asset identity across frames
-- same bounding box and pixel scale across frames
+- same camera distance and standing-equivalent anatomical scale across body frames; natural pose bboxes may change, but the model must not zoom individual poses
 - explicit containment: nothing may cross cell edges
 
 Mixed-action atlas guardrail:
@@ -161,6 +166,22 @@ Use layout guides deliberately:
 - optional for `3x3` large idle and high-value showcase loops when previous generations drift in scale or spacing
 - not the default for `4x4` four-direction walk sheets, because the guide can make directional poses too conservative; use it only after an unguided run fails layout or edge safety
 
+For grounded high-value character actions, an abstract box guide is weaker than a character anchor sheet. After accepting a neutral/idle master frame, create the anchor sheet:
+
+```bash
+python scripts/make_anchor_layout.py \
+  --input <accepted-master-frame.png> \
+  --rows 2 \
+  --cols 3 \
+  --cell-width 512 \
+  --cell-height 512 \
+  --subject-height-ratio 0.66 \
+  --feet-ratio 0.82 \
+  --output <run-dir>/references/attack-anchor-2x3.png
+```
+
+Make both the master frame and anchor sheet visible to built-in `image_gen`. State that the master locks identity/style and the anchor sheet locks slot positions, camera distance, standing-equivalent scale, body root, feet line, and padding. Ask the model to change only the action poses and never reproduce guides, borders, labels, or separators.
+
 ### 3. Generate the raw image
 
 Use built-in `image_gen`.
@@ -185,11 +206,29 @@ The processor is intentionally low-level. The agent chooses:
 - `shared_scale`
 - `component_mode`
 - `component_padding`
+- `scale_strategy`
 - `edge_touch` rejection strategy
 
 Use the processor to gather QC metadata, not to make aesthetic decisions for you.
 
 For hero action bundles, process each action grid as its own sheet before any final atlas assembly. Use `component_mode=largest` for body-only hero grids. Use `component_mode=all` only for projectile, impact, aura, slash FX, or intentionally detached FX sheets, not for fixed-cell hero body attacks that need stable body scale.
+
+Use `--scale-strategy preserve --align feet` for grounded hero/player body sheets when the raw art already has acceptable scale but bbox-fit would shrink the character because of a long weapon, extended pose, cape, or integrated melee effect. Preserve mode applies one uniform raw-cell-to-output scale to every frame, including one shared safety margin, then translates each detected subject to the shared anchor. It never applies a different bbox-fit scale per frame. Use the default `fit` strategy for compact bodies, creatures, projectiles, impacts, and intentionally normalized FX.
+
+For a character with multiple actions, write a scale profile only after an accepted reference action passes QC:
+
+```bash
+python scripts/generate2dsprite.py process \
+  --input <accepted-run-raw.png> \
+  --target player --mode run --rows 2 --cols 3 \
+  --output-dir <run-dir> \
+  --cell-size 128 --fit-scale 0.80 \
+  --align feet --scale-strategy preserve --component-mode largest \
+  --strict-qc --write-scale-profile <bundle>/character-scale-profile.json \
+  --profile-name <character-name> --max-profile-scale-drift 0.08
+```
+
+Process later actions with `--scale-profile <bundle>/character-scale-profile.json`. Profile values override per-command scale, anchor, trim, and component defaults so actions cannot silently use different output magnification. Keep using the same generation grid geometry and character anchor sheet when possible; a processing profile cannot repair a model-generated anatomy-scale change.
 
 ### 5. QC the result
 
@@ -201,8 +240,33 @@ Check:
 - does the sheet still read as one coherent animation
 - for hero/player body actions, does the body height match the accepted idle/run scale within roughly 10-15%
 - for fixed-cell runtimes, did a wide weapon trail or FX arc shrink the body inside the cell
+- for preserve-scale runs, are feet/bottom anchors aligned without any `paste_clamped` frames
+- for grounded high-value body sheets, does `qc_summary.body_scale_cv` stay at or below about `0.08` and `qc_summary.anchor_y_std` at or below about `0.05`
+- for multi-action bundles, does `qc_summary.profile_body_scale_drift` stay within the scale profile limit, normally `0.08`
 
 If not, rerun with different processor settings or regenerate the raw sheet.
+
+For grounded high-value humanoid player/hero body actions, run strict QC after generation-first scale control:
+
+```bash
+python scripts/generate2dsprite.py process \
+  --input <raw-sheet.png> \
+  --target player \
+  --mode attack \
+  --output-dir <out-dir> \
+  --rows 2 \
+  --cols 3 \
+  --align feet \
+  --scale-strategy preserve \
+  --component-mode largest \
+  --strict-qc \
+  --max-body-scale-cv 0.08 \
+  --max-anchor-y-std 0.05
+```
+
+These numeric gates are for grounded humanoid body actions, not jumps, knockback, projectiles, impacts, floating actors, creatures whose attack strongly changes silhouette/posture, or intentionally changing-scale FX. A failed gate is a regeneration signal; do not hide generation drift with per-frame scale normalization.
+
+Cross-action scale-profile drift is a generation QC signal. Preserve legitimate crouching, recoil, and compressed pose bboxes; inspect borderline hurt or knockback sheets visually instead of applying per-frame resize. For ordinary idle, run, walk, and grounded body attacks, reject unexplained profile drift.
 
 ### 6. Return the right bundle
 
@@ -231,6 +295,7 @@ For `hero_action_bundle`, expect:
 - per-action frame PNGs and GIFs for visual QC
 - separate projectile / muzzle / slash / impact assets when the hero shoots, casts, or uses wide melee effects
 - optional assembled `engine-atlas-transparent.png` only after per-action QC passes
+- one shared `character-scale-profile.json` for grounded body actions when cross-action scale consistency matters
 
 ## Defaults
 
@@ -246,6 +311,7 @@ For `hero_action_bundle`, expect:
 - controllable hero or main player with multiple actions -> `hero_action_bundle`
   - generate one action per raw multi-row grid sheet, not as a raw `1x4` strip
   - attack/shoot/cast body sheets are body-only by default; wide slash arcs, muzzle flashes, projectiles, trails, dust, and hit impacts are separate FX/projectile/impact sheets
+  - if the weapon must stay integrated and there is no separate FX layer, use `--scale-strategy preserve --align feet` instead of bbox-fit normalization
   - default 4-frame action grid is `2x2`
   - use `2x3` for 6-frame actions and `2x4`, `3x3`, `3x4`, or `4x4` for longer actions
   - do not generate a mixed-action raw `4x4`, `5x5`, or custom atlas
@@ -255,9 +321,12 @@ For `hero_action_bundle`, expect:
   - use as delivery atlases for mixed actions only after separate action sheets pass QC
 - use `shared_scale` by default for any multi-frame asset where frame-to-frame consistency matters
 - use `largest` component mode for hero/player body grids; use `all` for separate FX/projectile/impact sheets
+- use `scale_strategy=preserve` for grounded hero/player melee attacks with integrated weapons or wide body poses that would shrink under bbox-fit normalization; use `fit` for normal compact sheets and FX
 
 ## Resources
 
 - `references/modes.md`: asset, action, bundle, and sheet selection
 - `references/prompt-rules.md`: manual prompt patterns and containment rules
 - `scripts/generate2dsprite.py`: postprocess primitive for cleanup, extraction, alignment, QC, and GIF export
+- `scripts/make_anchor_layout.py`: repeat an accepted character frame into a fixed scale/root generation template
+- `scripts/make_layout_guide.py`: create abstract geometry-only guides for prop packs and suitable grids

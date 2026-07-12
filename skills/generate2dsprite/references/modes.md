@@ -113,6 +113,12 @@ Keep these mappings working:
 - use `component_mode=all` when detached effects are an intentional part of the asset silhouette
 - for body-only controllable hero actions, use `component_mode=largest`; for projectile, impact, aura, slash FX, or intentionally detached FX sheets, use `component_mode=all`
 - reject fixed-cell hero/player body actions when the body visibly shrinks compared with the accepted idle/run scale; split the wide FX or use a runtime with wider per-action cells and explicit origins
+- for grounded hero/player melee attacks where the weapon must remain integrated and no FX layer exists, use `scale_strategy=preserve` with `align=feet`: preserve raw-cell scale, translate frames to a shared feet/bottom anchor, and avoid bbox-fit shrinking
+- for high-value grounded humanoid body actions that drift during image generation, create a repeated character anchor sheet from the accepted master frame before regenerating; use it to lock camera distance, standing-equivalent scale, root position, feet line, and padding while changing only poses
+- for grounded high-value humanoid body sheets, use strict QC with `max_body_scale_cv=0.08` and `max_anchor_y_std=0.05`; treat failures as regeneration signals instead of applying per-frame scale correction
+- for a grounded multi-action hero bundle, create one scale profile from the accepted idle/run action and apply it to all compatible body sheets; never select an independent processor scale per action
+- do not apply those humanoid scale/feet gates to jumps, flying actors, or creatures whose action substantially changes posture or silhouette; use action-relative anchors and visual QC instead
+- do not use preserve-scale as a blind default for floating FX, projectiles, impact bursts, or sheets where deliberate normalization is useful
 - use a layout guide for prop packs, tileset-like atlases, fixed atlas rows, and non-directional 16-frame VFX-heavy action sequences; avoid making it the default for 4-direction walk sheets
 
 ## Output Shape

@@ -17,7 +17,7 @@ Always keep these constraints:
 - exact grid count only
 - no borders or frames between cells
 - same asset identity across frames
-- same bounding box and same pixel scale across frames
+- same camera distance and standing-equivalent anatomical scale across body frames; allow natural pose bbox changes without per-pose zoom
 - raw sprite art must come from built-in `image_gen`, not Three.js, Canvas, SVG, HTML/CSS drawing, PIL shape drawing, procedural geometry, placeholder primitives, or code-rendered screenshots
 
 ## Style Rules
@@ -59,6 +59,29 @@ Use the layout guide image just shown as a layout-only reference. Use it only to
 ```
 
 Keep the creative prompt agent-written. The layout guide only provides geometry; it must not replace the action plan, art style, identity lock, or containment rules.
+
+### Character Anchor Sheets
+
+For high-value grounded player/hero body actions, use a character anchor sheet when ordinary prompting still drifts in character scale or feet placement. This is stronger than an abstract box guide:
+
+1. Accept one neutral/idle master frame with the correct identity, camera distance, standing scale, and padding.
+2. Run `scripts/make_anchor_layout.py` to repeat that exact frame into every intended grid cell at one fixed scale and feet line.
+3. Make both images visible to built-in `image_gen`:
+   - master frame: identity, art style, anatomy, camera, and material reference
+   - anchor sheet: slot, scale, body-root, feet-line, and padding reference
+4. Ask the model to change only the poses while preserving the anchor sheet's geometry.
+
+Use prompt language like:
+
+```text
+Image 1 is the exact character identity and art reference.
+Image 2 is a scale-and-root template made from the same accepted character.
+Preserve Image 2's exact cell locations, fixed camera distance, standing-equivalent anatomical scale, body-root position, grounded foot-contact line, and padding. Change only the action pose in each slot. Never zoom or resize a pose to fill its cell. Natural crouching may change the visible pose bbox, but torso, head, limb thickness, costume, and weapon scale must remain constant.
+```
+
+Do not use a grounded character anchor sheet as a blind default for jumps, falls, knockback, flying/hovering motion, projectiles, impacts, creatures whose attack strongly changes silhouette/posture, or intentionally changing-scale FX. Those assets need center/root, motion-relative layouts, or visual QC instead of a fixed humanoid feet-line contract.
+
+For a multi-action character bundle, reuse the same master image, character anchor sheet, raw grid geometry, and generation resolution for every grounded body action. After accepting idle or run, create one processor scale profile from it and apply that profile to later actions. The anchor sheet controls the model; the scale profile prevents postprocessing from assigning different magnification to attack, hurt, idle, or run.
 
 ## Containment Rules
 
@@ -162,6 +185,8 @@ For controllable heroes, main characters, and fixed-cell game sprites, write att
 
 If the attack needs a large slash arc, sword trail, muzzle flash, or hit spark, generate it as a separate `fx`, `projectile`, or `impact` sheet and layer it in the runtime.
 
+For a high-value grounded hero whose attack sheets repeatedly drift in size or feet placement, build a character anchor sheet from the accepted idle/master frame before regenerating the body action. Keep the action body-only and use strict grounded-body QC after processing.
+
 ### `hurt`
 
 For a hurt-only sheet, describe:
@@ -230,7 +255,9 @@ For controllable heroes, main characters, and high-value player assets:
 2. Keep attack/shoot/cast body animation separate from projectile, muzzle flash, slash arc, weapon trail, impact, and dust unless the runtime explicitly supports wider per-action cells plus explicit origins.
 3. Process and visually QC each action independently for feet line, body center, scale, silhouette, and edge safety.
 4. Reject a body action when the body appears more than about 10-15% smaller than idle/run because a wide FX bbox forced it to shrink.
-5. Assemble a `4x4`, `5x5`, or custom engine atlas only after the separate action sheets pass QC.
+5. If the raw action has good scale but the processor shrinks it because a sword, spear, cape, or integrated weapon pose makes the bbox too wide, reprocess with preserve-scale feet alignment instead of accepting the smaller body.
+6. Assemble a `4x4`, `5x5`, or custom engine atlas only after the separate action sheets pass QC.
+7. Create one scale profile from the accepted idle/run action and apply it to all compatible body actions; reject unexplained cross-action body-scale drift rather than adding action-specific runtime compensation.
 
 Allowed raw multi-row sheets:
 
@@ -276,6 +303,36 @@ Use for casting, summoning, charging, transformation, death, and other single-ac
 - use a layout guide when the action includes VFX, portals, circles, summons, or other elements that might cross cell boundaries
 
 Do not use this format as a shortcut for four unrelated hero actions. If the requested rows are different actions, treat it as a `hero_action_bundle` or `engine_atlas` delivery problem instead.
+
+### Preserve-scale Processing
+
+Use preserve-scale processing when the raw sheet already has stable subject size but bbox-fit normalization makes the playable character smaller:
+
+- grounded player or main hero melee attacks with a sword, spear, staff, gun, cape, or wide body pose integrated into the body sheet
+- no separate runtime FX layer exists, so the weapon cannot be moved to a separate slash/projectile/impact sheet
+- the raw grid has enough empty cell padding and no edge-touching frames
+
+Recommended processor shape:
+
+```bash
+python scripts/generate2dsprite.py process \
+  --input <raw-sheet.png> \
+  --target player \
+  --mode attack \
+  --output-dir <out-dir> \
+  --rows 2 \
+  --cols 3 \
+  --align feet \
+  --scale-strategy preserve \
+  --component-mode largest \
+  --strict-qc \
+  --max-body-scale-cv 0.08 \
+  --max-anchor-y-std 0.05
+```
+
+For a multi-action bundle, add `--write-scale-profile <profile.json>` to the accepted idle/run reference process, then use `--scale-profile <profile.json>` for attack, hurt, cast-body, walk, and other compatible grounded actions. Do not create a separate profile for each action.
+
+Preserve-scale means: fixed-grid cut, chroma-key cleanup, apply one uniform raw-cell scale and safety margin to every frame, then translate each detected subject to one shared feet/bottom anchor. It does not apply a different bbox-fit scale per frame. A scale profile extends this contract across separate action sheets. QC should require no empty, edge-touching, or paste-clamped frames. For grounded high-value humanoid body actions, treat `body_scale_cv > 0.08`, normalized `anchor_y_std > 0.05`, or unexplained profile scale drift above the profile limit as a regeneration signal. Do not use these grounded thresholds for jumps, knockback, flying actors, creatures with large posture/silhouette changes, or FX.
 
 ### `5x5` and custom grids
 
