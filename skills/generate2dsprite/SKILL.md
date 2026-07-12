@@ -247,6 +247,20 @@ python scripts/generate2dsprite.py process \
 
 This writes `godot-sprite3d.json` beside the frames. The contract derives `recommended_pixel_size` from the QC-measured mean subject height, converts the shared output origin to Godot's `Sprite3D.offset`, lists animation frames, and records timing. Reuse the same intended `world_height` for every compatible action in one character bundle. The runtime should load this metadata rather than hardcode per-action scale or offsets.
 
+After all actions pass QC, build one Godot animation bundle:
+
+```bash
+python scripts/generate2dsprite.py build-godot-bundle \
+  --action idle=<bundle>/idle/godot-sprite3d.json \
+  --action move=<bundle>/move/godot-sprite3d.json \
+  --action attack=<bundle>/attack/godot-sprite3d.json \
+  --action hurt=<bundle>/hurt/godot-sprite3d.json \
+  --default-action idle --one-shot attack --one-shot hurt \
+  --output <bundle>/godot-sprite3d-bundle.json
+```
+
+The bundle validates cross-action world height, stores relative contract paths, and declares loop versus one-shot playback. Treat a bundle drift failure as an asset-generation or wrong-profile error; do not compensate with per-action runtime scale.
+
 ### 5. QC the result
 
 Check:
@@ -297,6 +311,7 @@ For a single sheet, expect:
 - `prompt-used.txt`
 - `pipeline-meta.json`
 - optional `godot-sprite3d.json` when `--godot-world-height` is supplied
+- `godot-sprite3d-bundle.json` for a multi-action Godot unit
 
 For `player_sheet`, expect:
 

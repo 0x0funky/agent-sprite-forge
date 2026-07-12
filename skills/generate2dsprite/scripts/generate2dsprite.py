@@ -670,6 +670,97 @@ def build_godot_sprite3d_metadata(
     }
 
 
+def build_godot_sprite3d_bundle(
+    action_contracts: dict[str, tuple[str, dict[str, object]]],
+    default_action: str,
+    one_shot_actions: set[str] | None = None,
+    max_world_height_drift: float = 0.02,
+) -> dict[str, object]:
+    """Combine per-action Sprite3D contracts into one validated runtime bundle."""
+    if not action_contracts:
+        raise ValueError("Godot Sprite3D bundles require at least one action contract.")
+    if default_action not in action_contracts:
+        raise ValueError(f"Default action '{default_action}' is not present in the bundle.")
+    if max_world_height_drift < 0:
+        raise ValueError("Maximum world-height drift cannot be negative.")
+
+    one_shots = set(one_shot_actions or set())
+    unknown_one_shots = one_shots.difference(action_contracts)
+    if unknown_one_shots:
+        raise ValueError(
+            "One-shot actions are missing contracts: " + ", ".join(sorted(unknown_one_shots))
+        )
+
+    action_payload: dict[str, object] = {}
+    reference_world_height = 0.0
+    maximum_drift = 0.0
+    for action, (contract_ref, contract) in action_contracts.items():
+        if not re.fullmatch(r"[a-z0-9][a-z0-9_-]*", action):
+            raise ValueError(
+                f"Invalid action name '{action}'; use lowercase letters, digits, hyphens, or underscores."
+            )
+        if contract.get("schema") != "generate2dsprite.godot_sprite3d.v1":
+            raise ValueError(f"Action '{action}' is not a Godot Sprite3D v1 contract.")
+        world_height = float(contract.get("world_height", 0.0))
+        if world_height <= 0:
+            raise ValueError(f"Action '{action}' has no valid world height.")
+        if not list(contract.get("frames") or []):
+            raise ValueError(f"Action '{action}' has no animation frames.")
+
+        if reference_world_height <= 0:
+            reference_world_height = world_height
+        drift = abs(world_height - reference_world_height) / reference_world_height
+        maximum_drift = max(maximum_drift, drift)
+        if drift > max_world_height_drift:
+            raise ValueError(
+                f"Action '{action}' world-height drift {drift:.4f} exceeds "
+                f"{max_world_height_drift:.4f}."
+            )
+        action_payload[action] = {
+            "contract": contract_ref,
+            "loop": action not in one_shots,
+        }
+
+    return {
+        "schema": "generate2dsprite.godot_sprite3d_bundle.v1",
+        "default_action": default_action,
+        "world_height": reference_world_height,
+        "world_height_max_drift": maximum_drift,
+        "actions": action_payload,
+    }
+
+
+def cmd_build_godot_bundle(args: argparse.Namespace) -> None:
+    action_contracts: dict[str, tuple[str, dict[str, object]]] = {}
+    output_parent = args.output.resolve().parent
+    for action_spec in args.action:
+        if "=" not in action_spec:
+            raise ValueError("Each --action must use ACTION=PATH syntax.")
+        action, raw_path = action_spec.split("=", 1)
+        action = action.strip()
+        if action in action_contracts:
+            raise ValueError(f"Duplicate action '{action}'.")
+        contract_path = Path(raw_path.strip()).resolve()
+        if not contract_path.exists():
+            raise ValueError(f"Action contract does not exist: {contract_path}")
+        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        try:
+            contract_ref = contract_path.relative_to(output_parent).as_posix()
+        except ValueError:
+            contract_ref = contract_path.as_posix()
+        action_contracts[action] = (contract_ref, contract)
+
+    payload = build_godot_sprite3d_bundle(
+        action_contracts,
+        args.default_action,
+        set(args.one_shot or []),
+        args.max_world_height_drift,
+    )
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    print(str(args.output.resolve()))
+
+
 SCALE_PROFILE_VERSION = 1
 SCALE_PROFILE_PROCESSING_KEYS = (
     "cell_size",
@@ -1351,6 +1442,25 @@ def build_parser() -> argparse.ArgumentParser:
     build_prompt_parser.add_argument("--write", type=Path)
     build_prompt_parser.add_argument("--write-json", type=Path)
 
+    bundle_parser = subparsers.add_parser(
+        "build-godot-bundle",
+        help="Combine per-action Sprite3D metadata into one validated animation bundle.",
+    )
+    bundle_parser.add_argument(
+        "--action",
+        action="append",
+        required=True,
+        help="Action contract in ACTION=PATH form; repeat for each action.",
+    )
+    bundle_parser.add_argument("--default-action", required=True)
+    bundle_parser.add_argument(
+        "--one-shot",
+        action="append",
+        help="Action that returns to the default action after its final frame.",
+    )
+    bundle_parser.add_argument("--max-world-height-drift", type=float, default=0.02)
+    bundle_parser.add_argument("--output", required=True, type=Path)
+
     process_parser = subparsers.add_parser("process", help="Postprocess a generated sprite image.")
     process_parser.add_argument("--input", required=True, type=Path)
     process_parser.add_argument("--target", required=True, choices=PROCESS_TARGETS)
@@ -1437,6 +1547,8 @@ def main() -> None:
         cmd_list_options()
     elif args.command == "build-prompt":
         cmd_build_prompt(args)
+    elif args.command == "build-godot-bundle":
+        cmd_build_godot_bundle(args)
     else:
         cmd_process(args)
 

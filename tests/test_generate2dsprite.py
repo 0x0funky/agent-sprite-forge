@@ -236,5 +236,40 @@ class AnchorLayoutTests(unittest.TestCase):
         self.assertEqual(bboxes[0][3], 32)
 
 
+class GodotSprite3DBundleTests(unittest.TestCase):
+    def make_contract(self, world_height: float) -> dict[str, object]:
+        return {
+            "schema": "generate2dsprite.godot_sprite3d.v1",
+            "world_height": world_height,
+            "frames": ["frame-1.png", "frame-2.png"],
+        }
+
+    def test_bundle_marks_one_shots_and_preserves_default(self) -> None:
+        bundle = MODULE.build_godot_sprite3d_bundle(
+            {
+                "idle": ("idle/godot-sprite3d.json", self.make_contract(0.7)),
+                "hurt": ("hurt/godot-sprite3d.json", self.make_contract(0.705)),
+            },
+            default_action="idle",
+            one_shot_actions={"hurt"},
+        )
+
+        self.assertEqual(bundle["default_action"], "idle")
+        self.assertTrue(bundle["actions"]["idle"]["loop"])
+        self.assertFalse(bundle["actions"]["hurt"]["loop"])
+        self.assertLess(bundle["world_height_max_drift"], 0.02)
+
+    def test_bundle_rejects_cross_action_world_height_drift(self) -> None:
+        with self.assertRaisesRegex(ValueError, "world-height drift"):
+            MODULE.build_godot_sprite3d_bundle(
+                {
+                    "idle": ("idle.json", self.make_contract(0.7)),
+                    "attack": ("attack.json", self.make_contract(0.9)),
+                },
+                default_action="idle",
+                one_shot_actions={"attack"},
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

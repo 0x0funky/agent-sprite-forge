@@ -126,6 +126,7 @@ Keep these mappings working:
 
 - any sheet mode: transparent sheet + per-frame PNGs + GIF
 - Godot `Sprite3D` grid delivery: the normal sheet outputs plus `godot-sprite3d.json`
+- Godot multi-action unit delivery: one per-action contract plus a validated `godot-sprite3d-bundle.json`; mark attack, hurt, death, and other non-looping actions as one-shot
 - `player_sheet`: plus direction strips and four GIFs
 - `single_asset`: cleaned transparent PNG
 - `hero_action_bundle`: per-action folders, per-action GIFs, separate projectile/impact assets when needed, and optional assembled engine atlas
