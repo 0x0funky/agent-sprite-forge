@@ -126,6 +126,7 @@ class SplitGridTests(unittest.TestCase):
         self.assertEqual(summary["frame_count"], 2)
         self.assertEqual(summary["valid_frame_count"], 2)
         self.assertGreater(summary["body_scale_mean"], 0)
+        self.assertGreater(summary["output_subject_height_mean"], 0)
         self.assertGreater(summary["body_scale_cv"], 0.2)
         self.assertGreater(summary["anchor_y_std"], 0.05)
 
@@ -189,6 +190,21 @@ class ScaleProfileTests(unittest.TestCase):
         profile = MODULE.build_scale_profile(self.make_metadata(), "ronin", 0.08)
         drift = MODULE.profile_scale_drift({"body_scale_mean": 0.22}, profile)
         self.assertAlmostEqual(drift, 0.10)
+
+    def test_godot_sprite3d_contract_uses_feet_origin_and_subject_height(self) -> None:
+        metadata = self.make_metadata()
+        metadata["duration"] = 125
+        metadata["frame_labels"] = ["idle-1", "idle-2"]
+        metadata["output_origin"] = [64.0, 116.0]
+        metadata["qc_summary"]["output_subject_height_mean"] = 100.0
+
+        contract = MODULE.build_godot_sprite3d_metadata(metadata, world_height=0.7)
+
+        self.assertEqual(contract["schema"], "generate2dsprite.godot_sprite3d.v1")
+        self.assertEqual(contract["sprite3d_offset"], [0.0, 52.0])
+        self.assertAlmostEqual(contract["recommended_pixel_size"], 0.007)
+        self.assertEqual(contract["fps"], 8.0)
+        self.assertEqual(contract["frames"], ["idle-1.png", "idle-2.png"])
 
 
 class AnchorLayoutTests(unittest.TestCase):

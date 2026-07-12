@@ -27,6 +27,8 @@ Infer these from the user request:
 - `art_style`: pixel_art | clean_hd | pixel_inspired | retro_pixel | map_style | project-native
 - `reference`: `none` | `attached_image` | `generated_image` | `local_file`
 - `layout_guide`: `none` | `geometry` | `character_anchor`
+- `runtime_contract`: `none` | `godot_sprite3d`
+- `world_height`: desired in-engine subject height when a runtime contract is requested
 - `prompt`: the user's theme or visual direction
 - `role`: only when the asset is clearly an NPC role
 - `name`: optional output slug
@@ -230,6 +232,21 @@ python scripts/generate2dsprite.py process \
 
 Process later actions with `--scale-profile <bundle>/character-scale-profile.json`. Profile values override per-command scale, anchor, trim, and component defaults so actions cannot silently use different output magnification. Keep using the same generation grid geometry and character anchor sheet when possible; a processing profile cannot repair a model-generated anatomy-scale change.
 
+When integrating a processed grid as a Godot `Sprite3D`, request a world-height contract instead of hand-tuning each action in the game:
+
+```bash
+python scripts/generate2dsprite.py process \
+  --input <raw-sheet.png> \
+  --target player --mode idle --rows 2 --cols 3 \
+  --output-dir <action-dir> \
+  --cell-size 256 --fit-scale 0.84 \
+  --align feet --scale-strategy preserve --component-mode largest \
+  --strict-qc --max-body-scale-cv 0.08 --max-anchor-y-std 0.05 \
+  --duration 125 --godot-world-height 0.70
+```
+
+This writes `godot-sprite3d.json` beside the frames. The contract derives `recommended_pixel_size` from the QC-measured mean subject height, converts the shared output origin to Godot's `Sprite3D.offset`, lists animation frames, and records timing. Reuse the same intended `world_height` for every compatible action in one character bundle. The runtime should load this metadata rather than hardcode per-action scale or offsets.
+
 ### 5. QC the result
 
 Check:
@@ -279,6 +296,7 @@ For a single sheet, expect:
 - `animation.gif`
 - `prompt-used.txt`
 - `pipeline-meta.json`
+- optional `godot-sprite3d.json` when `--godot-world-height` is supplied
 
 For `player_sheet`, expect:
 

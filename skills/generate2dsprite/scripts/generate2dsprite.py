@@ -579,6 +579,14 @@ def estimate_anchor(
 
 def summarize_frame_qc(frame_info: list[dict[str, object]]) -> dict[str, object]:
     valid = [info for info in frame_info if not bool(info.get("is_empty"))]
+    subject_heights = np.asarray(
+        [
+            float(info["aligned_bbox"][3]) - float(info["aligned_bbox"][1])
+            for info in valid
+            if info.get("aligned_bbox")
+        ],
+        dtype=float,
+    )
     scale_proxy = np.asarray(
         [math.sqrt(float(info.get("body_area_fraction", 0.0))) for info in valid],
         dtype=float,
@@ -608,12 +616,57 @@ def summarize_frame_qc(frame_info: list[dict[str, object]]) -> dict[str, object]
         "edge_touch_count": sum(bool(info.get("edge_touch")) for info in frame_info),
         "paste_clamped_count": sum(bool(info.get("paste_clamped")) for info in frame_info),
         "body_scale_mean": scale_mean,
+        "output_subject_height_mean": (
+            float(np.mean(subject_heights)) if subject_heights.size else 0.0
+        ),
         "body_scale_cv": (
             float(np.std(scale_proxy) / scale_mean) if scale_proxy.size and scale_mean > 0 else 0.0
         ),
         "anchor_x_std": float(np.std(anchor_x)) if anchor_x.size else 0.0,
         "anchor_y_std": float(np.std(anchor_y)) if anchor_y.size else 0.0,
         "anchor_y_mean": float(np.mean(anchor_y)) if anchor_y.size else 0.0,
+    }
+
+
+def build_godot_sprite3d_metadata(
+    metadata: dict[str, object],
+    world_height: float,
+) -> dict[str, object]:
+    """Build a Godot Sprite3D runtime contract from validated grid output."""
+    if world_height <= 0:
+        raise ValueError("Godot Sprite3D world height must be greater than zero.")
+
+    cell_size = int(metadata.get("cell_size", 0))
+    labels = list(metadata.get("frame_labels") or [])
+    if cell_size <= 0 or not labels:
+        raise ValueError("Godot Sprite3D metadata requires processed grid frames.")
+
+    origin = metadata.get("output_origin") or processing_output_origin(metadata)
+    origin_x = float(origin[0])
+    origin_y = float(origin[1])
+    subject_height = float(
+        dict(metadata.get("qc_summary") or {}).get("output_subject_height_mean", 0.0)
+    )
+    if subject_height <= 0:
+        raise ValueError("Godot Sprite3D metadata requires a valid output subject height.")
+
+    duration_ms = int(metadata.get("duration", 200))
+    if duration_ms <= 0:
+        raise ValueError("Animation duration must be greater than zero.")
+
+    return {
+        "schema": "generate2dsprite.godot_sprite3d.v1",
+        "frame_size": [cell_size, cell_size],
+        "output_origin": [origin_x, origin_y],
+        # Godot's Sprite3D offset uses +Y upward from the texture center.
+        "sprite3d_offset": [cell_size / 2 - origin_x, origin_y - cell_size / 2],
+        "reference_subject_height_px": subject_height,
+        "world_height": float(world_height),
+        "recommended_pixel_size": float(world_height) / subject_height,
+        "billboard": "enabled",
+        "duration_ms": duration_ms,
+        "fps": 1000.0 / duration_ms,
+        "frames": [f"{label}.png" for label in labels],
     }
 
 
@@ -1065,6 +1118,11 @@ def cmd_process(args: argparse.Namespace) -> None:
         raise ValueError(f"Unknown process target '{args.target}'. Valid targets: {', '.join(PROCESS_TARGETS)}")
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
+    godot_sprite3d_payload = None
+    godot_sprite3d_path = None
+
+    if args.write_godot_sprite3d_meta and args.godot_world_height is None:
+        raise ValueError("--write-godot-sprite3d-meta requires --godot-world-height.")
 
     if args.scale_profile and args.write_scale_profile:
         raise ValueError("Use either --scale-profile or --write-scale-profile, not both.")
@@ -1174,7 +1232,18 @@ def cmd_process(args: argparse.Namespace) -> None:
                 "reference_mode": dict(scale_profile["reference"]).get("mode"),
                 "processing_contract_applied": True,
             }
+        if args.godot_world_height is not None:
+            godot_sprite3d_payload = build_godot_sprite3d_metadata(
+                metadata, args.godot_world_height
+            )
+            godot_sprite3d_path = args.write_godot_sprite3d_meta or (
+                out_dir / "godot-sprite3d.json"
+            )
+            metadata["godot_sprite3d"] = godot_sprite3d_payload
+            metadata["godot_sprite3d_output"] = str(godot_sprite3d_path)
     else:
+        if args.godot_world_height is not None:
+            raise ValueError("Godot Sprite3D metadata currently requires processed grid frames.")
         raw.save(out_dir / "raw.png")
         centered = center_single_sprite(raw, args.single_size, args.threshold, args.edge_threshold)
         centered.save(out_dir / "clean.png")
@@ -1237,6 +1306,14 @@ def cmd_process(args: argparse.Namespace) -> None:
                 )
     if qc_errors:
         raise ValueError("QC failed: " + "; ".join(qc_errors))
+    if godot_sprite3d_payload is not None and godot_sprite3d_path is not None:
+        godot_sprite3d_path.parent.mkdir(parents=True, exist_ok=True)
+        godot_sprite3d_path.write_text(
+            json.dumps(godot_sprite3d_payload, indent=2), encoding="utf-8"
+        )
+        (out_dir / "pipeline-meta.json").write_text(
+            json.dumps(metadata, indent=2), encoding="utf-8"
+        )
     if args.write_scale_profile:
         if "qc_summary" not in metadata:
             raise ValueError("Scale profiles can only be written from processed grid sheets.")
@@ -1336,6 +1413,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     process_parser.add_argument("--single-size", type=int, default=256)
     process_parser.add_argument("--duration", type=int, default=200)
+    process_parser.add_argument(
+        "--godot-world-height",
+        type=float,
+        help=(
+            "Desired subject height in Godot world units. Writes godot-sprite3d.json "
+            "with a QC-derived pixel size, feet origin, and animation timing."
+        ),
+    )
+    process_parser.add_argument(
+        "--write-godot-sprite3d-meta",
+        type=Path,
+        help="Optional output path for Godot Sprite3D metadata.",
+    )
 
     return parser
 
