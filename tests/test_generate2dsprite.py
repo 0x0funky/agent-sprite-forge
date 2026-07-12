@@ -203,6 +203,7 @@ class ScaleProfileTests(unittest.TestCase):
         self.assertEqual(contract["schema"], "generate2dsprite.godot_sprite3d.v1")
         self.assertEqual(contract["sprite3d_offset"], [0.0, 52.0])
         self.assertAlmostEqual(contract["recommended_pixel_size"], 0.007)
+        self.assertEqual(contract["scale_source"], "measured_subject_height")
         self.assertEqual(contract["fps"], 8.0)
         self.assertEqual(contract["frames"], ["idle-1.png", "idle-2.png"])
 
@@ -237,11 +238,12 @@ class AnchorLayoutTests(unittest.TestCase):
 
 
 class GodotSprite3DBundleTests(unittest.TestCase):
-    def make_contract(self, world_height: float) -> dict[str, object]:
+    def make_contract(self, world_height: float, pixel_size: float = 0.0042) -> dict[str, object]:
         return {
             "schema": "generate2dsprite.godot_sprite3d.v1",
             "world_height": world_height,
             "frames": ["frame-1.png", "frame-2.png"],
+            "recommended_pixel_size": pixel_size,
         }
 
     def test_bundle_marks_one_shots_and_preserves_default(self) -> None:
@@ -269,6 +271,42 @@ class GodotSprite3DBundleTests(unittest.TestCase):
                 default_action="idle",
                 one_shot_actions={"attack"},
             )
+
+    def test_bundle_rejects_per_action_runtime_rescaling(self) -> None:
+        with self.assertRaisesRegex(ValueError, "pixel-size drift"):
+            MODULE.build_godot_sprite3d_bundle(
+                {
+                    "idle": ("idle.json", self.make_contract(0.7, 0.0042)),
+                    "hurt": ("hurt.json", self.make_contract(0.7, 0.0050)),
+                },
+                default_action="idle",
+                one_shot_actions={"hurt"},
+            )
+
+    def test_scale_profile_locks_runtime_pixel_size(self) -> None:
+        metadata = ScaleProfileTests().make_metadata()
+        metadata["godot_sprite3d"] = {
+            "world_height": 0.7,
+            "recommended_pixel_size": 0.0042,
+        }
+        profile = MODULE.build_scale_profile(metadata, "creature", 0.15)
+        self.assertEqual(profile["godot_sprite3d"]["pixel_size"], 0.0042)
+
+
+class ParserTests(unittest.TestCase):
+    def test_source_edge_override_is_explicit_and_opt_in(self) -> None:
+        parser = MODULE.build_parser()
+        args = parser.parse_args(
+            [
+                "process",
+                "--input", "raw.png",
+                "--target", "creature",
+                "--mode", "idle",
+                "--output-dir", "out",
+                "--allow-source-edge-touch",
+            ]
+        )
+        self.assertTrue(args.allow_source_edge_touch)
 
 
 if __name__ == "__main__":

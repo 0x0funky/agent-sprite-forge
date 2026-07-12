@@ -245,7 +245,7 @@ python scripts/generate2dsprite.py process \
   --duration 125 --godot-world-height 0.70
 ```
 
-This writes `godot-sprite3d.json` beside the frames. The contract derives `recommended_pixel_size` from the QC-measured mean subject height, converts the shared output origin to Godot's `Sprite3D.offset`, lists animation frames, and records timing. Reuse the same intended `world_height` for every compatible action in one character bundle. The runtime should load this metadata rather than hardcode per-action scale or offsets.
+This writes `godot-sprite3d.json` beside the frames. The reference action derives `recommended_pixel_size` from the QC-measured mean subject height and stores it in the scale profile. Later actions processed with that profile reuse the exact pixel size, so crouching, recoil, hurt, and creature silhouette changes remain real pose changes instead of being normalized back to the reference height. The contract also converts the shared output origin to Godot's `Sprite3D.offset`, lists animation frames, and records timing. Reuse the same `world_height` and scale profile for every compatible action in one bundle.
 
 After all actions pass QC, build one Godot animation bundle:
 
@@ -259,7 +259,7 @@ python scripts/generate2dsprite.py build-godot-bundle \
   --output <bundle>/godot-sprite3d-bundle.json
 ```
 
-The bundle validates cross-action world height, stores relative contract paths, and declares loop versus one-shot playback. Treat a bundle drift failure as an asset-generation or wrong-profile error; do not compensate with per-action runtime scale.
+The bundle validates cross-action world height and `pixel_size`, stores relative contract paths, and declares loop versus one-shot playback. Treat a bundle drift failure as an asset-generation or wrong-profile error; do not compensate with per-action runtime scale.
 
 ### 5. QC the result
 
@@ -276,6 +276,8 @@ Check:
 - for multi-action bundles, does `qc_summary.profile_body_scale_drift` stay within the scale profile limit, normally `0.08`
 
 If not, rerun with different processor settings or regenerate the raw sheet.
+
+Strict QC distinguishes raw source-cell contact from processed output contact. Prefer regeneration when a body part is visibly clipped. If visual review confirms the raw subject is complete and only an antialiased or harmless contour touches the source-cell boundary, use `--allow-source-edge-touch`; it never permits output-edge contact, paste clamping, or empty frames.
 
 For grounded high-value humanoid player/hero body actions, run strict QC after generation-first scale control:
 
