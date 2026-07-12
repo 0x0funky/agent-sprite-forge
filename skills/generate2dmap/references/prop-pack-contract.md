@@ -1,6 +1,6 @@
 # Prop Pack Contract
 
-Prop packs batch multiple small static map props into one generated sheet, then extract each cell into a transparent prop PNG. Square prop packs are for compact props only, not for floors, platforms, bridges, walls, or other wide/collision-critical scene objects.
+Prop packs batch multiple small static map props into one generated sheet, then extract each cell into a transparent prop PNG. Square prop packs are for compact props only, not for floors, platforms, bridges, walls, side-scroller ledges, or other wide/collision-critical scene objects.
 
 Use prop packs to reduce repeated image-generation calls and prompt overhead. They trade per-prop control for speed, so use them only when the props can share one style, scale, perspective, and quality bar.
 
@@ -51,6 +51,13 @@ Use `3x3` by default only when the user asks for a set of compact map props and 
 Use one-by-one, platform strips, custom wide packs, or tile/object layers instead of a square pack for hero props, wide gates, buildings, wide trees, floors, platforms, bridges, walls, long hazards, ladders, or anything that must line up exactly with collision.
 
 If a square pack fails because a wide/tall object touches the cell edge, do not pass it by relaxing QC and do not keep retrying the same square pack. Reclassify that object and regenerate it with one-by-one, a platform strip, a custom wide pack, or a tile/object-layer workflow.
+
+For side-scroll platformers, make a shared stage object library rather than segment-specific prop packs:
+
+- Generate platform strips, platform tiles, or terrain chunks once per stage style.
+- Reuse that platform library across all camera-width segments.
+- Put compact decorations, pickups, small terminals, small crates, lamps, and debris in square prop packs only after the structural platform library exists.
+- Store platform placements and collision as explicit metadata or engine-native nodes; the prop image is only the visual skin.
 
 ## Prompt Pattern
 

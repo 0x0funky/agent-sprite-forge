@@ -69,6 +69,10 @@ Then deliver platform tiles/objects, terrain chunks, hazards, doors, checkpoints
 
 Choose one `stage_canvas` before generation. The primary parallax plates, stage reference, and QA preview must share the same pixel dimensions, aspect ratio, camera framing, horizon, and top-left anchor. Default to the project camera aspect ratio; when unknown, use a 16:9 side-scroller canvas such as `1536x864`.
 
+For playable side-scrollers, also choose `stage_segment_count` before generation. Default to 2 camera-width segments for a normal playable level. Use 1 only for explicit one-screen rooms, boss arenas, fixed battle rooms, or background-only requests. Avoid one ultra-wide generated map image; use same-sized segments, loopable parallax plates, or per-segment parallax plates plus shared object metadata.
+
+For platformers and side-view action games, treat platforms as structural runtime geometry. The stable pattern is explicit platform rectangles or engine-native platform objects skinned by a shared platform strip/tile library. Use compact prop packs for decoration and small pickups, not for the main floors, ledges, bridges, walls, ladders, slopes, or long hazards.
+
 For brawlers, use the same mode but replace jump-platform geometry with a walkable belt polygon, foreground/background props, enemy wave zones, and camera locks.
 
 ### `grid_mode`
@@ -153,6 +157,23 @@ Generate parallax layers as scenery-only art. Platforms, walkable floors, ladder
 All primary parallax plates must use the same `stage_canvas`. If image generation returns inconsistent dimensions, regenerate or normalize the generated layer before runtime use. Do not rely on the engine to guess scaling between mismatched layer sizes. Repeatable strips may have different source widths only when metadata records display size, anchor, scale, repeat axis, and loop policy.
 
 The final side-scroller should feel deeper than a single flat image: distant layers move slowly, near layers move faster, and gameplay objects stay on their own runtime layer.
+
+## Side-Scroll Stage Segment Contract
+
+A side-scroll stage should be long because its runtime object layout is long, not because image generation produced one oversized panoramic picture.
+
+Default structure:
+
+- `stage_canvas`: one camera-sized canvas shared by primary parallax plates, stage references, and previews.
+- `stage_segment_count`: 2 by default for a normal playable side-scroller.
+- `stage_length`: camera width multiplied by segment count, or the existing engine world width when present.
+- `segments`: predictable ids such as `segment-01` and `segment-02`, each with its own placement ranges and optional parallax plates.
+- `shared_platform_library`: platform strips, platform tiles, or terrain chunks used across all segments.
+- `shared_object_library`: hazards, gates, doors, checkpoints, pickups, exits, and compact decorative props used across all segments.
+- `objects`: platform placements, terrain placements, hazards, interactives, foreground occluders, and exits grouped by segment or world coordinate range.
+- `scene_hooks`: player spawn, actor spawn markers, camera bounds, locks, arena triggers, checkpoint ids, and exit links.
+
+This mirrors a common platformer implementation: the runtime draws a background, then repeats/skins platform rectangles or tile spans from a small library. It is more controllable than asking image generation for a finished foreground layout and trying to infer collision from the pixels.
 
 ## Side-View Background Separation
 
@@ -317,7 +338,7 @@ Do not infer collision from prop PNG bounds automatically. Use explicit blockers
 - `visual_model`: `parallax_layers`
 - `runtime_object_model`: `platform_objects + interactive_scene_objects + scene_hooks + foreground_occluders`
 - `collision_model`: `precise_shapes` or engine-native platform/object collision
-- Typical deliverables: shared `stage_canvas`, separate parallax layers (`sky`, `far_bg`, `mid_bg`, `near_bg`, optional `foreground_overlay`) matching that canvas, scroll factors, in-world stage reference mockup, separate platform/terrain sprites, foreground pieces, hazards, pickups, doors, checkpoints, gates, exits, scene-hook metadata, camera bounds, collision metadata, and a stage preview.
+- Typical deliverables: shared `stage_canvas`, `stage_segment_count`, `stage_length`, separate parallax layers (`sky`, `far_bg`, `mid_bg`, `near_bg`, optional `foreground_overlay`) matching that canvas, scroll factors, in-world stage reference mockup, shared platform/object art library, separate platform/terrain sprites, foreground pieces, hazards, pickups, doors, checkpoints, gates, exits, segment placement metadata, scene-hook metadata, camera bounds, collision metadata, and a stage preview.
 
 ### Side-View Action / Platformer Stage
 
@@ -326,6 +347,8 @@ Do not infer collision from prop PNG bounds automatically. Use explicit blockers
 - `collision_model`: `precise_shapes` or engine-native platform/object collision
 - Applies to Megaman-like, Castlevania-like, Contra-like, side-view action, runner, shooter, and brawler stages across pixel art, clean HD, and project-native styles.
 - Required deliverables: shared `stage_canvas`, background/parallax art that matches that canvas, in-world stage reference mockup, separate platform or terrain-chunk sprites, hazard sprites, scene object placement data, scene-hook metadata, pickups/doors/checkpoints/gates when present, collision data, camera bounds, and a QA preview.
+- Default stage length: 2 camera-width segments unless the user asks for a one-screen room or boss arena.
+- Platform strategy: explicit platform metadata skinned by shared platform strips, platform tiles, or terrain chunks. Do not use ordinary square prop packs for floors, bridges, ledges, walls, ladders, or slopes.
 - The stage reference should plan no more than 9 distinct visible object candidates unless the user requests a larger pass. Use repeats in metadata rather than asking the image model to invent many unrelated props at once.
 - Anti-pattern: one generated full-stage PNG plus collision rectangles. That is a background with hitboxes, not a playable stage.
 

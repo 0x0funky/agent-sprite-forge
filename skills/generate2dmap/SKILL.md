@@ -99,10 +99,12 @@ User-facing parameters may be stated in natural language:
 - `visual_model`: baked raster | layered raster | tilemap | layered tilemap | parallax
 - `size`: pixel dimensions, tile dimensions, or camera-relative size
 - `stage_canvas`: exact pixel dimensions and aspect ratio for side-scroll/parallax layers, references, and previews
+- `stage_segment_count`: number of camera-width chunks for a side-scroll stage
 - `perspective`: top-down | 3/4 top-down | side-view | isometric-like
 - `art_style`: clean_hd | pixel_inspired | retro_pixel | hand_painted | project-native
 - `visual_asset_source`: image_gen | existing_assets | procedural_placeholder
 - `collision_precision`: none | coarse | precise | tile | walkmesh
+- `platform_strategy`: platform_rects_with_shared_tiles | platform_strip | tilemap | custom_terrain_chunks
 - `prop_generation`: none | one_by_one | prop_pack_2x2 | prop_pack_3x3 | prop_pack_4x4 | platform_strip_1x3 | platform_strip_1x4 | custom_wide_pack
 - `output_format`: PNG only | layered preview | manifest JSON | engine-native map data
 
@@ -114,6 +116,8 @@ When unspecified:
 - Use `scene_mode` for tower defense, survivors-like, cozy/top-down showcase maps, and base-map-plus-props requests.
 - Use `side_scroll_mode` for side-scrollers, platformers, runners, side-view action, brawlers, Metroidvania side rooms, Mega Man-like, Castlevania-like, Contra-like, and parallax background requests.
 - For `side_scroll_mode`, choose a canonical `stage_canvas` before image generation. Use the project camera/viewport aspect when available; otherwise default to a 16:9 side-scroller canvas such as `1536x864`. All primary parallax plates, stage references, and previews must preserve this same size/aspect.
+- For playable `side_scroll_mode`, choose `stage_segment_count` before image generation. Default to 2 camera-width segments for a normal playable scrolling level. Use 1 only for explicit one-screen rooms, boss arenas, title-like scenes, or fixed battle rooms; use 3 or more only when the user asks for a longer stage or the existing game already has that scope.
+- For playable `side_scroll_mode`, default `platform_strategy` to `platform_rects_with_shared_tiles`: write platform rectangles or engine-native platform objects as the gameplay source of truth, then skin them with a shared generated platform tile/strip library. Do not rely on a generated background or generic prop pack for platform shape.
 - Use `grid_mode` for tactical RPGs, factory/automation maps, board/card battlers, build grids, and terrain-cost maps.
 - Use `room_chunk_mode` for modular rooms, roguelike rooms, procedural room assembly, or Metroidvania room-chunk planning.
 - Use `baked_scene_mode` only for non-playable visual scenes or explicitly flat images.
@@ -123,6 +127,7 @@ When unspecified:
 - Use `parallax_layers + platform_objects + interactive_scene_objects + scene_hooks + precise_shapes` for playable side-view scrolling stages, platformers, runners, shooters, and horizontal action scenes; the parallax/background image is scenery-only and is not the runtime map by itself.
 - Use square prop packs only when 4 or more compact small/medium static props share one style and fit comfortably inside equal square cells.
 - Use one-by-one, platform strips, tile/object layers, or custom wide packs for hero props, buildings, gates, irregular large props, wide/tall props, platforms, terrain chunks, bridges, walls, ladders, long hazards, animated props, or props needing strong identity or collision alignment.
+- For side-scroll platformers, treat platforms, floors, ledges, bridges, walls, slopes, ladders, long hazards, doors, gates, checkpoints, and exits as structural stage objects, not decorative props. Compact prop packs are for optional dressing and pickups only.
 - Use `clean_hd` for generated exploration maps unless the project or user asks for pixel art. This means clean hand-painted top-down 2D RPG game map, HD game asset style, sharp readable terrain shapes, low texture noise, and no chunky pixels.
 - Use `pixel_inspired` only when the user wants a pixel-adjacent look without retro chunkiness.
 - Use `retro_pixel` only when the user explicitly asks for 16-bit, retro JRPG, or classic pixel-art maps.
@@ -150,7 +155,7 @@ When unspecified:
    - For tilemaps, generate or reuse tileset art first, then follow the engine/editor format for layers, objects, collision, and scene files. Do not script-draw the tileset as the final art source, and do not flatten object layers into a single runtime image.
    - For `grid_mode`, generate or reuse grid/tileset visual art first, then write cell metadata such as walkable/buildable flags, move cost, terrain effects, resource nodes, and object layers.
    - For `room_chunk_mode`, define chunk dimensions, exits, connection sockets, collision contract, and spawn/trigger metadata before final art assembly. Chunks must be reusable and validated at their seams.
-   - For playable side-view scrolling/action stages, define the canonical `stage_canvas` before generating art. Generate named scenery-only parallax layers first: `sky`, `far_bg`, `mid_bg`, `near_bg`, and optional `foreground_overlay`. Every primary parallax layer must use the same pixel dimensions, aspect ratio, camera framing, horizon line, and top-left anchor as the `stage_canvas`; do not accept mismatched image sizes that require guesswork to stack. Do not treat one full-width background image as a complete `side_scroll_mode` background stack unless the user explicitly asks for a flat/non-parallax background. These parallax passes must not contain playable foreground platforms, walkable floors, terrain chunks, hazards, pickups, doors, gates, checkpoints, crates, fences, spikes, or other runtime objects. Then perform the visual reference handoff and generate an in-world stage reference mockup that visually places up to 9 distinct intended platform/object candidates before generating final separate scene objects and metadata.
+   - For playable side-view scrolling/action stages, define the canonical `stage_canvas`, `stage_segment_count`, `stage_length`, and `platform_strategy` before generating art. Do not ask image generation for one ultra-wide full level. Generate per-segment or loopable scenery-only parallax plates first: `sky`, `far_bg`, `mid_bg`, `near_bg`, and optional `foreground_overlay`. Every primary parallax layer must use the same pixel dimensions, aspect ratio, camera framing, horizon line, and top-left anchor as the `stage_canvas`; do not accept mismatched image sizes that require guesswork to stack. Do not treat one full-width background image as a complete `side_scroll_mode` background stack unless the user explicitly asks for a flat/non-parallax background. These parallax passes must not contain playable foreground platforms, walkable floors, terrain chunks, hazards, pickups, doors, gates, checkpoints, crates, fences, spikes, or other runtime objects. Then perform the visual reference handoff and generate an in-world stage reference mockup that visually places up to 9 distinct intended platform/object candidates before generating final separate scene objects and metadata.
    - If a side-view background already contains collidable-looking foreground geometry, walkable floors, or reusable gameplay props, reject it as a runtime background and regenerate a cleaner scenery-only background before continuing.
    - Treat the reference mockup as a checkpoint, not a deliverable. Do not stop after generating it. After the relevant `dressed-reference` or `stage-reference` exists, inspect it and continue into the post-reference object production gate.
    - Do not present a rerunnable script that creates the whole art pack as the main solution unless the user asked for procedural placeholder art.
@@ -159,7 +164,7 @@ When unspecified:
    - Store prop placement, player spawns, actor spawn marker metadata, interactable scene objects, blockers, walk bounds, encounter zones, exits, camera bounds, and triggers as structured data.
    - For `grid_mode`, store grid dimensions, cell size, tile ids, terrain types, walkable/buildable flags, movement cost, collision, resource nodes, and object/entity slots.
    - For `room_chunk_mode`, store chunk id, size, entrances/exits, connection sockets, collision, spawn markers, camera bounds, and validation hints for seam alignment.
-   - For `side_scroll_mode`, store `stage_canvas`, parallax layer source size, display size, anchor, render order, scroll factors, loop/repeat policy, camera bounds, platform collision, hazards, exits, checkpoints, and actor spawn marker metadata.
+   - For `side_scroll_mode`, store `stage_canvas`, `stage_segment_count`, `stage_length`, segment ids, parallax layer source size, display size, anchor, render order, scroll factors, loop/repeat policy, shared platform/object library ids, camera bounds, platform collision, hazards, exits, checkpoints, and actor spawn marker metadata.
    - Keep collision independent from pixels unless the target engine explicitly uses tile collision.
 
 5. Validate and preview.
@@ -240,11 +245,51 @@ Reference-only output is incomplete for any playable map, layered map with props
 
 For prop packs or object packs generated after a reference mockup, the prompt must be derived from the visible reference mockup and original base/background, not from memory or filenames. It should list the exact objects being generated and preserve the art style, lighting, perspective, and scale cues from the original base/background.
 
+## Side-Scroll Stage Segments
+
+Playable side-scroll stages should be planned as camera-width segments, not as one huge generated map image. This keeps image generation readable while allowing the runtime level to be longer than a single picture.
+
+Default contract:
+
+- Use one `stage_canvas` for every segment, primary parallax plate, stage reference, stage preview, and normalization target.
+- Use `stage_segment_count: 2` by default for a normal playable platformer or action side-scroller. Use `1` only for explicit one-screen rooms, boss arenas, fixed battle rooms, or background-only requests.
+- Compute `stage_length` from the engine camera width and segment count, or from the existing project coordinate system when available.
+- Name segment files predictably, such as `segment-01`, `segment-02`, and keep each segment aligned to the same top-left camera frame.
+- Generate either per-segment parallax plates or loopable parallax plates, but record the choice in metadata. Do not mix image sizes or aspect ratios across segments.
+- Create one shared platform/object art library for the full stage. Do not generate a fresh unrelated prop pack for every segment unless the user explicitly asks for biome changes.
+- Compose a per-segment QA preview and, when practical, a stitched stage overview preview from the same shared object metadata.
+
+For platformer-style side-scroll stages, the runtime geometry must come from explicit platform/object metadata or engine-native nodes:
+
+- `platforms`: rectangles, tile spans, slopes, one-way ledges, moving platform handles, or engine-native platform nodes.
+- `terrain_chunks`: optional large reusable solid pieces when rectangles are not enough.
+- `hazards`: spikes, lasers, lava strips, pits, saws, traps, and other collision-critical objects.
+- `interactives`: doors, gates, terminals, switches, checkpoints, pickups, exits, and destructibles.
+- `scene_hooks`: player spawn, actor spawn markers, camera bounds, lock zones, arena triggers, exit links, and checkpoint ids.
+
+The art for structural geometry should skin the metadata, not define it. A good platformer stage can use simple collision rectangles with repeated platform cap/middle sprites, just like a classic tile or strip workflow. This is preferable to asking image generation to produce a complete foreground platform layout in one baked image.
+
+## Side-Scroll Shared Platform Library
+
+For `side_scroll_mode`, generate or select a shared structural platform library before decorative props:
+
+- `platform_strip_1x3`: left cap, seamless middle repeat, right cap.
+- `platform_strip_1x4`: left cap, seamless middle repeat, right cap, plus one slope/corner/broken/end variant.
+- `platform_tile_set`: square or rectangular tiles for top edge, underside, wall face, corner, and optional slope when the target engine/editor is tile-based.
+- `custom_terrain_chunk`: one-by-one or custom wide assets for important unique terrain chunks.
+
+Use the platform library across all stage segments. Platform objects in metadata should reference the shared library by id and declare display width, display height, anchor, repeat policy, collision rectangle, and render layer.
+
+Do not put platform strips, floors, ledges, bridges, ladders, walls, slopes, long spike rows, or terrain chunks into ordinary square prop packs. Square prop packs are for compact decorative props and simple pickups. Structural objects need strips, tiles, custom wide cells, one-by-one assets, or engine-native tile/object layers.
+
 ## Playable Stage Reference Rules
 
 For playable side-view scrolling/action maps, an in-world stage reference mockup is mandatory before generating final scene objects or scene metadata. This applies across art styles and game styles, including pixel art, clean HD, side-scrollers, platformers, runners, shooters, brawlers, scrolling combat stages, and Megaman-like or Castlevania-like stages:
 
-0. Choose and record one `stage_canvas`, for example `1536x864` for a default 16:9 HD side-scroller when the project has no explicit camera size. Use the engine's existing viewport aspect ratio when it exists. All primary parallax layers, the stage reference, and the stage preview must share this exact size unless a layer is explicitly marked as a repeatable strip.
+0. Choose and record one `stage_canvas`, for example `1536x864` for a default 16:9 HD side-scroller when the project has no explicit camera size. Choose and record `stage_segment_count` before art generation. All primary parallax layers, stage references, and stage previews must share this exact size unless a layer is explicitly marked as a repeatable strip.
+   - For normal playable platformer/action stages, default to `stage_segment_count: 2`. This means at least two camera-width segments that share one platform/object art library.
+   - Use `stage_segment_count: 1` only for explicit one-screen rooms, boss arenas, fixed battle rooms, or background-only requests.
+   - Do not make a longer level by asking for one ultra-wide generated painting. Keep each generated segment at `stage_canvas` size and assemble the runtime stage from segments plus object metadata.
 1. Generate named parallax scenery layers as separate runtime images: `assets/map/<name>-sky.png`, `assets/map/<name>-far-bg.png`, `assets/map/<name>-mid-bg.png`, `assets/map/<name>-near-bg.png`, and optional `assets/map/<name>-foreground-overlay.png`.
 - These layers are scenery only, not playable foreground. They may contain sky, clouds, mountains, distant buildings, distant castle walls, silhouettes, atmosphere, and non-colliding far depth.
 - Do not collapse these layers into only `assets/map/<name>-background.png` for a playable `side_scroll_mode` stage. A single scenery background is allowed only when the user explicitly requests a flat/non-parallax background; in that case still continue with stage reference, separate objects, collision, camera bounds, and QA preview.
@@ -258,9 +303,10 @@ For playable side-view scrolling/action maps, an in-world stage reference mockup
 5. In the stage reference, visually place the intended scene layout as natural game-world objects or subtle blockout geometry: platforms or walkable lanes, terrain chunks, foreground occluders, hazards, pickups, doors, checkpoints, gates, and exits.
    - Use at most 9 distinct visible runtime object candidates in the stage reference unless the user explicitly asks for a larger object pass. Repeated placements of the same platform, terrain chunk, hazard, pickup, checkpoint, door, gate, or occluder count as one candidate and should be repeated later in metadata.
    - Prioritize objects that the final game must render or collide with separately. Avoid filling the mockup with many small decorative foreground props that will not become reusable assets.
+   - For multi-segment stages, each segment may have its own stage reference, but all references must reuse the same structural platform/object library and camera frame. If time or cost requires only one reference, make it the style/layout reference for the shared object library and write separate segment placement metadata.
 6. Do not draw spawn markers, actor markers, arena trigger zones, camera bounds, arrows, labels, circles, outlines, numbered callouts, text, legends, or UI overlays in the reference image. Record player spawn, actor spawn markers, arena triggers, camera bounds, and exit links later as scene-hook metadata.
 7. Use the stage reference to decide object identities, sizes, coordinates, render order, collision shapes, and camera bounds.
-8. Continue through the post-reference object production gate: generate or define final platforms, terrain chunks, hazards, pickups, doors, checkpoints, foreground occluders, and other visible scene objects as separate assets, tile layers, or object layers. Compose the final runtime preview from the original background plus these separate runtime objects.
+8. Continue through the post-reference object production gate: generate or define final platforms, terrain chunks, hazards, pickups, doors, checkpoints, foreground occluders, and other visible scene objects as separate assets, tile layers, or object layers. Create segment placement metadata that reuses the shared platform/object library across the full `stage_length`. Compose the final runtime preview from the original background plus these separate runtime objects.
 
 The stage reference is an in-world reference mockup. Do not ship it as the runtime map, do not infer collision from its pixels, and do not cut platform objects out of the baked reference image. If a platform must be reusable or collidable, generate it as a separate platform object, terrain chunk, tile, or engine-native object.
 
@@ -305,16 +351,19 @@ For a playable side-view scrolling/action stage:
 
 - image-generated parallax scenery layers such as `assets/map/<name>-sky.png`, `assets/map/<name>-far-bg.png`, `assets/map/<name>-mid-bg.png`, `assets/map/<name>-near-bg.png`, and optional `assets/map/<name>-foreground-overlay.png`
 - one recorded `stage_canvas` shared by the primary parallax layers, `stage-reference`, and `stage-preview`
+- one recorded `stage_segment_count` and `stage_length`; default to at least 2 camera-width segments for a normal playable scrolling level
+- per-segment parallax layer metadata or loopable parallax metadata, with consistent dimensions and anchors
 - `assets/map/<name>-background.prompt.txt` and prompt files/manifests for other generated visual assets
 - `assets/map/<name>-stage-reference.png` as an in-world reference mockup for platform/object placement
+- a shared platform/object art library, such as platform strips, platform tiles, terrain chunks, hazards, doors, pickups, checkpoints, gates, and exits
 - separate image-generated platform, terrain-chunk, foreground-occluder, hazard, door, pickup, checkpoint, gate, and exit sprites when these are visible scene objects
-- `data/<name>-objects.json` or engine-native object layers for platforms, terrain chunks, hazards, pickups, doors, checkpoints, gates, exits, and foreground occluders
+- `data/<name>-objects.json` or engine-native object layers for platforms, terrain chunks, hazards, pickups, doors, checkpoints, gates, exits, and foreground occluders, grouped by segment when the stage has more than one segment
 - `data/<name>-scene-hooks.json` or engine-native metadata for player spawns, actor spawn marker metadata, encounter/arena triggers, camera bounds, and exit links
 - `data/<name>-collision.json` with explicit platform/solid geometry independent from the background pixels
 - `assets/map/<name>-stage-preview.png` composed from the background plus objects for QA only
 - code or scene changes that load the background, render object layers, and use the collision/object data as runtime gameplay data
 
-Do not accept a single generated side-view action/platformer stage image plus collision rectangles as the final playable map. The stage must expose platforms or walkable lanes, hazards, doors, pickups, checkpoints, gates, exits, scene hooks, and camera bounds as separate runtime objects, tile/object layers, or metadata. Runtime `background` fields must point to the scenery-only background or parallax layer, never to `stage-reference` or `stage-preview`; previews are QA artifacts only.
+Do not accept a single generated side-view action/platformer stage image plus collision rectangles as the final playable map. Do not accept a single camera-width scenery image as a complete scrolling level unless the user explicitly asked for a one-screen room. The stage must expose platforms or walkable lanes, hazards, doors, pickups, checkpoints, gates, exits, scene hooks, and camera bounds as separate runtime objects, tile/object layers, or metadata. Runtime `background` fields must point to the scenery-only background or parallax layer, never to `stage-reference` or `stage-preview`; previews are QA artifacts only.
 
 For `grid_mode`:
 
@@ -361,7 +410,10 @@ Always validate what the chosen pipeline requires:
 - playable stages have explicit runtime objects or metadata for every gameplay-relevant platform or walkable lane, blocker, hazard, door, pickup, checkpoint, gate, exit, player spawn, actor spawn marker, encounter/arena trigger, and camera bound
 - playable side-view backgrounds are scenery-only and do not contain baked-in foreground gameplay platforms, hazards, pickups, doors, gates, checkpoints, or other reusable runtime objects
 - `side_scroll_mode` primary parallax layers, stage references, and stage previews match the recorded `stage_canvas`; any repeatable strips or differently sized foreground sprites declare display size, anchor, scale, and repeat policy
+- `side_scroll_mode` records `stage_segment_count`, `stage_length`, segment ids, and whether parallax plates are per-segment or loopable
+- normal playable `side_scroll_mode` levels have at least 2 camera-width segments unless the user requested a one-screen room, boss arena, fixed battle room, or background-only asset
 - `side_scroll_mode` parallax layers have explicit render order, scroll factors, dimensions, loop/repeat policy, and are not used as collision sources
+- `side_scroll_mode` platforms and terrain use explicit platform/object metadata plus a shared platform strip, tile, or terrain-chunk library; they are not taken from a generic square prop pack
 - `grid_mode` outputs include grid dimensions, cell size, cell metadata, object layers, and validation of critical walkable/buildable cells
 - `room_chunk_mode` outputs include chunk dimensions, exits/connection sockets, seam validation, collision, and at least one assembled or per-chunk preview
 - stage-reference maps preserve the background dimensions and their object plan matches the final object/collision metadata
