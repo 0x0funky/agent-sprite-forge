@@ -38,6 +38,14 @@ Only `compact_prop` objects may use square `2x2`, `3x3`, or `4x4` prop packs. Ev
 
 Do not mix strategy classes in one sheet. A sheet of small rocks, crates, lamps, and grass is acceptable. A sheet that mixes rocks with platforms, floor pieces, gates, ladders, or spike hazards is not acceptable.
 
+Also classify whether a prop is a blocker or walkable dressing:
+
+- `blocker`: actors cannot share its footprint; normal depth sorting is sufficient.
+- `walkable_low_dressing`: actors may share the tile/lane and the prop stays below the important body silhouette.
+- `walkable_tall_dressing`: actors may share the tile/lane but the prop can cover the body; it requires an actor-safe placement and runtime occupant policy.
+
+For a fixed isometric board, do not center tall walkable dressing directly on the actor anchor. Prefer a rear-biased cluster that leaves the central/lower actor footprint open. If the art still overlaps the actor, use `rear_shift_and_fade` at runtime. Render priority alone is not an occlusion policy.
+
 ## Sheet Size Selection
 
 - `2x2`: 4 props, safest batch size.
@@ -172,11 +180,31 @@ After extraction, create placement JSON:
       "w": 96,
       "h": 72,
       "sortY": 512,
-      "layer": "props"
+      "layer": "props",
+      "occlusionClass": "low",
+      "actorSafeArea": { "shape": "ellipse", "cx": 0.5, "cy": 0.78, "rx": 0.22, "ry": 0.16 },
+      "occupantPolicy": { "mode": "none" }
     }
   ]
 }
 ```
+
+For tall walkable vegetation on a fixed isometric grid, use an explicit policy, for example:
+
+```json
+{
+  "occlusionClass": "tall",
+  "actorSafeArea": { "shape": "ellipse", "cx": 0.5, "cy": 0.76, "rx": 0.24, "ry": 0.18 },
+  "occupantPolicy": {
+    "mode": "rear_shift_and_fade",
+    "rearOffsetCells": [-0.18, -0.18],
+    "occupiedScale": 0.91,
+    "occupiedOpacity": 0.28
+  }
+}
+```
+
+Keep these values as runtime placement metadata, not baked changes to the transparent PNG. When occupied, preserve the terrain surface and modify only the tall decoration layer.
 
 Then compose a QA preview with `scripts/compose_layered_preview.py`.
 
@@ -190,5 +218,7 @@ Reject or regenerate the pack when:
 - prop identity drifts into character/NPC-like art
 - a prop is too large for the intended placement scale
 - a square pack contains a wide/long, tall/large, collision-bearing, platform, floor, bridge, wall, ladder, gate, door, or tileset/strip object
+- walkable tall dressing has no actor-safe area or occupant policy
+- an actor-in-place preview at gameplay camera scale hides the head, torso, weapon/action silhouette, selection ring, or path cues
 
 For noisy particles or edge debris, reprocess with `--component-mode largest`. For intentional multi-part props, use `--component-mode all` and increase the prompt margin.

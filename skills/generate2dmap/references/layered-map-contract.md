@@ -112,7 +112,10 @@ Use explicit map-space dimensions:
       "w": 380,
       "h": 306,
       "sortY": 850,
-      "layer": "props"
+      "layer": "props",
+      "occlusionClass": "tall",
+      "actorSafeArea": { "shape": "ellipse", "cx": 0.5, "cy": 0.82, "rx": 0.18, "ry": 0.12 },
+      "occupantPolicy": { "mode": "y_sort" }
     }
   ]
 }
@@ -125,6 +128,11 @@ Anchor conventions:
 - `w`, `h`: rendered size in map units.
 - `sortY`: y-depth used for render ordering. Use base `y` for normal props.
 - `layer`: `props` for y-sorted objects, `foreground` for always-over actors overlays.
+- `occlusionClass`: `low`, `tall`, or `foreground` according to how much of an actor it can cover.
+- `actorSafeArea`: normalized placement area that must keep the actor's actionable silhouette readable.
+- `occupantPolicy`: runtime treatment when an actor shares or selects the footprint. Use `y_sort` for normal blockers and `rear_shift_and_fade` for tall decoration on walkable cells.
+
+An `actorSafeArea` is a readability contract, not collision. Collision still uses explicit blockers. Slight foot overlap is allowed, but the head, torso, held weapon/action silhouette, selection state, and movement/path cues must remain visible.
 
 ## Render Order
 
@@ -195,6 +203,7 @@ The script assumes prop placement uses center-bottom anchoring unless a prop exp
 - Interactables block at their base but can be approached.
 - Encounter/rest zones are reachable.
 - Actors sort correctly when walking in front of and behind tall props.
+- Walkable tall dressing is tested with a representative actor standing directly in its footprint; its occupant policy preserves the actionable silhouette.
 - The flattened preview matches the in-game layered render closely enough for visual review.
 
 ## Anti-Patterns

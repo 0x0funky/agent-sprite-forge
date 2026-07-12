@@ -163,6 +163,7 @@ When unspecified:
 
 4. Build metadata.
    - Store prop placement, player spawns, actor spawn marker metadata, interactable scene objects, blockers, walk bounds, encounter zones, exits, camera bounds, and triggers as structured data.
+   - For walkable cells or actor lanes with visible dressing, classify prop occlusion as `low`, `tall`, or `foreground`; record an actor-safe area and an occupant policy such as `none`, `rear_shift`, `fade`, `rear_shift_and_fade`, or `hide`. Do not rely on render priority alone to keep actors readable.
    - For `grid_mode`, store grid dimensions, cell size, tile ids, terrain types, walkable/buildable flags, movement cost, collision, resource nodes, and object/entity slots.
    - For `room_chunk_mode`, store chunk id, size, entrances/exits, connection sockets, collision, spawn markers, camera bounds, and validation hints for seam alignment.
    - For `side_scroll_mode`, store `stage_canvas`, `stage_segment_count`, `stage_length`, segment ids, parallax layer source size, display size, anchor, render order, scroll factors, loop/repeat policy, shared platform/object library ids, camera bounds, platform collision, hazards, exits, checkpoints, and actor spawn marker metadata.
@@ -171,6 +172,7 @@ When unspecified:
 5. Validate and preview.
    - Compose a flattened preview for layered maps.
    - Validate image sizes, alpha channels, prop pack extraction metadata, JSON parseability, and critical walkability points when collision matters.
+   - For any playable map with tall props on walkable space, produce or inspect an actor-in-place preview at the real gameplay camera. The actor's head, torso, weapon/action silhouette, selection state, and destination/path cues must remain readable. Slight foot overlap is acceptable; losing the actionable silhouette is not.
    - For `side_scroll_mode`, reject or normalize mismatched primary parallax layer sizes before runtime integration. The stage reference and QA preview must match `stage_canvas` exactly. Deterministic resizing/cropping/padding is allowed only as a normalization step on generated art, not as a way to invent missing art.
 
 ## Terrain Tile Bundles
@@ -229,6 +231,8 @@ Choose the generation shape deliberately:
 - `custom_wide_pack`: several related wide objects using explicit wide cells, not square cells.
 
 Prop packs save image-generation calls and prompt overhead, but reduce per-prop control. Use square prop packs for rocks, shrubs, barrels, small signs, lamps, crates, floor ornaments, plants, and repeated compact environmental props. Do not use square prop packs for buildings, gates, trees with wide canopies, bridges, platforms, floors, walls, ladders, long fences, long hazards, character-like statues, hero objects, or anything that must be pixel-perfect or collision-aligned.
+
+When a compact shrub, grass cluster, rubble pile, or similar prop will share a walkable tile with an actor, classify it separately from blockers. Prefer a low silhouette or a rear-biased cluster that leaves the tile's actor-safe center clear. Tall walkable dressing must ship with an occupant policy; `rear_shift_and_fade` is the safe default for fixed isometric boards. Preserve the ground texture while fading only the tall decoration.
 
 For layered maps with generated props, prefer this in-world reference mockup pipeline:
 
@@ -397,6 +401,7 @@ For `grid_mode`:
 - cell metadata for walkable/buildable, movement cost, terrain effects, resources, collision, and placement rules
 - object layers for units, buildings, machines, cards/board slots, exits, spawns, and triggers
 - a QA preview that can show optional debug grid/collision overlays
+- for decorated walkable cells, prop occlusion metadata plus an actor-in-place preview using a representative runtime actor and the real gameplay camera
 
 For `room_chunk_mode`:
 
@@ -429,6 +434,7 @@ Always validate what the chosen pipeline requires:
 - transparent props contain alpha
 - prop pack manifests parse and accepted props do not touch cell edges
 - placement JSON parses and referenced prop files exist
+- walkable tall props declare `occlusionClass`, `actorSafeArea`, and `occupantPolicy`; runtime integration applies that policy when an actor occupies or selects the cell
 - collision/zones JSON parses when present
 - critical spawn, path, entrance, blocker, and zone points behave as expected
 - playable/editable layered maps use a foundation-only base/background and do not bake runtime-controlled props, interactables, hazards, doors, gates, pickups, actors, foreground occluders, or reusable scene objects into the base
@@ -446,3 +452,4 @@ Always validate what the chosen pipeline requires:
 - stage-reference and dressed-reference mockups contain no more than 9 distinct visible runtime prop/object candidates unless the user explicitly requested a larger pass
 - reference mockups are followed by final props/objects, placement metadata, collision/scene-hook metadata, and a QA preview unless the user explicitly requested reference-only output
 - flattened preview looks coherent at the game's camera size
+- actor-in-place previews prove that tall walkable dressing does not hide the actor's actionable silhouette or path/selection cues
