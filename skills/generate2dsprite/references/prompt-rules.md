@@ -172,6 +172,8 @@ For a compact attack-only sheet, describe:
 - follow-through
 - recovery
 
+For long quadrupeds, wolves, serpentine bodies, or actors with wide tails, do not describe a pounce as whole-body travel across the cell. Lock one shared silhouette envelope across all frames: fixed torso center, central 70% to 72% safe width/height, tail or long appendages tucked inward, and attack energy shown through in-place compression, neck/limb extension, and recoil. This is stronger and more reliable than a generic request for generous margins.
+
 For controllable heroes, main characters, and fixed-cell game sprites, write attack body prompts as body-only:
 
 - no detached slash arc
@@ -333,6 +335,8 @@ python scripts/generate2dsprite.py process \
 For a multi-action bundle, add `--write-scale-profile <profile.json>` to the accepted idle/run reference process, then use `--scale-profile <profile.json>` for attack, hurt, cast-body, walk, and other compatible grounded actions. Do not create a separate profile for each action.
 
 Preserve-scale means: fixed-grid cut, chroma-key cleanup, apply one uniform raw-cell scale and safety margin to every frame, then translate each detected subject to one shared feet/bottom anchor. It does not apply a different bbox-fit scale per frame. A scale profile extends this contract across separate action sheets. QC should require no empty, edge-touching, or paste-clamped frames. For grounded high-value humanoid body actions, treat `body_scale_cv > 0.08`, normalized `anchor_y_std > 0.05`, or unexplained profile scale drift above the profile limit as a regeneration signal. Do not use these grounded thresholds for jumps, knockback, flying actors, creatures with large posture/silhouette changes, or FX.
+
+For elongated creature attacks, regenerate whenever output-edge contact or paste clamping occurs. A visually complete raw contour may use the explicit source-edge override only after processed output-edge and clamp counts are both zero; the override is never a substitute for a smaller shared motion envelope.
 
 ### `5x5` and custom grids
 
