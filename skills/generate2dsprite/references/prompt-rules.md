@@ -147,6 +147,8 @@ Use:
 - weight shift or aura pulse
 - strongest idle accent before looping
 
+For a massive grounded boss, replace lateral weight shift with rooted weight: keep both feet and the pelvis fixed, compress the torso vertically, pulse an internal core, settle shoulders, and animate attached ornaments with small delayed secondary motion. Explicitly forbid whole-body left/right translation.
+
 Prefer:
 
 - `2x2` for standard actors
@@ -228,6 +230,8 @@ Describe:
 - expansion
 - peak burst
 - fade or collapse
+
+For a ground-contact looping effect such as fire, define one shared horizontal ignition baseline at a fixed percentage of every cell height. Let tips deform above it while the contact line, width, camera distance, and scale remain fixed. For a billboarded runtime overlay, forbid baked ground, lava pools, tile plates, shadows, and perspective floor art; those elements make the effect appear offset after engine placement.
 
 ### `walk` / `run` / `hover`
 

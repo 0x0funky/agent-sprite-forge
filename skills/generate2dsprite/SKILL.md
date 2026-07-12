@@ -59,6 +59,8 @@ Read [references/modes.md](references/modes.md) when the request is ambiguous.
 - In every animated body grid prompt, require the subject body to stay centered in each cell, full body inside the central 60% to 70% safe area, consistent scale across cells, stable feet/bottom anchor line when applicable, and no limbs, weapons, hair, capes, dust, muzzle flashes, or detached FX crossing cell edges.
 - For hero attack body prompts, explicitly require body height and body scale to match the accepted idle/run sheets, stable feet/bottom anchor, weapon kept close enough to avoid widening the body bbox, and no detached slash arc or screen-space attack effect.
 - For elongated quadrupeds, serpentine creatures, and actors whose tail or attack extension nearly fills a cell, add a shared-silhouette-envelope contract to action prompts: keep the torso center fixed, keep every pose inside the same central 70% to 72% width/height box, tuck tails and long appendages inward, and express pounces or bites through in-place compression/extension instead of translating the whole body across the cell. "Generous margin" alone is not a reliable containment instruction for these silhouettes.
+- For massive grounded bosses, lock the feet and pelvis against lateral translation in idle prompts. Express weight through vertical torso compression, chest/core pulse, shoulder settling, and secondary motion of attached ornaments; do not use whole-body left/right sway as the idle beat.
+- For ground-contact environmental FX such as fire, write one explicit shared ignition/baseline coordinate into the prompt and forbid baked ground plates. Treat tip-height variation as animation, not anchor drift; visually verify the contact line and use an FX-specific anchor threshold instead of applying humanoid feet gates.
 - For high-value grounded player/hero body actions, prefer a character anchor sheet when consistent scale or feet placement matters: repeat one accepted master frame at the intended size and feet line in every cell, then use that sheet as a scale/root template while asking built-in `image_gen` to change only the poses. Do not use a grounded anchor sheet for jumps, knockback, airborne motion, projectiles, or FX.
 - For a multi-action character bundle, create one scale profile from an accepted idle or run sheet, then process every grounded body action with that profile. The profile locks output cell size, one shared raw-cell scale, anchor, trimming, and component rules across actions. Do not choose a new `fit_scale` per action.
 - For map prop packs, classify props before choosing a grid. Square `2x2`, `3x3`, and `4x4` packs are only for compact props. Do not put platforms, floors, bridges, walls, ladders, gates, doors, long hazards, wide/tall props, collision-bearing objects, or tileset/strip pieces into square prop packs; use one-by-one, `1x3`/`1x4` strips, custom wide cells, or a tileset-like atlas instead.
@@ -274,6 +276,8 @@ Check:
 - for fixed-cell runtimes, did a wide weapon trail or FX arc shrink the body inside the cell
 - for preserve-scale runs, are feet/bottom anchors aligned without any `paste_clamped` frames
 - for grounded high-value body sheets, does `qc_summary.body_scale_cv` stay at or below about `0.08` and `qc_summary.anchor_y_std` at or below about `0.05`
+- for rooted boss idles, do the feet and pelvis remain fixed while motion comes from compression, glow, shoulders, and attached secondary elements
+- for ground-contact FX, is the authored ignition/baseline stable even when flame tips, embers, or effect height change
 - for multi-action bundles, does `qc_summary.profile_body_scale_drift` stay within the scale profile limit, normally `0.08`
 
 If not, rerun with different processor settings or regenerate the raw sheet.
@@ -301,6 +305,8 @@ python scripts/generate2dsprite.py process \
 ```
 
 These numeric gates are for grounded humanoid body actions, not jumps, knockback, projectiles, impacts, floating actors, creatures whose attack strongly changes silhouette/posture, or intentionally changing-scale FX. A failed gate is a regeneration signal; do not hide generation drift with per-frame scale normalization.
+
+For ground-contact FX, prefer `component_mode=largest` when detached embers would corrupt the contact anchor. Accept a looser action-specific `max_anchor_y_std` only after visual review confirms a fixed baseline, zero output-edge contact, zero paste clamping, and correct in-engine placement. Do not loosen the grounded-character defaults globally.
 
 Cross-action scale-profile drift is a generation QC signal. Preserve legitimate crouching, recoil, and compressed pose bboxes; inspect borderline hurt or knockback sheets visually instead of applying per-frame resize. For ordinary idle, run, walk, and grounded body attacks, reject unexplained profile drift.
 
