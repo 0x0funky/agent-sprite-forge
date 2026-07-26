@@ -308,6 +308,45 @@ class ParserTests(unittest.TestCase):
         )
         self.assertTrue(args.allow_source_edge_touch)
 
+    def test_source_edge_override_still_rejects_output_edge_touch(self) -> None:
+        parser = MODULE.build_parser()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            image = Image.new("RGBA", (40, 40), MAGENTA)
+            for row in range(2):
+                for col in range(2):
+                    left = col * 20
+                    top = row * 20
+                    image.paste(SUBJECT, (left, top + 5, left + 6, top + 15))
+            source = root / "raw.png"
+            image.save(source)
+
+            common = [
+                "process",
+                "--input", str(source),
+                "--target", "asset",
+                "--mode", "idle",
+                "--trim-border", "0",
+                "--edge-clean-depth", "0",
+                "--cell-size", "32",
+                "--component-mode", "largest",
+                "--strict-qc",
+                "--reject-edge-touch",
+                "--allow-source-edge-touch",
+            ]
+            MODULE.cmd_process(
+                parser.parse_args(
+                    [*common, "--output-dir", str(root / "safe"), "--fit-scale", "0.5"]
+                )
+            )
+
+            with self.assertRaisesRegex(ValueError, "frames touch a cell edge"):
+                MODULE.cmd_process(
+                    parser.parse_args(
+                        [*common, "--output-dir", str(root / "unsafe"), "--fit-scale", "1.0"]
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

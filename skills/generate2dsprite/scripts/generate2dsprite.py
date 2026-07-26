@@ -1411,8 +1411,11 @@ def cmd_process(args: argparse.Namespace) -> None:
     }
     (out_dir / "pipeline-meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
     qc_errors = []
-    if args.reject_edge_touch and metadata.get("edge_touch_frames"):
-        qc_errors.append(f"frames touch a cell edge: {metadata['edge_touch_frames']}")
+    rejected_edge_frames = metadata.get(
+        "output_edge_touch_frames" if args.allow_source_edge_touch else "edge_touch_frames"
+    )
+    if args.reject_edge_touch and rejected_edge_frames:
+        qc_errors.append(f"frames touch a cell edge: {rejected_edge_frames}")
     if args.strict_qc:
         if metadata.get("empty_frames"):
             qc_errors.append(f"empty frames: {metadata['empty_frames']}")
