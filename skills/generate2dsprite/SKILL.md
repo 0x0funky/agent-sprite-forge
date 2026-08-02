@@ -21,6 +21,7 @@ Infer these from the user request:
 - `bundle`: `single_asset` | `unit_bundle` | `spell_bundle` | `combat_bundle` | `line_bundle` | `hero_action_bundle` | `engine_atlas`
 - `effect_policy`: `all` | `largest`
 - `anchor`: `center` | `bottom` | `feet`
+- `stabilize_axis`: `none` | `core` | `core-register`
 - `scale_strategy`: `fit` | `preserve`
 - `scale_profile`: `none` | `create_from_accepted_action` | `reuse_existing`
 - `margin`: `tight` | `normal` | `safe`
@@ -42,6 +43,10 @@ Read [references/modes.md](references/modes.md) when the request is ambiguous.
 - For controllable heroes, main characters, and high-value player assets with multiple actions, generate separate per-action grid sheets first, QC each action, then deterministically assemble the engine-required atlas only after the grids pass visual review.
 - For controllable heroes, main characters, and high-value player body actions, default attack/shoot/cast body sheets to body-only. Do not include large slash arcs, muzzle flashes, projectiles, impact bursts, detached dust, long trails, or wide detached FX in the body sheet. Generate those as separate `fx`, `projectile`, or `impact` sheets and layer them in the game.
 - Only include wide attack FX in the same raw body sheet when the target runtime explicitly supports wider per-action cells plus per-action origin/anchor metadata. Otherwise, a wide FX bbox will force the body to shrink inside the fixed cell.
+- Horizontal axis stabilization is on by default and every processed sheet ships with it applied. Vertical anchoring alone does not stop horizontal slide: `align=feet` locks the feet line but leaves the body free to drift left/right, because a per-frame feet median moves whenever the stance widens, a foot lifts, or a weapon extends. Do not turn stabilization off for a body sheet.
+- Pass `--stabilize-axis none` only for assets whose horizontal travel inside the cell is the animation, such as a travelling projectile, a sweeping FX, or a dash smear. Everything else keeps the default.
+- Never let the horizontal anchor come from the frame bbox. A sword, cannon, tail, or cape that grows on one side moves the bbox center, so bbox-centered frames slide by exactly half the extension. The body axis must come from column alpha mass, which de-weights thin protrusions.
+- Treat a large stabilization correction as a generation defect, not a fix. Stabilization is a finishing pass; if `qc_summary.stabilize_max_shift_px` exceeds roughly 8-10% of the cell size, the raw sheet drifted and should be regenerated with a stronger centering contract.
 - When a grounded hero/player attack must keep an integrated weapon in the body sheet and there is no runtime FX layer, process it with `scale_strategy=preserve` and `align=feet` by default. This preserves raw-cell scale, translates frames to a shared feet line, and avoids bbox-fit shrinking from long swords, spears, weapon trails, capes, or wide melee poses.
 - Write the art prompt yourself. Do not default to the prompt-builder script.
 - Use built-in `image_gen` for every raw image.
@@ -208,6 +213,7 @@ The processor is intentionally low-level. The agent chooses:
 - `rows` / `cols`
 - `fit_scale`
 - `align`
+- `stabilize_axis`
 - `shared_scale`
 - `component_mode`
 - `component_padding`
@@ -219,6 +225,47 @@ Use the processor to gather QC metadata, not to make aesthetic decisions for you
 For hero action bundles, process each action grid as its own sheet before any final atlas assembly. Use `component_mode=largest` for body-only hero grids. Use `component_mode=all` only for projectile, impact, aura, slash FX, or intentionally detached FX sheets, not for fixed-cell hero body attacks that need stable body scale.
 
 Use `--scale-strategy preserve --align feet` for grounded hero/player body sheets when the raw art already has acceptable scale but bbox-fit would shrink the character because of a long weapon, extended pose, cape, or integrated melee effect. Preserve mode applies one uniform raw-cell-to-output scale to every frame, including one shared safety margin, then translates each detected subject to the shared anchor. It never applies a different bbox-fit scale per frame. Use the default `fit` strategy for compact bodies, creatures, projectiles, impacts, and intentionally normalized FX.
+
+#### Kill horizontal slide
+
+`align=feet` and `scale_strategy=preserve` fix vertical drift and scale drift, but the subject can still slide left and right between frames. This is the most common remaining quality defect in generated attack, cast, and run sheets, and it is a processing problem, not only a prompt problem.
+
+`process` therefore runs `--stabilize-axis core-register` by default, so frames, `sheet-transparent.png`, `animation.gif`, and `godot-sprite3d.json` are all already stabilized. The flags below only need to appear when changing that behavior:
+
+```bash
+python scripts/generate2dsprite.py process \
+  --input <raw-sheet.png> \
+  --target player --mode attack --rows 4 --cols 4 \
+  --output-dir <out-dir> \
+  --cell-size 256 --fit-scale 0.88 \
+  --align feet --scale-strategy preserve --component-mode largest \
+  --strict-qc --max-body-scale-cv 0.08 --max-anchor-y-std 0.05 --max-axis-x-std 0.01
+```
+
+How the axis is found:
+
+- Each frame is reduced to per-column alpha mass, then the axis is the mass-weighted median. A dense torso outweighs a thin cannon, sword, tail, or cape, so an extension that grows across the animation barely moves the axis. A bbox center would move by half the extension.
+- The estimate is then mode-seeked toward the densest column cluster, so an off-center detached element cannot pull it.
+- `core-register` adds a bounded refinement pass that maximizes silhouette overlap against the mean of all aligned frames, limited to `--stabilize-register-window` pixels. The bound matters: unbounded registration walks the subject away whenever the silhouette changes.
+- The shared axis lands on the cell center, so it matches `output_origin` and `godot-sprite3d.json`'s `sprite3d_offset`. This also aligns separate action sheets with each other: idle, run, and attack all put the body root on the same point, so a runtime animation switch cannot jump the character sideways.
+- Frames are translated by whole pixels only, so pixel art stays crisp, and translation is clamped so a correction can never push a subject into the cell edge.
+
+Flags worth changing:
+
+- `--stabilize-axis none` disables the pass. Reserve it for travelling projectiles and sweeping FX.
+- `--stabilize-target mean` keeps the sheet's own average axis instead of the cell center. It moves frames less, but breaks the cross-action alignment above, so prefer the default for anything with a runtime contract.
+- `--stabilize-band-top` / `--stabilize-band-bottom` restrict the axis measurement to part of the subject, top-relative. Use `0.0 0.55` for a character whose legs move much more than the torso.
+- `--stabilize-strength` below `1.0` keeps some of the original motion. Use it when an attack has an intentional lunge that full alignment would flatten.
+- `--max-stabilize-shift` caps the correction, defaulting to 15% of the cell size. Under `--strict-qc`, hitting the cap fails QC, because a sheet needing that much correction should be regenerated.
+
+To fix frames that are already processed, without regenerating or re-running the full pipeline:
+
+```bash
+python scripts/generate2dsprite.py stabilize \
+  --frames-dir <run-dir> --prefix attack --rows 4 --cols 4 --duration 80
+```
+
+This writes corrected frames, `sheet-transparent.png`, `animation.gif`, and `stabilize-meta.json` into `<run-dir>/stabilized/`. Pass `--in-place` or `--output-dir` to choose a different destination.
 
 For a character with multiple actions, write a scale profile only after an accepted reference action passes QC:
 
@@ -276,6 +323,9 @@ Check:
 - for fixed-cell runtimes, did a wide weapon trail or FX arc shrink the body inside the cell
 - for preserve-scale runs, are feet/bottom anchors aligned without any `paste_clamped` frames
 - for grounded high-value body sheets, does `qc_summary.body_scale_cv` stay at or below about `0.08` and `qc_summary.anchor_y_std` at or below about `0.05`
+- does the subject slide sideways: `qc_summary.axis_x_std` should stay at or below about `0.01` of the cell width after stabilization
+- was the raw sheet already well centered: compare `qc_summary.pre_stabilize_axis_x_std` against `axis_x_std`, and treat a large `stabilize_max_shift_px` as a regeneration signal even when the stabilized output passes
+- did stabilization run out of room: any `stabilize_clamped_frames` means the correction was capped, not completed
 - for rooted boss idles, do the feet and pelvis remain fixed while motion comes from compression, glow, shoulders, and attached secondary elements
 - for ground-contact FX, is the authored ignition/baseline stable even when flame tips, embers, or effect height change
 - for multi-action bundles, does `qc_summary.profile_body_scale_drift` stay within the scale profile limit, normally `0.08`
@@ -363,6 +413,7 @@ For `hero_action_bundle`, expect:
 - `4x4`, `5x5`, and custom grids
   - use as raw generation only for one coherent long action sequence, canonical directional locomotion, prop packs, or tileset-like atlases
   - use as delivery atlases for mixed actions only after separate action sheets pass QC
+- `stabilize_axis=core-register` is the processor default and applies to every processed sheet; override with `none` only for projectiles, impacts, and FX whose horizontal travel is the animation
 - use `shared_scale` by default for any multi-frame asset where frame-to-frame consistency matters
 - use `largest` component mode for hero/player body grids; use `all` for separate FX/projectile/impact sheets
 - use `scale_strategy=preserve` for grounded hero/player melee attacks with integrated weapons or wide body poses that would shrink under bbox-fit normalization; use `fit` for normal compact sheets and FX
@@ -372,5 +423,7 @@ For `hero_action_bundle`, expect:
 - `references/modes.md`: asset, action, bundle, and sheet selection
 - `references/prompt-rules.md`: manual prompt patterns and containment rules
 - `scripts/generate2dsprite.py`: postprocess primitive for cleanup, extraction, alignment, QC, and GIF export
+  - `process --stabilize-axis`: remove horizontal slide during processing
+  - `stabilize`: re-align frame PNGs that were already processed
 - `scripts/make_anchor_layout.py`: repeat an accepted character frame into a fixed scale/root generation template
 - `scripts/make_layout_guide.py`: create abstract geometry-only guides for prop packs and suitable grids

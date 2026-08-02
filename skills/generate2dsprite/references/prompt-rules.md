@@ -186,6 +186,7 @@ For controllable heroes, main characters, and fixed-cell game sprites, write att
 - no detached dust cloud
 - weapon remains close enough that the body bbox stays near idle/run size
 - body height and feet/bottom anchor match the accepted idle/run sheet
+- the torso and head stay on one shared vertical centerline in every cell, with the weapon extending away from a fixed body root instead of the whole body shifting sideways
 
 If the attack needs a large slash arc, sword trail, muzzle flash, or hit spark, generate it as a separate `fx`, `projectile`, or `impact` sheet and layer it in the runtime.
 
@@ -333,10 +334,13 @@ python scripts/generate2dsprite.py process \
   --component-mode largest \
   --strict-qc \
   --max-body-scale-cv 0.08 \
-  --max-anchor-y-std 0.05
+  --max-anchor-y-std 0.05 \
+  --max-axis-x-std 0.01
 ```
 
 For a multi-action bundle, add `--write-scale-profile <profile.json>` to the accepted idle/run reference process, then use `--scale-profile <profile.json>` for attack, hurt, cast-body, walk, and other compatible grounded actions. Do not create a separate profile for each action.
+
+Preserve-scale controls vertical anchor and scale, not horizontal placement. Horizontal stabilization is a separate default pass (`--stabilize-axis core-register`) that puts every frame's body axis on the cell center, so the body cannot slide left and right when the stance widens or a weapon extends. Treat normalized `axis_x_std > 0.01` as unresolved slide, and a `stabilize_max_shift_px` above roughly 8-10% of the cell size as a raw-generation defect worth regenerating even when the stabilized frames pass. Disable it only for travelling projectiles and sweeping FX.
 
 Preserve-scale means: fixed-grid cut, chroma-key cleanup, apply one uniform raw-cell scale and safety margin to every frame, then translate each detected subject to one shared feet/bottom anchor. It does not apply a different bbox-fit scale per frame. A scale profile extends this contract across separate action sheets. QC should require no empty, edge-touching, or paste-clamped frames. For grounded high-value humanoid body actions, treat `body_scale_cv > 0.08`, normalized `anchor_y_std > 0.05`, or unexplained profile scale drift above the profile limit as a regeneration signal. Do not use these grounded thresholds for jumps, knockback, flying actors, creatures with large posture/silhouette changes, or FX.
 

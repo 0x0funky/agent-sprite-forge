@@ -41,7 +41,7 @@ class SplitGridTests(unittest.TestCase):
         image = Image.new("RGBA", (20, 20), MAGENTA)
         image.paste(SUBJECT, (2, 5, 18, 15))
 
-        _frames, info = MODULE.split_grid(
+        _frames, info, _stabilize = MODULE.split_grid(
             image,
             rows=1,
             cols=1,
@@ -60,7 +60,7 @@ class SplitGridTests(unittest.TestCase):
     def test_empty_frame_is_reported_as_empty(self) -> None:
         image = Image.new("RGBA", (20, 20), MAGENTA)
 
-        frames, info = MODULE.split_grid(
+        frames, info, _stabilize = MODULE.split_grid(
             image,
             rows=1,
             cols=1,
@@ -81,7 +81,7 @@ class SplitGridTests(unittest.TestCase):
         image.paste(SUBJECT, (3, 3, 9, 15))
         image.paste(SUBJECT, (28, 6, 34, 18))
 
-        frames, info = MODULE.split_grid(
+        frames, info, _stabilize = MODULE.split_grid(
             image,
             rows=1,
             cols=2,
@@ -107,7 +107,7 @@ class SplitGridTests(unittest.TestCase):
         image.paste(SUBJECT, (8, 8, 12, 16))
         image.paste(SUBJECT, (32, 4, 40, 20))
 
-        _frames, info = MODULE.split_grid(
+        _frames, info, _stabilize = MODULE.split_grid(
             image,
             rows=1,
             cols=2,
@@ -129,6 +129,134 @@ class SplitGridTests(unittest.TestCase):
         self.assertGreater(summary["output_subject_height_mean"], 0)
         self.assertGreater(summary["body_scale_cv"], 0.2)
         self.assertGreater(summary["anchor_y_std"], 0.05)
+
+
+class AxisStabilizationTests(unittest.TestCase):
+    def make_frame(self, size: int, body_x: int, arm_length: int) -> Image.Image:
+        """A dense body block plus a thin horizontal arm/weapon extension."""
+        frame = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+        body = Image.new("RGBA", (10, 30), SUBJECT)
+        frame.paste(body, (body_x, size - 34))
+        if arm_length:
+            arm = Image.new("RGBA", (arm_length, 3), SUBJECT)
+            frame.paste(arm, (body_x + 10, size - 30))
+        return frame
+
+    def test_body_axis_ignores_thin_extension(self) -> None:
+        short = MODULE.body_axis_x(self.make_frame(64, 20, 2))
+        long = MODULE.body_axis_x(self.make_frame(64, 20, 24))
+
+        self.assertIsNotNone(short)
+        self.assertIsNotNone(long)
+        # A growing weapon must not drag the body axis the way a bbox center would.
+        self.assertLess(abs(long - short), 1.5)
+
+    def test_stabilize_removes_horizontal_slide(self) -> None:
+        frames = [
+            self.make_frame(64, 20, 2),
+            self.make_frame(64, 28, 20),
+            self.make_frame(64, 14, 12),
+        ]
+        info: list[dict[str, object]] = [{} for _ in frames]
+
+        report = MODULE.stabilize_axis(
+            frames, info, "core-register", (0.0, 1.0), 0.30, 4, 1.0, 32
+        )
+
+        self.assertTrue(report["applied"])
+        self.assertLess(report["post_axis_x_std_px"], 1.0)
+        self.assertLess(report["post_axis_x_std_px"], report["pre_axis_x_std_px"])
+        self.assertEqual(report["shift_clamped_count"], 0)
+        self.assertEqual(report["edge_clamped_count"], 0)
+        self.assertEqual([i["stabilize_shift_x"] for i in info], report["shifts"])
+
+    def test_stabilize_lands_axis_on_cell_center_by_default(self) -> None:
+        # Every frame sits left of centre, so a mean-based target would leave the shared
+        # axis off-centre and break output_origin.
+        frames = [self.make_frame(64, 8, 2), self.make_frame(64, 12, 6), self.make_frame(64, 10, 3)]
+        info: list[dict[str, object]] = [{} for _ in frames]
+
+        report = MODULE.stabilize_axis(
+            frames, info, "core-register", (0.0, 1.0), 0.30, 4, 1.0, 64
+        )
+
+        self.assertEqual(report["target_axis_x"], 32.0)
+        landed = [MODULE.body_axis_x(frame) for frame in frames]
+        for axis in landed:
+            self.assertLess(abs(axis - 32.0), 2.0)
+
+    def test_stabilize_mean_target_keeps_sheet_average_axis(self) -> None:
+        frames = [self.make_frame(64, 8, 2), self.make_frame(64, 12, 6), self.make_frame(64, 10, 3)]
+        info: list[dict[str, object]] = [{} for _ in frames]
+
+        report = MODULE.stabilize_axis(
+            frames, info, "core", (0.0, 1.0), 0.30, 0, 1.0, 64, 0, "mean"
+        )
+
+        self.assertLess(report["target_axis_x"], 32.0)
+
+    def test_stabilize_respects_max_shift(self) -> None:
+        frames = [self.make_frame(64, 6, 2), self.make_frame(64, 40, 2)]
+        info: list[dict[str, object]] = [{} for _ in frames]
+
+        report = MODULE.stabilize_axis(frames, info, "core", (0.0, 1.0), 0.30, 0, 1.0, 3)
+
+        self.assertTrue(all(abs(dx) <= 3 for dx in report["shifts"]))
+        self.assertGreater(report["shift_clamped_count"], 0)
+
+    def test_stabilize_never_pushes_subject_into_cell_edge(self) -> None:
+        frames = [self.make_frame(64, 2, 2), self.make_frame(64, 40, 2)]
+        info: list[dict[str, object]] = [{} for _ in frames]
+
+        MODULE.stabilize_axis(frames, info, "core", (0.0, 1.0), 0.30, 0, 1.0, 64, 0)
+
+        for frame in frames:
+            bbox = frame.getbbox()
+            self.assertIsNotNone(bbox)
+            self.assertFalse(MODULE.bbox_touches_edge(bbox, frame.width, frame.height, 0))
+
+    def test_split_grid_reports_axis_spread_without_stabilizing(self) -> None:
+        image = Image.new("RGBA", (80, 40), MAGENTA)
+        image.paste(SUBJECT, (5, 10, 15, 34))
+        image.paste(SUBJECT, (58, 10, 68, 34))
+
+        frames, info, report = MODULE.split_grid(
+            image,
+            rows=1,
+            cols=2,
+            cell_size=40,
+            threshold=100,
+            edge_threshold=150,
+            trim_border_px=0,
+            edge_clean_depth=0,
+            align="feet",
+            component_mode="largest",
+            scale_strategy="preserve",
+        )
+
+        self.assertEqual(report["mode"], "none")
+        self.assertFalse(report["applied"])
+        self.assertIn("axis_x_std_px", report)
+        self.assertEqual([i["stabilize_shift_x"] for i in info], [0, 0])
+        self.assertEqual(len(frames), 2)
+
+    def test_qc_summary_normalizes_axis_spread_by_cell_size(self) -> None:
+        report = {
+            "mode": "core-register",
+            "pre_axis_x_std_px": 8.0,
+            "post_axis_x_std_px": 2.0,
+            "post_axis_x_range_px": 5.0,
+            "max_applied_shift": 13,
+            "shift_clamped_count": 0,
+            "edge_clamped_count": 1,
+        }
+
+        summary = MODULE.summarize_frame_qc([], report, 200)
+
+        self.assertAlmostEqual(summary["axis_x_std"], 0.01)
+        self.assertAlmostEqual(summary["pre_stabilize_axis_x_std"], 0.04)
+        self.assertEqual(summary["stabilize_max_shift_px"], 13)
+        self.assertEqual(summary["stabilize_clamped_count"], 1)
 
 
 class ScaleProfileTests(unittest.TestCase):
