@@ -577,7 +577,234 @@ def estimate_anchor(
     return (anchor_x, anchor_y)
 
 
-def summarize_frame_qc(frame_info: list[dict[str, object]]) -> dict[str, object]:
+def column_mass(img: Image.Image, band: tuple[float, float]) -> np.ndarray | None:
+    """Per-column alpha mass over a vertical band of the subject, top-relative."""
+    alpha = np.asarray(img.getchannel("A")) > 127
+    ys, _xs = np.nonzero(alpha)
+    if ys.size == 0:
+        return None
+    top, bottom = int(ys.min()), int(ys.max())
+    height = bottom - top + 1
+    lo = int(top + band[0] * height)
+    hi = int(top + band[1] * height)
+    strip = alpha[lo : max(hi + 1, lo + 1)]
+    mass = strip.sum(axis=0).astype(float)
+    return mass if mass.sum() > 0 else None
+
+
+def weighted_median(weights: np.ndarray) -> float | None:
+    total = float(weights.sum())
+    if total <= 0:
+        return None
+    cumulative = np.cumsum(weights) / total
+    return float(np.interp(0.5, cumulative, np.arange(len(weights))))
+
+
+def body_axis_x(
+    img: Image.Image,
+    band: tuple[float, float] = (0.0, 1.0),
+    width_fraction: float = 0.30,
+    iterations: int = 8,
+) -> float | None:
+    """Estimate the subject's vertical centerline.
+
+    Uses the per-column alpha mass, which already de-weights thin protrusions such as
+    weapons, tails, capes, and FX, then mode-seeks toward the densest body column
+    cluster so a long extension cannot drag the axis the way a bbox center does.
+    """
+    mass = column_mass(img, band)
+    if mass is None:
+        return None
+    axis = weighted_median(mass)
+    if axis is None:
+        return None
+    half_window = max(4.0, img.width * width_fraction / 2)
+    columns = np.arange(len(mass))
+    for _ in range(iterations):
+        windowed = mass * (np.abs(columns - axis) <= half_window)
+        moved = weighted_median(windowed)
+        if moved is None:
+            break
+        if abs(moved - axis) < 0.05:
+            axis = moved
+            break
+        axis = moved
+    return float(axis)
+
+
+def shift_frame_x(img: Image.Image, dx: int) -> Image.Image:
+    if dx == 0:
+        return img
+    shifted = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    shifted.paste(img, (dx, 0), img)
+    return shifted
+
+
+def _mask_overlap(mask: np.ndarray, reference: np.ndarray, dx: int) -> float:
+    shifted = np.roll(mask, dx, axis=1)
+    if dx > 0:
+        shifted[:, :dx] = 0.0
+    elif dx < 0:
+        shifted[:, dx:] = 0.0
+    intersection = float((shifted * reference).sum())
+    union = float(shifted.sum() + reference.sum() - intersection)
+    return intersection / union if union > 0 else 0.0
+
+
+def refine_axis_shifts(
+    frames: list[Image.Image],
+    shifts: list[int],
+    window: int,
+    iterations: int = 3,
+) -> list[int]:
+    """Polish axis shifts by maximizing silhouette overlap against a shared reference.
+
+    The search stays inside +/-`window` of the axis estimate so registration can correct
+    a few pixels of axis bias without letting a changing silhouette walk the subject away.
+    """
+    if window <= 0 or not frames:
+        return shifts
+    masks = [(np.asarray(frame.getchannel("A")) > 127).astype(np.float32) for frame in frames]
+    current = list(shifts)
+    for _ in range(iterations):
+        accumulator = np.zeros(masks[0].shape, dtype=np.float32)
+        for mask, dx in zip(masks, current):
+            shifted = np.roll(mask, dx, axis=1)
+            if dx > 0:
+                shifted[:, :dx] = 0.0
+            elif dx < 0:
+                shifted[:, dx:] = 0.0
+            accumulator += shifted
+        reference = accumulator / len(masks)
+        updated = []
+        for mask, dx in zip(masks, current):
+            candidates = range(dx - window, dx + window + 1)
+            updated.append(max(candidates, key=lambda c: _mask_overlap(mask, reference, c)))
+        centered = int(round(float(np.mean(updated))))
+        updated = [value - centered for value in updated]
+        if updated == current:
+            break
+        current = updated
+    return current
+
+
+def measure_axis_spread(frames: list[Image.Image], band: tuple[float, float]) -> dict[str, float]:
+    axes = [body_axis_x(frame, band) for frame in frames]
+    valid = np.asarray([axis for axis in axes if axis is not None], dtype=float)
+    if valid.size == 0:
+        return {"axis_x_std_px": 0.0, "axis_x_range_px": 0.0}
+    return {
+        "axis_x_std_px": float(np.std(valid)),
+        "axis_x_range_px": float(valid.max() - valid.min()),
+    }
+
+
+def stabilize_axis(
+    frames: list[Image.Image],
+    frame_info: list[dict[str, object]],
+    mode: str,
+    band: tuple[float, float],
+    width_fraction: float,
+    register_window: int,
+    strength: float,
+    max_shift: int,
+    edge_touch_margin: int = 0,
+    target_mode: str = "center",
+) -> dict[str, object]:
+    """Translate frames horizontally so every subject shares one vertical centerline.
+
+    Returns diagnostics and mutates `frames` in place. Only whole-pixel translation is
+    applied, so pixel-art frames stay crisp.
+    """
+    cell_size = frames[0].width if frames else 0
+    report: dict[str, object] = {
+        "mode": mode,
+        "band": list(band),
+        "width_fraction": width_fraction,
+        "register_window": register_window,
+        "strength": strength,
+        "max_shift": max_shift,
+    }
+    report.update(
+        {f"pre_{key}": value for key, value in measure_axis_spread(frames, band).items()}
+    )
+
+    axes = [body_axis_x(frame, band, width_fraction) for frame in frames]
+    measured = [axis for axis in axes if axis is not None]
+    if not measured:
+        report["applied"] = False
+        report["reason"] = "no subject pixels"
+        return report
+    target = cell_size / 2 if target_mode == "center" else float(np.mean(measured))
+    shifts = [0 if axis is None else int(round(target - axis)) for axis in axes]
+
+    if mode == "core-register" and register_window > 0:
+        shifts = refine_axis_shifts(frames, shifts, register_window)
+
+    if strength < 1.0:
+        shifts = [int(round(dx * strength)) for dx in shifts]
+
+    # Refinement and partial strength both re-center the series on its own mean, so put
+    # the shared axis back on the requested target with one uniform offset. Landing every
+    # action on the cell center keeps `output_origin` truthful and stops a character from
+    # jumping sideways when the runtime switches between action sheets.
+    landed = [axis + dx for axis, dx in zip(axes, shifts) if axis is not None]
+    if landed:
+        global_offset = int(round(target - float(np.mean(landed))))
+        shifts = [dx + global_offset for dx in shifts]
+
+    clamped_shift = [max(-max_shift, min(max_shift, dx)) for dx in shifts]
+    shift_clamped = [a != b for a, b in zip(shifts, clamped_shift)]
+
+    # Never translate a subject into a cell edge: keep at least the edge-touch margin of
+    # clear pixels on both sides, and report when that limit blocked a correction.
+    edge_clamped: list[bool] = []
+    for index, (frame, dx) in enumerate(zip(frames, clamped_shift)):
+        bbox = frame.getbbox()
+        if bbox is None:
+            edge_clamped.append(False)
+            clamped_shift[index] = 0
+            continue
+        room_left = max(0, bbox[0] - edge_touch_margin - 1)
+        room_right = max(0, (cell_size - edge_touch_margin - 1) - bbox[2])
+        limited = max(-room_left, min(room_right, dx))
+        edge_clamped.append(limited != dx)
+        clamped_shift[index] = limited
+        frames[index] = shift_frame_x(frame, limited)
+
+    for info, frame, requested, applied, hit_limit, hit_edge in zip(
+        frame_info, frames, shifts, clamped_shift, shift_clamped, edge_clamped
+    ):
+        info["stabilize_shift_x"] = applied
+        info["stabilize_requested_shift_x"] = requested
+        info["stabilize_shift_clamped"] = bool(hit_limit)
+        info["stabilize_edge_clamped"] = bool(hit_edge)
+        aligned_bbox = frame.getbbox()
+        if aligned_bbox is not None:
+            info["aligned_bbox"] = list(aligned_bbox)
+            output_edge_touch = bbox_touches_edge(
+                aligned_bbox, cell_size, frame.height, edge_touch_margin
+            )
+            info["output_edge_touch"] = output_edge_touch
+            info["edge_touch"] = bool(info.get("source_edge_touch")) or output_edge_touch
+
+    report.update(
+        {f"post_{key}": value for key, value in measure_axis_spread(frames, band).items()}
+    )
+    report["applied"] = True
+    report["target_axis_x"] = target
+    report["shifts"] = clamped_shift
+    report["max_applied_shift"] = max((abs(dx) for dx in clamped_shift), default=0)
+    report["shift_clamped_count"] = sum(shift_clamped)
+    report["edge_clamped_count"] = sum(edge_clamped)
+    return report
+
+
+def summarize_frame_qc(
+    frame_info: list[dict[str, object]],
+    stabilize_report: dict[str, object] | None = None,
+    cell_size: int | None = None,
+) -> dict[str, object]:
     valid = [info for info in frame_info if not bool(info.get("is_empty"))]
     subject_heights = np.asarray(
         [
@@ -609,7 +836,22 @@ def summarize_frame_qc(frame_info: list[dict[str, object]]) -> dict[str, object]
     )
 
     scale_mean = float(np.mean(scale_proxy)) if scale_proxy.size else 0.0
+    axis_summary: dict[str, object] = {}
+    if stabilize_report is not None and cell_size:
+        post_std = float(stabilize_report.get("post_axis_x_std_px", 0.0))
+        pre_std = float(stabilize_report.get("pre_axis_x_std_px", 0.0))
+        axis_summary = {
+            "axis_x_std_px": post_std,
+            "axis_x_std": post_std / cell_size,
+            "axis_x_range_px": float(stabilize_report.get("post_axis_x_range_px", 0.0)),
+            "pre_stabilize_axis_x_std": pre_std / cell_size,
+            "stabilize_mode": stabilize_report.get("mode", "none"),
+            "stabilize_max_shift_px": int(stabilize_report.get("max_applied_shift", 0)),
+            "stabilize_clamped_count": int(stabilize_report.get("shift_clamped_count", 0))
+            + int(stabilize_report.get("edge_clamped_count", 0)),
+        }
     return {
+        **axis_summary,
         "frame_count": len(frame_info),
         "valid_frame_count": len(valid),
         "empty_count": sum(bool(info.get("is_empty")) for info in frame_info),
@@ -922,7 +1164,14 @@ def split_grid(
     min_component_area: int = 1,
     edge_touch_margin: int = 0,
     scale_strategy: str = "fit",
-) -> tuple[list[Image.Image], list[dict[str, object]]]:
+    stabilize_axis_mode: str = "none",
+    stabilize_band: tuple[float, float] = (0.0, 1.0),
+    stabilize_width_fraction: float = 0.30,
+    stabilize_register_window: int = 4,
+    stabilize_strength: float = 1.0,
+    max_stabilize_shift: int | None = None,
+    stabilize_target: str = "center",
+) -> tuple[list[Image.Image], list[dict[str, object]], dict[str, object]]:
     cleaned = remove_bg_magenta(img.convert("RGBA"), threshold, edge_threshold)
     width, height = cleaned.size
     cell_width, cell_height = width // cols, height // rows
@@ -985,6 +1234,37 @@ def split_grid(
                     "edge_touch": source_edge_touch,
                 }
             )
+
+    shift_limit = (
+        max_stabilize_shift if max_stabilize_shift is not None else int(round(cell_size * 0.15))
+    )
+
+    def finish(
+        built: list[Image.Image],
+    ) -> tuple[list[Image.Image], list[dict[str, object]], dict[str, object]]:
+        if stabilize_axis_mode == "none":
+            report = {"mode": "none", "applied": False, "band": list(stabilize_band)}
+            report.update(measure_axis_spread(built, stabilize_band))
+            report["pre_axis_x_std_px"] = report["axis_x_std_px"]
+            report["post_axis_x_std_px"] = report["axis_x_std_px"]
+            report["pre_axis_x_range_px"] = report["axis_x_range_px"]
+            report["post_axis_x_range_px"] = report["axis_x_range_px"]
+            for info in frame_info:
+                info["stabilize_shift_x"] = 0
+            return built, frame_info, report
+        report = stabilize_axis(
+            built,
+            frame_info,
+            stabilize_axis_mode,
+            stabilize_band,
+            stabilize_width_fraction,
+            stabilize_register_window,
+            stabilize_strength,
+            shift_limit,
+            edge_touch_margin,
+            stabilize_target,
+        )
+        return built, frame_info, report
 
     if scale_strategy == "preserve":
         target_x = cell_size / 2
@@ -1055,7 +1335,7 @@ def split_grid(
             info["scale_strategy"] = scale_strategy
             info["shared_center_x"] = target_x
             info["shared_feet_y"] = target_y
-        return frames, frame_info
+        return finish(frames)
 
     common_scale = None
     if shared_scale:
@@ -1109,7 +1389,7 @@ def split_grid(
         info["scale_strategy"] = "fit"
         info["scale_changed"] = bool(info["bbox_scale_applied"])
         frames.append(canvas)
-    return frames, frame_info
+    return finish(frames)
 
 
 def compose_sheet(frames: list[Image.Image], rows: int, cols: int, cell_size: int) -> Image.Image:
@@ -1279,7 +1559,7 @@ def cmd_process(args: argparse.Namespace) -> None:
         cleaned = remove_bg_magenta(raw.copy(), args.threshold, args.edge_threshold)
         cleaned.save(out_dir / "raw-sheet-clean.png")
 
-        frames, frame_qc = split_grid(
+        frames, frame_qc, stabilize_report = split_grid(
             raw,
             rows,
             cols,
@@ -1296,6 +1576,13 @@ def cmd_process(args: argparse.Namespace) -> None:
             min_component_area=args.min_component_area,
             edge_touch_margin=args.edge_touch_margin,
             scale_strategy=args.scale_strategy,
+            stabilize_axis_mode=args.stabilize_axis,
+            stabilize_band=(args.stabilize_band_top, args.stabilize_band_bottom),
+            stabilize_width_fraction=args.stabilize_width_fraction,
+            stabilize_register_window=args.stabilize_register_window,
+            stabilize_strength=args.stabilize_strength,
+            max_stabilize_shift=args.max_stabilize_shift,
+            stabilize_target=args.stabilize_target,
         )
         if has_custom_grid:
             prefix = args.label_prefix or args.mode
@@ -1347,10 +1634,21 @@ def cmd_process(args: argparse.Namespace) -> None:
         metadata["paste_clamped_frames"] = [
             info["grid"] for info in frame_qc if bool(info.get("paste_clamped"))
         ]
-        metadata["qc_summary"] = summarize_frame_qc(frame_qc)
+        metadata["stabilize_axis"] = stabilize_report
+        metadata["stabilize_clamped_frames"] = [
+            info["grid"]
+            for info in frame_qc
+            if bool(info.get("stabilize_shift_clamped")) or bool(info.get("stabilize_edge_clamped"))
+        ]
+        metadata["qc_summary"] = summarize_frame_qc(frame_qc, stabilize_report, cell_size)
         valid_origins = [info.get("anchor_target") for info in frame_qc if info.get("anchor_target")]
         if valid_origins:
             metadata["output_origin"] = valid_origins[0]
+        if stabilize_report.get("applied") and metadata.get("output_origin"):
+            # Stabilization, not the per-frame anchor, decides where the body axis ends up.
+            origin = list(metadata["output_origin"])
+            origin[0] = float(stabilize_report["target_axis_x"])
+            metadata["output_origin"] = origin
         if scale_profile:
             drift = profile_scale_drift(metadata["qc_summary"], scale_profile)
             metadata["qc_summary"]["profile_body_scale_drift"] = drift
@@ -1407,6 +1705,7 @@ def cmd_process(args: argparse.Namespace) -> None:
         "allow_source_edge_touch": args.allow_source_edge_touch,
         "max_body_scale_cv": args.max_body_scale_cv,
         "max_anchor_y_std": args.max_anchor_y_std,
+        "max_axis_x_std": args.max_axis_x_std,
         "max_profile_scale_drift": effective_profile_limit,
     }
     (out_dir / "pipeline-meta.json").write_text(json.dumps(metadata, indent=2), encoding="utf-8")
@@ -1446,6 +1745,20 @@ def cmd_process(args: argparse.Namespace) -> None:
             qc_errors.append(
                 f"anchor Y std {float(qc_summary['anchor_y_std']):.4f} exceeds "
                 f"{args.max_anchor_y_std:.4f}"
+            )
+        if (
+            args.max_axis_x_std is not None
+            and float(qc_summary.get("axis_x_std", 0.0)) > args.max_axis_x_std
+        ):
+            qc_errors.append(
+                f"horizontal body-axis std {float(qc_summary['axis_x_std']):.4f} exceeds "
+                f"{args.max_axis_x_std:.4f} (frames slide sideways; use --stabilize-axis "
+                "core-register or regenerate the raw sheet)"
+            )
+        if metadata.get("stabilize_clamped_frames"):
+            qc_errors.append(
+                "stabilization hit its shift limit on frames "
+                f"{metadata['stabilize_clamped_frames']}; the raw sheet drifts too far to correct"
             )
         if scale_profile:
             profile_limit = effective_profile_limit
@@ -1488,6 +1801,58 @@ def cmd_process(args: argparse.Namespace) -> None:
     print(str(out_dir.resolve()))
 
 
+def cmd_stabilize(args: argparse.Namespace) -> None:
+    """Re-align already-processed frame PNGs onto one shared vertical centerline."""
+    frame_paths = sorted(
+        args.frames_dir.glob(f"{args.prefix}-*.png"),
+        key=lambda path: int(re.search(r"-(\d+)\.png$", path.name).group(1)),
+    )
+    if not frame_paths:
+        raise ValueError(f"No frames matching '{args.prefix}-N.png' in {args.frames_dir}")
+
+    frames = [Image.open(path).convert("RGBA") for path in frame_paths]
+    cell_size = frames[0].width
+    if any(frame.size != frames[0].size for frame in frames):
+        raise ValueError("All frames must share one cell size before stabilization.")
+
+    frame_info: list[dict[str, object]] = [{} for _ in frames]
+    band = (args.stabilize_band_top, args.stabilize_band_bottom)
+    shift_limit = (
+        args.max_stabilize_shift
+        if args.max_stabilize_shift is not None
+        else int(round(cell_size * 0.15))
+    )
+    report = stabilize_axis(
+        frames,
+        frame_info,
+        args.stabilize_axis,
+        band,
+        args.stabilize_width_fraction,
+        args.stabilize_register_window,
+        args.stabilize_strength,
+        shift_limit,
+        0,
+        args.stabilize_target,
+    )
+
+    out_dir = args.output_dir or (args.frames_dir if args.in_place else args.frames_dir / "stabilized")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for path, frame in zip(frame_paths, frames):
+        frame.save(out_dir / path.name)
+
+    rows, cols = args.rows, args.cols
+    if rows and cols:
+        compose_sheet(frames, rows, cols, cell_size).save(out_dir / "sheet-transparent.png")
+    save_transparent_gif(frames, out_dir / "animation.gif", args.duration)
+
+    report["frame_count"] = len(frames)
+    report["cell_size"] = cell_size
+    report["source_dir"] = str(args.frames_dir)
+    report["frames"] = [path.name for path in frame_paths]
+    (out_dir / "stabilize-meta.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    print(str(out_dir.resolve()))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -1522,6 +1887,30 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_parser.add_argument("--max-world-height-drift", type=float, default=0.02)
     bundle_parser.add_argument("--max-pixel-size-drift", type=float, default=0.02)
     bundle_parser.add_argument("--output", required=True, type=Path)
+
+    stabilize_parser = subparsers.add_parser(
+        "stabilize",
+        help="Re-align already-processed frame PNGs onto one shared vertical centerline.",
+    )
+    stabilize_parser.add_argument("--frames-dir", required=True, type=Path)
+    stabilize_parser.add_argument("--prefix", required=True, help="Frame name prefix, e.g. 'attack'.")
+    stabilize_parser.add_argument("--output-dir", type=Path)
+    stabilize_parser.add_argument("--in-place", action="store_true")
+    stabilize_parser.add_argument("--rows", type=int)
+    stabilize_parser.add_argument("--cols", type=int)
+    stabilize_parser.add_argument("--duration", type=int, default=200)
+    stabilize_parser.add_argument(
+        "--stabilize-axis", choices=["core", "core-register"], default="core-register"
+    )
+    stabilize_parser.add_argument(
+        "--stabilize-target", choices=["center", "mean"], default="center"
+    )
+    stabilize_parser.add_argument("--stabilize-band-top", type=float, default=0.0)
+    stabilize_parser.add_argument("--stabilize-band-bottom", type=float, default=1.0)
+    stabilize_parser.add_argument("--stabilize-width-fraction", type=float, default=0.30)
+    stabilize_parser.add_argument("--stabilize-register-window", type=int, default=4)
+    stabilize_parser.add_argument("--stabilize-strength", type=float, default=1.0)
+    stabilize_parser.add_argument("--max-stabilize-shift", type=int)
 
     process_parser = subparsers.add_parser("process", help="Postprocess a generated sprite image.")
     process_parser.add_argument("--input", required=True, type=Path)
@@ -1562,6 +1951,71 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Under strict QC, allow a visually reviewed raw source-cell edge touch while still "
             "rejecting output-edge contact, clamping, and empty frames."
+        ),
+    )
+    process_parser.add_argument(
+        "--stabilize-axis",
+        choices=["none", "core", "core-register"],
+        default="core-register",
+        help=(
+            "Remove frame-to-frame horizontal slide by translating each frame so every "
+            "subject shares one vertical centerline. 'core' uses the mass-weighted body "
+            "axis; 'core-register' also polishes it with bounded silhouette registration. "
+            "Use 'none' only for assets whose horizontal travel inside the cell is the "
+            "animation, such as travelling projectiles and sweeping FX."
+        ),
+    )
+    process_parser.add_argument(
+        "--stabilize-target",
+        choices=["center", "mean"],
+        default="center",
+        help=(
+            "Where the shared centerline lands. 'center' puts it on the cell center so it "
+            "matches output_origin and stays consistent across a character's action "
+            "sheets; 'mean' keeps the sheet's own average axis and moves frames less."
+        ),
+    )
+    process_parser.add_argument(
+        "--stabilize-band-top",
+        type=float,
+        default=0.0,
+        help="Top of the subject-relative band used to measure the body axis (0.0 = head).",
+    )
+    process_parser.add_argument(
+        "--stabilize-band-bottom",
+        type=float,
+        default=1.0,
+        help="Bottom of the subject-relative band used to measure the body axis (1.0 = feet).",
+    )
+    process_parser.add_argument(
+        "--stabilize-width-fraction",
+        type=float,
+        default=0.30,
+        help="Width of the mode-seeking window as a fraction of the cell, for example 0.30.",
+    )
+    process_parser.add_argument(
+        "--stabilize-register-window",
+        type=int,
+        default=4,
+        help="Maximum pixels the registration pass may move the axis estimate.",
+    )
+    process_parser.add_argument(
+        "--stabilize-strength",
+        type=float,
+        default=1.0,
+        help="Fraction of the computed correction to apply; below 1.0 keeps some motion.",
+    )
+    process_parser.add_argument(
+        "--max-stabilize-shift",
+        type=int,
+        help="Maximum stabilization shift in pixels. Defaults to 15%% of the cell size.",
+    )
+    process_parser.add_argument(
+        "--max-axis-x-std",
+        type=float,
+        help=(
+            "Strict-QC maximum normalized horizontal body-axis standard deviation, for "
+            "example 0.01. Measures residual slide after stabilization."
         ),
     )
     process_parser.add_argument("--strict-qc", action="store_true")
@@ -1619,6 +2073,8 @@ def main() -> None:
         cmd_build_prompt(args)
     elif args.command == "build-godot-bundle":
         cmd_build_godot_bundle(args)
+    elif args.command == "stabilize":
+        cmd_stabilize(args)
     else:
         cmd_process(args)
 
