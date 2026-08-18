@@ -440,16 +440,16 @@ Script 不是創意大腦。Agent 負責美術與 pipeline 決策，Python tools
 
 ## 安裝方式
 
-本地 processor 需要 **Python**、**Pillow**、**numpy**；`$video2dsprite` 抽幀還需要 **ffmpeg** 在 `PATH` 上。
+本地 processor 需要 **Python 3.10+**、**Pillow**、**numpy**；`$video2dsprite` 抽幀還需要 **ffmpeg** 在 `PATH` 上。建議使用 [uv](https://docs.astral.sh/uv/) 管理環境。
 
 ### Option 1: Windows PowerShell
 
-先 clone repo，安裝依賴，再依你用的 agent 複製 skills：
+先 clone repo、同步已鎖定的環境，再依你用的 agent 複製 skills：
 
 ```powershell
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd .\agent-sprite-forge
-python -m pip install -r .\requirements.txt
+uv sync --locked
 
 # Codex
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
@@ -465,7 +465,7 @@ Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.grok\skills\"
 ```bash
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd ./agent-sprite-forge
-python3 -m pip install -r ./requirements.txt
+uv sync --locked
 
 # Codex
 mkdir -p ~/.codex/skills
@@ -478,6 +478,20 @@ cp -R ./skills/* ~/.grok/skills/
 
 安裝完後建議重新開 Codex 或 Grok Build session，讓 skills 重新載入。
 
+若仍需使用傳統 pip，`requirements.txt` 是由 `uv.lock` 匯出的相同鎖定依賴：
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+```
+
+請勿手動修改 `requirements.txt`。更新 `pyproject.toml`、執行 `uv lock`，再重新匯出：
+
+```bash
+uv export --locked --format requirements.txt --no-hashes -o requirements.txt
+```
+
 **注意：** `$generate2dsprite` / `$generate2dmap` 在有 image gen 的環境都能用。**完整 `$video2dsprite` 流程只有 Grok Build**（`image_to_video`）。若已有抽出的 frames，任何有 ffmpeg + Pillow 的機器都能用 script 重抽 sample。
 
 ## Python 依賴
@@ -488,7 +502,7 @@ cp -R ./skills/* ~/.grok/skills/
 - `numpy`
 - `ffmpeg`（CLI，`$video2dsprite` 抽幀用）
 
-Python 套件列在 [`requirements.txt`](./requirements.txt)。生圖 / 生影片由 host agent 負責；這些工具負責洋紅去背、切格、對齊、透明 PNG / GIF、prop-pack slicing，以及影片幀採樣。
+相容版本範圍宣告在 [`pyproject.toml`](./pyproject.toml)，精確的跨平台版本與檔案雜湊則鎖定於 [`uv.lock`](./uv.lock)；[`requirements.txt`](./requirements.txt) 是相容用途的匯出檔。生圖 / 生影片由 host agent 負責；這些工具負責洋紅去背、切格、對齊、透明 PNG / GIF、prop-pack slicing，以及影片幀採樣。
 
 ## Repo 結構
 
@@ -496,7 +510,9 @@ Python 套件列在 [`requirements.txt`](./requirements.txt)。生圖 / 生影�
 agent-sprite-forge/
   README.md
   README.zh-TW.md
+  pyproject.toml
   requirements.txt
+  uv.lock
   src/
   skills/
     generate2dmap/

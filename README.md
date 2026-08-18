@@ -457,16 +457,16 @@ The script is not the creative brain. The agent makes the visual and pipeline de
 
 ## Install
 
-Local processors need **Python**, **Pillow**, **numpy**, and (for `$video2dsprite`) **ffmpeg** on `PATH`.
+Local processors need **Python 3.10+**, **Pillow**, **numpy**, and (for `$video2dsprite`) **ffmpeg** on `PATH`. The recommended environment manager is [uv](https://docs.astral.sh/uv/).
 
 ### Option 1: Windows PowerShell
 
-Clone the repo, install dependencies, then copy skills into the agent skills directory you use:
+Clone the repo, sync the locked environment, then copy skills into the agent skills directory you use:
 
 ```powershell
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd .\agent-sprite-forge
-python -m pip install -r .\requirements.txt
+uv sync --locked
 
 # Codex
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
@@ -482,7 +482,7 @@ Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.grok\skills\"
 ```bash
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd ./agent-sprite-forge
-python3 -m pip install -r ./requirements.txt
+uv sync --locked
 
 # Codex
 mkdir -p ~/.codex/skills
@@ -495,6 +495,20 @@ cp -R ./skills/* ~/.grok/skills/
 
 Start a new Codex or Grok Build session after installation so skills reload.
 
+For legacy pip workflows, `requirements.txt` is generated from `uv.lock` and contains the same pinned Python dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python3 -m pip install -r requirements.txt
+```
+
+Do not edit `requirements.txt` by hand. Update `pyproject.toml`, run `uv lock`, then regenerate it with:
+
+```bash
+uv export --locked --format requirements.txt --no-hashes -o requirements.txt
+```
+
 **Note:** `$generate2dsprite` and `$generate2dmap` work wherever built-in image generation is available. **`$video2dsprite` full pipeline only works in Grok Build** (`image_to_video`). The Python postprocessor can still re-sample already-exported frames on any machine with ffmpeg + Pillow.
 
 ## Python Requirements
@@ -505,7 +519,7 @@ The local post-processors depend on:
 - `numpy`
 - `ffmpeg` (CLI on `PATH`) for `$video2dsprite` frame extraction
 
-They are listed in [`requirements.txt`](./requirements.txt) (Python only). Image/video generation is provided by the host agent; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
+Compatible version ranges are declared in [`pyproject.toml`](./pyproject.toml), while exact cross-platform versions and artifact hashes are committed in [`uv.lock`](./uv.lock). [`requirements.txt`](./requirements.txt) is an exported compatibility file. Image/video generation is provided by the host agent; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
 
 ## Repository Layout
 
@@ -516,7 +530,9 @@ agent-sprite-forge/
   README.zh-CN.md
   README.ja.md
   README.ko.md
+  pyproject.toml
   requirements.txt
+  uv.lock
   src/
   skills/
     generate2dmap/

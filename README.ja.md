@@ -171,12 +171,14 @@ image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_z
 
 ## Install
 
+[uv](https://docs.astral.sh/uv/) と `uv.lock` を使い、再現可能な Python 3.10+ 環境を作る方法を推奨します。
+
 ### Windows PowerShell
 
 ```powershell
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd .\agent-sprite-forge
-python -m pip install -r .\requirements.txt
+uv sync --locked
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
 Copy-Item -Recurse -Force `
   ".\skills\*" `
@@ -188,12 +190,14 @@ Copy-Item -Recurse -Force `
 ```bash
 git clone https://github.com/0x0funky/agent-sprite-forge.git
 cd ./agent-sprite-forge
-python3 -m pip install -r ./requirements.txt
+uv sync --locked
 mkdir -p ~/.codex/skills
 cp -R ./skills/* ~/.codex/skills/
 ```
 
 インストール後は、新しい Codex session を開始して skills を読み込み直してください。
+
+従来の pip が必要な場合は `python -m pip install -r requirements.txt` を使えます。このファイルは `uv.lock` から生成されるため、直接編集せず、依存関係を更新した後に `uv export --locked --format requirements.txt --no-hashes -o requirements.txt` を実行してください。
 
 ## Suggested Prompts
 
