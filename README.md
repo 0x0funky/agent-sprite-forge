@@ -385,8 +385,43 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 | Skill | Use it for | Output | Runtime |
 | --- | --- | --- | --- |
 | [`generate2dsprite`](./skills/generate2dsprite) | Sprites, animation sheets, props, spell bundles, FX, reference variants, optional layout guides for fixed-frame sheets | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex / Grok (image gen) |
+| [`generate2dspriteapi`](./skills/generate2dspriteapi) | Same sprite workflow, but raw images come from the bundled `genimg.py` OpenAI-compatible API wrapper | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex + configured Image API |
 | [`generate2dmap`](./skills/generate2dmap) | Baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes | Base map, dressed reference, prop pack, extracted props, preview, scene metadata | Codex / Grok (image gen) |
 | [`video2dsprite`](./skills/video2dsprite) | **Denser motion sprites from video**: base still → `image_to_video` → frame extract → magenta chroma → multi-density sprite strips/GIFs | Video, raw/clean frames, 8/16/24/48 sprite sets, strips, preview GIFs | **Grok Build only** |
+
+### `$generate2dsprite` and `$generate2dspriteapi` can coexist
+
+These skills do not overwrite each other:
+
+- `$generate2dsprite`: uses Codex built-in `image_gen` for raw image generation and does not require `OPENAI_API_KEY`.
+- `$generate2dspriteapi`: uses the bundled `scripts/genimg.py` OpenAI-compatible API wrapper and requires an API key; cleanup, frame extraction, alignment, QC, and export remain local and deterministic.
+
+The API skill uses a user-level configuration file, so it can run from any project:
+
+```text
+~/.codex/generate2dspriteapi.env
+```
+
+For the official OpenAI API:
+
+```text
+OPENAI_API_KEY=your-api-key
+```
+
+For an OpenAI-compatible provider:
+
+```text
+OPENAI_API_KEY=provider-api-key
+OPENAI_BASE_URL=https://example.com/v1
+```
+
+Keep the file outside the repository and restrict it to the current user:
+
+```bash
+chmod 600 ~/.codex/generate2dspriteapi.env
+```
+
+`OPENAI_BASE_URL` is a base URL, not the complete `/images/generations` endpoint. Command-line `--base-url` / `--api-url` overrides environment and user-level configuration.
 
 ### Grok Build only: `$video2dsprite`
 
@@ -438,7 +473,7 @@ When a visual reference is involved, the image skills follow the same wrapper ru
 
 1. The user asks Codex for a sprite, prop pack, map, or engine-ready prototype.
 2. The agent chooses the asset type, action, bundle shape, sheet layout, frame count, style, and alignment strategy.
-3. Built-in image generation creates the raw visual asset.
+3. The selected generation backend creates the raw visual asset: built-in `image_gen` for `$generate2dsprite`, or the bundled API wrapper for `$generate2dspriteapi`.
 4. Local scripts run deterministic post-processing: chroma-key cleanup, despill, frame extraction, alignment, prop-pack slicing, GIF/PNG export, and validation metadata.
 5. For maps and prototypes, Codex can also assemble placement metadata, collision, trigger zones, Godot scenes, or Unity project wiring.
 
@@ -495,7 +530,7 @@ cp -R ./skills/* ~/.grok/skills/
 
 Start a new Codex or Grok Build session after installation so skills reload.
 
-**Note:** `$generate2dsprite` and `$generate2dmap` work wherever built-in image generation is available. **`$video2dsprite` full pipeline only works in Grok Build** (`image_to_video`). The Python postprocessor can still re-sample already-exported frames on any machine with ffmpeg + Pillow.
+**Note:** `$generate2dsprite` and `$generate2dmap` work wherever built-in image generation is available. `$generate2dspriteapi` works wherever the API skill and its Python dependencies are installed. **`$video2dsprite` full pipeline only works in Grok Build** (`image_to_video`). The Python postprocessor can still re-sample already-exported frames on any machine with ffmpeg + Pillow.
 
 ## Python Requirements
 
@@ -504,6 +539,7 @@ The local post-processors depend on:
 - `Pillow`
 - `numpy`
 - `ffmpeg` (CLI on `PATH`) for `$video2dsprite` frame extraction
+- `openai` for `$generate2dspriteapi` API-backed raw image generation
 
 They are listed in [`requirements.txt`](./requirements.txt) (Python only). Image/video generation is provided by the host agent; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
 
@@ -539,6 +575,19 @@ agent-sprite-forge/
         prompt-rules.md
       scripts/
         generate2dsprite.py
+        make_layout_guide.py
+    generate2dspriteapi/
+      SKILL.md
+      agents/
+        openai.yaml
+      references/
+        genimg-api.md
+        modes.md
+        prompt-rules.md
+      scripts/
+        genimg.py
+        generate2dsprite.py
+        make_anchor_layout.py
         make_layout_guide.py
     video2dsprite/                 # Grok Build only (image_to_video)
       SKILL.md

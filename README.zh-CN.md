@@ -152,18 +152,54 @@ image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_z
 | Skill | 用途 | 输出 | 运行环境 |
 | --- | --- | --- | --- |
 | [`generate2dsprite`](./skills/generate2dsprite) | Sprites、animation sheets、props、spell bundles、FX、参考图变体、固定 frame sheet 的 layout guide | raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex / Grok |
+| [`generate2dspriteapi`](./skills/generate2dspriteapi) | 相同的精灵工作流，但原始图像通过 skill 自带的 `genimg.py` OpenAI-compatible API wrapper 生成 | raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex + 配置好的 Image API |
 | [`generate2dmap`](./skills/generate2dmap) | baked maps、layered raster maps、clean HD RPG maps、prop packs、collision/zones、Godot-editable scenes、side-scroll/parallax scenes | base map、dressed/stage reference、prop pack、extracted props、preview、scene metadata | Codex / Grok |
 | [`video2dsprite`](./skills/video2dsprite) | **视频驱动的更密动作 sprite**：静帧 → `image_to_video` → 抽帧 → 品红抠图 → 多密度 strip/GIF | video、frames、8/16/24/48 sprites | **仅 Grok Build** |
 
 > **`$video2dsprite` 仅 Grok Build 可用**（需要 `image_to_video`）。安装到 `~/.grok/skills`。追求硬像素生产 sheet 仍优先 `$generate2dsprite`。
 
-`$generate2dmap` 只有在地图流程需要可复用透明 props 时，才会搭配 `$generate2dsprite`。小型环境 props 可以批成 `2x2`、`3x3` 或 `4x4` prop packs，再切成独立透明 props。平台、地板、桥、墙、门和长条 hazard 这类碰撞关键物件，通常应该单独生成或用 tile/object layer 表达。
+### `$generate2dsprite` 与 `$generate2dspriteapi` 可以并存
+
+两个 skill 不会互相覆盖：
+
+- `$generate2dsprite`：生图阶段使用 Codex 内置 `image_gen`，不需要 `OPENAI_API_KEY`。
+- `$generate2dspriteapi`：生图阶段使用自带的 `scripts/genimg.py` OpenAI-compatible API wrapper，需要配置 API Key；后续去背、拆帧、对齐、QC 和导出仍然是本地流程。
+
+API skill 使用用户级配置文件，因此可以在任意项目中调用：
+
+```text
+~/.codex/generate2dspriteapi.env
+```
+
+官方 OpenAI API：
+
+```text
+OPENAI_API_KEY=your-api-key
+```
+
+OpenAI-compatible 服务：
+
+```text
+OPENAI_API_KEY=provider-api-key
+OPENAI_BASE_URL=https://example.com/v1
+```
+
+配置文件不属于仓库内容，应限制为当前用户可读：
+
+```bash
+chmod 600 ~/.codex/generate2dspriteapi.env
+```
+
+`OPENAI_BASE_URL` 应填写基础地址，不要填写完整的 `/images/generations` 路径。命令行的 `--base-url` / `--api-url` 会覆盖环境变量和用户级配置。
+
+
+`$generate2dmap` 只有在地图流程需要可复用透明 props 时，才会搭配 `$generate2dsprite`。`$generate2dspriteapi` 可以在 API 环境可用时替代原始生图阶段。小型环境 props 可以批成 `2x2`、`3x3` 或 `4x4` prop packs，再切成独立透明 props。平台、地板、桥、墙、门和长条 hazard 这类碰撞关键物件，通常应该单独生成或用 tile/object layer 表达。
 
 ## How It Works
 
 1. 用户请 Codex 生成 sprite、prop pack、map 或 engine-ready prototype。
 2. Agent 判断 asset type、action、bundle shape、sheet layout、frame count、style 和 alignment strategy。
-3. 内置图像生成产出 raw visual asset。
+3. 由选定的生图后端产出 raw visual asset：`$generate2dsprite` 使用内置 `image_gen`，`$generate2dspriteapi` 使用自带 API wrapper。
 4. 本地脚本做 deterministic post-processing：chroma-key cleanup、despill、frame extraction、alignment、prop-pack slicing、GIF/PNG export 和 validation metadata。
 5. 对地图和 prototype，Codex 也可以组装 placement metadata、collision、trigger zones、Godot scenes 或 Unity project wiring。
 
@@ -194,6 +230,9 @@ cp -R ./skills/* ~/.codex/skills/
 ```
 
 安装后请重开 Codex session，让 skills 被干净载入。
+
+
+`$generate2dspriteapi` 还需要 Python 的 `openai` 包和一个有效的 API Key；配置方式见上面的用户级配置文件说明。
 
 ## Suggested Prompts
 
