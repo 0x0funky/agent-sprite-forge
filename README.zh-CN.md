@@ -152,7 +152,7 @@ image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_z
 | Skill | 用途 | 输出 | 运行环境 |
 | --- | --- | --- | --- |
 | [`generate2dsprite`](./skills/generate2dsprite) | Sprites、animation sheets、props、spell bundles、FX、参考图变体、固定 frame sheet 的 layout guide | raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex / Grok |
-| [`generate2dspriteapi`](./skills/generate2dspriteapi) | 相同的精灵工作流，但原始图像通过 skill 自带的 `genimg.py` OpenAI-compatible API wrapper 生成 | raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex + 配置好的 Image API |
+| [`generate2dspriteapi`](./skills/generate2dspriteapi) | `generate2dsprite` 的轻量 API 后端适配层；原始图像通过自带 `genimg.py` 生成，并复用原 skill 的处理脚本和规则 | raw sheet、cleaned transparent sheet、frames、GIFs、metadata | Codex + 配置好的 Image API |
 | [`generate2dmap`](./skills/generate2dmap) | baked maps、layered raster maps、clean HD RPG maps、prop packs、collision/zones、Godot-editable scenes、side-scroll/parallax scenes | base map、dressed/stage reference、prop pack、extracted props、preview、scene metadata | Codex / Grok |
 | [`video2dsprite`](./skills/video2dsprite) | **视频驱动的更密动作 sprite**：静帧 → `image_to_video` → 抽帧 → 品红抠图 → 多密度 strip/GIF | video、frames、8/16/24/48 sprites | **仅 Grok Build** |
 
@@ -163,7 +163,9 @@ image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_z
 两个 skill 不会互相覆盖：
 
 - `$generate2dsprite`：生图阶段使用 Codex 内置 `image_gen`，不需要 `OPENAI_API_KEY`。
-- `$generate2dspriteapi`：生图阶段使用自带的 `scripts/genimg.py` OpenAI-compatible API wrapper，需要配置 API Key；后续去背、拆帧、对齐、QC 和导出仍然是本地流程。
+- `$generate2dspriteapi`：是一个轻量后端适配层，使用自带的 `scripts/genimg.py`，并复用相邻原 skill 的处理脚本、提示规则和 QC 规则，需要配置 API Key。
+
+API 适配层不会复制 `generate2dsprite.py`、`make_anchor_layout.py`、`make_layout_guide.py`、`modes.md` 或 `prompt-rules.md`。安装时需要两个 skill 一起安装。
 
 API skill 使用用户级配置文件，因此可以在任意项目中调用：
 

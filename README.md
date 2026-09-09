@@ -385,7 +385,7 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 | Skill | Use it for | Output | Runtime |
 | --- | --- | --- | --- |
 | [`generate2dsprite`](./skills/generate2dsprite) | Sprites, animation sheets, props, spell bundles, FX, reference variants, optional layout guides for fixed-frame sheets | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex / Grok (image gen) |
-| [`generate2dspriteapi`](./skills/generate2dspriteapi) | Same sprite workflow, but raw images come from the bundled `genimg.py` OpenAI-compatible API wrapper | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex + configured Image API |
+| [`generate2dspriteapi`](./skills/generate2dspriteapi) | Thin API backend adapter for `generate2dsprite`; raw images come from bundled `genimg.py` while shared processors and rules are reused | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex + configured Image API |
 | [`generate2dmap`](./skills/generate2dmap) | Baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes | Base map, dressed reference, prop pack, extracted props, preview, scene metadata | Codex / Grok (image gen) |
 | [`video2dsprite`](./skills/video2dsprite) | **Denser motion sprites from video**: base still → `image_to_video` → frame extract → magenta chroma → multi-density sprite strips/GIFs | Video, raw/clean frames, 8/16/24/48 sprite sets, strips, preview GIFs | **Grok Build only** |
 
@@ -394,7 +394,9 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 These skills do not overwrite each other:
 
 - `$generate2dsprite`: uses Codex built-in `image_gen` for raw image generation and does not require `OPENAI_API_KEY`.
-- `$generate2dspriteapi`: uses the bundled `scripts/genimg.py` OpenAI-compatible API wrapper and requires an API key; cleanup, frame extraction, alignment, QC, and export remain local and deterministic.
+- `$generate2dspriteapi`: is a thin backend adapter that uses the bundled `scripts/genimg.py`; it reuses the sibling skill's processor scripts and prompt/QC rules, and requires an API key.
+
+The API adapter intentionally does not copy `generate2dsprite.py`, `make_anchor_layout.py`, `make_layout_guide.py`, `modes.md`, or `prompt-rules.md`. Install both skills together.
 
 The API skill uses a user-level configuration file, so it can run from any project:
 
@@ -576,19 +578,14 @@ agent-sprite-forge/
       scripts/
         generate2dsprite.py
         make_layout_guide.py
-    generate2dspriteapi/
+    generate2dspriteapi/             # Thin API backend adapter; reuses generate2dsprite tools
       SKILL.md
       agents/
         openai.yaml
       references/
         genimg-api.md
-        modes.md
-        prompt-rules.md
       scripts/
         genimg.py
-        generate2dsprite.py
-        make_anchor_layout.py
-        make_layout_guide.py
     video2dsprite/                 # Grok Build only (image_to_video)
       SKILL.md
       agents/

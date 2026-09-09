@@ -21,6 +21,27 @@ MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
 
 
+class SkillStructureTests(unittest.TestCase):
+    def test_api_skill_only_owns_api_specific_files(self) -> None:
+        api_root = SCRIPT_PATH.parents[1]
+        shared_root = api_root.parent / "generate2dsprite"
+
+        self.assertTrue((shared_root / "scripts" / "generate2dsprite.py").is_file())
+        self.assertTrue((shared_root / "scripts" / "make_anchor_layout.py").is_file())
+        self.assertTrue((shared_root / "scripts" / "make_layout_guide.py").is_file())
+        self.assertTrue((api_root / "scripts" / "genimg.py").is_file())
+
+        duplicated_files = [
+            api_root / "scripts" / "generate2dsprite.py",
+            api_root / "scripts" / "make_anchor_layout.py",
+            api_root / "scripts" / "make_layout_guide.py",
+            api_root / "references" / "modes.md",
+            api_root / "references" / "prompt-rules.md",
+        ]
+        for duplicated_file in duplicated_files:
+            self.assertFalse(duplicated_file.exists(), duplicated_file)
+
+
 class ConfigTests(unittest.TestCase):
     def test_default_config_path_uses_codex_home(self) -> None:
         with patch.dict(os.environ, {"CODEX_HOME": "/tmp/codex-test"}, clear=False):
