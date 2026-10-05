@@ -1,5 +1,10 @@
 """Offline, non-destructive frame review and explicit interval export.
 
+  review  local HTML reviewer with recurrence candidate intervals
+  select  classify candidate intervals (valid 1-cycle, valid 2-cycle, rejected with the
+          reasons) with gait_loop's period analysis; writes a v2 frame selection
+  cut     byte-preserved export of a v1 interval or a v2 selection (holds, retimed order)
+
 Candidate intervals are recurrence diagnostics, never automatic gait approval.
 No interpolation, per-frame normalization, generation, or network access.
 """
@@ -10,11 +15,18 @@ import hashlib
 import json
 import math
 import shutil
+import sys
 import tempfile
 from pathlib import Path
 
 import numpy as np
 from PIL import Image
+
+_HERE = Path(__file__).resolve().parent
+if str(_HERE) not in sys.path:
+    sys.path.insert(0, str(_HERE))
+import forge_core  # noqa: E402  (this skill's vendored copy)
+import gait_loop  # noqa: E402  (period analysis and frame selection v2)
 
 
 def sources(directory: Path) -> list[Path]:
@@ -214,8 +226,147 @@ def cut(directory: Path, out: Path, start: int, end: int, fps: float, expected: 
     return result
 
 
+CLASS_ORDER = ("valid-1-cycle", "valid-2-cycle", "valid-cycle", "rejected")
+ENTRY_METRICS = ("seconds", "files", "covers", "strides", "phase_error_frames_local", "context_repeat_ratio",
+                 "wrap_ratio", "root_drift_pct_body", "step_asymmetry", "closure_steps", "amplitude_steps", "score")
+
+
+def _entry(window: dict, source: str, recurrence: dict | None = None) -> dict:
+    verdict = window["classification"]
+    entry = {"start": window["start"], "endExclusive": window["endExclusive"], "frameCount": window["frames"],
+             "class": verdict["class"], "reasons": verdict["reasons"], "notes": verdict["notes"], "source": source,
+             "metrics": {key: window[key] for key in ENTRY_METRICS if key in window}}
+    if recurrence is not None:
+        entry["recurrence"] = {key: recurrence[key] for key in ("recurrenceToMedianRatio", "seamToMedianRatio",
+                                                                "rankingScore")}
+    return entry
+
+
+def _rank(entry: dict) -> tuple:
+    """Valid classes first, then the lower (better) seam or closure score."""
+    score = entry["metrics"].get("score")
+    return CLASS_ORDER.index(entry["class"]), math.inf if score is None else score, entry["start"]
+
+
+def select(directory: Path, out: Path, fps, kind: str = "gait", state: str = "run", minimum: int = 6,
+           maximum: int = 48, limit: int = 8) -> dict:
+    """Classify the recurrence candidates and gait_loop's best windows; write a v2 selection.
+
+    Each candidate becomes valid-1-cycle or valid-2-cycle (gait), valid-cycle (idle, hover)
+    or rejected with every reason (unusable frames, half or partial stride, seam, wrap,
+    drift range). selection.json holds the recommended loop and candidates.json the
+    classified list. Nothing is published when no window is a valid loop.
+    """
+    if out.exists():
+        raise ValueError("output directory already exists")
+    if not 1 <= limit <= 32:
+        raise ValueError("--limit must be in 1..32")
+    paths = sources(directory)
+    values, _, _ = features(paths)
+    proposed = candidates(values, minimum, maximum, limit)
+    analysis = gait_loop.analyse(directory, fps, kind, state)
+    entries = [_entry(gait_loop.classify_window(analysis, c["start"], c["endExclusive"]), "recurrence", c)
+               for c in proposed]
+    seen = {(e["start"], e["endExclusive"]) for e in entries}
+    try:
+        rec = gait_loop.recommend(analysis)
+    except ValueError as error:
+        rec, failure = None, str(error)
+    if rec is not None:
+        for windows in rec["candidates"].values():
+            for window in windows:
+                if (window["start"], window["endExclusive"]) not in seen:
+                    seen.add((window["start"], window["endExclusive"]))
+                    entries.append(_entry(window, "gait_loop"))
+        window, policy = rec["window"], rec["policy"]
+    else:
+        valid = [e for e in entries if e["class"] != "rejected"]
+        if not valid:
+            reasons = "; ".join(f"{e['start']}:{e['endExclusive']} {e['reasons'][0]}" for e in entries[:4])
+            raise ValueError(f"no valid loop ({failure})" + (f"; candidates rejected: {reasons}" if reasons else ""))
+        best = min(valid, key=_rank)
+        window, policy = gait_loop.classify_window(analysis, best["start"], best["endExclusive"]), "cycle"
+    entries.sort(key=_rank)
+    indices = gait_loop.kept_indices(analysis, window["start"], window["endExclusive"])
+    durations = gait_loop.kept_durations(window["start"], window["endExclusive"], indices, analysis.clip.fps)
+    seam = gait_loop.sequence_seam(analysis.clip, indices + indices[-2:0:-1] if policy == "pingpong" else indices)
+    if [signature(path) for path in paths] != analysis.clip.hashes:
+        raise ValueError("source frames changed during select; nothing published")
+    counts = {name: sum(e["class"] == name for e in entries) for name in CLASS_ORDER}
+    review_text = (gait_loop.REVIEW_FIRST + " Candidates are classified by pixel evidence; "
+                   "rejected ones say why. Confirm the chosen loop visually.")
+    with forge_core.staged_output(out) as stage:
+        selection = gait_loop.build_selection(
+            analysis.clip, stage, indices, durations, policy=policy, kind=kind, review=review_text,
+            window=(window["start"], window["endExclusive"]),
+            method=f"animation_review select ({kind}): recurrence candidates classified by gait_loop",
+            extra={"cycles": window.get("strides", 1), "seam": seam})
+        report = {"schema": "forge-animation-select/v1", "status": "needs-visual-review",
+                  "sourceDirectory": gait_loop.directory_ref(directory, stage),
+                  "fps": gait_loop.fps_text(analysis.clip.fps), "kind": kind,
+                  "period": ({key: analysis.period[key] for key in ("T_frames", "S_frames", "verdict", "why")}
+                             if analysis.period else None),
+                  "unusableFrames": analysis.unusable,
+                  "usableRange": {key: analysis.usable[key] for key in ("start", "endExclusive", "reason")},
+                  "recommendation": {"start": window["start"], "endExclusive": window["endExclusive"],
+                                     "policy": policy, "sourceIndices": indices,
+                                     "confidence": rec["confidence"] if rec else None},
+                  "counts": counts, "candidates": entries,
+                  "candidateSearch": {"minCycle": minimum, "maxCycle": maximum, "limit": limit,
+                                      "gate": "recurrenceMAE < adjacentMedianMAE (review helper), then gait_loop "
+                                              "classification"}}
+        gait_loop.write_selection_files(stage, {"selection.json": selection})
+        report["qa"] = gait_loop.qa_envelope(
+            "needs-visual-review", selection["method"],
+            [{"id": "valid-loop", "status": "pass", "value": [window["start"], window["endExclusive"]]},
+             {"id": "rejected-candidates-explained", "status": "pass",
+              "value": sum(bool(e["reasons"]) for e in entries if e["class"] == "rejected"),
+              "threshold": counts["rejected"]},
+             {"id": "visual-review", "status": "needs-visual-review", "value": None}],
+            gait_loop.frame_refs(analysis.clip, stage, range(analysis.clip.count)),
+            [gait_loop.file_ref(stage / "selection.json", stage)],
+            tool={"name": "animation_review select", "version": gait_loop.GAIT_LOOP_VERSION})
+        gait_loop.write_selection_files(stage, {"candidates.json": report})
+    return {"status": gait_loop.SELECTED_STATUS, "counts": counts,
+            "recommendation": [window["start"], window["endExclusive"]]}
+
+
+def cut_selection(directory: Path, out: Path, selection_path: Path) -> dict:
+    """Byte-preserved export of a forge-frame-selection/v2: frames in played order (holds and
+    reversals repeat the same bytes) plus selection.json rebased onto the cut folder."""
+    if out.exists():
+        raise ValueError("output directory already exists")
+    selection = gait_loop.read_selection(selection_path)
+    if selection["schema"] != gait_loop.SELECTION_V2:
+        raise ValueError("cut_selection reads forge-frame-selection/v2")
+    paths = sources(directory)
+    gait_loop.verify_selection(selection, selection_path, directory)
+    indices, durations, raw = selection["indices"], selection["durations"], selection["raw"]
+    digests = {index: selection["hashes"][index - selection["start"]] for index in set(indices)}
+    with forge_core.staged_output(out) as stage:
+        names = []
+        for position, index in enumerate(indices):
+            copied = stage / f"frame-{position:04d}.png"
+            shutil.copyfile(paths[index], copied)
+            if signature(copied) != digests[index]:
+                raise ValueError("source frames changed during copy; no cut published")
+            names.append(copied.name)
+        rebased = {**raw, "sourceDirectory": ".", "sourceHashes": [digests[i] for i in indices], "sourceFiles": names,
+                   "start": 0, "endExclusive": len(indices), "sourceIndices": list(range(len(indices))),
+                   "durations_ms": durations, "fps": forge_core.rational_fps(len(indices), sum(durations)),
+                   "status": gait_loop.SELECTED_STATUS,
+                   "method": f"animation_review cut (byte-preserved, played order) of: {raw['method']}",
+                   "origin": {"sourceDirectory": gait_loop.directory_ref(directory, out),
+                              "start": selection["start"], "endExclusive": selection["endExclusive"],
+                              "sourceIndices": indices, "selection": gait_loop.file_ref(selection_path, out),
+                              "transforms": "none; byte-preserved shared canvases"}}
+        gait_loop.write_selection_files(stage, {"selection.json": rebased})
+    return rebased
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
+    forge_core.utf8_stdio()
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     rv = sub.add_parser("review")
     rv.add_argument("--frames-dir", type=Path, required=True)
@@ -230,34 +381,59 @@ def main(argv=None) -> int:
     ct.add_argument("--start", type=int)
     ct.add_argument("--end", type=int, help="exclusive")
     ct.add_argument("--fps", type=float)
-    ct.add_argument("--selection", type=Path, help="JSON downloaded from the reviewer; validates source hashes")
+    ct.add_argument("--selection", type=Path,
+                    help="selection JSON (v1 from the reviewer, or v2 from select, gait_loop or retime); "
+                         "validates source hashes")
+    sl = sub.add_parser("select", help="classify candidate intervals and write a v2 frame selection")
+    sl.add_argument("--frames-dir", type=Path, required=True)
+    sl.add_argument("--output-dir", "--out-dir", dest="out_dir", type=Path, required=True,
+                    help="new directory for selection.json and candidates.json")
+    sl.add_argument("--fps", required=True, help="source frame rate: a number or N/D")
+    sl.add_argument("--kind", choices=gait_loop.KINDS, default="gait")
+    sl.add_argument("--state", choices=gait_loop.STATES, default="run", help="gait stride window (default run)")
+    sl.add_argument("--min-cycle", type=int, default=6)
+    sl.add_argument("--max-cycle", type=int, default=48)
+    sl.add_argument("--limit", type=int, default=8, help="recurrence candidates to classify (default 8)")
     args = parser.parse_args(argv)
     try:
         if args.command == "review":
             result = review(args.frames_dir, args.out_dir, args.fps, args.min_cycle, args.max_cycle, args.preview_size)
+        elif args.command == "select":
+            result = select(args.frames_dir, args.out_dir, args.fps, args.kind, args.state, args.min_cycle,
+                            args.max_cycle, args.limit)
+            print(json.dumps({"output": str(args.out_dir.resolve()),
+                              "selection": str((args.out_dir / "selection.json").resolve()),
+                              "metadata": str((args.out_dir / "candidates.json").resolve()),
+                              "status": result["status"], "recommended": result["recommendation"],
+                              "counts": result["counts"]}))
+            return 0
         else:
-            expected = None
+            expected = data = None
             if args.selection:
                 if any(v is not None for v in (args.start, args.end, args.fps)):
                     raise ValueError("use selection OR start/end/fps, not both")
                 data = json.loads(args.selection.read_text(encoding="utf-8"))
                 if not isinstance(data, dict):
                     raise ValueError("selection must be a JSON object")
-                if not isinstance(data.get("sourceDirectory"), str) or not data["sourceDirectory"].strip():
-                    raise ValueError("selection sourceDirectory must be a nonempty path string")
-                if data.get("schema") != "forge-frame-selection/v1" or Path(data["sourceDirectory"]).resolve() != args.frames_dir.resolve():
-                    raise ValueError("selection schema/source directory mismatch")
-                args.start, args.end, args.fps = data["start"], data["endExclusive"], data["fps"]
-                expected = data["sourceHashes"]
-                if not isinstance(expected, list):
-                    raise ValueError("selection sourceHashes must be an array; hash validation cannot be omitted")
-            if any(v is None for v in (args.start, args.end, args.fps)):
-                raise ValueError("cut requires --selection or --start/--end/--fps")
-            result = cut(args.frames_dir, args.out_dir, args.start, args.end, args.fps, expected)
+            if data is not None and data.get("schema") == gait_loop.SELECTION_V2:
+                result = cut_selection(args.frames_dir, args.out_dir, args.selection)
+            else:
+                if data is not None:
+                    if not isinstance(data.get("sourceDirectory"), str) or not data["sourceDirectory"].strip():
+                        raise ValueError("selection sourceDirectory must be a nonempty path string")
+                    if data.get("schema") != "forge-frame-selection/v1" or Path(data["sourceDirectory"]).resolve() != args.frames_dir.resolve():
+                        raise ValueError("selection schema/source directory mismatch")
+                    args.start, args.end, args.fps = data["start"], data["endExclusive"], data["fps"]
+                    expected = data["sourceHashes"]
+                    if not isinstance(expected, list):
+                        raise ValueError("selection sourceHashes must be an array; hash validation cannot be omitted")
+                if any(v is None for v in (args.start, args.end, args.fps)):
+                    raise ValueError("cut requires --selection or --start/--end/--fps")
+                result = cut(args.frames_dir, args.out_dir, args.start, args.end, args.fps, expected)
         print(json.dumps({"output": str(args.out_dir.resolve()), "status": result["status"]}))
         return 0
     except (ValueError, OSError, KeyError, TypeError) as exc:
-        parser.exit(1, f"error: {exc}\n")
+        parser.exit(1, forge_core.ascii_text(f"error: {exc}") + "\n")
 
 
 if __name__ == "__main__":
