@@ -21,6 +21,11 @@ replacement. Failures raise ForgeAVError (a RuntimeError) carrying an ASCII
 tail of ffmpeg's stderr. Encoders write deterministic bytes, never replace an
 existing file and never leave a partial one behind. Requires ffmpeg 5.1+.
 
+Frame files are read with forge_core.load_rgba (16-bit, indexed and LA PNGs
+are converted correctly; animated files are refused) and finished encodes
+are published with forge_core.publish_file_no_replace (D30): forge_core is
+vendored next to this file in every skill that ships it.
+
 Canonical source: shared/forge_av.py. Skills vendor byte-identical copies
 (shared/VENDORED.json); edit only this file, then run
 ``python tools/vendor_sync.py --write``.
@@ -36,6 +41,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import uuid
@@ -45,6 +51,14 @@ from typing import Iterable, Iterator, Mapping, Sequence
 
 import numpy as np
 from PIL import Image
+
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import forge_core  # noqa: E402  (the sibling copy: shared/ or the skill's scripts/)
+
+if str(getattr(forge_core, "FORGE_CORE_API_VERSION", "")).split(".")[0] != "1":
+    raise ImportError("forge_av needs forge_core API version 1.x next to it; run tools/vendor_sync.py --write.")
 
 FORGE_AV_API_VERSION = "1"
 DEFAULT_TIMEOUT = 300.0
@@ -693,35 +707,13 @@ def _encode_file(out, muxer: str, argv: list[str], chunks: Iterable[bytes], fram
         keyframes = _keyframes(packets)
         if keyint and keyframes != list(range(0, frames, keyint)):
             raise ForgeAVError(f"keyframes at {keyframes} do not follow keyint {keyint}")
-        _local_publish_file_no_replace(partial, target)
+        try:
+            forge_core.publish_file_no_replace(partial, target)  # fsynced copy, hard-linked into place
+        except FileExistsError:
+            raise FileExistsError(f"{target} appeared during encoding; refusing to replace it") from None
     finally:
         partial.unlink(missing_ok=True)
     return target, keyframes
-
-
-def _local_publish_file_no_replace(source: Path, target: Path) -> None:
-    """Publish ``source`` as ``target``; an existing target is never replaced.
-
-    A hard link is atomic and refuses an existing target. Filesystems without
-    hard links fall back to an exclusive create plus copy. The caller removes
-    ``source``.
-    """
-    try:
-        os.link(source, target)
-        return
-    except FileExistsError:
-        raise FileExistsError(f"{target} appeared during encoding; refusing to replace it") from None
-    except OSError:
-        pass
-    with open(source, "rb") as src, open(target, "xb") as dst:
-        try:
-            shutil.copyfileobj(src, dst, 1 << 20)
-            dst.flush()
-            os.fsync(dst.fileno())
-        except BaseException:
-            dst.close()
-            target.unlink(missing_ok=True)
-            raise
 
 
 def _raw_input(clip: _Clip, pix_fmt: str) -> list[str]:
@@ -809,12 +801,14 @@ def _frame_sources(frames) -> list:
 
 
 def _load_frame(item) -> np.ndarray:
-    """One frame as a C-contiguous (H, W, 4) uint8 array; RGB input is opaque."""
+    """One frame as a C-contiguous (H, W, 4) uint8 array; RGB input is opaque.
+
+    A path goes through forge_core.load_rgba, so 16-bit grey keeps its high
+    byte instead of clipping to white, palette and LA files get their alpha,
+    and an animated file is refused (ValueError).
+    """
     if isinstance(item, (str, os.PathLike)):
-        with Image.open(item) as image:
-            if getattr(image, "n_frames", 1) > 1:
-                raise ValueError(f"animated image is not one frame: {item}")
-            array = np.asarray(image.convert("RGBA"))
+        array = np.asarray(forge_core.load_rgba(item)[0])
     elif isinstance(item, Image.Image):
         array = np.asarray(item.convert("RGBA"))
     else:
