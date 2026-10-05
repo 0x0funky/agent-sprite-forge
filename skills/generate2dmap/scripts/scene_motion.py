@@ -905,7 +905,8 @@ def build_parser() -> argparse.ArgumentParser:
                        help="auto (default): after a failed decoded seam, retry with a lower QP at the wrap "
                             "(crf-8, crf-12, crf-14), then also a lower crf. off: encode once.")
     build.add_argument("--allow-seam-fail", action="store_true",
-                       help="Publish a loop whose seam still fails, marked fail, for review.")
+                       help="Publish a loop whose seam still fails, marked fail, for review (the build then "
+                            "exits 1).")
     build.add_argument("--edge-fade", type=float, default=DEFAULT_EDGE_FADE,
                        help=f"Fade masked motion over this many px inside clip edges that do not reach the plate "
                             f"border (default {DEFAULT_EDGE_FADE:g}).")

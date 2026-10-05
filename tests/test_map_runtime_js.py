@@ -401,7 +401,7 @@ class RuntimeSourceTests(unittest.TestCase):
 
     def test_runtime_names_the_forge_nav_rule_book(self):
         source = RUNTIME.read_text(encoding="utf-8")
-        for rule in ("N1", "N2", "N3", "N4", "N5", "N6", "N8", "N9", "N10", "N11", "N12", "N13", "N14", "N15"):
+        for rule in (f"N{number}" for number in range(1, 16)):
             self.assertRegex(source, rf"\b{rule}\b", rule)
         self.assertIn("forge_nav", source)
         self.assertEqual(NAV.SQRT1_2, 0.7071067811865476)

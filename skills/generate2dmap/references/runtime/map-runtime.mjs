@@ -33,9 +33,15 @@
  *       inline items; pack + label entries must be resolved first); basis
  *       world_px is not scaled, prop_px and image_px are scaled once by the
  *       instance scale; flip_x mirrors offset x and rotate
+ *   N7  tile collision: each placed tile's shapes moved to its cell, and a
+ *       tile without shapes whose walkable is false blocks its cell; forge_nav
+ *       reads the tileset files, so build_scene_preview passes the result in
+ *       as collision.solids (their source names the layer), closed like
+ *       every solid (N5)
  *   N8  material grid: square pixels of s = W / width world px (a whole
- *       number); solid blocks; liquid and hazard block unless walkable;
- *       decor never; one_way never blocks a point (N11)
+ *       number), half-open (right and bottom edges belong to the next pixel);
+ *       solid blocks; liquid and hazard block unless walkable; decor never;
+ *       one_way never blocks a point (N11)
  *   N9  valid = all 9 samples in the walk area and on no blocker
  *   N10 segmentClear: n = max(1, ceil(len / (cell / 2))) samples
  *       a + d * k / n are valid; the one_way rule holds; and (thin-gap rule)
