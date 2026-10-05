@@ -381,7 +381,7 @@ class RoundingAndAnchorErrorTests(unittest.TestCase):
         """repro_02 (MAP-21): an odd-width bottom-centre prop moved 1 world px moves 1 canvas px every time."""
         lefts = [COMPOSE.placement_xy({"x": x, "y": 50}, 5, 8)[0] for x in range(10, 16)]
         self.assertEqual(lefts, [8, 9, 10, 11, 12, 13])
-        self.assertEqual([COMPOSE.round_half_up(value) for value in (2.5, -2.5, 3.5, -0.5)], [3, -2, 4, 0])
+        self.assertEqual([COMPOSE._local_round_half_up(value) for value in (2.5, -2.5, 3.5, -0.5)], [3, -2, 4, 0])
 
     def test_anchor_world_error_reports_the_rounding(self):
         with tempfile.TemporaryDirectory() as temporary:

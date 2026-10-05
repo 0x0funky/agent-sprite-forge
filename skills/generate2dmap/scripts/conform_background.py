@@ -84,7 +84,7 @@ def _focus(text: str) -> tuple[float, float]:
     return values
 
 
-def parse_aspect(text: Any) -> tuple[float, float]:
+def _local_parse_aspect(text: Any) -> tuple[float, float]:
     """'16:9', '19.5:9', '16/9' or a plain ratio such as 1.7778, as (width share, height share)."""
     match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*(?:[:/]\s*([0-9]*\.?[0-9]+))?\s*", str(text))
     if not match:
@@ -98,7 +98,7 @@ def parse_aspect(text: Any) -> tuple[float, float]:
 def parse_aspects(text: str) -> list[tuple[str, tuple[float, float]]]:
     if not text or text.strip().lower() == "none":
         return []
-    return [(part.strip(), parse_aspect(part)) for part in text.split(",") if part.strip()]
+    return [(part.strip(), _local_parse_aspect(part)) for part in text.split(",") if part.strip()]
 
 
 def _box(values: Any, name: str) -> tuple[float, float, float, float]:
@@ -192,7 +192,7 @@ def ground_fit_transform(src_size: tuple[int, int], out_size: tuple[int, int], g
     return Transform(scale, (left, top, left + crop_w, top + crop_h), tuple(out_size))
 
 
-def crop_window(size: tuple[int, int], aspect: tuple[float, float], zoom: float = 1.0,
+def _local_cover_window(size: tuple[int, int], aspect: tuple[float, float], zoom: float = 1.0,
                 focus: tuple[float, float] = (0.5, 0.5)) -> tuple[float, float, float, float]:
     """The part of a ``size`` plate a runtime shows on an ``aspect`` screen when it cover-crops around
     ``focus``, divided by a plate-pan ``zoom`` (game-opus55 drawCoverR)."""
@@ -234,7 +234,7 @@ def window_checks(size: tuple[int, int], subjects: list[dict[str, Any]], aspects
     checks = []
     for name, aspect in aspects:
         for focus in focuses:
-            window = crop_window(size, aspect, zoom, focus)
+            window = _local_cover_window(size, aspect, zoom, focus)
             measured = {subject["id"]: margins(subject["box"], window) for subject in subjects}
             failed = sorted(ident for ident, value in measured.items() if value["min"] < min_margin)
             checks.append({"id": f"crop {name} focus {focus[0]:g},{focus[1]:g}", "status": "fail" if failed else "pass",
@@ -251,7 +251,7 @@ def _envelope(checks: list[dict[str, Any]], method: str, not_proven: list[str], 
             "inputs": inputs, "outputs": outputs, "tool": dict(TOOL)}
 
 
-def _file_ref(path: Path, base_dir: Path, sha256: str | None = None) -> dict[str, Any]:
+def _local_file_ref(path: Path, base_dir: Path, sha256: str | None = None) -> dict[str, Any]:
     """Manifest-relative POSIX path, or only the file name when there is no relative route (another drive)."""
     relative = forge_core.portable_path(path, base_dir)
     if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
@@ -341,8 +341,8 @@ def cmd_conform(args: argparse.Namespace) -> dict[str, Any]:
     final = Path(args.output_dir)
     with forge_core.staged_output(final) as stage:
         forge_core.save_png(background, stage / "background.png")
-        output_ref = _file_ref(stage / "background.png", stage)
-        source_ref = _file_ref(args.input, final, info["sha256"])
+        output_ref = _local_file_ref(stage / "background.png", stage)
+        source_ref = _local_file_ref(args.input, final, info["sha256"])
         record = {
             "schema": CONFORM_SCHEMA, "tool": dict(TOOL), "mode": args.mode,
             "source": {**source_ref, "size": list(source.size), "source_mode": info["source_mode"]},
@@ -397,8 +397,8 @@ def cmd_validate_crops(args: argparse.Namespace) -> dict[str, Any]:
         forge_core.save_png(render_crops_overlay(plate, checks, subjects), stage / "crops-overlay.png")
         report = _envelope(checks, "validate-crops: cover-crop window per aspect and focus (divided by --zoom), "
                                    "subject box margins to each window edge in plate pixels.", CROPS_NOT_PROVEN,
-                           [_file_ref(args.input, final, info["sha256"])],
-                           [_file_ref(stage / "crops-overlay.png", stage)])
+                           [_local_file_ref(args.input, final, info["sha256"])],
+                           [_local_file_ref(stage / "crops-overlay.png", stage)])
         report = {"schema": CROPS_SCHEMA, **report, "plate_size": list(plate.size),
                   "subjects": _round([{"id": subject["id"], "box": list(subject["box"])} for subject in subjects])}
         forge_core.write_json(stage / "crops-qa.json", report)

@@ -294,7 +294,7 @@ class ValidateCropsTests(unittest.TestCase):
                                               ((1000, 1500), (16, 9), (1600, 900), (0.3, 0.7)),
                                               ((900, 400), (19.5, 9), (390, 180), (1.0, 0.0))):
             with self.subTest(size=size, aspect=aspect):
-                window = CONFORM.crop_window(size, aspect, 1.0, focus)
+                window = CONFORM._local_cover_window(size, aspect, 1.0, focus)
                 expected = CONFORM.cover_transform(size, out_size, focus).src_rect
                 np.testing.assert_allclose(window, expected, rtol=1e-12, atol=1e-9)
 

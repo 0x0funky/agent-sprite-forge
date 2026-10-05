@@ -72,7 +72,7 @@ def boolean(value: Any, name: str) -> bool:
     return value
 
 
-def parse_aspect(text: Any) -> tuple[float, float]:
+def _local_parse_aspect(text: Any) -> tuple[float, float]:
     """'16:9', '19.5:9', '16/9' or a plain ratio such as 1.7778, as (width share, height share)."""
     match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*(?:[:/]\s*([0-9]*\.?[0-9]+))?\s*", str(text))
     if not match:
@@ -144,7 +144,7 @@ def seam_metrics(image: Image.Image | np.ndarray, axis: str) -> dict[str, Any]:
     return report
 
 
-def aspect_viewport(viewport: list[float], aspect: tuple[float, float], policy: str) -> list[float]:
+def _local_aspect_viewport(viewport: list[float], aspect: tuple[float, float], policy: str) -> list[float]:
     """The viewport a screen of this aspect shows: expand keeps the plan viewport and grows the other side,
     fixed-height keeps the height, fixed-width keeps the width."""
     width, height = viewport
@@ -355,7 +355,7 @@ def _aspect_sweep(sweep: dict[str, tuple[float, float]], required_aspects: list[
     viewport, share = context["viewport"], context["pivot_share"]
     results = []
     for text, aspect in sweep.items():
-        swept = aspect_viewport(viewport, aspect, policy)
+        swept = _local_aspect_viewport(viewport, aspect, policy)
         shift = [share[i] * (swept[i] - viewport[i]) for i in range(2)]
         swept_pivot = (share[0] * swept[0], share[1] * swept[1])
         failing = []
@@ -398,7 +398,7 @@ def validate_plan(plan: Any, base_dir: Path, *, coverage: str = "auto", pixel_gr
     if not isinstance(required_aspects, list):
         raise ValueError('aspects must be a list such as ["16:9", "19.5:9"].')
     required_aspects = [str(text) for text in required_aspects]
-    sweep = {str(text): parse_aspect(text) for text in [*aspects, *required_aspects]}
+    sweep = {str(text): _local_parse_aspect(text) for text in [*aspects, *required_aspects]}
     pixel_art = plan.get("pixel_art", False)
     if type(pixel_art) is not bool:
         raise ValueError("pixel_art must be true or false.")

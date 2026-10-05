@@ -692,7 +692,7 @@ class AspectSweepTests(unittest.TestCase):
         self.assertFalse(top_left["aspect_sweep"]["aspects"][0]["passed"])
         for bad in ("wide", "0:9", "-4:3"):
             with self.subTest(aspect=bad), self.assertRaises(ValueError):
-                PARALLAX.parse_aspect(bad)
+                PARALLAX._local_parse_aspect(bad)
 
 
 class ParallaxCliTests(unittest.TestCase):

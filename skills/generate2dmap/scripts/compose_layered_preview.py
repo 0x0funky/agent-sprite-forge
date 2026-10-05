@@ -95,7 +95,7 @@ AUDIT_NOT_PROVEN = [
 
 # --------------------------------------------------------------------------- small helpers
 
-def round_half_up(value: float) -> int:
+def _local_round_half_up(value: float) -> int:
     """Nearest integer, halves rounded up (MAP-21): 2.5 -> 3 and -2.5 -> -2."""
     return int(math.floor(value + 0.5))
 
@@ -119,7 +119,7 @@ def resolve_path(value: str, roots: list[Path]) -> Path:
     return roots[0] / path
 
 
-def portable_ref(path: Path, base_dir: Path | None) -> str:
+def _local_portable_ref(path: Path, base_dir: Path | None) -> str:
     """Manifest-relative POSIX path (MAP-24); a file with no relative route (another drive) is named
     by its file name only, and the sha256 beside it identifies it."""
     if base_dir is None:
@@ -130,9 +130,9 @@ def portable_ref(path: Path, base_dir: Path | None) -> str:
     return relative
 
 
-def file_ref(path: Path, base_dir: Path | None, sha256: str | None = None) -> dict[str, Any]:
+def _local_file_ref(path: Path, base_dir: Path | None, sha256: str | None = None) -> dict[str, Any]:
     path = Path(path)
-    return {"path": portable_ref(path, base_dir), "sha256": sha256 or forge_core.sha256_file(path),
+    return {"path": _local_portable_ref(path, base_dir), "sha256": sha256 or forge_core.sha256_file(path),
             "bytes": path.stat().st_size}
 
 
@@ -245,7 +245,7 @@ def placement_xy(prop: dict[str, Any], width: int, height: int,
                  source_size: tuple[int, int] | None = None) -> tuple[int, int]:
     """Integer top-left of a placement, rounded half up (MAP-21)."""
     left, top = placement_origin(prop, width, height, source_size)
-    return round_half_up(left), round_half_up(top)
+    return _local_round_half_up(left), _local_round_half_up(top)
 
 
 def effective_sort_y(prop: dict[str, Any], ground_y: float | None = None) -> float:
@@ -452,7 +452,7 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
     else:
         width_f = _number(prop.get("w", prop.get("width", sw)), f"{ident} w")
         height_f = _number(prop.get("h", prop.get("height", sh)), f"{ident} h")
-    width, height = round_half_up(width_f * scale), round_half_up(height_f * scale)
+    width, height = _local_round_half_up(width_f * scale), _local_round_half_up(height_f * scale)
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid prop size for {image_path}: {width}x{height}")
 
@@ -520,7 +520,7 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
         offset_x, offset_y = _box_anchor_offset(anchor_source[4:], width, height)
     else:
         offset_x, offset_y = anchor_px[0] * width / sw, anchor_px[1] * height / sh
-    left, top = round_half_up(x * scale - offset_x), round_half_up(y * scale - offset_y)
+    left, top = _local_round_half_up(x * scale - offset_x), _local_round_half_up(y * scale - offset_y)
 
     if "sortY" in prop:
         sort_y, sort_source = effective_sort_y(prop), "explicit"
@@ -573,7 +573,7 @@ def report_entry(item: Placed, canvas_size: tuple[int, int], report_dir: Path | 
     return _clean({
         "id": item.id, "group": item.group, "kind": item.kind, "layer": item.layer, "band": item.band,
         "draw_index": item.draw_index,
-        "image": portable_ref(item.image_path, report_dir) if report_dir is not None else str(item.image_path),
+        "image": _local_portable_ref(item.image_path, report_dir) if report_dir is not None else str(item.image_path),
         "image_sha256": item.image_sha256,
         "left": item.left, "top": item.top, "w": item.width, "h": item.height,
         "source_size": list(item.source_size), "anchorPx": list(item.anchor_px), "anchor_source": item.anchor_source,
@@ -905,7 +905,7 @@ def load_geometry(args: argparse.Namespace, canvas_size: tuple[int, int], base_s
 
 # --------------------------------------------------------------------------- geometry tests
 
-def points_in_polygon(points: np.ndarray, polygon: np.ndarray) -> np.ndarray:
+def _local_points_in_polygon(points: np.ndarray, polygon: np.ndarray) -> np.ndarray:
     """Even-odd test of (N, 2) points against one polygon, vectorised over points and edges."""
     px, py = points[:, :1], points[:, 1:2]
     x0, y0 = polygon[:, 0], polygon[:, 1]
@@ -916,10 +916,10 @@ def points_in_polygon(points: np.ndarray, polygon: np.ndarray) -> np.ndarray:
     return np.count_nonzero(crosses & (px < x_cross), axis=1) % 2 == 1
 
 
-def points_in_shape(points: np.ndarray, shape: dict[str, Any]) -> np.ndarray:
+def _local_points_in_shape(points: np.ndarray, shape: dict[str, Any]) -> np.ndarray:
     """Points inside a rect/ellipse (centre, radii, rotation in degrees) or polygon."""
     if shape["shape"] == "polygon":
-        return points_in_polygon(points, shape["points"])
+        return _local_points_in_polygon(points, shape["points"])
     theta = math.radians(shape.get("rotate", 0.0))
     dx, dy = points[:, 0] - shape["cx"], points[:, 1] - shape["cy"]
     u = dx * math.cos(theta) + dy * math.sin(theta)
@@ -932,21 +932,21 @@ def points_in_shape(points: np.ndarray, shape: dict[str, Any]) -> np.ndarray:
     return (u / rx) ** 2 + (v / ry) ** 2 <= 1.0
 
 
-def walkable(points: np.ndarray, geometry: Geometry) -> np.ndarray:
+def _local_walkable(points: np.ndarray, geometry: Geometry) -> np.ndarray:
     """Inside a walk region and outside its holes; with no walk regions, inside the canvas (Appendix C)."""
     if not geometry.walk:
         width, height = geometry.canvas_size
         return (points[:, 0] >= 0) & (points[:, 0] < width) & (points[:, 1] >= 0) & (points[:, 1] < height)
     inside = np.zeros(len(points), bool)
     for polygon, holes in geometry.walk:
-        region = points_in_polygon(points, polygon)
+        region = _local_points_in_polygon(points, polygon)
         for hole in holes:
-            region &= ~points_in_polygon(points, hole)
+            region &= ~_local_points_in_polygon(points, hole)
         inside |= region
     return inside
 
 
-def footprint_samples(point: tuple[float, float], radius: float, y_squash: float) -> np.ndarray:
+def _local_footprint_samples(point: tuple[float, float], radius: float, y_squash: float) -> np.ndarray:
     """The point plus 8 samples on the actor footprint ellipse (rx = r, ry = r * ySquash)."""
     angles = np.arange(8) * (math.pi / 4)
     samples = np.column_stack([point[0] + radius * np.cos(angles), point[1] + radius * y_squash * np.sin(angles)])
@@ -968,7 +968,7 @@ def shape_mask(shape: dict[str, Any]) -> tuple[tuple[int, int, int, int], np.nda
         return box, np.zeros((height, width), bool)
     gy, gx = np.mgrid[box[1]:box[3], box[0]:box[2]]
     points = np.column_stack([gx.ravel() + 0.5, gy.ravel() + 0.5])
-    return box, points_in_shape(points, shape).reshape(height, width)
+    return box, _local_points_in_shape(points, shape).reshape(height, width)
 
 
 def overlap_area(first: tuple[tuple[int, int, int, int], np.ndarray],
@@ -1002,15 +1002,15 @@ def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Ge
         row: dict[str, Any] = {"id": item.id, "kind": item.kind, "band": item.band, "draw_index": item.draw_index,
                                "foot": list(foot), "visible_bounds": list(bounds) if bounds else None}
         if item.kind == "actor":
-            samples = footprint_samples(foot, geometry.actor_radius, geometry.y_squash)
-            inside = walkable(samples, geometry)
-            hits = [shape["id"] for shape in blockers if points_in_shape(samples, shape).any()]
+            samples = _local_footprint_samples(foot, geometry.actor_radius, geometry.y_squash)
+            inside = _local_walkable(samples, geometry)
+            hits = [shape["id"] for shape in blockers if _local_points_in_shape(samples, shape).any()]
             row["foot_valid"] = bool(inside.all() and not hits)
             row["blocked_by"] = hits
             if not row["foot_valid"]:
                 actor_invalid.append(item.id)
         elif item.band != "foreground":
-            row["foot_walkable"] = bool(walkable(np.array([foot]), geometry)[0])
+            row["foot_walkable"] = bool(_local_walkable(np.array([foot]), geometry)[0])
             if not row["foot_walkable"]:
                 outside.append(item.id)
         if bounds is None:
@@ -1054,7 +1054,8 @@ def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Ge
     seen: dict[tuple, str] = {}
     duplicates = []
     for item in ordered:
-        key = (item.image_sha256, round_half_up(item.world[0] * 2), round_half_up(item.world[1] * 2), item.band)
+        key = (item.image_sha256, _local_round_half_up(item.world[0] * 2), _local_round_half_up(item.world[1] * 2),
+               item.band)
         if key in seen:
             duplicates.append({"a": seen[key], "b": item.id})
         else:
@@ -1413,7 +1414,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.scale == 1:
         scaled = base
     else:
-        size = (round_half_up(base.width * args.scale), round_half_up(base.height * args.scale))
+        size = (_local_round_half_up(base.width * args.scale), _local_round_half_up(base.height * args.scale))
         scaled = base.resize(size, _resample_filter(args.resampler))
     ordered = draw_order(placed, args.sort)
     canvas, owners = compose_scene(scaled, ordered, track_owners=need_audit)
@@ -1450,7 +1451,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             audit_dir = Path(args.audit_out).resolve().parent
             audit_doc = dict(audit)
             audit_doc["inputs"] = _input_refs(args, placed, packs, geometry, audit_dir)
-            audit_doc["outputs"] = [{"path": portable_ref(args.output, audit_dir), "sha256": preview_sha,
+            audit_doc["outputs"] = [{"path": _local_portable_ref(args.output, audit_dir), "sha256": preview_sha,
                                      "bytes": preview.stat().st_size}]
             (stage / "audit.json").write_bytes(_json_bytes(audit_doc))
             staged.append((stage / "audit.json", args.audit_out))
@@ -1458,20 +1459,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             report_dir = Path(args.report).resolve().parent
             report = {
                 "schema": REPORT_SCHEMA, "tool": dict(TOOL),
-                "base": portable_ref(args.base, report_dir), "base_sha256": base_info["sha256"],
-                "placements": portable_ref(args.placements, report_dir),
+                "base": _local_portable_ref(args.base, report_dir), "base_sha256": base_info["sha256"],
+                "placements": _local_portable_ref(args.placements, report_dir),
                 "placements_sha256": forge_core.sha256_file(args.placements),
-                "output": portable_ref(args.output, report_dir), "output_sha256": preview_sha,
+                "output": _local_portable_ref(args.output, report_dir), "output_sha256": preview_sha,
                 "canvas_size": list(canvas.size), "scale": args.scale, "resampler": args.resampler,
                 "sort": args.sort, "anchor_policy": args.anchor, "compositing_order": compositing_order(args.sort),
-                "prop_packs": [file_ref(path, report_dir) for path in packs.manifests.values()],
+                "prop_packs": [_local_file_ref(path, report_dir) for path in packs.manifests.values()],
                 "pasted": [report_entry(item, canvas.size, report_dir) for item in ordered],
                 "warnings": warnings,
             }
             if audit is not None:
                 report["audit_status"] = audit["status"]
             if pan_windows is not None:
-                report["plate_pan"] = {"file": portable_ref(args.plate_pan, report_dir),
+                report["plate_pan"] = {"file": _local_portable_ref(args.plate_pan, report_dir),
                                        "viewport": list(args.pan_viewport), "zoom": args.pan_zoom,
                                        "gap_px": PAN_GAP_PX, "frames": pan_windows}
             (stage / "report.json").write_bytes(_json_bytes(_clean(report)))
@@ -1494,7 +1495,7 @@ def _input_refs(args: argparse.Namespace, placed: Sequence[Placed], packs: PropP
         key = path_key(path)
         if key not in seen:
             seen.add(key)
-            refs.append(file_ref(Path(path), base_dir))
+            refs.append(_local_file_ref(Path(path), base_dir))
     return refs
 
 
