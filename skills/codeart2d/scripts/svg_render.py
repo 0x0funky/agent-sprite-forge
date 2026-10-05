@@ -56,7 +56,7 @@ else:
     _MISSING = None
 
 TOOL_NAME = "svg_render.py"
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.4.0"  # D29: the package version
 SKILL_DIR = SCRIPTS_DIR.parent
 META_NAME = "codeart-meta.json"
 BASE_VARIANT = "base"
@@ -72,6 +72,7 @@ RENDER_NOT_PROVEN = (
     "the recorded renderer version).",
     "That the art matches the brief and the intent of the SVG.",
 )
+DOCTOR_SCHEMA = "codeart2d.doctor_report.v1"  # codeart.schema.json#/$defs/doctor_report_v1
 DOCTOR_METHOD = ("svg_render.py doctor: codeart_core.run_doctor renders the conformance corpus on each backend; "
                  "exact cases compare every pixel with the truth image (t01 also at 4x), the palette case checks "
                  "colours and alpha, golden cases compare pinned resvg-py hashes or Chrome-measured probe pixels, "
@@ -102,13 +103,9 @@ def _local_safe_stem(name: str, used: set[str], fallback: str) -> str:
     return candidate
 
 
-def _local_file_ref(path: Path, base: Path) -> dict:
-    """fileRef relative to `base` (POSIX); a file on another drive is recorded by its name."""
-    try:
-        relative = Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:  # Windows: another drive has no relative path
-        relative = path.name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+def _file_ref(path: Path, base: Path) -> dict:
+    """fileRef relative to `base` (POSIX); a file on another drive is recorded by its name (forge_core.file_ref)."""
+    return forge_core.file_ref(path, base)
 
 
 def _local_inside(path: Path, folder: Path) -> bool:
@@ -290,9 +287,9 @@ def cmd_render(args: argparse.Namespace) -> dict:
                                "size": [pixels.shape[1] * upscale, pixels.shape[0] * upscale],
                                "anchor_px": [anchor[0] * upscale, anchor[1] * upscale] if anchor else None,
                                "from": png.relative_to(stage).as_posix(), "method": "integer nearest"})
-        inputs = [_local_file_ref(svg_path, stage)] + ([_local_file_ref(Path(args.palette), stage)]
+        inputs = [_file_ref(svg_path, stage)] + ([_file_ref(Path(args.palette), stage)]
                                                        if args.palette else [])
-        qa = render_envelope(images, profile, args.crisp, inputs, [_local_file_ref(path, stage) for path in outputs])
+        qa = render_envelope(images, profile, args.crisp, inputs, [_file_ref(path, stage) for path in outputs])
         if args.strict_qc and qa["status"] != "pass":
             failing = [f"{check['id']} {check['value']} in {', '.join(check['failing'][:3])}"
                        for check in qa["checks"] if check["status"] == "fail"]
@@ -381,7 +378,8 @@ def doctor_envelope(report: dict) -> dict:
     for result in report["lint"]:
         checks.append({"id": f"lint:{result['case']}", "status": result["status"], "value": result["codes"],
                        "threshold": "rejected by the portable lint"})
-    return {**report, "method": DOCTOR_METHOD, "notProven": list(DOCTOR_NOT_PROVEN), "checks": checks,
+    return {"schema": DOCTOR_SCHEMA, **report, "method": DOCTOR_METHOD, "notProven": list(DOCTOR_NOT_PROVEN),
+            "checks": checks,
             "inputs": [], "outputs": [], "tool": {"name": f"{TOOL_NAME} doctor", "version": TOOL_VERSION},
             "platform": {"system": sys.platform, "python": platform.python_version()}}
 
@@ -478,7 +476,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
     except Exception as error:  # never a traceback for the user; a render stage is already removed
-        print(f"error: internal error ({type(error).__name__}): {forge_core.ascii_text(str(error))}", file=sys.stderr)
+        print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     if failure:

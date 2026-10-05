@@ -101,11 +101,12 @@ are none); `--variants base` renders the base palette; `--variants a,b` picks va
 
 Clips follow the sprite clip contract: `frames` are frame names or 0-based indices,
 timing is `duration_ms` (one integer or one per frame) or `ticks` at `tick_hz` (default
-60), looping is `loop` or `loop_policy`. Clips with only `frames`, `duration_ms`, `loop`
-and `stride_world_units` are written as `generate2dsprite.animation_clips.v1` manifests,
-which every build_animation_clips accepts. A clip that uses any newer field (`ticks`,
-`loop_policy`, `events`, `keys`, `entry_frame`, `transitions`, `cadence_ms`, `role`, ...)
-is written as a `.v2` manifest, which needs the clips v2 builder.
+60), looping is `loop` or `loop_policy`. Manifests are written as
+`generate2dsprite.animation_clips.v2`, so events, ticks and the top-level `sampling: nearest`,
+`pixel_art` and `art_source: code` reach the compiled clips. `--clips-schema v1` writes the v1
+id for a build_animation_clips that predates the v2 reader; it refuses clips that use a v2
+field (`ticks`, `loop_policy`, `events`, `keys`, `entry_frame`, `transitions`, `cadence_ms`,
+`role`, ...).
 
 ## What render_pixelspec checks before rendering
 

@@ -22,7 +22,8 @@ variants. Checks, each valued at the worst frame:
 outputs) plus per-frame metrics. --review writes a contact sheet: every frame at each
 --scales factor (integer nearest only) on each --bg, an --onion row (previous frame red,
 next blue, --anchor magenta), palette swatches and the per-frame metrics.
-With --strict a failed check exits 1 and writes neither file; warnings never fail.
+A failed check exits 1: without --strict the report and review sheet are still written (so
+the failure can be inspected), with --strict neither file is written. Warnings never fail.
 """
 
 from __future__ import annotations
@@ -49,7 +50,7 @@ else:
     _MISSING = None
 
 TOOL_NAME = "pixel_qa.py"
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.4.0"  # D29: the package version
 SKILL_DIR = SCRIPTS_DIR.parent
 META_SCHEMA = "codeart2d.codeart_meta.v1"
 LOOP_SEAM_LIMIT = 2.0
@@ -122,7 +123,7 @@ def load_palette(path: Path) -> Any:
     if path.suffix.lower() != ".json":
         return codeart_core.parse_palette(path)
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = forge_core.read_json(path)  # UTF-8 with an optional BOM (D28)
     except (OSError, ValueError) as error:
         raise codeart_core.CodeArtError(f"cannot read palette {path.name}: {error}") from None
     return codeart_core.parse_palette(data["palette"] if isinstance(data, dict) and data.get("schema") == META_SCHEMA
@@ -147,13 +148,9 @@ def outline_colours(text: str | None, palette: Any, variant: str | None) -> list
     return colours
 
 
-def _local_file_ref(path: Path, base: Path) -> dict:
-    """fileRef relative to `base` (POSIX); a file on another drive is recorded by its name."""
-    try:
-        relative = Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:  # Windows: another drive has no relative path
-        relative = path.name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+def _file_ref(path: Path, base: Path) -> dict:
+    """fileRef relative to `base` (POSIX); a file on another drive is recorded by its name (forge_core.file_ref)."""
+    return forge_core.file_ref(path, base)
 
 
 def _status(checks: list[dict]) -> str:
@@ -307,8 +304,8 @@ def run(args: argparse.Namespace) -> dict:
         items.append((Path(args.review), lambda path: codeart_core.save_png(review_image, path)))
     if args.report:
         base = Path(args.report).resolve().parent
-        frame_refs = [_local_file_ref(frame["path"], base) for frame in frames]
-        palette_refs = [_local_file_ref(Path(args.palette), base)] if args.palette else []
+        frame_refs = [_file_ref(frame["path"], base) for frame in frames]
+        palette_refs = [_file_ref(Path(args.palette), base)] if args.palette else []
         report = {
             "status": status, "method": QA_METHOD,
             "notProven": list(QA_NOT_PROVEN) + _skipped_notes(checks), "checks": checks,
@@ -322,17 +319,18 @@ def run(args: argparse.Namespace) -> dict:
 
         def write_report(path: Path) -> None:
             if args.review:
-                report["outputs"] = [_local_file_ref(Path(args.review), base)]
+                report["outputs"] = [_file_ref(Path(args.review), base)]
             forge_core.write_json(path, report, no_clobber=False)
 
         items.append((Path(args.report), write_report))
     _local_publish_files(items)
     warned = [check["id"] for check in checks if check["status"] == "warn"]
-    if failed:
-        _warn(f"QA failed: {', '.join(check['id'] for check in failed)} (use --strict to exit 1)")
     summary = {"status": status, "frames": len(frames), "failed": [check["id"] for check in failed],
                "warned": warned, "report": str(Path(args.report).resolve()) if args.report else None,
                "review": str(Path(args.review).resolve()) if args.review else None}
+    if failed:  # D26: a failed QA exits 1 although its report is written; main() prints this line
+        summary["error"] = (f"QA failed: {', '.join(check['id'] for check in failed)}"
+                            + (" (report written)" if args.report else "") + "; --strict writes nothing on failure")
     return summary
 
 
@@ -370,10 +368,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _warn(message: str) -> None:
-    print(f"warning: {forge_core.ascii_text(message)}", file=sys.stderr)
-
-
 def _local_dependency_problem() -> str | None:
     """The pip command for missing numpy/Pillow, or why the skill's own modules did not import."""
     if _MISSING is None:
@@ -407,9 +401,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
     except Exception as error:  # never a traceback for the user
-        print(f"error: internal error ({type(error).__name__}): {forge_core.ascii_text(str(error))}", file=sys.stderr)
+        print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
+    message = summary.pop("error", None)
     print(json.dumps(summary, ensure_ascii=True))
+    if message:  # D26: a failed check exits 1 although the report and review sheet are written
+        print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -54,8 +54,9 @@ The status is `pass` only when the primary backend passes every case and the lin
 rejects every lint case; otherwise the doctor exits 1 and names the failing cases. A
 deviating fallback backend is reported as a warning. With no backend the status is
 `fail` and the message is the pip command. `--report` writes the full report even when
-the doctor fails: the case results per backend plus a QA envelope (`method`,
-`notProven`, `checks`, `tool`) and the platform. It never replaces an existing file.
+the doctor fails: `schema: codeart2d.doctor_report.v1`, the case results per backend
+plus a QA envelope (`method`, `notProven`, `checks`, `tool`) and the platform. It never
+replaces an existing file.
 
 Golden hashes for t09, t10 and t13 are pinned for resvg-py 0.5.0 on Windows (win32),
 the only configuration measured. On other versions or systems those cases fall back to
