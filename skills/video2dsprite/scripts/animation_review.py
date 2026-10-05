@@ -134,7 +134,7 @@ const ctx=$('view').getContext('2d');ctx.imageSmoothingEnabled=false;
 function integerValue(id,fallback){const raw=$(id).value;const value=raw===''?fallback:Number(raw);return Number.isFinite(value)?Math.trunc(value):fallback}
 function range(){let a=Math.max(0,Math.min(imgs.length-1,integerValue('start',0)));let b=Math.max(a+1,Math.min(imgs.length,integerValue('end',imgs.length)));return[a,b]}
 function change(){let[a,b]=range();$('start').value=a;$('end').value=b;index=a;elapsed=0;last=performance.now();$('span').textContent=`${b-a} frames · ${((b-a)/data.fps).toFixed(3)} s at ${data.fps} fps`}
-function selection(){let[a,b]=range();return{schema:'forge-frame-selection/v1',sourceDirectory:data.sourceDirectory,start:a,endExclusive:b,fps:data.fps,sourceHashes:data.frames.slice(a,b).map(f=>f.sha256),status:'selected-needs-visual-review'}}
+function selection(){let[a,b]=range();return{schema:'forge-frame-selection/v1',sourceDirectory:data.sourceDirectoryName||data.sourceDirectory,start:a,endExclusive:b,fps:data.fps,sourceHashes:data.frames.slice(a,b).map(f=>f.sha256),status:'selected-needs-visual-review'}}
 $('start').onchange=$('end').onchange=change;$('whole').onclick=()=>{$('start').value=0;$('end').value=imgs.length;change()};
 $('scrub').oninput=()=>{running=false;index=Number($('scrub').value);$('play').textContent='Play'};
 $('play').onclick=()=>{running=!running;$('play').textContent=running?'Pause':'Play';elapsed=0;last=performance.now();const[a,b]=range();if(running&&(index<a||index>=b))index=a};
@@ -159,8 +159,12 @@ def review(directory: Path, out: Path, fps: float, minimum: int, maximum: int, p
     adjacent = np.abs(np.diff(values, axis=0)).mean(axis=tuple(range(1, values.ndim)))
     with Image.open(paths[0]) as im:
         size = list(im.size)
+    # Paths are relative to the review folder, or only the name across drives (forge_core.manifest_path; the
+    # sha256 values are the binding). The reviewer page saves selections with the bare folder name: a
+    # downloaded file has no known location, and cut checks the hashes (r2-conventions finding 5).
     report = {"schema": "forge-animation-review/v1", "status": "needs-visual-review",
-              "sourceDirectory": str(directory.resolve()), "sourceSize": size,
+              "sourceDirectory": forge_core.manifest_path(directory, out),
+              "sourceDirectoryName": directory.resolve().name, "sourceSize": size,
               "fps": fps, "previewMaxSide": preview_size, "candidates": proposed,
               "diagnostics": {"frameCount": len(paths), "durationSeconds": len(paths) / fps,
                               "uniqueVisibleFrames": len(set(hashes)),
@@ -169,7 +173,7 @@ def review(directory: Path, out: Path, fps: float, minimum: int, maximum: int, p
                               "largestSteps": [{"from": int(i), "to": int(i+1), "MAE": round(float(adjacent[i]), 7)} for i in np.argsort(adjacent)[-8:][::-1]],
                               "candidateGate": "recurrenceMAE < adjacentMedianMAE; heuristic improvement over ordinary frame-to-frame change, not loop approval",
                               "limits": "Recurrence is not gait/contact/identity validation. Candidate lengths may be partial or multiple cycles. No interpolation or registration repair applied."},
-              "frames": [{"source": str(p.resolve()), "sha256": source_hashes[i], "bounds": bounds[i],
+              "frames": [{"source": forge_core.manifest_path(p, out), "sha256": source_hashes[i], "bounds": bounds[i],
                           "preview": f"frames/frame-{i:04d}.png"} for i, p in enumerate(paths)]}
     out.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".review-", dir=out.parent) as tmp:
@@ -178,7 +182,8 @@ def review(directory: Path, out: Path, fps: float, minimum: int, maximum: int, p
         for i, path in enumerate(paths):
             with Image.open(path) as im:
                 im.thumbnail((preview_size, preview_size), Image.Resampling.LANCZOS)
-                im.save(stage / report["frames"][i]["preview"])
+                # Straight alpha with RGB zeroed under alpha 0 (Appendix D): LANCZOS ringing leaves colour there.
+                forge_core.save_png(im, stage / report["frames"][i]["preview"])
         if [signature(path) for path in paths] != source_hashes:
             raise ValueError("source frames changed during review; no review published")
         (stage / "review.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -208,7 +213,7 @@ def cut(directory: Path, out: Path, start: int, end: int, fps: float, expected: 
     digests = [signature(p) for p in paths]
     if expected is not None and expected != digests:
         raise ValueError("selection hashes no longer match source frames")
-    result = {"schema": "forge-frame-cut/v1", "sourceDirectory": str(directory.resolve()),
+    result = {"schema": "forge-frame-cut/v1", "sourceDirectory": forge_core.manifest_path(directory, out),
               "start": start, "endExclusive": end, "fps": fps, "durationSeconds": len(paths)/fps,
               "status": "selected-needs-visual-review", "sourceHashes": digests,
               "transforms": "none; byte-preserved shared canvases"}
@@ -424,7 +429,10 @@ def _run(argv=None) -> int:
             if data is not None:
                 if not isinstance(data.get("sourceDirectory"), str) or not data["sourceDirectory"].strip():
                     raise ValueError("selection sourceDirectory must be a nonempty path string")
-                if data.get("schema") != "forge-frame-selection/v1" or Path(data["sourceDirectory"]).resolve() != args.frames_dir.resolve():
+                # Old v1 files hold an absolute path; new ones a path relative to the selection file or only
+                # the folder name (the reviewer page), bound by the source hashes (gait_loop.resolve_directory).
+                if data.get("schema") != "forge-frame-selection/v1" or not gait_loop.resolve_directory(
+                        data["sourceDirectory"], args.selection, args.frames_dir):
                     raise ValueError("selection schema/source directory mismatch")
                 args.start, args.end, args.fps = data["start"], data["endExclusive"], data["fps"]
                 expected = data["sourceHashes"]

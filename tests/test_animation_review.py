@@ -133,7 +133,90 @@ class ReviewTests(unittest.TestCase):
             self.assertTrue((root / "review/index.html").is_file())
             for frame in report["frames"]:
                 self.assertTrue((root / "review" / frame["preview"]).is_file())
-                self.assertEqual(frame["sha256"], R.signature(Path(frame["source"])))
+                self.assertEqual(frame["sha256"], R.signature(root / "review" / frame["source"]))
+
+    def test_review_and_v1_cut_write_no_absolute_paths(self):
+        """r2-conventions finding 5: review.json (and the index.html that embeds it) and the v1 cut's
+        selection.json held absolute paths. sourceDirectory and frames[].source are relative to the output
+        folder now, or only the name when there is no relative route (another drive); the sha256 values bind them."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_frames(root / "src")
+            names = sorted(p.name for p in (root / "src").glob("*.png"))
+            report = R.review(root / "src", root / "review", 24, 3, 5, 96)
+            self.assertEqual((report["sourceDirectory"], report["sourceDirectoryName"]), ("../src", "src"))
+            self.assertEqual([frame["source"] for frame in report["frames"]], [f"../src/{name}" for name in names])
+            self.assertEqual(R.cut(root / "src", root / "cut", 2, 6, 24)["sourceDirectory"], "../src")
+            absolute = {str(root.resolve()), root.resolve().as_posix(), json.dumps(str(root.resolve()))[1:-1]}
+            for path in (root / "review" / "review.json", root / "review" / "index.html", root / "cut" / "selection.json"):
+                text = path.read_text(encoding="utf-8")
+                self.assertFalse([value for value in absolute if value in text], path.name)
+            off_drive = lambda path, base: Path(path).resolve().as_posix()  # what portable_path gives across drives
+            with mock.patch.object(R.forge_core, "portable_path", off_drive):
+                report = R.review(root / "src", root / "review-2", 24, 3, 5, 96)
+                cut = R.cut(root / "src", root / "cut-2", 2, 6, 24)
+            self.assertEqual((report["sourceDirectory"], cut["sourceDirectory"]), ("src", "src"))
+            self.assertEqual([frame["source"] for frame in report["frames"]], names)
+
+    def test_v1_selections_from_the_page_and_old_absolute_files_both_cut(self):
+        """r2-conventions finding 5: the page saves sourceDirectory as the frames folder's name (a downloaded file
+        has no known location; the hashes bind it) and cut resolves v1 like v2 (gait_loop.resolve_directory):
+        relative to the selection file, or by name. Old v1 files with an absolute path still cut."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            make_frames(root / "src")
+            report = R.review(root / "src", root / "review", 24, 3, 5, 96)
+            page = {"schema": "forge-frame-selection/v1", "sourceDirectory": report["sourceDirectoryName"],
+                    "start": 1, "endExclusive": 4, "fps": 24,
+                    "sourceHashes": [frame["sha256"] for frame in report["frames"][1:4]],
+                    "status": "selected-needs-visual-review"}
+            downloads = root / "Downloads"
+            downloads.mkdir()
+            cases = [(downloads, page), (root, {**page, "sourceDirectory": str((root / "src").resolve())}),
+                     (downloads, {**page, "sourceDirectory": "../src"})]
+            for index, (folder, selection) in enumerate(cases):
+                file = folder / f"selection-{index}.json"
+                file.write_text(json.dumps(selection), encoding="utf-8")
+                with contextlib.redirect_stdout(io.StringIO()):
+                    self.assertEqual(R.main(["cut", "--frames-dir", str(root / "src"), "--out-dir",
+                                             str(root / f"cut-{index}"), "--selection", str(file)]), 0)
+                self.assertEqual(len(list((root / f"cut-{index}").glob("frame-*.png"))), 3)
+            wrong = downloads / "wrong.json"
+            wrong.write_text(json.dumps({**page, "sourceDirectory": "other"}), encoding="utf-8")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+                R.main(["cut", "--frames-dir", str(root / "src"), "--out-dir", str(root / "cut-wrong"),
+                        "--selection", str(wrong)])
+            self.assertEqual(caught.exception.code, 1)
+            self.assertIn("source directory mismatch", stderr.getvalue())
+            self.assertFalse((root / "cut-wrong").exists())
+
+    def test_review_previews_zero_rgb_under_alpha_0(self):
+        """r2-conventions finding 4: the frames/frame-NNNN.png previews (LANCZOS thumbnails) kept colour under
+        alpha 0; they are written with forge_core.save_png now (Appendix D)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "src").mkdir()
+            y, x = np.mgrid[:256, :256]
+            for i in range(6):  # a dark body with a faint bright rim, RGB zero under alpha 0
+                pixels = np.zeros((256, 256, 4), np.uint8)
+                inside = (x - 128 - i) ** 2 / 70 ** 2 + (y - 128) ** 2 / 100 ** 2 <= 1
+                rim = ((x - 128 - i) ** 2 / 74 ** 2 + (y - 128) ** 2 / 104 ** 2 <= 1) & ~inside
+                pixels[inside] = (20, 24, 32, 255)
+                pixels[rim] = (250, 240, 200, 24)
+                Image.fromarray(pixels, "RGBA").save(root / "src" / f"frame-{i:03d}.png")
+
+            def coloured(image):
+                pixels = np.asarray(image.convert("RGBA"))
+                return int(((pixels[..., 3] == 0) & pixels[..., :3].any(axis=2)).sum())
+
+            with Image.open(root / "src" / "frame-000.png") as image:
+                image.thumbnail((192, 192), Image.Resampling.LANCZOS)
+                self.assertGreater(coloured(image), 0)  # the thumbnail itself leaves colour behind
+            report = R.review(root / "src", root / "review", 24, 2, 3)
+            for frame in report["frames"]:
+                with Image.open(root / "review" / frame["preview"]) as preview:
+                    self.assertEqual((preview.size, coloured(preview)), ((192, 192), 0), frame["preview"])
 
     def test_selection_cli_rejects_changed_or_wrong_source(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -184,7 +267,7 @@ class ReviewTests(unittest.TestCase):
     def test_ui_uses_source_timing_and_integer_selected_interval(self):
         data = {"frames": [{"preview": f"frame-{i}.png", "sha256": "a" * 64, "bounds": None} for i in range(8)],
                 "fps": 20, "sourceSize": [48, 64], "previewMaxSide": 192,
-                "sourceDirectory": "/frames", "candidates": [], "diagnostics": {}}
+                "sourceDirectory": "../frames", "sourceDirectoryName": "frames", "candidates": [], "diagnostics": {}}
         script = R.HTML.split("<script>", 1)[1].split("</script>", 1)[0].replace("__DATA__", json.dumps(data))
         harness = r'''
 const vm = require('node:vm');
@@ -215,6 +298,8 @@ setImmediate(()=>{
         self.assertEqual([result[k] for k in ["delayed1x", "halfSpeed", "paused", "halfStep", "fullStep"]], [5, 7, 7, 7, 0])
         self.assertEqual((result["selection"]["start"], result["selection"]["endExclusive"]), (1, 5))
         self.assertEqual(len(result["selection"]["sourceHashes"]), 4)
+        # r2-conventions finding 5: the saved selection names the frames folder, not a review-relative path
+        self.assertEqual(result["selection"]["sourceDirectory"], "frames")
         self.assertEqual([result[k] for k in ["previousWrap", "nextWrap", "resumeInsideRange"]], [4, 1, 1])
 
     def test_mixed_canvas_and_animated_png_are_rejected(self):

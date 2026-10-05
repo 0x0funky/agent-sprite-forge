@@ -177,6 +177,12 @@ file) and writes a v2 selection rebased onto the cut folder, with the original i
 under `origin`. `cut --start 12 --end 28 --fps 24` still exports an interval without a
 selection. Neither selection nor export turns `needs-visual-review` into an approval.
 
+No written file holds an absolute path: `review.json` and a cut's `selection.json` name
+their sources relative to their own folder (only the name across drives). The reviewer
+page saves its selection with the frames folder's name, because a downloaded file has no
+fixed place; `cut` resolves `sourceDirectory` relative to the selection file or by that
+name, still reads the absolute paths of older v1 files, and the frame hashes decide.
+
 ## Limits
 
 The gait thresholds (stride windows, the 1.10 alternation ratio, seam and wrap limits)
