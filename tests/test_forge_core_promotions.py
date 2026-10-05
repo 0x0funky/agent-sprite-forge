@@ -780,6 +780,19 @@ def test_edge_seam_report_d9_verdicts():
     for report in (report, small):
         assert report["verdict"] in fc.EDGE_SEAM_VERDICTS
         assert_valid_contract(report, "common", "seamReport")
+    # D9, one schema def: every verdict's report is a valid common edgeSeam, whose verdict enum is
+    # exactly EDGE_SEAM_VERDICTS (map platform-strip joins and terrain wraps use the def, and map
+    # parallaxSeam its verdict enum).
+    schema = json.loads((REPO_ROOT / "shared" / "schemas" / "common.schema.json").read_text(encoding="utf-8"))
+    assert set(schema["$defs"]["edgeSeam"]["properties"]["verdict"]["enum"]) == set(fc.EDGE_SEAM_VERDICTS)
+    by_verdict = {"flat": fc.edge_seam_report(flat, flat), "too_small": small,
+                  "seam": fc.edge_seam_report(ramp, ramp),
+                  "duplicate_edge": fc.edge_seam_report(ramp[:, :6], ramp[:, 5:]),
+                  "continuous": fc.edge_seam_report(ramp[:, :6], ramp[:, 6:])}
+    assert set(by_verdict) == set(fc.EDGE_SEAM_VERDICTS)
+    for verdict, result in by_verdict.items():
+        assert result["verdict"] == verdict
+        assert_valid_contract(result, "common", "edgeSeam")
 
 
 def test_edge_seam_report_inputs():
