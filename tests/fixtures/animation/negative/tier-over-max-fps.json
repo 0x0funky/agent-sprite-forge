@@ -1,0 +1,14 @@
+{
+  "rule": "tiers",
+  "why": "a tier keeps its fps ceiling",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/mobilePackedAlpha/0/maxFps",
+      "value": "6/1"
+    }
+  ],
+  "alsoFails": []
+}

@@ -1,0 +1,14 @@
+{
+  "rule": "paths",
+  "why": "packaged files stay inside the package folder",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/provenanceFile",
+      "value": "../provenance.json"
+    }
+  ],
+  "alsoFails": []
+}

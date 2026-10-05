@@ -1,0 +1,13 @@
+{
+  "rule": "timing",
+  "why": "one sourceIndices entry per frame",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "remove",
+      "path": "/sourceIndices/0"
+    }
+  ],
+  "alsoFails": []
+}

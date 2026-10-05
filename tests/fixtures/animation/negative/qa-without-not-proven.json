@@ -1,0 +1,14 @@
+{
+  "rule": "qa-incomplete",
+  "why": "QA states what it does not prove",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/qa/notProven",
+      "value": []
+    }
+  ],
+  "alsoFails": []
+}

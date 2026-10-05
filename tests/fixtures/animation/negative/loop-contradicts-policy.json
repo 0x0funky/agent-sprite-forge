@@ -1,0 +1,14 @@
+{
+  "rule": "loop-flag",
+  "why": "loop false with a cycle loop policy",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/loop",
+      "value": false
+    }
+  ],
+  "alsoFails": []
+}

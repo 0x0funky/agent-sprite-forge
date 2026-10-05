@@ -1,0 +1,20 @@
+{
+  "rule": "ffprobe-packets",
+  "why": "one packet per manifest frame",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "encode",
+      "file": "idle-packed.mp4",
+      "kind": "packed",
+      "size": [
+        48,
+        48
+      ],
+      "frames": 7,
+      "fps": "21/2"
+    }
+  ],
+  "alsoFails": []
+}

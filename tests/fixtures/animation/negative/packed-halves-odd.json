@@ -1,0 +1,16 @@
+{
+  "rule": "packed-geometry",
+  "why": "packed halves are padded to even pixels",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/packedAlpha/halfWidth",
+      "value": 49
+    }
+  ],
+  "alsoFails": [
+    "ffprobe-dimensions"
+  ]
+}
