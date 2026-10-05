@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import unittest
 from unittest import mock
 
 from PIL import Image
+
+from forge_testutils import assert_cli_help, run_cli
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "skills/generate2dsprite/scripts/make_anchor_layout.py"
@@ -111,6 +114,94 @@ class AnchorTemplateTests(unittest.TestCase):
             with Image.open(root / "legacy.png") as image:
                 self.assertEqual(image.mode, "RGB")
                 self.assertEqual(image.getpixel((0, 0)), (255, 0, 255))
+
+
+GUIDE = SCRIPT.with_name("make_layout_guide.py")
+
+
+class AnchorLayoutCliTests(unittest.TestCase):
+    """Plan Appendix D for make_anchor_layout.py: ASCII help, no overwrite, nothing left on failure."""
+
+    def args(self, root: Path, output: str, *extra: str) -> list:
+        return [SCRIPT, "--input", str(root / "input.png"), "--rows", "1", "--cols", "2", "--cell-width", "8",
+                "--cell-height", "8", "--subject-height-ratio", "0.5", "--subject-width-ratio", "0.5",
+                "--feet-ratio", "0.75", "--background-mode", "native_alpha", "--resampler", "nearest",
+                "--output", str(root / output), *extra]
+
+    def test_help_is_ascii_under_cp1252(self):
+        assert_cli_help("generate2dsprite", "make_anchor_layout")
+
+    def test_refuses_existing_output_and_prints_a_summary(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            AnchorTemplateTests().source().save(root / "input.png")
+            first = run_cli(self.args(root, "template.png"))
+            self.assertEqual(first.returncode, 0, first.stderr)
+            summary = json.loads(first.stdout)
+            self.assertEqual((summary["size"], summary["mode"]), ([16, 8], "RGBA"))
+            written = (root / "template.png").read_bytes()
+            second = run_cli(self.args(root, "template.png"))
+            self.assertEqual(second.returncode, 1)
+            self.assertIn("error: Refusing to overwrite existing output", second.stderr)
+            self.assertEqual((root / "template.png").read_bytes(), written)
+
+    def test_failure_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            AnchorTemplateTests().source().save(root / "input.png")
+            result = run_cli(self.args(root, "template.png", "--feet-ratio", "0.2"))
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("error: subject ratios place the reference outside the cell", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertEqual(sorted(path.name for path in root.iterdir()), ["input.png"])
+
+
+class LayoutGuideTests(unittest.TestCase):
+    """B01-T7 / S25 for make_layout_guide.py, plus the Appendix D CLI conventions."""
+
+    def guide(self, root: Path, *extra: str):
+        return run_cli([GUIDE, "--rows", "1", "--cols", "2", "--cell-width", "384", "--cell-height", "384",
+                        "--output", str(root / "guide.png"), *extra])
+
+    def test_layout_guide_margin_bounds(self):
+        """r12: a margin of half a cell or more, or below 0, is refused before drawing."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for margin in ("200", "192", "-30"):
+                with self.subTest(margin=margin):
+                    result = self.guide(root, "--safe-margin-x", margin)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("error: --safe-margin-x must satisfy 0 <= margin < half the cell width",
+                                  result.stderr)
+                    self.assertNotIn("Traceback", result.stderr)
+                    self.assertFalse((root / "guide.png").exists())
+            result = self.guide(root, "--safe-margin-x", "191", "--safe-margin-y", "0")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            with Image.open(root / "guide.png") as guide:
+                # The second cell's safe frame stays inside that cell: 1 px wide at x = 384 + 191.
+                self.assertEqual(guide.getpixel((384 + 191, 100)), (47, 128, 237))
+                self.assertEqual(guide.getpixel((384 + 29, 100)), (248, 248, 248))
+
+    def test_help_is_ascii_under_cp1252(self):
+        assert_cli_help("generate2dsprite", "make_layout_guide")
+
+    def test_refuses_existing_output(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            self.assertEqual(self.guide(root).returncode, 0)
+            written = (root / "guide.png").read_bytes()
+            again = self.guide(root, "--label-cells")
+            self.assertEqual(again.returncode, 1)
+            self.assertIn("error: Refusing to overwrite existing output", again.stderr)
+            self.assertEqual((root / "guide.png").read_bytes(), written)
+
+    def test_failure_publishes_nothing(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            result = run_cli([GUIDE, "--rows", "0", "--cols", "2", "--output", str(root / "guide.png")])
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("error: --rows and --cols must be positive", result.stderr)
+            self.assertEqual(list(root.iterdir()), [])
 
 
 if __name__ == "__main__":
