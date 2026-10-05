@@ -92,6 +92,7 @@ Block out navigation, make art and kit, place it, validate the data, preview, th
 - With a plate the best stage status is `needs-visual-review`. Quote `scene_motion.py qa` numbers (decoded seam, frames, fps, keyint, bytes) before calling a loop seamless.
 - Native alpha must keep purple; an RGB checkerboard is not transparency. Test devices before claiming mobile performance.
 - Deliver originals and prompts, runtime assets and data, the preview and the checks run, with remaining limits.
+- Report every WARN or FAIL check verbatim (id, value, threshold, files) from each published QA envelope; never say "all checks passed" when any published envelope has a warn.
 
 ## References
 

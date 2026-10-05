@@ -73,7 +73,7 @@ Image sheets: `sheet_qc.py spill` on the raw sheet, then `generate2dsprite.py pr
 | Jumps, bob or recoil on one registration point | `process --scale-strategy registered` (or `--anchor-px X,Y`) |
 | One character's scale across actions | `process --write-scale-profile <p.json>` on the grounded reference, then `--scale-profile <p.json> --max-profile-scale-drift 0.08` |
 | Canvas does not divide into the grid; other row order | `process --grid-rounding nearest` or `--pad-to-grid`; `--direction-order down,up,left,right` ([modes.md](references/modes.md)) |
-| Identity, NEAR/FAR alternation, drift, baselines | `sheet_qc.py frames --sheet <sheet> --rows R --cols C --cycle run --output-dir <new>`; a duplicated half-cycle means regenerate the second half |
+| Identity, NEAR/FAR alternation, drift, baselines | `sheet_qc.py frames --sheet <sheet> --rows R --cols C --cycle run --output-dir <new>`; a duplicated half-cycle means regenerate the second half. On code-drawn frames (`art_source=code`) `identity_residual` and `torso_drift` are advisory |
 | Game size on one canvas and root, never clamped | `scale_frames.py --frames <pngs> --root-lock torso-x --row-baseline --emit-clips --ticks N --output-dir <new>`; later actions add `--profile <first>/scale-frames.json --action-padding L,T,R,B` |
 | Clips with timing, events, transitions | `build_animation_clips.py --manifest clips.json --output-dir <new>`; read the lints and `review/` ([frames-and-clips.md](references/frames-and-clips.md)) |
 | Whole frames or a scene loop (no keying) | `assemble_frames.py` (`--key chroma`, `--slice ownership`; `--loop-overlap K --ambient` for ambient loops only) |
@@ -88,6 +88,7 @@ Image sheets: `sheet_qc.py spill` on the raw sheet, then `generate2dsprite.py pr
 
 - Review at game size: silhouette and identity, contact and flight, loop seam or one-shot recovery, alpha over light and dark, extremities, scale across actions, root and collider.
 - Quote numbers for quality claims: `pipeline-meta.json` `matte.qa` (a `key_ring_spill` warning: add `--despill-radius 1` or `--key-quality soft`), `sheet-qc.json`, the clip builder's lints. Numeric QC finds symptoms; it never approves anatomy or motion.
+- Report every WARN or FAIL check verbatim (id, value, threshold, files) from each published QA envelope; never say "all checks passed" when any published envelope has a warn.
 - Deliver accepted source art, runtime frames or clips, preview, prompt and provenance, QA and remaining limits. Keep the last accepted bundle when revising.
 
 ## References

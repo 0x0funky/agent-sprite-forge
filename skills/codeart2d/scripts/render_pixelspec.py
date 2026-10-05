@@ -29,6 +29,9 @@ an error. Code art goes to build_animation_clips, never to generate2dsprite.py p
 With --strict-qc nothing is published unless every frame has 0 partial-alpha and
 0 off-palette pixels and, with an outline, 0 outline gaps and at most 10 L-corners.
 Without it a failing result is still published for inspection, and the tool exits 1.
+Walk and run clips (by clip or state name) also get half_cycle_duplicates: frame i vs
+i+n/2 with silhouette IoU >= 0.95 warns (QA status warn, still published, exit 0)
+unless --allow-duplicate-half-cycle records that the leg colours carry the stride.
 """
 
 from __future__ import annotations
@@ -80,6 +83,8 @@ QA_NOT_PROVEN = (
     "Motion, timing and spacing between frames; numbers do not judge animation quality.",
     "That the art matches the brief and the intent of the spec.",
 )
+GAIT_NAME = re.compile(r"(?<![a-z])(?:walk|run|jog|sprint|trot|gallop)(?:s|ing|ning)?(?![a-z])", re.I)
+HALF_CYCLE_IOU_WARN = 0.95  # silhouette IoU of frame i vs i + n/2 in a walk or run clip (live validation 2026-10-06)
 _WINDOWS_RESERVED = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
 
 
@@ -337,8 +342,66 @@ def frame_qa(path: Path, colours: Mapping[str, tuple], outline: list | None) -> 
     return codeart_core.qa_pixels(np.asarray(image), list(colours.values()), outline)
 
 
-def qa_envelope(records: list[dict], inputs: list[dict], outputs: list[dict], has_outline: bool) -> dict:
-    """A common qaEnvelope over every frame: one check per pixel gate, valued at the worst frame."""
+def gait_clips(spec: Mapping) -> list[str]:
+    """Clips whose own name, or a state that plays them, names a walk or run (walk_right, hero-run, ...)."""
+    clips = spec.get("clips") or {}
+    by_state = {target for state, target in (spec.get("states") or {}).items() if GAIT_NAME.search(str(state))}
+    return [name for name in clips if GAIT_NAME.search(name) or name in by_state]
+
+
+def half_cycle_check(spec: Mapping, plan: Mapping, allow: bool) -> dict | None:
+    """Warn when a walk or run clip's frame i and frame i + n/2 have nearly the same silhouette.
+
+    Side-view cycles swap the near and far legs every half cycle; when the two half-cycle frames
+    share a silhouette (IoU >= HALF_CYCLE_IOU_WARN), the alternation rests on leg colours alone and
+    often reads as a shuffle (the live Codex fox, IoU 0.97 and 0.95). Variants change colours only,
+    so the first variant's alpha is measured. None when the spec has no walk or run clip."""
+    names = gait_clips(spec)
+    if not names:
+        return None
+    label = next(iter(key for key, _ in plan["pixels"]))
+    lookup = {frame["name"]: position for position, frame in enumerate(plan["frames"]) if frame["name"] is not None}
+    rows, flagged, worst = [], [], None
+    for clip_name in names:
+        positions = [ref if isinstance(ref, int) else lookup[ref] for ref in spec["clips"][clip_name]["frames"]]
+        count, half = len(positions), len(positions) // 2
+        row: dict[str, Any] = {"clip": clip_name, "frames": count, "pairs": []}
+        if count < 4:
+            row["note"] = "fewer than 4 frames: no half cycle to compare"
+            rows.append(row)
+            continue
+        for index in range(half):
+            first = plan["pixels"][(label, positions[index])][..., 3] > 0
+            second = plan["pixels"][(label, positions[index + half])][..., 3] > 0
+            union = int((first | second).sum())
+            if not union:
+                continue
+            iou = round(float((first & second).sum()) / union, 4)
+            row["pairs"].append([index, index + half, iou])
+            worst = iou if worst is None else max(worst, iou)
+            if iou >= HALF_CYCLE_IOU_WARN:
+                flagged.append(f"{clip_name} {index}/{index + half} (IoU {iou:.2f})")
+        rows.append(row)
+    check: dict[str, Any] = {"id": "half_cycle_duplicates", "status": "pass", "value": worst,
+                             "threshold": HALF_CYCLE_IOU_WARN, "detail": {"clips": rows, "variant": label}}
+    if worst is None:
+        check["status"] = "skipped"
+    elif flagged:
+        check["failing"] = flagged
+        if allow:
+            check["override"] = "--allow-duplicate-half-cycle"
+        else:
+            check["status"] = "warn"
+            check["note"] = ("half-cycle frames share a silhouette, so the stride rests on leg colours alone: give the "
+                             "near and far legs a clear value contrast, keep the arms or forelegs visible, look at the "
+                             "review sheet, and pass --allow-duplicate-half-cycle only once it reads")
+    return check
+
+
+def qa_envelope(records: list[dict], inputs: list[dict], outputs: list[dict], has_outline: bool,
+                extra_checks: Sequence[dict] = ()) -> dict:
+    """A common qaEnvelope over every frame: one check per pixel gate, valued at the worst frame,
+    plus ``extra_checks`` (the walk/run half-cycle check, which can warn but never fails)."""
     checks = []
     for name, limit in codeart_core.QA_PIXEL_GATES:
         values = [(record["metrics"][name], record["file"]) for record in records
@@ -352,10 +415,12 @@ def qa_envelope(records: list[dict], inputs: list[dict], outputs: list[dict], ha
         if failing:
             check["failing"] = failing
         checks.append(check)
+    checks.extend(extra_checks)
     not_proven = list(QA_NOT_PROVEN)
     if not has_outline:
         not_proven.append("Outline continuity and L-corners: the spec has no outline, so they were not measured.")
-    status = "fail" if any(check["status"] == "fail" for check in checks) else "pass"
+    statuses = {check["status"] for check in checks}
+    status = "fail" if "fail" in statuses else "warn" if "warn" in statuses else "pass"
     keep = ("visible", "partial_alpha", "off_palette", "colors", "orphans", "l_corners", "outline_gaps", "bbox")
     return {"status": status, "method": QA_METHOD, "notProven": not_proven, "checks": checks, "inputs": inputs,
             "outputs": outputs, "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
@@ -539,8 +604,10 @@ def run(args: argparse.Namespace) -> dict:
                                 else frames[position]["stem"], "metrics": frame_qa(target, colours, outline)})
         inputs = [_file_ref(spec_path, stage)]
         frame_refs = [_file_ref(path, stage) for path in outputs]
-        qa = qa_envelope(records, inputs, frame_refs, spec.get("outline", {}).get("mode", "none") != "none")
-        if args.strict_qc and qa["status"] != "pass":
+        gait = half_cycle_check(spec, plan, args.allow_duplicate_half_cycle)
+        qa = qa_envelope(records, inputs, frame_refs, spec.get("outline", {}).get("mode", "none") != "none",
+                         [gait] if gait is not None else [])
+        if args.strict_qc and qa["status"] == "fail":
             failing = [f"{check['id']} {check['value']} > {check['threshold']} in {', '.join(check['failing'][:3])}"
                        for check in qa["checks"] if check["status"] == "fail"]
             raise QAFailure("strict QC failed, nothing was published: " + "; ".join(failing))
@@ -596,12 +663,15 @@ def run(args: argparse.Namespace) -> dict:
     final = final.parent.resolve() / final.name
     summary = {"output": str(final), "metadata": str(final / META_NAME), "qa": qa["status"],
                "variants": [label for label, _ in variants], "frames": len(written), "files": len(outputs),
-               "failed_checks": [check["id"] for check in qa["checks"] if check["status"] == "fail"]}
+               "failed_checks": [check["id"] for check in qa["checks"] if check["status"] == "fail"],
+               "warned_checks": [check["id"] for check in qa["checks"] if check["status"] == "warn"]}
     if bundles:
         summary["bundles"] = [str(final / path) for path in bundles.values()]
     dropped = [frames[position]["stem"] for position in range(len(frames)) if empty[position]]
     if dropped:
         _warn(f"{len(dropped)} frame(s) render no pixel and were not written: {', '.join(dropped[:6])}")
+    if gait is not None and gait["status"] == "warn":
+        _warn(f"half_cycle_duplicates: {'; '.join(gait['failing'][:4])}: {gait['note']}")
     return summary  # a QA status fail (published because --strict-qc was not given) exits 1 in main (D26)
 
 
@@ -623,7 +693,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--preview-scale", type=int, default=None, metavar="N",
                         help="write preview-xN.png: every variant and distinct frame, integer nearest upscale")
     parser.add_argument("--strict-qc", action="store_true",
-                        help="publish nothing unless every frame passes the pixel gates")
+                        help="publish nothing unless every frame passes the pixel gates (warnings still publish)")
+    parser.add_argument("--allow-duplicate-half-cycle", action="store_true",
+                        help="walk/run clips: accept half-cycle frames (i, i+n/2) with silhouette IoU >= 0.95 after "
+                             "you have checked that the near/far leg colours carry the stride (recorded as an override)")
     return parser
 
 

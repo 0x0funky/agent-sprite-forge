@@ -4,7 +4,9 @@
   prepare  Place the approved master (or one view of a multi-view sheet) on the
            provider canvas (default 1280x720) with its root on a fixed pixel and
            one recorded scale (integer NEAREST scaling for pixel art), over a flat
-           key colour the master does not use. Writes input.png, prompt.txt (an
+           key colour the master does not use (an opaque master on a flat
+           magenta, green or blue backdrop is keyed first; the job records
+           masterKeying). Writes input.png, prompt.txt (an
            action timeline with a numeric work region), a byte copy of the
            master, review-guide.png and registration_job.json
            (video2dsprite.registration_job.v1) into a new --output-dir.
@@ -352,6 +354,45 @@ def describe_key(key: str) -> tuple[str, str]:
     return f"flat RGB({r}, {g}, {b}) ({key})", "key"
 
 
+# --------------------------------------------------------------------------- opaque master
+
+def key_opaque_master(sheet: np.ndarray, requested: str, pixel_art: bool) -> tuple[np.ndarray, dict[str, Any]]:
+    """Key an opaque master on a flat magenta, green or blue backdrop (or the --master-key colour)
+    with forge_matte.key_still's soft matte; pixel art keeps binary alpha (threshold 128).
+
+    ``requested`` auto takes the declared key whose border-ring estimate is valid and covers at
+    least half of the ring. Raises ValueError when no key backdrop is found or nothing is keyed."""
+    if requested == "auto":
+        best = None
+        for name in forge_matte.DECLARED_KEYS:
+            _, estimate = forge_matte.estimate_key(sheet, name)
+            if estimate["valid"] and estimate["ring_share"] >= 0.5 and (
+                    best is None or estimate["ring_share"] > best[1]["ring_share"]):
+                best = (name, estimate)
+        if best is None:
+            raise ValueError("The master has no transparent pixels and no flat magenta, green or blue backdrop. "
+                             "Pass the approved RGBA cut-out (for example generate2dsprite process output), or "
+                             "name its backdrop with --master-key.")
+        backdrop = best[0]
+    else:
+        backdrop = requested
+    keyed_image, info = forge_matte.key_still(sheet, quality="soft", key=backdrop)
+    keyed = np.array(keyed_image.convert("RGBA"), dtype=np.uint8)
+    if pixel_art:
+        keyed[..., 3] = np.where(keyed[..., 3] >= 128, 255, 0).astype(np.uint8)
+    if int(keyed[..., 3].min()) == 255:
+        raise ValueError(f"Keying the opaque master on {backdrop} removed nothing; pass the RGBA cut-out "
+                         "or the right --master-key.")
+    qa = info.get("qa", {})
+    record = {"method": "forge_matte.key_still (soft matte)" + (", binary alpha at 128" if pixel_art else ""),
+              "backdrop": backdrop, "requested": requested,
+              "keyRgb": info.get("key"), "quality": info.get("quality"),
+              "transparentShare": round(float((keyed[..., 3] == 0).mean()), 6),
+              "qa": {name: qa[name] for name in ("opaque_key_px", "outer_ring_spill_fraction", "enclosed_key_pockets",
+                                                 "key_hued_px") if name in qa}}
+    return keyed, record
+
+
 # --------------------------------------------------------------------------- prompt
 
 def _round1(value: float) -> float:
@@ -380,6 +421,19 @@ def _seconds(value: float) -> str:
     return f"{value:.1f}"
 
 
+_HEAD_BREAK = re.compile(r"\s*(?:[,;(]|\b(?:with|in|of|wearing|holding|carrying|on|who|that)\b)", re.I)
+_ARTICLE = re.compile(r"^(?:a|an|the|this|one)\s+", re.I)
+
+
+def subject_head(subject: str) -> str:
+    """The subject phrase before its first 'with/in/of/...' clause, without a leading article
+    ('side-view adventurer with a scarf' -> 'side-view adventurer'); the whole phrase when nothing is left."""
+    text = " ".join(str(subject).split())
+    head = _HEAD_BREAK.split(text, maxsplit=1)[0].strip()
+    head = _ARTICLE.sub("", head).strip() or _ARTICLE.sub("", text).strip()
+    return head or text
+
+
 def build_prompt(template: ActionTemplate, *, subject: str, facing: str | None, key: str,
                  region: Sequence[int], canvas: Sequence[int], root: Sequence[float], duration: float,
                  rows: Sequence[dict[str, Any]], pixel_art: bool, extra: str | None) -> str:
@@ -401,7 +455,7 @@ def build_prompt(template: ActionTemplate, *, subject: str, facing: str | None, 
         f"limbs and existing facing direction{facing_text}; keep {style}.",
         "LOCKED camera: fixed framing and fixed scale for the whole clip; no zoom, push-in, pull-out, pan, tilt, "
         "shake, rotation toward the camera or cut.",
-        f"Everything behind the {noun.split()[-1]} stays a perfectly uniform {key_text} for the whole clip: no "
+        f"Everything behind the {subject_head(noun)} stays a perfectly uniform {key_text} for the whole clip: no "
         f"floor, contact shadow, horizon, reflection, gradient, vignette, scenery, text or {key_word}-coloured "
         "light.",
         f"The ENTIRE motion, including hair, cloth, weapons and every appendage, stays inside the work region "
@@ -544,9 +598,15 @@ def cmd_prepare(args: argparse.Namespace) -> dict[str, Any]:
                              f"{sheet.shape[1]}x{sheet.shape[0]} master.")
         view = sheet[y0:y1, x0:x1].copy()
         origin = (x0, y0)
+    master_keying = None
     if int(view[..., 3].min()) == 255:
-        raise ValueError("The master has no transparent pixels. Pass the approved RGBA cut-out "
-                         "(for example generate2dsprite process output), not a keyed or opaque image.")
+        # an opaque master on a key backdrop (a previous input.png, a generated still): key it once
+        sheet, master_keying = key_opaque_master(sheet, args.master_key, args.pixel_art)
+        master_keying.update({"sourceName": master_path.name, "sourceSha256": info["sha256"]})
+        view = sheet[origin[1]:origin[1] + view.shape[0], origin[0]:origin[0] + view.shape[1]].copy()
+        if int(view[..., 3].min()) == 255:
+            raise ValueError("The --view-box of the keyed master still has no transparent pixels; "
+                             "pass the RGBA cut-out.")
     size = (view.shape[1], view.shape[0])
     subject_box = forge_core.subject_bbox(view[..., 3])
     if subject_box is None:
@@ -624,6 +684,9 @@ def cmd_prepare(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("Prompt lint failed (--strict-lint): " + "; ".join(
             f"{item['rule']}: {item['message']}" for item in findings))
     warnings = [f"lint {item['rule']}: {item['message']}" for item in findings]
+    if master_keying is not None:
+        warnings.append(f"the master was opaque: keyed its {master_keying['backdrop']} backdrop with "
+                        "forge_matte.key_still (masterKeying in the job); check master.png over light and dark")
     if key_choice["status"] == "conflict":
         warnings.append(f"key {key} overlaps the master's colours (--allow-key-conflict)")
     subject_height = (placed_box[3] - placed_box[1]) / canvas[1]
@@ -631,7 +694,7 @@ def cmd_prepare(args: argparse.Namespace) -> dict[str, Any]:
         warnings.append(f"the subject fills only {subject_height:.0%} of the canvas height; generators "
                         "under-animate small subjects, so raise --scale")
 
-    master_name = "master" + (master_path.suffix.lower() or ".png")
+    master_name = "master.png" if master_keying is not None else "master" + (master_path.suffix.lower() or ".png")
     prompt_bytes = prompt.encode("utf-8")
     job: dict[str, Any] = {
         "schema": JOB_SCHEMA,
@@ -665,9 +728,15 @@ def cmd_prepare(args: argparse.Namespace) -> dict[str, Any]:
     }
     if args.view_box:
         job["master"]["viewBox"] = list(args.view_box)
+    if master_keying is not None:
+        job["masterKeying"] = master_keying
     output = Path(args.output_dir)
     with forge_core.staged_output(output) as stage:
-        shutil.copyfile(master_path, stage / master_name)
+        if master_keying is not None:  # the job's master is the keyed RGBA cut-out
+            forge_core.save_png(sheet, stage / master_name)
+            job["master"]["sha256"] = forge_core.sha256_file(stage / master_name)
+        else:
+            shutil.copyfile(master_path, stage / master_name)
         forge_core.save_png(input_rgb, stage / "input.png")
         (stage / "prompt.txt").write_bytes(prompt_bytes)
         guide = review_guide(input_rgb, region, actual_root, margin)
@@ -699,7 +768,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     pp = sub.add_parser("prepare", help="write input.png, prompt.txt and registration_job.json for one action")
-    pp.add_argument("--master", required=True, help="approved RGBA master (or multi-view sheet) PNG")
+    pp.add_argument("--master", required=True,
+                    help="approved RGBA master (or multi-view sheet) PNG; an opaque one on a flat key backdrop is keyed")
     pp.add_argument("--view-box", type=parse_box, help="X0,Y0,X1,Y1: one view of a multi-view sheet (half-open, px)")
     pp.add_argument("--action", required=True, choices=sorted(ACTIONS), help="timeline template")
     pp.add_argument("--output-dir", required=True, help="new folder for the job (must not exist)")
@@ -718,6 +788,10 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--margin", type=float, default=DEFAULT_MARGIN, help="free canvas border in px (default 20)")
     pp.add_argument("--key", type=normalise_key, default="auto",
                     help="auto (a key the master does not use), magenta, green, blue or #rrggbb")
+    pp.add_argument("--master-key", type=normalise_key, default="auto",
+                    help="backdrop of an opaque master: auto (detect a flat magenta, green or blue border), "
+                         "magenta, green, blue or #rrggbb; it is keyed with forge_matte.key_still and the job "
+                         "records masterKeying (an RGBA master with transparency is used as it is)")
     pp.add_argument("--allow-key-conflict", action="store_true",
                     help="keep a key that the master's own colours lean to (recorded as a warning)")
     pp.add_argument("--action-padding", type=parse_padding,

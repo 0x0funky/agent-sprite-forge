@@ -228,6 +228,56 @@ def test_prompt_contains_work_region_and_timeline(tmp_path):
         assert PREP.lint_prompt(text, "green") == [], action
 
 
+def test_subject_head_names_the_subject_not_its_last_noun(tmp_path):
+    """Live validation 2026-10-06: 'side-view adventurer with a scarf' gave 'Everything behind the scarf'."""
+    assert PREP.subject_head("side-view adventurer with a scarf") == "side-view adventurer"
+    assert PREP.subject_head("a knight in red armour") == "knight"
+    assert PREP.subject_head("pile of coins") == "pile"
+    assert PREP.subject_head("compact pixel-art knight") == "compact pixel-art knight"
+    assert PREP.subject_head("with a hat") == "with a hat"
+    job_path, _ = prepare(tmp_path, "scarf", "--action", "walk", "--subject", "side-view adventurer with a scarf")
+    prompt = (job_path.parent / "prompt.txt").read_text(encoding="utf-8")
+    assert "Animate this EXACT isolated side-view adventurer with a scarf." in prompt
+    assert "Everything behind the side-view adventurer stays" in prompt and "behind the scarf" not in prompt
+
+
+def _opaque_on(master: np.ndarray, key) -> np.ndarray:
+    alpha = master[..., 3:4].astype(np.float32) / 255
+    rgb = master[..., :3] * alpha + np.array(key, np.float32) * (1 - alpha)
+    padded = np.zeros((master.shape[0] + 16, master.shape[1] + 16, 4), np.uint8)
+    padded[..., :3] = key
+    padded[8:-8, 8:-8, :3] = np.round(rgb).astype(np.uint8)
+    padded[..., 3] = 255
+    return padded
+
+
+@pytest.mark.parametrize("key, extra", [((255, 0, 255), ()), ((0, 255, 0), ("--master-key", "green"))])
+def test_opaque_master_on_a_key_backdrop_is_keyed(tmp_path, key, extra):
+    """Live validation 2026-10-06: an opaque master on magenta was refused ('no transparent pixels')."""
+    job_path, job = prepare(tmp_path, "opaque", *extra, master=_opaque_on(make_master(), key),
+                            master_name="input.png")
+    keying = job["masterKeying"]
+    assert keying["backdrop"] == ("magenta" if key == (255, 0, 255) else "green")
+    assert keying["requested"] == ("auto" if not extra else "green") and keying["sourceName"] == "input.png"
+    assert keying["qa"]["opaque_key_px"] == 0 and any("master was opaque" in w for w in job["warnings"])
+    assert job["master"]["path"] == "master.png"
+    keyed = read_png(job_path.parent / "master.png")
+    assert (keyed[..., 3] == 0).mean() > 0.5 and keyed[..., 3].max() == 255
+    assert job["master"]["sha256"] == CORE.sha256_file(job_path.parent / "master.png")
+    view = RC.load_master_view(RC.load_job(job_path))  # register_clip accepts the keyed master
+    assert view.shape == keyed.shape
+    assert_requested(job, "registration_job_v1")
+    _, reference = prepare(tmp_path, "rgba")
+    assert "masterKeying" not in reference and reference["master"]["path"] == "master.png"
+
+
+def test_opaque_master_without_a_key_backdrop_is_refused(tmp_path):
+    master = _opaque_on(make_master(), (128, 128, 128))
+    with pytest.raises(ValueError, match="no flat magenta, green or blue backdrop"):
+        prepare(tmp_path, "grey", master=master)
+    assert not (tmp_path / "grey").exists()
+
+
 def test_lint_warns_on_tiny_and_extremely_slow(tmp_path):
     findings = PREP.lint_prompt("Tiny breathing, extremely slow sway. Locked camera. Work region x=1..9, y=1..9; "
                                 "0.0-0.4 s hold; no slow-motion freeze; no push-in.")

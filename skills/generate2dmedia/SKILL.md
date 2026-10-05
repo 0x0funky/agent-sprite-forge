@@ -43,7 +43,8 @@ Tell the user about one "Grok (local CLI)" route (one-shot for images, ACP for v
 | Image through the user's own Codex or Grok, on request | `cli_media.py image --route codex-cli` (or `grok-cli`) `--prompt-file <txt> --output-dir <new>` dry run, show the consent block, then `--execute` |
 | Reference edit | `cli_media.py edit --route grok-cli --reference <img> --prompt-file <txt> --output-dir <new>` |
 | Animate an approved still | `cli_media.py video --route auto --reference <img> --prompt-file <txt> --output-dir <new> --duration 6 --resolution 720p --execute` |
-| First use, or after a CLI update | `forge_doctor.py --verify-route <route>`, then `--execute` after the user agrees (one quota call) |
+| First use, or after a CLI update | `forge_doctor.py --verify-route <route>`, then `--execute` after the user agrees (one quota call); or, with that consent, run the real job on the explicit route (`--route grok-acp` or `codex-cli`, not `auto`, which says NOT_VERIFIED until a proof exists) with `--execute`: its first success records the VERIFIED proof |
+| Check a packaged clip by state | video2dsprite `validate_animation.py --require-states` takes the package `--name` (`hero-run`, not `run`) |
 | The session cap stopped a route (`CAP`) | ask the user: raise it (`--session-images N`, `FORGE_SESSION_IMAGES`), wait, or take the paid route with consent |
 | Timed out or interrupted | `cli_media.py resume --run <id>`, then `--adopt` (never reruns the CLI) |
 | Codex made an image that is not in the project | `cli_media.py adopt --codex-thread <thread-id> --output-dir <new>` |
