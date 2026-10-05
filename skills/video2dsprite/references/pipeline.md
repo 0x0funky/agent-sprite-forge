@@ -1,47 +1,117 @@
-# Processing and runtime contract
+# Processing, packaging and runtime contract
 
-## Inputs and CLI
+The processor makes no network calls. Generation is a separate step (host tools, the sibling
+`generate2dmedia` adapter, or a clip the user supplies). Run every command from the project
+root; `<skill-dir>` is this skill's folder (in Claude Code: `${CLAUDE_SKILL_DIR}`). Outputs go
+into the project, never into the skill folder.
 
-The processor has no network calls. Generation may use native tools, the sibling
-`generate2dmedia` API adapter, or an existing video. Keep original art/video and
-generation provenance outside generated asset folders.
+## Files, in pipeline order
 
-```bash
-python skills/video2dsprite/scripts/video2dsprite.py extract --video motion.mp4 --out-dir raw --start 1 --duration 2 --fps 12
-python skills/video2dsprite/scripts/video2dsprite.py clean --raw-dir raw --out-dir clean --key-mode magenta
-python skills/video2dsprite/scripts/video2dsprite.py sample --clean-dir clean --out-dir comparison --frame-counts 12,24 --playback-duration 2
-python skills/video2dsprite/scripts/video2dsprite.py package --clean-dir clean --out-dir game-assets/idle --name idle --fps 12 --source-size 448,448 --source-anchor 224,430 --max-side 320 --formats png,webm,packed --loop
+```text
+work/<clip>/                       video2dsprite.py process --out-dir work/<clip>
+  frames-raw/frame_000000.png ...  decoded source frames, 0-based, original timing
+  frames-clean/clean_*.png         keyed straight-alpha RGBA frames: the package input
+  sprite/                          sampled comparison sprites, strips and preview GIFs
+  pipeline-meta.json               processing record; its "matte" block names the key
+  README.txt
+work/<clip>/selection.json         frame selection (forge-frame-selection v1 or v2)
+work/<clip>/registration.json      registration job or registration record (optional)
+work/<clip>/review.json            review verdict (video2dsprite.review_verdict.v1, optional)
+game/<character>/<state>/          engine_export.py package --output-dir (a new folder)
+  animation.json                   runtime manifest, schemaVersion 3.0
+  animation-qa.json                the manifest's QA envelope as its own file
+  provenance.json                  tool, version, parameters and sha256 of every input
+  <name>-poster.png                first frame on the encoded canvas
+  <name>-atlas-00.png ...          PNG fallback pages, at most 4096 px per side
+  <name>.webm                      VP9 with native alpha (--formats webm)
+  <name>-packed.mp4                H.264, RGB left and alpha right (--formats packed)
+  <name>-packed-<tier>.mp4         mobile packed tiers (--tiers)
+  verify-qa.json                   engine_export.py verify, written only when it passes
 ```
 
-For native transparent frames `clean --key-mode none` copies alpha exactly.
-`auto` preserves alpha if present; otherwise it keys magenta. Do not key a colorful
-opaque scene. Magenta flood fill removes connected background and preserves enclosed
-magenta clothing. Key color touching clothing or trapped background holes still
-needs a mask/manual review; this is not semantic segmentation.
-Optional `--despill 0..1` removes a bounded amount of magenta contamination from
-the first visible boundary's RGB without altering alpha or interior colors. Default
-is 0 because violet costume edges may be intentional. Native-alpha frames in `auto`
-and all frames in `none` bypass both keying and despill.
+The selection comes from the motion tools (gait_loop select, retime, or animation_review);
+the registration file from prepare_i2v_input (a `video2dsprite.registration_job.v1`) or
+register_clip (a record with `mode`). Contracts for every file are in
+[schemas/video.schema.json](schemas/video.schema.json) and
+[schemas/common.schema.json](schemas/common.schema.json).
 
-`extract --decoder libvpx-vp9` explicitly preserves VP9 WebM alpha. This is unnecessary
-for ordinary opaque MP4. `--fps 0` extracts original frames; for variable frame-rate
-sources, resample to a chosen constant fps before packaging. Package fps is explicit
-and must match the decoded interval's intended playback speed.
+## Package
 
-`sample` is a comparison tool: evenly spaced indices include first/last, and fewer
-available frames are reported honestly instead of fabricating frames. The old GIF
-tempo remains when `--playback-duration` is omitted and is labelled preview-only.
-Do not infer gameplay duration from it. `process` combines extraction, cleaning and
-sampling; it does not automatically certify or loop-trim a generated video.
+The smallest call packages every clean frame at a fixed rate:
 
-## Fixed geometry
+    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk/frames-clean --output-dir game/hero/walk --name walk --fps 12 --loop --formats png,webm,packed
 
-All frames must share the same source canvas. Default `package` retains it. Optional
-`--crop-union` calculates a single envelope for the complete clip. One resize applies
-to every frame; there is no frame-dependent recentering or scale normalization.
-Even dimensions pad right/bottom transparently for codec compatibility.
+A reviewed loop with timing, registration and a mobile tier:
 
-For world anchor `(x,y)` and scale `s`, draw `contentSize` pixels from the media to:
+    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk/frames-clean --selection work/hero-walk/selection.json --registration work/hero-walk/registration.json --review work/hero-walk/review.json --pipeline-meta work/hero-walk/pipeline-meta.json --output-dir game/hero/walk --name walk --formats png,webm,packed --tiers actor --body-height-px 300 --speed-ref 3.65
+
+Inputs and rules:
+
+- `--clean-dir` frames are read sorted by name (`clean_*.png` when present, otherwise every
+  PNG); they must share one canvas. At most 128 million decoded pixels per package.
+- Timing comes from `--fps` (`12`, `24000/1001`) or from `--selection`. A v1 selection packages
+  `[start, endExclusive)` at its `fps`; a v2 selection supplies 0-based `sourceIndices`
+  (repeats are holds), `durations_ms`, `loopPolicy`, `events`, `impactMs`, `holdMs`,
+  `cadenceMs` and `strideWorldUnits`. Its `sourceHashes` must still match the frames, or the
+  selection is stale and refused.
+- `--loop` (or `--loop-policy cycle`) loops; `--loop-policy pingpong` is baked into one cycle
+  (`0 1 2 3 2 1`, recorded as `pingpongBaked`); `oneshot` plays once.
+- Rates above 60 fps are reduced to at most 60 fps without changing the clip length
+  (`fpsCapped`, `inputFps`). Video transports play one constant rate, so durations that differ
+  by more than 1 ms package only as PNG; express holds as repeated frames instead.
+- `--registration` with a registration job means registration by construction: the master
+  canvas plus `padding` [left, top, right, bottom] is `sourceSize` and the master anchor moves
+  by (left, top). Conflicting `--source-size`/`--source-anchor` values are refused.
+- `--review`: the verdict's `reviewedSha256` must be the sha256 of the selection file, or the
+  `inputDigest` that package prints (sha256 of the newline-terminated list of frame sha256s in
+  playback order). `accepted` gives reviewStatus accepted and lets QA pass;
+  `accept_with_mask` gives a warn; `fail_regenerate` refuses the package.
+- Key-residue gate: every packaged frame is measured with forge_matte.matte_qa against the key
+  (`--key auto` reads `matte.key` from `--pipeline-meta`, else magenta; `--key none` for
+  native-alpha footage). Any opaque key pixel, or key-coloured spill on more than 1% of the
+  outer ring, refuses the package and publishes nothing. `--allow-key-residue` ships it anyway
+  and records the override (QA status warn). Re-keying with the soft matte is the fix.
+- Resizing is one crop (full canvas, or `--crop-union` over the whole clip) and one resize on
+  premultiplied channels to at most `--max-side` px; it never upscales. `--pixel-art` samples
+  nearest and only reduces by whole factors.
+- The output folder must not exist. Everything is written to a staging folder beside it and
+  published only after every encode and decode check passed.
+
+The command prints one JSON line with the output, manifest, QA and provenance paths, the QA
+status, reviewStatus, frame count, rational fps, duration and inputDigest.
+
+## animation.json 3.0
+
+Every 2.0 key is kept (`fps` stays a number, `registration` becomes an object, `qa` becomes a
+QA envelope that still carries the 2.0 diagnostics). 3.0 adds:
+
+| Field | Meaning |
+|---|---|
+| `fpsRational` | exact transport rate, `"num/den"` |
+| `sourceIndices` | 0-based source frame per packaged frame |
+| `durationsMs` | whole milliseconds per frame; the timeline |
+| `loopPolicy` | `cycle` or `oneshot` (pingpong is baked into a cycle) |
+| `events` | `{name, atMs, frame, data?}`; `frame` is the frame shown at `atMs` |
+| `impactMs`, `holdMs` | gameplay instants inside the clip |
+| `terminal` | the clip ends its state and holds the last frame |
+| `cadenceMs`, `strideWorldUnits`, `speedRef`, `cycles` | walk phase from distance travelled |
+| `registration` | `{mode: construction, fixed-envelope or preserved, jobSha256?, baseSize?, baseAnchor?, padding?, legacyMode}` |
+| `sampling`, `pixelArt`, `bodyHeightPx`, `shadow`, `displayScale`, `budgetClass` | runtime hints |
+| `packedAlpha` | `layout`, `width`, `height` (content), `halfWidth`, `halfHeight` (even halves), `fps`, `keyframes`, `fullDecodePassed` |
+| `mobilePackedAlpha` | one record per tier (below) |
+| `fpsCapped`, `inputFps`, `pingpongBaked` | present when they apply |
+| `provenanceFile`, `artSource`, `placeholder` | provenance.json, `video`, false |
+
+`hitEvents` (2.0) lists the `hit` events. File names in the manifest are bare names inside the
+package; no absolute path is ever written. Inputs outside the package are recorded in
+provenance.json by file name and sha256.
+
+## Geometry
+
+`sourceSize`, `sourceAnchor` and `sourceRect` (`[x, y, width, height]`) are approved art
+units and never change with the media size, a tier or the frame rate. `contentSize` is the
+media pixels of `sourceRect`; `encodedSize` adds the even right/bottom padding. For world anchor
+`(x, y)` and scale `s`, draw the `contentSize` pixels of any transport to:
 
 ```text
 left   = x + (sourceRect.x - sourceAnchor.x) * s
@@ -50,84 +120,111 @@ width  = sourceRect.width * s
 height = sourceRect.height * s
 ```
 
-`sourceSize` and `sourceAnchor` describe approved art units, even when the encoding
-is much smaller. `sourceRect` is `[x,y,width,height]` in those same units.
-`encodedSize` includes even padding; `contentSize` excludes padding. `encodedAnchor`
-is a derived media coordinate, not a replacement for world geometry.
+Example: art 448x448 with anchor [224, 430], media 320x320 and an actor tier. Geometry stays
+448x448 and [224, 430] at every size, so contact and scale match across devices. Collision
+and hitboxes are gameplay data; never derive them from animation alpha.
 
-Example: source art 448×448, anchor `[224,430]`, mobile media 320×320. The source
-geometry stays 448×448 / `[224,430]`. Changing it to 320×320 without adjusting world
-geometry makes actor size/contact differ across devices. Collision and hitboxes
-are gameplay data; don't derive them from the changing animation alpha.
+## Transports and mobile tiers
 
-## Outputs
+- PNG fallback: always written; pages record `firstFrame`, `frameCount` and `columns`.
+- WebM: VP9 with an alpha plane (decode with libvpx-vp9; native decoders drop alpha).
+- Packed MP4: H.264 Main, BT.709 limited range, faststart. RGB is on the left, alpha (red
+  channel) on the right; each half is the content padded right/bottom to even pixels
+  (`width` 403 gives `halfWidth` 404). Crop RGB at `(0, 0, width, height)` and alpha at
+  `(halfWidth, 0, width, height)`.
+- Loops are encoded as one closed GOP per loop (keyint = frame count), so the wrap is a
+  keyframe boundary. Alignment is necessary but not sufficient; `verify` measures the seam.
+- `--tiers` adds packed files sized for phones. Default tiers (Dusk 1.8.3 mobile budgets):
 
-```text
-animation.json             geometry, timing, file hashes, formats, input provenance
-animation-qa.json          seam differences, bounds drift, empty/edge frames
-idle-poster.png            first decoded frame, same geometry as runtime media
-idle-atlas-00.png ...      PNG fallback pages (at most 4096×4096)
-idle.webm                  optional VP9 alpha (libvpx-vp9)
-idle-packed.mp4            optional RGB-left / alpha-right H.264 (libx264)
-```
+| Tier | Long edge | Max fps |
+|---|---|---|
+| `actor` | 320 px | 24 |
+| `prop` | 384 px | 12 |
+| `fx` | 512 px | 30 |
 
-PNG fallback is always generated, independent of requested video formats.
-Each atlas page records `firstFrame`, `frameCount`, `columns`; cell size is fixed.
-Read files through the current manifest, not directory globbing across old runs.
-`inputFrames` records source names, SHA256 and byte size. Requested encoders must
-exist before output is written. Encoded streams undergo a complete decode check;
-this does not replace real browser/alpha or performance review.
-`package` requires a new destination. It writes into a temporary sibling directory
-and publishes that directory only after the encoders/decoder checks complete; an
-encoder failure leaves no partial accepted manifest or mixed-version assets.
+  Custom tiers are `name:EDGE@FPS` (`actor:256@20`). A tier scales the packaged content
+  (premultiplied, never upscaled) and resamples time to at most its fps without changing the
+  clip length. Each record has `tier`, `sourceWidth`/`sourceHeight` (the content it was scaled
+  from), `width`/`height`, `halfWidth`/`halfHeight`, `fps`, `frameCount`, `durationMs`,
+  `inputIndices` (positions in the main timeline), `encodedAnchor` (the anchor in tier pixels),
+  `file` and `sha256`. Draw a tier with the same source geometry as the main media.
 
-The processor retains frames in memory, with a 128-million decoded-pixel cap for
-`package`. Long/high-resolution clips should be trimmed or decoded at lower fps.
-Typical starter budgets are 12fps props and 24fps actors at 256–384px per side, then
-measure. Do not preload an entire game's videos or assume compressed bytes predict
-RAM, CPU or GPU use.
+## Verify
 
-## Transparent playback
+    python "<skill-dir>/scripts/engine_export.py" verify --package game/hero/walk
 
-VP9 WebM may play while ignoring alpha on some browser/device combinations. Packed
-MP4 avoids depending on native alpha, but needs a compositor. The bundled
-[packed-alpha-runtime.js](packed-alpha-runtime.js) demonstrates reconstruction:
+Decodes every encoded file completely and compares each frame with the lossless atlas:
 
-```js
-import { createPackedAlphaDrawable, drawAnchoredFrame } from './packed-alpha-runtime.js';
-const video = document.createElement('video');
-video.muted = true;
-video.playsInline = true;
-video.loop = clip.loop;
-// For a cross-origin asset, set crossOrigin before src and configure server CORS.
-video.src = assetBase + clip.packedAlpha.file;
-const output = createPackedAlphaDrawable(video, clip.packedAlpha);
-// Call within the application's visible-frame loop, after a user gesture if required:
-if (output.update()) textureNeedsUpdate = true;
-// Draw the poster until update() succeeds at least once. Handle play() rejection.
-drawAnchoredFrame(ctx, output.drawable, clip, actor.x, actor.y, actor.scale);
-```
+| Check | Gate |
+|---|---|
+| alpha mean absolute error, worst frame | at most 3.5 / 255 (p99 and max are reported) |
+| decoded alpha where the source is transparent | median at most 1 |
+| decoded alpha where the source is opaque | median at least 253 |
+| straight RGB error where source alpha > 16 | at most 12 / 255 |
+| dynamic alpha | source alpha that moves must still move after decoding |
+| codec, dimensions, packets, decode timestamps | match the manifest |
+| duration | within 2 ms of the manifest |
+| packed MP4 | `moov` before `mdat` (faststart) |
+| WebM | VP9 AlphaMode tag present |
+| loops: decoded seam / adjacent p95 | at most 1.10 x max(1, source ratio) |
 
-The helper is a correctness/fallback example using CPU Canvas2D readback, not a
-high-throughput renderer. At larger counts use a WebGL shader that samples the
-left half as RGB and right half's red channel as alpha, preserving the same geometry
-and straight-alpha blending. Use `requestVideoFrameCallback` where available, share
-one decode for identical clips, and stop hidden/offscene media. Set an active decoder
-budget and prioritize controllable actors; distant props may use posters. Pick the
-budget from device measurements rather than assuming a universal safe count.
-The application owns `play()`, pause, seek, listeners, unloading
-(`removeAttribute('src'); load()`), and resource scheduling. Avoid `file://`, verify
-media headers/range behavior and CORS, and profile real devices. A pack alone is not
-an iPhone FPS guarantee.
+It writes `verify-qa.json` (a QA envelope bound by sha256 to animation.json, the atlas, the
+poster and every encoded file) only when every gate passes; otherwise it prints the failed
+checks and writes nothing. A failing seam on a subtle loop usually needs a lower `--crf-packed`
+or `--crf-webm`, not a different GOP.
 
-## QA interpretation
+## Validate
 
-`seamPremultipliedMAE` compares first/last premultiplied RGBA on a small sample.
-`seamToMedianRatio` relates that to ordinary adjacent changes; neither is a pass
-threshold. Transparent hidden RGB is excluded. Bounds-bottom/center spans reveal
-possible root drift but also respond to intended jumps or trailing cloth. Inspect
-the actual contact point and identity across the full clip.
+    python "<skill-dir>/scripts/validate_animation.py" game/hero --require-states idle,walk,attack --require-verify --static-sprite game/hero/hero.png --static-anchor 224,430
 
-Game code decides when an attack lands. `hitEvents` starts empty; populate reviewed
-game timing separately. Never trigger damage based only on video `ended`, decoded
-frame counts, or a provider's assumed action timing.
+Accepts package folders, animation.json files or a folder of packages. Each failure names its
+rule: schema, paths, files, timing, anchor, impact-hold, events, loop-flag, states, poster,
+padding-embed, packed-geometry, tiers, static-sprite, ffprobe-dimensions, ffprobe-timestamps,
+ffprobe-duration (2 ms), ffprobe-packets, vp9-alpha, the hash-bound QA rules (qa-incomplete,
+qa-inconsistent, qa-failed, qa-stale, qa-partial, qa-foreign), verify and review. QA that misses
+a file, lists a foreign one, or judged other bytes than the files now on disk is refused, so
+edit nothing after packaging: repackage. `--report <new file>` writes a QA envelope when every
+rule passes. Acceptance order: package, then verify, then validate_animation.
+
+## iOS transport and runtime
+
+- Browsers with working VP9 alpha play the WebM. iPhone and iPad play the packed MP4 through a
+  compositor; a packed MP4 drawn as a plain video shows the grey alpha half beside the art.
+  `canPlayType()` or a playing video does not prove the alpha is right; test on a device.
+- One shared WebGL compositor rebuilds RGBA from the two halves (alpha from the right half's
+  red channel) into a canvas. A decoder pool hands out leases: `lease.video` is the element to
+  play, pause and seek; `lease.drawable` is what to draw (the video on the native path, the
+  rebuilt canvas on the packed path); `lease.frameVersion()` changes when a new frame is ready.
+  Always draw `lease.drawable`, never the packed video itself.
+- Draw the PNG poster until the first decoded frame exists, and fall back to the PNG atlas when
+  decoding or compositing fails; never leave a black rectangle or an endless loading state.
+- [packed-alpha-runtime.js](packed-alpha-runtime.js) is a CPU Canvas2D reference for one clip
+  (correctness, not throughput). Under the 3.0 contract it must crop alpha at `halfWidth` and
+  expect a `2 * halfWidth` wide video.
+- The application owns play/pause, seeking, unloading (`removeAttribute('src'); load()`), CORS
+  for cross-origin pixel reads and visibility. Avoid `file://` pages for video textures.
+
+## Decoder budgets
+
+Measured on one shipped game (Dusk 1.8.3); starting points to re-measure, not guarantees:
+
+- at most 6 live video resources while exploring on a phone, controllable actors first;
+- at most 3 packed MP4 downloads at a time, cancelable;
+- device pixel ratio capped at 1.25, world drawing budgeted at 30 fps (logic keeps its rate);
+- distant or over-budget props show their poster; one decoder is shared by identical clips;
+- release world video when a battle starts; pause and release on tab switches.
+
+Compressed bytes do not predict decoder, memory or GPU cost. Preload only the current scene's
+actions.
+
+## Honest scope
+
+- Proven offline: file hashes, container facts, complete decodes, alpha and colour error
+  against the lossless atlas, durations, loop seams on the decoded file, and the manifest
+  contract.
+- Not proven: Safari, WebGL or iPhone playback, autoplay rules, decoder throughput, memory and
+  thermal behaviour, and the visual quality, identity and motion of the art. A similar first
+  and last frame does not prove a seamless gait; review the clip at runtime scale.
+- The key-residue thresholds were set on one clip; the verify gates come from one game's iOS
+  transport and synthetic clips. Game code decides when an attack lands; never trigger damage
+  from video `ended` or decoded frame counts.
