@@ -168,6 +168,55 @@ console.log(JSON.stringify({{
     }
 
 
+@pytest.mark.node
+def test_runtime_reads_real_builder_and_export_output(node, tmp_path):
+    """Reviewer repro b02_runtime.mjs: the runtime reads build_animation_clips.py v2 output and the
+    engine-export.json made from it; pingpong events fire on the frame shown at their time and the hints
+    come from transition_hints (D12, D13)."""
+    source = tmp_path / "src"
+    source.mkdir()
+    for i in range(6):
+        pixels = np.zeros((48, 40, 4), np.uint8)
+        pixels[10:44, 8 + 2 * i:24 + 2 * i] = (40 + 30 * i, 150, 200 - 20 * i, 255)
+        Image.fromarray(pixels).save(source / f"f{i}.png")
+    (source / "clips.json").write_text(json.dumps({
+        "schema": "generate2dsprite.animation_clips.v2", "frames": [f"f{i}.png" for i in range(6)],
+        "anchor_px": [20, 44], "states": {"idle": "idle", "attack": "attack"}, "clips": {
+            "idle": {"frames": [0, 1, 2], "ticks": 6, "loop_policy": "pingpong",
+                     "events": [{"at": 1, "name": "step_l"}, {"at": 2, "name": "step_r"}]},
+            "attack": {"frames": [3, 4, 5], "duration_ms": [80, 60, 200], "loop": False, "hitstop_ticks": 4,
+                       "events": [{"at": 1, "name": "tell"}, {"at": 2, "name": "hit"}],
+                       "transitions": [{"to": "idle", "entry_frame": 1, "dissolve_ms": 60, "mode": "dither"}]}}}),
+        encoding="utf-8")
+    built = run_cli([script_path("generate2dsprite", "build_animation_clips"), "--manifest", source / "clips.json",
+                     "--output-dir", tmp_path / "built", "--no-reviews"])
+    assert built.returncode == 0, built.stderr
+    clips = tmp_path / "built" / "animation-clips.json"
+    exported = run_cli([script_path("generate2dsprite", "export_engine"), "--clips", clips, "--output-dir",
+                        tmp_path / "engine", "--target", "aseprite-json"])
+    assert exported.returncode == 0, exported.stderr
+    script = f"""
+import {{readFileSync}} from 'node:fs';
+import * as R from {json.dumps(RUNTIME.as_uri())};
+const read = path => JSON.parse(readFileSync(path, 'utf8'));
+const out = {{}};
+for (const [label, path] of [['built', {json.dumps(str(clips))}],
+                             ['export', {json.dumps(str(tmp_path / "engine" / "engine-export.json"))}]]) {{
+  const manifest = read(path);
+  const idle = R.normalizeClip(manifest.clips.idle, {{name: 'idle', manifest}});
+  const attack = R.normalizeClip(manifest.clips.attack, {{name: 'attack', manifest}});
+  out[label] = {{
+    events: idle.events.map(e => [e.name, e.atMs, e.frame, R.frameAt(idle, e.atMs, 'oneshot').frame]),
+    hint: R.transitionHint(attack, 'idle'),
+    hitstop: attack.hitstopTicks,
+  }};
+}}
+console.log(JSON.stringify(out));"""
+    expected = {"events": [["step_l", 100, 1, 1], ["step_r", 200, 2, 2], ["step_l", 300, 3, 3]],
+                "hint": {"to": "idle", "entryFrame": 1, "dissolveMs": 60, "mode": "dither"}, "hitstop": 4}
+    assert node_json(node, script) == {"built": expected, "export": expected}
+
+
 # --------------------------------------------------------------------------- optional: real WebGL
 
 _PAGE = """<!doctype html><meta charset="utf-8"><pre id="result">pending</pre>

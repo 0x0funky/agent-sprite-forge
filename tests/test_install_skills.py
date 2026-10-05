@@ -89,12 +89,14 @@ def test_drift_detected(source, home, capsys):
     (dest / "alpha" / "scripts" / "tool.py").write_text("print('edited')\n", encoding="utf-8")
     (dest / "alpha" / "scripts" / "__pycache__").mkdir()
     (dest / "alpha" / "scripts" / "__pycache__" / "tool.cpython-313.pyc").write_bytes(b"\0")
+    (dest / "alpha" / "references" / "stray.md").write_text("not from the checkout\n", encoding="utf-8")
     (dest / "beta" / "references" / "notes.md").unlink()
     (source / "beta" / "SKILL.md").write_text("---\nname: beta\n---\nnew text\n", encoding="utf-8")
     code, _, err = run(capsys, "--check", "--host", "codex", "--source", source)
     assert code == 1
     assert "changed (edited locally): alpha/scripts/tool.py" in err
-    assert "extra: alpha/scripts/__pycache__/tool.cpython-313.pyc" in err
+    assert "extra: alpha/references/stray.md" in err
+    assert "__pycache__" not in err  # bytecode that running the skill writes is never drift (D24)
     assert "missing: beta/references/notes.md" in err and "changed (outdated): beta/SKILL.md" in err
     assert "error: 4 file(s) differ" in err
     # The doctor sees the same local drift from the manifest, without the checkout.
@@ -182,3 +184,24 @@ def test_installs_this_checkout_into_a_temp_folder(tmp_path, capsys):
     report = forge_doctor.diagnose(skills_root=dest, project_dir=tmp_path, run_versions=False, console_encoding="utf-8")
     assert next(c for c in report["checks"] if c["id"] == "skills.install")["status"] == "OK"
     assert next(c for c in report["checks"] if c["id"] == "skills.vendored")["status"] == "OK"
+
+
+def test_running_an_installed_skill_is_not_drift(source, home, capsys):
+    """D24 (reviewer: install, run the installed generate_media.py --help, then --check exits 1 and the doctor
+    WARNs): bytecode, dot files and OS junk that using a skill or browsing it leaves behind are not drift, for
+    install_skills --check and for forge_doctor's skills.install alike."""
+    dest = home / ".claude" / "skills"
+    assert run(capsys, "--apply", "--host", "claude", "--source", source)[0] == 0
+    for skill in ("alpha", "beta"):
+        cache = dest / skill / "scripts" / "__pycache__"
+        cache.mkdir()
+        (cache / "tool.cpython-313.pyc").write_bytes(b"\0bytecode")
+        (dest / skill / "scripts" / "tool.cpython-310.pyo").write_bytes(b"\0")
+        (dest / skill / ".DS_Store").write_bytes(b"junk")
+        (dest / skill / "references" / "Thumbs.db").write_bytes(b"junk")
+        (dest / skill / "references" / "desktop.ini").write_bytes(b"junk")
+    code, summary, err = run(capsys, "--check", "--host", "claude", "--source", source)
+    assert code == 0 and summary["status"] == "in-sync", err
+    report = forge_doctor.diagnose(skills_root=dest, project_dir=home, run_versions=False, console_encoding="utf-8")
+    install_check = next(c for c in report["checks"] if c["id"] == "skills.install")
+    assert install_check["status"] == "OK", install_check

@@ -19,8 +19,10 @@ commit). Any failure restores the previous folders and writes no manifest.
 
 --check compares the checkout with the installed copies: missing, changed (marked "edited
 locally" when the installed file no longer matches the manifest, "outdated" when the
-checkout moved on) and extra files such as __pycache__. forge_doctor.py reads the same
-manifest to report local drift. Stdlib only.
+checkout moved on) and extra files. What an install never ships is never drift either:
+__pycache__ and bytecode that running an installed skill writes, dot files and OS junk
+are skipped on both sides (D24). forge_doctor.py reads the same manifest to report local
+drift with the same rule. Stdlib only.
 """
 from __future__ import annotations
 
@@ -105,7 +107,7 @@ def destination(args: argparse.Namespace) -> Path:
 
 def read_manifest(dest: Path) -> dict | None:
     try:
-        data = json.loads((dest / MANIFEST).read_text(encoding="utf-8"))
+        data = json.loads((dest / MANIFEST).read_text(encoding="utf-8-sig"))
     except (OSError, ValueError):
         return None
     return data if isinstance(data, dict) and isinstance(data.get("files"), list) else None
@@ -128,13 +130,15 @@ def source_commit(source: Path) -> dict:
 
 def drift(source: Path, dest: Path, skills: list[str]) -> list[tuple[str, str]]:
     """[(kind, path)] where kind is missing, changed (edited locally), changed (outdated),
-    changed or extra; an empty list means the install matches the checkout."""
+    changed or extra; an empty list means the install matches the checkout. Installed files that
+    an install never ships (shipped() is false: __pycache__, bytecode, dot files, OS junk) are not
+    extras: running an installed skill writes them (D24)."""
     manifest = read_manifest(dest)
     installed_as = {item["path"]: item.get("sha256") for item in manifest["files"]} if manifest else {}
     problems = []
     for skill in skills:
         wanted = skill_files(source / skill)
-        present = skill_files(dest / skill, everything=True) if (dest / skill).is_dir() else {}
+        present = skill_files(dest / skill) if (dest / skill).is_dir() else {}
         for path, digest in wanted.items():
             if path not in present:
                 problems.append(("missing", path))
@@ -255,6 +259,9 @@ def main(argv: list[str] | None = None) -> int:
                        "files": sum(len(skill_files(source / s)) for s in skills)}
     except (InstallError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001  (D27: tracebacks are never user-facing)
+        print(f"error: internal error ({type(exc).__name__}: {exc})", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0

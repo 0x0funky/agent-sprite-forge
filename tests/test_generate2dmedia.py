@@ -779,6 +779,45 @@ def test_batch_progress_validates_against_vendored_schema(inputs, tmp_path, monk
     validator.validate(progress)
 
 
+def test_batch_progress_paths_are_relative(inputs, tmp_path, monkeypatch, capsys):
+    """D25: the progress file records jobsFile and every jobDir relative to its own folder, never the absolute
+    paths the batch resolved; it still validates as batch_progress_v1."""
+    from forge_testutils import assert_valid_contract
+
+    monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
+    jobs_dir = tmp_path / "jobs"
+    jobs_dir.mkdir()
+    (jobs_dir / "p0.txt").write_text("Batch prop number 0", encoding="utf-8")
+    (jobs_dir / "jobs.json").write_text(json.dumps({"jobs": [
+        {"id": "j0", "command": "image", "provider": "openai", "model": "gpt-image-2.5-sunburst",
+         "prompt_file": "p0.txt", "out_dir": "../out/j0"}]}), encoding="utf-8")
+    base = ["batch", str(jobs_dir / "jobs.json"), "--project-dir", str(project(inputs)), "--execute"]
+    assert media.main(base, transport=Fake([b64_image()])) == 0
+    text = (jobs_dir / "jobs.progress.json").read_text(encoding="utf-8")
+    progress = json.loads(text)
+    assert_valid_contract(progress, "media", "batch_progress_v1", skill="generate2dmedia")
+    assert progress["jobsFile"] == "jobs.json" and progress["results"][0]["jobDir"] == "../out/j0"
+    assert str(tmp_path) not in text and tmp_path.as_posix() not in text
+    capsys.readouterr()
+    # Another progress location keeps the paths relative to itself; the finished job is reused.
+    assert media.main([*base, "--progress", str(tmp_path / "logs" / "run.json")], transport=Refuse()) == 0
+    other = json.loads((tmp_path / "logs" / "run.json").read_text(encoding="utf-8"))
+    assert other["jobsFile"] == "../jobs/jobs.json"
+    assert other["results"] == [{"id": "j0", "status": "reused", "outcomeCode": "ok", "jobDir": "../out/j0"}]
+
+
+def test_unexpected_errors_are_one_scrubbed_line(inputs, monkeypatch, capsys):
+    """D27: an unexpected exception is one line, error: internal error (<Type>: <message>), with secrets
+    removed; D29: receipts name the package release."""
+    monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
+    code = media.main(argv(inputs, extra=["--execute"]),
+                      transport=Fake([RuntimeError(f"transport crashed with {OPENAI_KEY}")]))
+    err = capsys.readouterr().err
+    assert code == 1 and "Traceback" not in err
+    assert err.strip() == "error: internal error (RuntimeError: transport crashed with [redacted]); nothing was retried"
+    assert media.TOOL == "generate_media/0.4.0" == "generate_media/" + ledger_mod.FORGE_PACKAGE_VERSION
+
+
 class ThreadSafeFake(Fake):
     def __init__(self):
         super().__init__()

@@ -15,7 +15,7 @@ python "<skill-dir>/scripts/export_engine.py" --clips out/hero-clips/animation-c
 python "<skill-dir>/scripts/export_engine.py" --clips out/hero-clips/animation-clips.json --target godot-sprite3d --output-dir out/hero-3d --world-height 1.7 --billboard fixed-y
 ```
 
-In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success the tool prints one JSON line with `status`, `output`, `metadata` (the `engine-export.json` path), `targets`, `clips`, `frames` and `pages`. Errors print `error: ...` and exit 1, and nothing is published.
+In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success the tool prints one JSON line with `status`, `output`, `metadata` (the `engine-export.json` path), `targets`, `clips`, `frames` and `pages`. Errors print `error: ...` and exit 1 (a mistyped option exits 2 with argparse's usage line), and nothing is published.
 
 Export the **built** manifest. A clips input manifest (`clips.json`) is refused with a pointer to `build_animation_clips.py`, which resolves names, ticks and pingpong into explicit frames and integer milliseconds first.
 
@@ -28,7 +28,7 @@ Export the **built** manifest. A clips input manifest (`clips.json`) is refused 
 | `--sampling` | `auto` | `nearest` or `linear`; auto reads the manifest `sampling` or `pixel_art`, else linear |
 | `--godot-fps` | `auto` | Godot animation speed; auto uses a clip's ticks when it has them, else its shortest frame |
 | `--world-height` / `--pixel-size` | pixel size 0.01 | Sprite3D scale: Godot units for the subject height, or the pixel size itself |
-| `--subject-height-px`, `--reference-clip` | measured | subject height used for `--world-height` (else `body_height_px`, else the idle clip's median visible height) |
+| `--subject-height-px`, `--reference-clip` | measured | subject height used for `--world-height` (else `body_height_px`, else the idle clip's median visible height). Only `godot-sprite3d` and `--world-height` need it: faint FX (nothing above alpha 32) exported to the atlas targets get no `scale` block, and the mapping table uses `--pixel-size` or 0.01 |
 | `--billboard` | `enabled` | Sprite3D billboard: `enabled`, `fixed-y` or `disabled` |
 | `--ppu`, `--camera-pitch-deg` | 1 / pixel size, none | fill the Unity and pitch-compensation rows of the mapping table |
 
@@ -39,9 +39,9 @@ Export the **built** manifest. A clips input manifest (`clips.json`) is refused 
 | `aseprite-json` | `aseprite/<name>.json`, `aseprite/<name>.png` | JSON array atlas. Frames are named `"0"`, `"1"`, ... (Aseprite's `{frame}` naming, which Phaser's `createFromAseprite` expects). One `frameTags` entry per clip (`direction` forward, `repeat` `"1"` for one-shot clips), tag `data` holds the events as JSON, one `anchor` slice carries the pivot, and a top-level `animations` map lists each clip's frame names for PixiJS. |
 | `godot-spriteframes` | `godot/<name>.tres`, `godot/<name>.tscn`, `godot/<name>-atlas-NN.png` | SpriteFrames over AtlasTexture regions (`filter_clip` on) and an AnimatedSprite2D scene with the anchor offset and texture filter. |
 | `godot-sprite3d` | `godot-sprite3d/<name>.tres`, `.tscn`, `frames/*.png`, `action-<clip>.json`, `bundle.json` | AnimatedSprite3D over one texture per frame (no atlas, so mipmaps cannot bleed between cells), plus `generate2dsprite.godot_sprite3d.v1` contracts and a bundle whose paths are all relative. |
-| always | `engine-export.json` | the files with sha256, per-clip frames, durations, events, transition hints, keys and Godot timing, the mapping table and the QA envelope |
+| always | `engine-export.json` | the files with sha256, per-clip frames, durations, events, `transition_hints`, keys and Godot timing, the mapping table and the QA envelope |
 
-Atlas pages are at most 4096 px. Identical frames share one cell. A clip never spans two pages (an Aseprite tag addresses one image), so a clip whose distinct frames do not fit one page is refused: split it or export smaller frames. Frames are not trimmed or rotated.
+Atlas pages are at most 4096 px. Identical frames share one cell. A clip never spans two pages (an Aseprite tag addresses one image), so a clip whose distinct frames do not fit one page is refused by `aseprite-json` and `godot-spriteframes`: split it or export smaller frames. `godot-sprite3d` draws one texture per frame, so an export of that target alone plans no atlas (`atlas.pages` is empty and each clip's `page` is 0) and has no page limit. Frames are not trimmed or rotated.
 
 Text paths inside the export are relative: Godot resolves a relative `ext_resource` path against the `.tres`/`.tscn` that names it (Godot rewrites it to `res://` when it saves the resource again), and every Sprite3D contract lists its frames relative to itself (finding S19). Move the whole output folder into the engine project; nothing points back at the source bundle.
 
@@ -50,10 +50,19 @@ Text paths inside the export are relative: Godot resolves a relative `ext_resour
 Godot shows a frame for `relative_duration / speed` seconds, so the export writes `relative_duration = ms x speed / 1000`:
 
 - `--godot-fps N`: speed N for every clip.
-- auto, a clip with integer `ticks` at `tick_hz` (consistent with its ms): speed = tick rate, relative durations = ticks (exact 60 Hz timing).
+- auto, a clip with integer `ticks` at `tick_hz` (consistent with its ms): speed = tick rate, relative durations = ticks (exact 60 Hz timing). Ticks are authored positions: a pingpong clip's ticks are mapped onto its played frames (authored 0 1 2 plays 0 1 2 1).
 - auto, otherwise: speed = 1000 / shortest frame ms, so the shortest frame is 1.0 and an evenly timed clip is all 1.0.
 
-The round trip requires the recovered milliseconds to equal the source to 1e-6 ms (1 ms for tick-timed clips, the builder's tick rounding). SpriteFrames cannot carry events: read them from `engine-export.json` (`clips.<name>.events_ms`, with the frame position `at`) or the Aseprite tag data.
+The round trip requires the recovered milliseconds to equal the source to 1e-6 ms (1 ms for tick-timed clips, the builder's tick rounding). SpriteFrames cannot carry events: read them from `engine-export.json` (`clips.<name>.events_ms`) or the Aseprite tag data.
+
+### Positions, events and transition hints
+
+Built clips list the **played** timeline: `frames` and `duration_ms` of a pingpong clip arrive expanded (authored 0 1 2 3 plays 0 1 2 3 2 1) and `authored_frames` keeps the authored order. The positions follow `sprite.schema.json` builtClip:
+
+- `events_ms[].at_ms` is authoritative. `position` is the played frame (the index into `frames`): taken when the built clip gives it, otherwise found from `at_ms` on the duration edges, and refused when the two disagree. `at` is the **authored** position, so an event authored once fires on every played occurrence (a pingpong `step_l` at authored 1 fires at played frames 1 and 3).
+- `engine-export.json` writes each event with `at_ms`, `at` and `position`; the Aseprite tag data and the Sprite3D contracts place it on the played frame (`frame` = tag `from` + `position`). Event names follow `common/eventName` (`custom:<name>` for anything else).
+- `ticks`, `keys` and `entry_frame` stay authored positions (with `keys_ms`, `entry_ms` and `hitstop_ms` beside them); `authored_frames` comes along so a reader can map them.
+- Transition hints are read from `transition_hints`; a clip without them falls back to legacy `transitions` items that name a target clip with `to` (built clips keep `transitions` for the frame-to-frame metrics). They are written as `transition_hints`, and each must name a clip of the manifest and enter it at one of its authored positions.
 
 ## Anchor mapping table
 
@@ -96,7 +105,7 @@ Record what you imported and in which engine version before claiming support in 
 The video2dsprite skill ships DOM-free runtime helpers in its `references/runtime/forge-runtime.mjs` (with the packed-alpha WebGL compositor beside it). They read `engine-export.json` clips, `animation-clips.json` clips and video `animation.json` 2.0/3.0 alike (`normalizeClip`), and work for sprite sheets too.
 
 - **Distance-driven walk.** Drive the gait phase from distance actually travelled, never from the wall clock: feed the position after collision to `TravelMeter`, then `walkPlayback(clip, meter.distance, speed)` or `gaitFrame(distance, stride, frames)`. Both share one phase, so a blocked actor keeps its pose and a video walk and a sheet walk stay in step. The travel per loop is `stride_world_units` (sprite clips, per clip cycle) or `strideWorldUnits x cycles` (video). Enter on `entry_frame` with `phaseOffset(distance, loopDistance, entryPhase(clip))`.
-- **Transitions.** `transitionHint(clip, to)` gives the entry frame and dissolve time from the clip's hints. `ditherDissolve(progress, x, y)` keeps the outgoing pose's pixel at sprite-local `(x, y)` while true; draw the incoming pose underneath (`ditherDissolvePixels` does this on pixel arrays). Mode `premultiplied` uses `premultipliedMix`.
+- **Transitions.** `transitionHint(clip, to)` gives the entry frame and dissolve time from the clip's `transition_hints` (legacy `transitions` items with `to` still count). `ditherDissolve(progress, x, y)` keeps the outgoing pose's pixel at sprite-local `(x, y)` while true; draw the incoming pose underneath (`ditherDissolvePixels` does this on pixel arrays). Mode `premultiplied` uses `premultipliedMix`.
 - **Hit-stop.** One `HitStopClock` per entity: `hitStop(clip.hitstop_ticks)` at the hit event freezes the action clock while the world clock keeps shaking and spawning particles. Longer requests win; they never stack.
 - **Time-warp onto hits.** `mapActionTime(clip, {durationMs, impactTimesMs}, elapsedMs)` stretches the clip so its impact frame lands on every gameplay hit (multi-hit attacks included) and returns the frame and playback rate.
 - **Fixed step and events.** `FixedStepLoop` runs the simulation at 60 Hz with an interpolation `alpha` for rendering and drops a long stall instead of spiralling; `frameAt(clip, t)` picks frames from integer durations that sum exactly; `eventsCrossed(clip, previousMs, nowMs)` fires each event once per crossing.

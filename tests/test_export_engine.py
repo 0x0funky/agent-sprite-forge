@@ -6,7 +6,6 @@ builder). Engine imports themselves are not tested here (no editors in CI).
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -18,238 +17,16 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import (SHARED_SCHEMAS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
-                             script_path)
+from forge_testutils import assert_cli_help, assert_valid_contract, load_script, run_cli, script_path
 
 E = load_script("generate2dsprite", "export_engine")
 TOOL = script_path("generate2dsprite", "export_engine")
 BUILDER = script_path("generate2dsprite", "build_animation_clips")
 V1, V2 = "generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"
 
-# Schema additions requested in handoff/B09-runtime-export.md section 5 (sprite.schema.json $defs).
-# The tests validate every document export_engine writes against the frozen schemas plus these.
-PROPOSED_SPRITE_DEFS = json.loads(r"""
-{
-  "exportedClip": {
-    "description": "A clip in engine-export.json: source frames, integer durations, events, per-target placement.",
-    "type": "object",
-    "required": ["frames", "duration_ms", "total_duration_ms", "loop", "loop_policy", "events_ms", "page"],
-    "properties": {
-      "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
-      "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-      "total_duration_ms": {"type": "integer", "minimum": 1},
-      "loop": {"type": "boolean"},
-      "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
-      "events_ms": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": ["name", "at_ms", "at"],
-          "properties": {
-            "name": {"$ref": "common.schema.json#/$defs/eventName"},
-            "at_ms": {"type": "integer", "minimum": 0},
-            "at": {"type": "integer", "minimum": 0},
-            "data": true
-          }
-        }
-      },
-      "page": {"type": "integer", "minimum": 0},
-      "transitions": {"type": "array", "items": {"$ref": "#/$defs/clipTransition"}},
-      "aseprite": {
-        "type": "object",
-        "required": ["file", "from", "to"],
-        "properties": {
-          "file": {"$ref": "common.schema.json#/$defs/relPath"},
-          "from": {"type": "integer", "minimum": 0},
-          "to": {"type": "integer", "minimum": 0}
-        }
-      },
-      "godot": {
-        "type": "object",
-        "required": ["speed", "relative_durations"],
-        "properties": {
-          "speed": {"type": "number", "exclusiveMinimum": 0},
-          "relative_durations": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}},
-          "basis": {"type": "string"}
-        }
-      },
-      "sprite3d": {
-        "type": "object",
-        "required": ["action", "contract"],
-        "properties": {
-          "action": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
-          "contract": {"$ref": "common.schema.json#/$defs/relPath"}
-        }
-      }
-    }
-  },
-  "engine_export_v1": {
-    "description": "engine-export.json (export_engine.py): files, clip timing, mapping table, QA. Paths are relative.",
-    "type": "object",
-    "required": [
-      "schema",
-      "name",
-      "tool",
-      "source",
-      "targets",
-      "frame_size",
-      "anchor_px",
-      "sampling",
-      "atlas",
-      "clips",
-      "mapping",
-      "files",
-      "qa"
-    ],
-    "properties": {
-      "schema": {"const": "generate2dsprite.engine_export.v1"},
-      "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
-      "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-      "source": {
-        "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
-        "properties": {
-          "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]}
-        }
-      },
-      "targets": {
-        "type": "array",
-        "minItems": 1,
-        "items": {"enum": ["aseprite-json", "godot-spriteframes", "godot-sprite3d"]}
-      },
-      "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
-      "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
-      "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
-      "default_clip": {"type": "string", "minLength": 1},
-      "atlas": {
-        "type": "object",
-        "required": ["max_size", "padding", "extrude", "pages"],
-        "properties": {
-          "max_size": {"type": "integer", "minimum": 16, "maximum": 4096},
-          "padding": {"type": "integer", "minimum": 0},
-          "extrude": {"type": "integer", "minimum": 0},
-          "pages": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "object",
-              "required": ["index", "size", "cells", "clips"],
-              "properties": {
-                "index": {"type": "integer", "minimum": 0},
-                "size": {"$ref": "common.schema.json#/$defs/size2"},
-                "cells": {"type": "integer", "minimum": 1},
-                "clips": {"type": "array", "items": {"type": "string"}}
-              }
-            }
-          }
-        }
-      },
-      "scale": {
-        "type": "object",
-        "required": ["pixel_size", "subject_height_px", "world_height"],
-        "properties": {
-          "pixel_size": {"type": "number", "exclusiveMinimum": 0},
-          "subject_height_px": {"type": "number", "exclusiveMinimum": 0},
-          "world_height": {"type": "number", "exclusiveMinimum": 0}
-        }
-      },
-      "clips": {
-        "type": "object",
-        "minProperties": 1,
-        "additionalProperties": {"$ref": "#/$defs/exportedClip"}
-      },
-      "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
-      "unused_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-      "mapping": {
-        "type": "object",
-        "required": ["anchor_px", "frame_size", "godot", "unity", "phaser", "pitch_compensation"]
-      },
-      "files": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
-      "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
-    }
-  },
-  "godot_sprite3d_v1": {
-    "description": "Godot Sprite3D contract; frames are relative to this file (S19); durations_ms is exact per frame.",
-    "type": "object",
-    "required": [
-      "schema",
-      "frame_size",
-      "output_origin",
-      "sprite3d_offset",
-      "world_height",
-      "recommended_pixel_size",
-      "duration_ms",
-      "fps",
-      "frames"
-    ],
-    "properties": {
-      "schema": {"const": "generate2dsprite.godot_sprite3d.v1"},
-      "clip": {"type": "string", "minLength": 1},
-      "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
-      "output_origin": {"$ref": "common.schema.json#/$defs/point2"},
-      "sprite3d_offset": {"$ref": "common.schema.json#/$defs/point2"},
-      "reference_subject_height_px": {"type": "number", "exclusiveMinimum": 0},
-      "world_height": {"type": "number", "exclusiveMinimum": 0},
-      "recommended_pixel_size": {"type": "number", "exclusiveMinimum": 0},
-      "rendered_subject_height_world": {"type": "number", "exclusiveMinimum": 0},
-      "scale_source": {"type": "string"},
-      "billboard": {"enum": ["enabled", "disabled", "fixed-y"]},
-      "texture_filter": {"$ref": "common.schema.json#/$defs/sampling"},
-      "duration_ms": {"type": "integer", "minimum": 1},
-      "fps": {"type": "number", "exclusiveMinimum": 0},
-      "frames": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/relPath"}},
-      "frame_sha256": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/sha256"}},
-      "durations_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-      "loop": {"type": "boolean"},
-      "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
-      "events_ms": {"type": "array"}
-    }
-  },
-  "godot_sprite3d_bundle_v1": {
-    "description": "Per-action Sprite3D contracts combined; contract paths are relative to this file.",
-    "type": "object",
-    "required": ["schema", "default_action", "world_height", "pixel_size", "actions"],
-    "properties": {
-      "schema": {"const": "generate2dsprite.godot_sprite3d_bundle.v1"},
-      "default_action": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
-      "world_height": {"type": "number", "exclusiveMinimum": 0},
-      "world_height_max_drift": {"type": "number", "minimum": 0},
-      "pixel_size": {"type": "number", "exclusiveMinimum": 0},
-      "pixel_size_max_drift": {"type": "number", "minimum": 0},
-      "actions": {
-        "type": "object",
-        "minProperties": 1,
-        "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]*$"},
-        "additionalProperties": {
-          "type": "object",
-          "required": ["contract", "loop"],
-          "properties": {
-            "contract": {"$ref": "common.schema.json#/$defs/relPath"},
-            "loop": {"type": "boolean"},
-            "clip": {"type": "string"}
-          }
-        }
-      }
-    }
-  }
-}
-""")
-
-
-def assert_valid_proposed(document: dict, name: str) -> None:
-    """Validate against sprite.schema.json with PROPOSED_SPRITE_DEFS added in memory (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name: json.loads(path.read_text(encoding="utf-8"))
-               for path in SHARED_SCHEMAS_DIR.glob("*.schema.json")}
-    sprite = copy.deepcopy(schemas["sprite.schema.json"])
-    sprite["$defs"].update(PROPOSED_SPRITE_DEFS)
-    schemas["sprite.schema.json"] = sprite
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in schemas.values())
-    validator = Draft202012Validator({"$ref": f"{sprite['$id']}#/$defs/{name}"}, registry=registry)
-    errors = [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
-    assert not errors, f"{name} violations:\n" + "\n".join(errors)
+def assert_valid_sprite(document: dict, name: str) -> None:
+    """Validate against generate2dsprite's vendored sprite.schema.json (B09's section 5 defs landed there)."""
+    assert_valid_contract(document, "sprite", name, skill="generate2dsprite")
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -417,12 +194,12 @@ def test_sprite3d_paths_relative(tmp_path):
     shutil.rmtree(clips_path.parent)
     folder = moved / "godot-sprite3d"
     bundle = json.loads((folder / "bundle.json").read_text(encoding="utf-8"))
-    assert_valid_proposed(bundle, "godot_sprite3d_bundle_v1")
+    assert_valid_sprite(bundle, "godot_sprite3d_bundle_v1")
     assert bundle["default_action"] == "idle" and set(bundle["actions"]) == {"idle", "attack"}
     for action in bundle["actions"].values():
         contract_path = folder / action["contract"]
         contract = json.loads(contract_path.read_text(encoding="utf-8"))
-        assert_valid_proposed(contract, "godot_sprite3d_v1")
+        assert_valid_sprite(contract, "godot_sprite3d_v1")
         assert contract["recommended_pixel_size"] == pytest.approx(1.6 / contract["reference_subject_height_px"])
         assert contract["sprite3d_offset"] == [0.0, 20.0]     # [w/2 - ax, ay - h/2], +Y up
         for relative, digest in zip(contract["frames"], contract["frame_sha256"]):
@@ -503,7 +280,7 @@ def test_v1_manifest_from_the_real_builder(tmp_path):
     assert record["source"]["schema"] == json.loads(clips_path.read_text(encoding="utf-8"))["schema"]
     assert record["default_clip"] == "walk"          # no idle state: the first clip
     assert_valid_contract(record["qa"], "common", "qaEnvelope")
-    assert_valid_proposed(record, "engine_export_v1")
+    assert_valid_sprite(record, "engine_export_v1")
 
 
 def test_engine_export_document_and_contracts(tmp_path):
@@ -513,8 +290,10 @@ def test_engine_export_document_and_contracts(tmp_path):
     output, summary = export(tmp_path, clips_path, "--name", "hero", "--camera-pitch-deg", "30", "--ppu", "16")
     record = json.loads((output / "engine-export.json").read_text(encoding="utf-8"))
     assert_valid_contract(record["qa"], "common", "qaEnvelope", skill="generate2dsprite")
-    assert_valid_proposed(record, "engine_export_v1")
+    assert_valid_sprite(record, "engine_export_v1")
     assert record["qa"]["status"] == summary["status"] == "pass"
+    # D29: the QA envelope and the document name the package version.
+    assert record["tool"]["version"] == record["qa"]["tool"]["version"] == E.forge_core.FORGE_PACKAGE_VERSION == "0.4.0"
     assert {c["id"] for c in record["qa"]["checks"]} >= {"aseprite_roundtrip", "godot_spriteframes_roundtrip",
                                                          "godot_sprite3d_frames_roundtrip", "sprite3d_paths_relative"}
     assert any("not run" in text for text in record["qa"]["notProven"])
@@ -524,10 +303,12 @@ def test_engine_export_document_and_contracts(tmp_path):
     for item in record["files"]:
         assert hashlib.sha256((output / item["path"]).read_bytes()).hexdigest() == item["sha256"]
     assert record["source"]["path"] == "../built/animation-clips.json"
-    # Clip metadata a runtime needs: events, hints, keys and the Godot timing.
+    # Clip metadata a runtime needs: events (D12: at authored, position played), hints, keys and the Godot timing.
     attack = record["clips"]["attack"]
-    assert attack["events_ms"][1] == {"name": "hit", "at_ms": 140, "at": 2, "data": {"damage": 2}}
-    assert attack["transitions"] == [{"to": "idle", "entry_frame": 0, "dissolve_ms": 60, "mode": "dither"}]
+    assert attack["events_ms"][1] == {"name": "hit", "at_ms": 140, "at": 2, "position": 2, "data": {"damage": 2}}
+    # The fixture's legacy hint items in transitions are read (D13) and written as transition_hints.
+    assert attack["transition_hints"] == [{"to": "idle", "entry_frame": 0, "dissolve_ms": 60, "mode": "dither"}]
+    assert "transitions" not in attack
     assert attack["keys"] == {"wind_start": 0, "strike": 2} and attack["hitstop_ticks"] == 4
     assert record["clips"]["idle"]["stride_world_units"] == 24
     # pixel_art -> nearest everywhere; the mapping table follows the anchor.
@@ -638,10 +419,12 @@ def test_action_names_are_bundle_safe_and_unique():
 
 
 def test_file_refs_never_record_absolute_paths(tmp_path, monkeypatch):
+    """export_engine records its inputs with forge_core.file_ref (D30): another drive keeps only the file name."""
     target = tmp_path / "frame.png"
     target.write_bytes(b"png")
     monkeypatch.setattr(E.forge_core, "portable_path", lambda path, base: "D:/other-drive/frame.png")
-    assert E._local_file_ref(target, tmp_path)["path"] == "frame.png"
+    assert E.forge_core.file_ref(target, tmp_path)["path"] == "frame.png"
+    assert not hasattr(E, "_local_file_ref") and not hasattr(E, "_local_round_half_up")
 
 
 def test_godot_parser_reads_back_what_the_writer_writes():
@@ -670,3 +453,217 @@ def test_engine_export_doc_has_single_line_commands_and_says_imports_are_unverif
         assert set(options) <= {action for action in E.build_parser()._option_string_actions}, command
     for row in ("Godot AnimatedSprite2D", "Godot Sprite3D", "Unity", "Phaser", "PixiJS", "billboard"):
         assert row in text
+
+
+# --------------------------------------------------------------------------- D12/D13 on real build_animation_clips.py output
+
+REAL_CLIPS = {
+    # pingpong from ticks: 3 authored poses play 0 1 2 1; step_l (authored position 1) fires twice.
+    "idle": {"frames": [0, 1, 2], "ticks": 6, "loop_policy": "pingpong",
+             "events": [{"at": 1, "name": "step_l"}, {"at": 2, "name": "step_r"}]},
+    "attack": {"frames": [3, 4, 5], "duration_ms": [80, 60, 200], "loop": False,
+               "events": [{"at": 1, "name": "tell"}, {"at": 2, "name": "hit", "data": {"damage": 2}}],
+               "keys": {"wind_start": 0, "strike": 2}, "hitstop_ticks": 4,
+               "transitions": [{"to": "idle", "entry_frame": 1, "dissolve_ms": 60, "mode": "dither"}]},
+    # Uneven authored ticks: Godot must play them mapped onto the played order 0 1 2 3 2 1.
+    "walk": {"frames": [0, 1, 2, 3], "ticks": [5, 5, 6, 4], "loop_policy": "pingpong", "entry_frame": 2,
+             "events": [{"at": 0, "name": "step_l"}, {"at": 2, "name": "step_r"}]},
+}
+
+
+def build_real(tmp_path: Path, clips: dict = REAL_CLIPS) -> Path:
+    """Run the real build_animation_clips.py on a v2 clips manifest and return its animation-clips.json."""
+    source = tmp_path / "src"
+    source.mkdir(parents=True)
+    for i in range(6):
+        Image.fromarray(sprite_frame(i)).save(source / f"f{i}.png")
+    (source / "clips.json").write_text(json.dumps({
+        "schema": V2, "frames": [f"f{i}.png" for i in range(6)], "anchor_px": [20, 44], "clips": clips,
+        "states": {"idle": "idle", "attack": "attack"}}), encoding="utf-8")
+    built = run_cli([BUILDER, "--manifest", source / "clips.json", "--output-dir", tmp_path / "built", "--no-reviews"])
+    assert built.returncode == 0, built.stderr
+    return tmp_path / "built" / "animation-clips.json"
+
+
+def shown_at(durations: list[int], at_ms: int) -> int:
+    """The played frame a player shows at at_ms (an end-edge event names the last frame)."""
+    edges = np.cumsum([0, *durations])
+    return min(len(durations) - 1, int(np.searchsorted(edges, at_ms, side="right")) - 1)
+
+
+def test_real_builder_v2_events_ticks_and_hints(tmp_path):
+    """Reviewer repro b02_to_b09_e2e.py: B02's v2 output keeps at authored, position played, ticks authored and
+    the hints in transition_hints (D12, D13); every engine output must place and time them by the played frames."""
+    clips_path = build_real(tmp_path)
+    built = json.loads(clips_path.read_text(encoding="utf-8"))["clips"]
+    # What B02 writes (if this changes, the D12/D13 readers below must follow).
+    assert built["idle"]["frames"] == [0, 1, 2, 1] and built["idle"]["authored_frames"] == [0, 1, 2]
+    assert built["idle"]["ticks"] == [6, 6, 6] and len(built["idle"]["duration_ms"]) == 4
+    assert [(e["name"], e["at"], e["position"]) for e in built["idle"]["events_ms"]] == [
+        ("step_l", 1, 1), ("step_r", 2, 2), ("step_l", 1, 3)]
+    assert built["attack"]["transition_hints"][0]["to"] == "idle"
+    assert all("to" not in item for item in built["attack"]["transitions"])  # the v1 frame-step metrics
+
+    output, summary = export(tmp_path, clips_path, "--name", "hero", "--world-height", "1.6")
+    assert summary["status"] == "pass"
+    record = json.loads((output / "engine-export.json").read_text(encoding="utf-8"))
+    assert_valid_sprite(record, "engine_export_v1")
+    clips = record["clips"]
+    for name, clip in clips.items():
+        source_events = built[name]["events_ms"]
+        assert [(e["name"], e["at_ms"], e["at"], e["position"]) for e in clip["events_ms"]] == [
+            (e["name"], e["at_ms"], e["at"], e["position"]) for e in source_events], name
+        for event in clip["events_ms"]:
+            assert event["position"] == shown_at(clip["duration_ms"], event["at_ms"]), (name, event)
+    # Hints survive (D13), with the builder's resolved entry_ms and dissolve_ticks.
+    assert clips["attack"]["transition_hints"] == built["attack"]["transition_hints"]
+    assert "transition_hints" not in clips["idle"] and "transitions" not in clips["attack"]
+    # Authored ticks drive Godot on the played frames (D12): 0 1 2 1 and 0 1 2 3 2 1.
+    assert clips["idle"]["godot"] == {"speed": 60.0, "basis": "ticks at 60 Hz", "relative_durations": [6.0] * 4}
+    assert clips["walk"]["godot"]["basis"] == "ticks at 60 Hz"
+    assert clips["walk"]["godot"]["relative_durations"] == [5.0, 5.0, 6.0, 4.0, 6.0, 5.0]
+    # ticks, keys and entry_frame stay authored positions; authored_frames and the *_ms times come along.
+    assert clips["idle"]["ticks"] == [6, 6, 6] and clips["idle"]["authored_frames"] == [0, 1, 2]
+    assert (clips["walk"]["entry_frame"], clips["walk"]["entry_ms"]) == (2, built["walk"]["entry_ms"])
+    assert clips["attack"]["keys_ms"] == built["attack"]["keys_ms"] and clips["attack"]["hitstop_ms"] == 67
+    animations = {a["name"]: a for a in godot_animations((output / "godot" / "hero.tres").read_text(encoding="utf-8"))}
+    assert animations["idle"]["speed"] == 60.0 and animations["idle"]["durations"] == [6.0] * 4
+    assert animations["walk"]["durations"] == [5.0, 5.0, 6.0, 4.0, 6.0, 5.0]
+    # Aseprite: every event sits on the frame that is shown at its at_ms (the second step_l on frame 3).
+    document = json.loads((output / "aseprite" / "hero.json").read_text(encoding="utf-8"))
+    durations = [entry["duration"] for entry in document["frames"]]
+    for tag in document["meta"]["frameTags"]:
+        events = json.loads(tag.get("data", "{}")).get("events", [])
+        for event in events:
+            assert event["frame"] - tag["from"] == shown_at(durations[tag["from"]:tag["to"] + 1], event["at_ms"])
+        if tag["name"] == "idle":
+            assert [(e["name"], e["frame"] - tag["from"]) for e in events] == [("step_l", 1), ("step_r", 2),
+                                                                               ("step_l", 3)]
+    contract = json.loads((output / "godot-sprite3d" / "action-idle.json").read_text(encoding="utf-8"))
+    assert_valid_sprite(contract, "godot_sprite3d_v1")
+    assert [e["position"] for e in contract["events_ms"]] == [1, 2, 3]
+
+
+def test_transition_hints_win_over_frame_step_metrics(tmp_path):
+    """D13: transition_hints first; legacy transitions items count only when they name a target with to."""
+    frames = [sprite_frame(i) for i in range(4)]
+    metrics = [{"from_position": 0, "to_position": 1, "premultiplied_rgb_mae": 3.0, "alpha_mae": 0.0,
+                "changed_visible_pixels": 10}]
+    hint = {"to": "idle", "entry_frame": 1, "entry_ms": 100, "dissolve_ms": 40, "dissolve_ticks": 2,
+            "mode": "premultiplied"}
+    clips = {"idle": {"frames": [0, 1], "duration_ms": [100, 100], "loop": True, "transitions": metrics},
+             "attack": {"frames": [2, 3], "duration_ms": [80, 120], "loop": False,
+                        "transitions": [*metrics, {"to": "attack", "entry_frame": 0}], "transition_hints": [hint]}}
+    clips_path = write_built(tmp_path / "built", frames, clips)
+    output, _ = export(tmp_path, clips_path, "--target", "aseprite-json", "--name", "hero")
+    record = json.loads((output / "engine-export.json").read_text(encoding="utf-8"))
+    assert record["clips"]["attack"]["transition_hints"] == [hint]
+    assert "transition_hints" not in record["clips"]["idle"]
+    assert_valid_sprite(record, "engine_export_v1")
+
+
+def test_event_positions_must_agree_with_at_ms(tmp_path):
+    """D12: at_ms is authoritative; a position or an authored at that contradicts it is refused, as is an
+    event name outside common/eventName (reviewer b09_spot.py case 4). Nothing is published."""
+    frames = [sprite_frame(i) for i in range(3)]
+    idle = {"frames": [0, 1, 2, 1], "duration_ms": [100] * 4, "loop": True, "loop_policy": "pingpong",
+            "authored_frames": [0, 1, 2]}
+    cases = [
+        ([{"name": "step_l", "at_ms": 300, "at": 1, "position": 1}], "position 1 disagrees with at_ms 300"),
+        # at read as a played position (the pre-D12 reading) names authored position 3, which does not exist.
+        ([{"name": "step_l", "at_ms": 300, "at": 3}], "shows authored position 1"),
+        ([{"name": "footstep", "at_ms": 100, "at": 1}], "custom:<name>"),
+    ]
+    for number, (events, message) in enumerate(cases):
+        clips_path = write_built(tmp_path / f"in{number}", frames, {"idle": {**idle, "events_ms": events}})
+        result = run_cli([TOOL, "--clips", clips_path, "--output-dir", tmp_path / f"out{number}"])
+        assert result.returncode == 1 and message in result.stderr, result.stderr
+        assert "Traceback" not in result.stderr and not (tmp_path / f"out{number}").exists()
+    # authored_frames must expand to frames under the loop policy.
+    clips_path = write_built(tmp_path / "bad", frames, {"idle": {**idle, "authored_frames": [0, 2, 1]}})
+    result = run_cli([TOOL, "--clips", clips_path, "--output-dir", tmp_path / "bad-out"])
+    assert result.returncode == 1 and "pingpong playback of its authored_frames" in result.stderr
+    # An event that gives only at_ms and its authored at lands on the played frame shown at that time.
+    clips_path = write_built(tmp_path / "ok", frames, {"idle": {**idle, "events_ms": [
+        {"name": "step_l", "at_ms": 100, "at": 1}, {"name": "custom:land", "at_ms": 300, "at": 1}]}})
+    output, _ = export(tmp_path, clips_path, "--target", "aseprite-json", "--name", "hero", out="ok-out")
+    tag = json.loads((output / "aseprite" / "hero.json").read_text(encoding="utf-8"))["meta"]["frameTags"][0]
+    assert [e["frame"] for e in json.loads(tag["data"])["events"]] == [1, 3]
+
+
+def test_bad_references_are_clean_errors(tmp_path):
+    """Reviewer b09_spot.py case 3: a non-string state was an unhashable TypeError traceback."""
+    frames = [sprite_frame(i) for i in range(2)]
+    idle = {"frames": [0, 1], "duration_ms": [100, 100], "loop": True}
+    cases = [
+        ({"states": {"idle": ["idle"]}}, {}, "states must map state names to clip names"),
+        ({"states": {"idle": "run"}}, {}, "states must map state names to clip names"),
+        ({}, {"transition_hints": [{"to": "run"}]}, "'run', which is not a clip"),
+        ({}, {"transition_hints": [{"to": "idle", "entry_frame": 2}]}, "entry_frame 2 is not one of its 2"),
+        ({}, {"transition_hints": [{"to": "idle", "mode": "wipe"}]}, "mode must be dither or premultiplied"),
+    ]
+    for number, (manifest_extra, clip_extra, message) in enumerate(cases):
+        clips_path = write_built(tmp_path / f"in{number}", frames, {"idle": {**idle, **clip_extra}}, **manifest_extra)
+        result = run_cli([TOOL, "--clips", clips_path, "--output-dir", tmp_path / f"out{number}"])
+        assert result.returncode == 1 and message in result.stderr, result.stderr
+        assert "Traceback" not in result.stderr and not (tmp_path / f"out{number}").exists()
+
+
+def test_faint_fx_exports_without_a_subject_height(tmp_path):
+    """Reviewer b09_spot.py case 2: frames with nothing above alpha 32 need a subject height only for Sprite3D."""
+    faint = []
+    for i in range(3):
+        pixels = np.zeros((32, 32, 4), np.uint8)
+        pixels[8 + i:30, 8:24] = (200, 60 + 20 * i, 90, 30)
+        faint.append(pixels)
+    clips_path = write_built(tmp_path / "built", faint,
+                             {"puff": {"frames": [0, 1, 2], "duration_ms": [50, 50, 50], "loop": False}},
+                             anchor=(16, 30))
+    output, summary = export(tmp_path, clips_path, "--target", "aseprite-json", "--name", "puff")
+    record = json.loads((output / "engine-export.json").read_text(encoding="utf-8"))
+    assert summary["status"] == "pass" and "scale" not in record
+    assert record["mapping"]["godot"]["animated_sprite_3d"]["pixel_size"] == 0.01
+    assert record["mapping"]["unity"]["pixels_per_unit"] == 100.0
+    assert_valid_sprite(record, "engine_export_v1")
+    result = run_cli([TOOL, "--clips", clips_path, "--output-dir", tmp_path / "s3d", "--target", "godot-sprite3d"])
+    assert result.returncode == 1 and "--subject-height-px" in result.stderr and not (tmp_path / "s3d").exists()
+    export(tmp_path, clips_path, "--target", "godot-sprite3d", "--subject-height-px", "22", out="s3d-ok")
+
+
+def test_sprite3d_only_export_needs_no_atlas(tmp_path):
+    """Reviewer b09_sprite3d_atlas.py: per-frame Sprite3D textures are not bound by the atlas page size."""
+    frames = [sprite_frame(i) for i in range(5)]
+    clips_path = write_built(tmp_path / "built", frames,
+                             {"long": {"frames": [0, 1, 2, 3, 4], "duration_ms": [100] * 5, "loop": True}})
+    # 40x48 cells with padding 2 and extrude 1: a 128 px page holds 4 distinct frames, so atlas targets refuse ...
+    result = run_cli([TOOL, "--clips", clips_path, "--output-dir", tmp_path / "atlas", "--max-atlas-size", "128"])
+    assert result.returncode == 1 and "needs 5 distinct frames" in result.stderr
+    # ... and Sprite3D alone exports the clip.
+    output, summary = export(tmp_path, clips_path, "--target", "godot-sprite3d", "--max-atlas-size", "128",
+                             "--name", "hero", out="s3d")
+    record = json.loads((output / "engine-export.json").read_text(encoding="utf-8"))
+    assert summary["pages"] == 0 and record["atlas"]["pages"] == [] and record["clips"]["long"]["page"] == 0
+    assert next(c for c in record["qa"]["checks"] if c["id"] == "atlas_max_side_px")["status"] == "skipped"
+    assert not (output / "aseprite").exists() and not (output / "godot").exists()
+    assert_valid_sprite(record, "engine_export_v1")
+
+
+def test_error_conventions(tmp_path, monkeypatch, capsys):
+    """D26: usage errors exit 2 with argparse's usage line. D27: anything unexpected is one clean line, exit 1.
+    D28: a manifest with a UTF-8 BOM (Windows PowerShell 5.1) loads; NaN is refused."""
+    usage = run_cli([TOOL, "--clips", "x.json", "--output-dir", tmp_path / "out", "--target", "everything"])
+    assert usage.returncode == 2 and "usage:" in usage.stderr and "Traceback" not in usage.stderr
+    clips_path = hero(tmp_path)
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(E, "plan_pages", broken)
+    assert E.main(["--clips", str(clips_path), "--output-dir", str(tmp_path / "engine")]) == 1
+    assert capsys.readouterr().err.strip() == "error: internal error (RuntimeError: boom)"
+    assert not (tmp_path / "engine").exists()
+    monkeypatch.undo()
+    clips_path.write_bytes(b"\xef\xbb\xbf" + clips_path.read_bytes())
+    export(tmp_path, clips_path, "--target", "aseprite-json", "--name", "hero", out="bom")
+    clips_path.write_bytes(clips_path.read_bytes().replace(b'"loop": true', b'"loop": NaN', 1))
+    result = run_cli([TOOL, "--clips", clips_path, "--output-dir", tmp_path / "nan"])
+    assert result.returncode == 1 and "not usable JSON" in result.stderr

@@ -3,10 +3,17 @@
 Branch `asf/B22-media-routes-doctor`, based on `wip/asf-upgrade-20261005` @ `3f9252d`.
 Plan tasks B22-T1 to B22-T5. Files added (no existing file changed):
 
+> **Integration (2026-10-05, group pass "runtime-media", branch `asf/int-g-runtime-media`).** Owner decision 13 is
+> implemented (D22): local agent first in the doctor's ROUTES, user-facing "Codex (local CLI)" / "Grok (local CLI)"
+> names, `cli_media.py --route auto`, and a default session cap of 8 images and 2 videos per 12 hours enforced
+> through the ledger. Re-verification after a CLI update works (D23), the drift check ignores bytecode and OS junk
+> (D24), batch progress files hold relative paths (D25), and D26-D29 apply. The schema requests of section 5 were
+> applied by the shared stage. Open items for Z are marked **Z**.
+
 - [skills/generate2dmedia/scripts/forge_doctor.py](../skills/generate2dmedia/scripts/forge_doctor.py): capability doctor (stdlib only, read-only) and the library `cli_media.py` uses for executable resolution, isolation env and proofs.
-- [skills/generate2dmedia/scripts/cli_media.py](../skills/generate2dmedia/scripts/cli_media.py): the opt-in CLI routes, `resume --adopt`, `adopt --codex-thread`, `batch`.
+- [skills/generate2dmedia/scripts/cli_media.py](../skills/generate2dmedia/scripts/cli_media.py): the local CLI routes (Codex / Grok (local CLI), `--route auto`, session cap), `resume --adopt`, `adopt --codex-thread`, `batch`.
 - [skills/generate2dmedia/references/cli-routes.md](../skills/generate2dmedia/references/cli-routes.md): routes, consent, quota, provenance, error codes.
-- [skills/generate2dmedia/references/agent-profiles/video-agent.md](../skills/generate2dmedia/references/agent-profiles/video-agent.md): the Grok ACP agent profile (Grok's own frontmatter format, not a SKILL.md).
+- [skills/generate2dmedia/references/agent-profiles/video-agent.md](../skills/generate2dmedia/references/agent-profiles/video-agent.md): the Grok ACP agent profile (Grok's own frontmatter format, not a SKILL.md), and [agent-profiles/README.md](../skills/generate2dmedia/references/agent-profiles/README.md) (integration): which route uses it and the route order.
 - [tools/install_skills.py](../tools/install_skills.py): `--check` / `--apply` with manifest and backup.
 - Tests: [tests/test_forge_doctor.py](../tests/test_forge_doctor.py), [tests/test_cli_media.py](../tests/test_cli_media.py), [tests/test_install_skills.py](../tests/test_install_skills.py); fake CLIs [tests/fixtures/fake_cli/fake_codex.py](../tests/fixtures/fake_cli/fake_codex.py) and [tests/fixtures/fake_cli/fake_grok.py](../tests/fixtures/fake_cli/fake_grok.py).
 
@@ -19,8 +26,12 @@ Run from the user's project root; `<skill-dir>` is `skills/generate2dmedia` (`${
     python "<skill-dir>/scripts/forge_doctor.py" --probe-auth
     python "<skill-dir>/scripts/forge_doctor.py" --verify-route codex-cli
     python "<skill-dir>/scripts/forge_doctor.py" --verify-route codex-cli --execute
+    python "<skill-dir>/scripts/cli_media.py" image --route auto --prompt-file prompts/hero.txt --output-dir outputs/hero-local
+    python "<skill-dir>/scripts/cli_media.py" image --route auto --prompt-file prompts/hero.txt --output-dir outputs/hero-local --execute
+    python "<skill-dir>/scripts/cli_media.py" video --route auto --reference hero.png --prompt-file prompts/idle.txt --output-dir outputs/hero-idle-local --execute
     python "<skill-dir>/scripts/cli_media.py" image --route codex-cli --prompt-file prompts/hero.txt --output-dir outputs/hero-codex
     python "<skill-dir>/scripts/cli_media.py" image --route codex-cli --prompt-file prompts/hero.txt --output-dir outputs/hero-codex --execute --max-calls 5
+    python "<skill-dir>/scripts/cli_media.py" image --route codex-cli --prompt-file prompts/hero.txt --output-dir outputs/hero-more --execute --session-images 12
     python "<skill-dir>/scripts/cli_media.py" image --route grok-cli --prompt-file prompts/forest.txt --output-dir outputs/forest-grok --execute
     python "<skill-dir>/scripts/cli_media.py" edit --route grok-cli --reference hero.png --prompt-file prompts/hero-night.txt --output-dir outputs/hero-night --execute
     python "<skill-dir>/scripts/cli_media.py" video --route grok-acp --reference hero.png --prompt-file prompts/idle.txt --duration 6 --resolution 720p --output-dir outputs/hero-idle-grok --execute
@@ -37,7 +48,10 @@ Repository tool (run from the checkout):
     python tools/install_skills.py --apply --dest .claude/skills --skills generate2dsprite,generate2dmap --backup-dir backups/skills-old
 
 - `forge_doctor.py`: text by default; `--json` prints the `doctor_v1` report as one line of ASCII JSON (`schema`, `tool`, `createdAt`, `overall`, `host`, `checks`, `cli`, `routes`, `proofs`, `elapsedMs`, plus `saved` when `--save` wrote a new file; `--save` refuses an existing file). Exit 1 when a check FAILs (the report still prints, and stderr says `error: N check(s) failed: ids`). `--no-exec` runs nothing at all; by default it runs only `ffmpeg -version` and `<cli> --version` of native executables, concurrently (Grok with its auto-updater off). Measured on the owner's machine with the real Codex 0.155.1 and Grok 1.0.40: 224 ms of doctor work, 0.45 s wall.
-- `cli_media.py`: a dry run prints the plan (`consent`, `estimate`, `fingerprint`, `cli` presence/version/proof, exact `command`, `ledger` totals, `warnings`); `--execute` prints `{status, route, output, artifact, metadata, sha256, runRecord, version, verifiedBefore}`. Errors are one `error: CODE: message` line, ending in `(run <id>)` once a run record exists (use it with `resume --run`); exit 1, 130 on Ctrl+C. `resume`, `adopt` and `batch` print one JSON line (`batch` = the `batch_progress_v1` document plus `progressFile`).
+- `cli_media.py`: a dry run prints the plan (`route`, `label`, `consent`, `estimate`, `fingerprint`, `cli` presence/version/proof, exact `command`, `ledger` totals with `session` usage, `warnings`, and `routeChoice` for `--route auto`); `--execute` prints `{status, route, label, output, artifact, metadata, sha256, runRecord, version, verifiedBefore, routeChoice?}`. Errors are one `error: CODE: message` line, ending in `(run <id>)` once a run record exists (use it with `resume --run`); exit 1, 130 on Ctrl+C; argparse usage errors exit 2 (D26); anything unexpected is `error: internal error (<Type>: <message>)`, scrubbed (D27). `resume`, `adopt` and `batch` print one JSON line (`batch` = the `batch_progress_v1` document plus `progressFile`; its `jobsFile` and `jobDir` are relative to the progress file, D25).
+- `--route auto` (D22) takes the first local route of the owner's order (images: `codex-cli`, then `grok-cli`; edits: `grok-cli`; video: `grok-acp`) that is VERIFIED for the installed CLI version and names it in `routeChoice` (route, label, order, skipped routes and why); none VERIFIED gives `NOT_VERIFIED` and runs nothing. Batch jobs may say `"route": "auto"`.
+- Session cap (D22): every executed local-route call is checked in `media_ledger.reserve` under the ledger lock against at most 8 images (image and edit) and 2 videos within the last 12 hours of the project's ledger. `--session-images N`, `--session-videos N`, `--session-hours H` (flags win) or `FORGE_SESSION_IMAGES`, `FORGE_SESSION_VIDEOS`, `FORGE_SESSION_HOURS` change it; `0` blocks a kind; a refused call is `CAP` and runs nothing. Dry runs, batch plans, `media_ledger.py summary` and the doctor's `media.ledger` check show the usage.
+- `forge_doctor.py --verify-route ROUTE --execute` passes `--allow-duplicate` and the hidden `--verification` flag, which puts the installed CLI version into `options.verifies` and so into the fingerprint (D23): verifying again after a CLI update is a new request and is never refused as a duplicate.
 - `install_skills.py`: `--check` (default) prints `missing: / changed (edited locally|outdated): / extra:` lines on stderr and exits 1 on drift, else `{"status": "in-sync", ...}`; `--apply` prints `{status, dest, skills, files, backup, manifest}`.
 - Every `--help` (top level and each verb) is ASCII and exits 0 under `PYTHONIOENCODING=cp1252` and `cp950` (tested).
 
@@ -47,13 +61,15 @@ Repository tool (run from the checkout):
 
 | Need | Route |
 |---|---|
-| Which art routes work here (once per session) | `scripts/forge_doctor.py --host-tools <your media tools or none>`; use only what `ROUTES` names |
+| Which art routes work here (once per session) | `scripts/forge_doctor.py --host-tools <your media tools or none>`; use only what `ROUTES` names, local agent first |
+| An image with no host image tool, a local route VERIFIED (`ROUTES` status `ready`) | `scripts/cli_media.py image --route auto ... --execute`: no per-call question within the session cap; tell the user which route ran ("Codex (local CLI)" or "Grok (local CLI)") |
 | User asks for an image through their own Codex or Grok subscription | `scripts/cli_media.py image --route codex-cli\|grok-cli ...` dry run, show the consent block, then `--execute` |
 | Reference edit through the Grok CLI | `scripts/cli_media.py edit --route grok-cli --reference <img> ...` |
-| Animate an approved still through the Grok CLI (no API key) | `scripts/cli_media.py video --route grok-acp --reference <img> --duration 6 --resolution 720p ...` |
+| Animate an approved still through the Grok CLI (no API key) | `scripts/cli_media.py video --route grok-acp --reference <img> --duration 6 --resolution 720p ...` (or `--route auto`); the first video route when VERIFIED |
+| The session cap stopped a local route (`CAP`) | ask the user: raise it (`--session-images N`, `FORGE_SESSION_IMAGES`), wait, or take the paid REST route with their consent |
 | A CLI run timed out or was interrupted | `scripts/cli_media.py resume --run <id>`, then `--adopt` (never reruns the CLI) |
 | Codex Desktop made an image but it is not in the project | `scripts/cli_media.py adopt --codex-thread <thread-id> --output-dir <new>` |
-| First use of a CLI route on this CLI version | `scripts/forge_doctor.py --verify-route <route>`, then `--execute` after consent |
+| First use of a CLI route on this CLI version, or after a CLI update | `scripts/forge_doctor.py --verify-route <route>`, then `--execute` after consent (Grok `image_edit` is verified by one consented `cli_media.py edit ... --execute`) |
 
 Paste-ready section for **all five** SKILL.md files (Z note: "Capability check"), placed before the art-source decision:
 
@@ -62,9 +78,12 @@ Paste-ready section for **all five** SKILL.md files (Z note: "Capability check")
 
 Run `python "<skill-dir-of-generate2dmedia>/scripts/forge_doctor.py" --host-tools <tools>` where `<tools>`
 lists the media tools in your own tool list (`image_gen`, `image_edit`, `image_to_video`) or `none`.
-Use only the routes its ROUTES block names. An installed Codex or Grok CLI is not a connected tool:
-the doctor offers a CLI route only after a verified run for that CLI version (see the generate2dmedia
-CLI routes reference). Save the report next to your outputs with `--save <output>/doctor.json`.
+Use only the routes its ROUTES block names; they come local agent first. `ready` means use it now: your
+own tool, or Codex / Grok (local CLI) VERIFIED for the installed version, which runs without a per-call
+question within the session cap (8 images and 2 videos per 12 hours); always name the route you used.
+`consent` (the paid API) needs the user's consent for each request. An installed Codex or Grok CLI is not
+a connected tool: a CLI route is offered only after a verified run for that CLI version (see the
+generate2dmedia CLI routes reference). Save the report next to your outputs with `--save <output>/doctor.json`.
 If `encoding.stdout` FAILs, set `PYTHONUTF8=1` before running Python.
 ```
 
@@ -78,15 +97,15 @@ If `encoding.stdout` FAILs, set `PYTHONUTF8=1` before running Python.
 
 | Need | Route |
 |---|---|
-| Animate a still with the user's Grok subscription (opt-in) | generate2dmedia `cli_media.py video --route grok-acp`; then `video2dsprite.py process` on `generated.mp4` |
+| Animate a still with the user's Grok subscription: Grok (local CLI), the first video route when VERIFIED | generate2dmedia `cli_media.py video --route auto` (Grok ACP mode); then `video2dsprite.py process` on `generated.mp4`; without a VERIFIED route, the xAI REST route needs the user's consent |
 
 ## 3. README tool-table rows
 
 | Tool | What it does | Verified by |
 |---|---|---|
-| `generate2dmedia/scripts/forge_doctor.py` | Reports which art routes work here (deps, ffmpeg, console encoding, skill drift, API keys, Codex/Grok CLI readiness ladder PRESENT -> AUTH_MODE -> TOOL_EXPOSED -> VERIFIED) without reading credentials or spending anything | `tests/test_forge_doctor.py` (cold machine, host tools, cp1252 FAIL, audit-hooked no-credential-read run, under 1 s) |
-| `generate2dmedia/scripts/cli_media.py` | Opt-in image, edit and image-to-video through the user's own Codex or Grok CLI: dry-run consent, isolated child, kill on any other tool, quota ledger, provenance checks, resume and Codex Desktop adopt | `tests/test_cli_media.py` with fake CLIs |
-| `tools/install_skills.py` | Installs the skills into Claude Code, Codex, Grok or any folder with a backup and a sha256 manifest; `--check` reports drift; never ships `__pycache__` | `tests/test_install_skills.py` |
+| `generate2dmedia/scripts/forge_doctor.py` | Reports which art routes work here, local agent first (deps, ffmpeg, console encoding, skill drift, API keys, ledger and session cap, Codex/Grok CLI readiness ladder PRESENT -> AUTH_MODE -> TOOL_EXPOSED -> VERIFIED) without reading credentials or spending anything | `tests/test_forge_doctor.py` (cold machine, host tools, route order, cp1252 FAIL, audit-hooked no-credential-read run, re-verification across a CLI update, under 1 s) |
+| `generate2dmedia/scripts/cli_media.py` | Image, edit and image-to-video through the user's own Codex or Grok CLI (Codex / Grok (local CLI)): `--route auto` to the first VERIFIED route, session cap, dry-run plan, isolated child, kill on any other tool, quota ledger, provenance checks, resume and Codex Desktop adopt | `tests/test_cli_media.py` with fake CLIs |
+| `tools/install_skills.py` | Installs the skills into Claude Code, Codex, Grok or any folder with a backup and a sha256 manifest; `--check` reports drift, ignoring bytecode, dot files and OS junk; never ships `__pycache__` | `tests/test_install_skills.py` |
 
 Repository tree lines under `generate2dmedia/`:
 
@@ -114,9 +133,12 @@ Added
 - Provenance: run records in `.forge/cli-runs/` written before the CLI starts, CLI ids saved as soon as reported, scoped output checks (own folder, no symlink or junction, fresh, one file, magic bytes, decode), exclusive copy with sha256, staged publication, `resume --adopt`, `adopt --codex-thread` (B22-T3; F-13).
 - `tools/install_skills.py` with manifest and backup (B22-T4; F-11, roadmap 7.2).
 - `references/cli-routes.md` (B22-T5).
+- Integration (D22): `cli_media.py --route auto` (the first VERIFIED local route, named in `routeChoice`) and the local routes' session cap (8 images, 2 videos per 12 hours; `--session-images/--session-videos/--session-hours`, `FORGE_SESSION_*`), enforced through the ledger; `references/agent-profiles/README.md`.
 
 Changed
-- None (no existing file was modified).
+- Integration (D22): ROUTES puts the local agent first and marks a VERIFIED local route `ready` (no per-call question within the session cap) instead of `consent`; user-facing route names are "Codex (local CLI)" and "Grok (local CLI)" (one-shot mode for images, ACP mode for video).
+- Integration (D25): `cli_media.py batch` progress files store `jobsFile` and `jobDir` relative to the progress file.
+- Integration (D29): the doctor's `tool.version` and the receipts' `toolVersion` (`cli_media/0.4.0`) name the package version.
 
 BREAKING
 - None.
@@ -126,84 +148,28 @@ Fixed
 - F-11: a stale or hand-edited `~/.codex/skills` copy is detected (`install_skills.py --check`, and `forge_doctor.py` from the manifest).
 - Roadmap 7.2: installs never copy `__pycache__` or bytecode.
 - Report v2 3.4 / P1-2: an installed `grok.exe` is no longer mistaken for a usable video route.
+- Integration (D23): `--verify-route ROUTE --execute` after a Codex or Grok update was refused as a DUPLICATE, so the doctor's own remedy failed; two verifications within one second also collided on their output folder.
+- Integration (D24): `install_skills.py --check` and the doctor's `skills.install` reported the bytecode that running an installed skill writes as drift.
+- Integration (reviewer notes): error messages turned relative paths of 40+ characters into `[blob]`; the `grok-cli:image_edit` remedy offered `--verify-route grok-cli`, which verifies `image_gen` only.
 
 ## 5. Schema change requests
 
-Against `shared/schemas/media.schema.json`. My tests validate every document against the vendored schema, and the proofs file against the schema with request 1 applied in memory (`tests/test_cli_media.py::ROUTE_PROOFS_V1`).
+Resolved by the shared stage (shared-stage commit f3d7eb2): `$defs/route_proofs_v1` (its description now cites D23), the
+documentation of the `job_v2` fields cli_media writes (`artSource`, `outputDir`, `adoptedAt`, `adoption`, the extra
+`cliRun` and `consent` fields) and of the `doctor_v1` keys (including the D22 route order), and `batch_progress_v1`
+(described as relative per D25). The tests validate against the real `media.schema.json` (`assert_valid_contract`); the
+in-memory `ROUTE_PROOFS_V1` copy is gone.
 
-1. **New `$defs/route_proofs_v1`** (`<project>/.forge/route-proofs.json`; producer `cli_media.py`, consumer `forge_doctor.py`):
+New optional fields from the integration pass (objects are open, so everything validates today; document them):
 
-```json
-"route_proofs_v1": {
-  "description": "<project>/.forge/route-proofs.json written by cli_media.py: version-keyed evidence that an opt-in CLI route works. A record is valid only for its route, native tool, CLI version and recipe; forge_doctor.py reads it for the TOOL_EXPOSED and VERIFIED ladder steps.",
-  "type": "object",
-  "required": ["schema", "proofs"],
-  "properties": {
-    "schema": {"const": "generate2dmedia.route_proofs.v1"},
-    "proofs": {"type": "array", "items": {
-      "type": "object",
-      "required": ["route", "tool", "version", "recipe", "level", "verifiedAt"],
-      "properties": {
-        "route": {"enum": ["codex-cli", "grok-cli", "grok-acp"]},
-        "tool": {"enum": ["image_gen", "image_edit", "image_to_video"]},
-        "version": {"type": "string", "minLength": 1},
-        "versionText": {"type": "string", "minLength": 1},
-        "recipe": {"type": "string", "pattern": "^[a-z0-9-]+/[0-9]+$"},
-        "level": {"enum": ["TOOL_EXPOSED", "VERIFIED"]},
-        "verifiedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
-        "runId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-        "method": {"type": "string"},
-        "jobDir": {"$ref": "common.schema.json#/$defs/relPath"},
-        "artifactSha256": {"$ref": "common.schema.json#/$defs/sha256"}
-      },
-      "if": {"properties": {"level": {"const": "VERIFIED"}}, "required": ["level"]},
-      "then": {"required": ["artifactSha256"]}
-    }}
-  }
-}
-```
+- `job_v2.routeChoice`: `{requested: "auto", route, label, order[], skipped[], version | null, verifiedFor?, note?}`, present
+  when `--route auto` chose the route.
+- `job_v2.options.verifies`: the installed CLI version a `--verify-route` run verifies (D23; part of the fingerprint).
+- `doctor_v1.routes.<need>.options[].label`: the user-facing route name; a VERIFIED local route has status `ready`.
+- `media_ledger.py summary` gains `session {image, video, since, hours, caps{image, video}}` (not a contract document).
 
-2. **Optional fields my producers add to `job_v2`** (they validate today because objects are open; please document them). Proposed fragment for `$defs/job_v2.properties`:
-
-```json
-"artSource": {"$ref": "common.schema.json#/$defs/artSource"},
-"outputDir": {"$ref": "common.schema.json#/$defs/relPath"},
-"adoptedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
-"adoption": {
-  "description": "How the artifact was taken from the CLI's own output: method native-run-folder (a cli_media run), native-run-folder (resume --adopt), codex-thread-folder or codex-thread-rollout (adopt --codex-thread). source is symbolic (CODEX_HOME/... or GROK_HOME/sessions/*/...), never an absolute path.",
-  "type": "object",
-  "required": ["method", "source", "sourceSha256"],
-  "properties": {
-    "method": {"type": "string", "minLength": 1},
-    "source": {"type": "string", "pattern": "^(CODEX_HOME|GROK_HOME)/"},
-    "sourceSha256": {"$ref": "common.schema.json#/$defs/sha256"},
-    "sourceMtime": {"type": ["string", "null"]},
-    "freshAfter": {"$ref": "common.schema.json#/$defs/timestamp"},
-    "threadId": {"type": "string"},
-    "checks": {"type": "array", "items": {"type": "string"}},
-    "finalAnswerNamesFile": {"type": "boolean"}
-  }
-},
-"cliRun": {"properties": {
-  "threadId": {"type": "string"}, "sessionId": {"type": "string"},
-  "version": {"type": ["string", "null"]}, "versionText": {"type": ["string", "null"]},
-  "recipe": {"type": "string", "pattern": "^[a-z0-9-]+/[0-9]+$"},
-  "home": {"enum": ["CODEX_HOME", "GROK_HOME"]},
-  "sourceRel": {"type": "string", "pattern": "^\\*/[0-9A-Za-z][0-9A-Za-z_-]{7,79}/(images|videos)/[0-9A-Za-z_.-]{1,120}$"},
-  "verifiedBefore": {"type": "boolean"}
-}},
-"consent": {"properties": {"route": {"enum": ["rest", "codex-cli", "grok-cli", "grok-acp"]}, "quota": {"type": "boolean"},
-                           "account": {"type": "string"}, "note": {"type": "string"}}}
-```
-
-   - `outputDir` appears only in run records (relative to `.forge/cli-runs/`); the published `job.json` omits it. `cliRun.cwd` is `<tmp>/forge-cli-<run>-<rand>` (the run folder's name, never an absolute path). For CLI routes `error` uses the existing closed object with `code` (the error code, e.g. `UNEXPECTED_TOOL`) and `message` (scrubbed, at most 300 characters); `receipt.outcomeCode` carries the same code, `ok`, or `adopted`.
-   - `options` holds `{tool}` (plus `duration`, `resolution` for video; `adopted` for `adopt`); `requestedModel` is `<cli>-<tool>` (for example `codex-image_gen`, `grok-image_to_video`): the CLIs choose their own image model and report none.
-
-3. **`doctor_v1` documentation** (no change needed; optional tightening). Extra top-level keys: `tool`, `createdAt`, `overall` (`OK|WARN|FAIL`), `host{declared, tools[], unrecognised[]}`, `cli{"<route>:<tool>": {route, tool, recipe, level (null|PRESENT|AUTH_MODE|TOOL_EXPOSED|VERIFIED), blocked, version, versionText, steps[{step, status, detail, remedy?}]}}`, `elapsedMs`, and `saved` (stdout only). `routes` keys: `image`, `image_edit`, `video`, `clip`, `code_art`, each `{route, status (ready|consent|unverified|limited|unknown|none), detail, options[]?}`; `route` is `host_image|host_image_edit|host_video|codex-cli|grok-cli|grok-acp|api|ffmpeg|png-frames|codeart2d|none`. `proofs{"<route>:<tool>": {level, version, recipe, verifiedAt, matchesInstalled}}`.
-
-4. **Reused, unchanged**: `ledger_line_v1` (routes `codex-cli|grok-cli|grok-acp`, `quotaCall: true`, `reservedUsd: 0`), `batch_progress_v1` (`cli_media.py batch`, `workers` 1).
-
-5. **Not proposed**: the install manifest `.agent-sprite-forge.install.json` (`schema: agent-sprite-forge.install.v1`, `tool`, `installedAt`, `source{commit, dirty}`, `skills[]`, `files[{path, sha256, bytes}]`, `backup`) is written by a repository tool into the user's skills folder and read by `forge_doctor.py`; add a `$def` only if Z wants it in the contracts.
+Follow-up for the schema owner: `batch_progress_v1.jobsFile` and `results[].jobDir` can now be typed as `relPath`
+(both batch tools write relative paths, D25); files written before D25 held absolute paths.
 
 ## 6. Shared-helper promotion requests
 
@@ -216,14 +182,15 @@ generate2dmedia vendors no forge_core (and forge_core imports numpy, which the s
 
 ## 7. Cross-module links that Z must add
 
-- generate2dmedia SKILL.md: link `references/cli-routes.md`, `scripts/forge_doctor.py`, `scripts/cli_media.py`; add the routing rows of section 2; say the CLI routes are opt-in and use the user's subscription quota. Keep the consent checklist from A4 and add "CLI routes: one quota call, not API credit".
+- **Z** generate2dmedia SKILL.md: link `references/cli-routes.md`, `scripts/forge_doctor.py`, `scripts/cli_media.py`; add the routing rows of section 2. Policy text (owner decision 13, amended decision 10, D22): local agent first; a local route is used only when VERIFIED; a VERIFIED route runs without a per-call question within the session cap and the route used is always named; an unverified route needs consent for its one verification call; REST needs consent for every paid request; never raise the session cap or pass `--allow-duplicate`/`--allow-unverified` unless the user asks. Keep the consent checklist from A4 and add "local CLI routes: one quota call each, not API credit". The narrowed frontmatter description should cover the local routes too, not only "explicit OpenAI/xAI API generation".
 - All five SKILL.md files: the "Capability check" section of section 2 (plain-text path to generate2dmedia's doctor; each skill links its own copy only if Z decides to vendor the doctor, which this module does not).
 - generate2dsprite and generate2dmap SKILL.md (Codex notes): `adopt --codex-thread` instead of copying from `$CODEX_HOME/generated_images` by hand. README: "Codex Desktop adopt" (plan note).
-- video2dsprite SKILL.md / prompt-rules: the opt-in `grok-acp` route as the subscription alternative to the xAI REST video route.
+- video2dsprite SKILL.md / prompt-rules: Grok (local CLI) in ACP mode (`grok-acp`, or `cli_media.py video --route auto`) is the first video route when VERIFIED, ahead of the xAI REST video route (consent).
 - README install section and CONTRIBUTING: `python tools/install_skills.py --apply|--check --host claude|codex|grok|agents` (backup + manifest; no `__pycache__`); developers keep `~/.codex/skills` in sync with `--check` (F-11).
-- `.gitignore`: `.forge/` (also requested by A4) now also holds `cli-runs/` and `route-proofs.json`.
+- `.gitignore`: `.forge/` (also requested by A4) now also holds `cli-runs/`, `route-checks/` and `route-proofs.json`.
+- Owner decision 14 live validation: the per-project session cap (8 images, 2 videos per 12 h) is lower than the validation's caps (Codex 10 images, Grok 4 images, 4 videos); set `FORGE_SESSION_IMAGES` / `FORGE_SESSION_VIDEOS` for that run, or use one project folder per task.
 - Z-T5 `test_skill_packages`: exclude `references/agent-profiles/*.md` from any SKILL.md frontmatter allowlist (it is a Grok agent profile); `test_cli_encoding` should include `forge_doctor.py`, `cli_media.py` and `tools/install_skills.py`.
-- Z-T8 evals: "never treat an installed Grok/Codex CLI as a connected tool", "no CLI route without consent", "never reuse a Grok login for REST".
+- Z-T8 evals: "never treat an installed Grok/Codex CLI as a connected tool", "no unverified CLI route and no paid REST call without consent", "a VERIFIED local route runs within the session cap and the reply names it", "never raise the session cap unasked", "never reuse a Grok login for REST".
 - CHANGELOG: section 4; credit the PR #5 author for the adopt idea.
 
 ## 8. Known limitations and what is not proven
@@ -237,6 +204,10 @@ generate2dmedia vendors no forge_core (and forge_core imports numpy, which the s
 - Windows only: tests ran on Windows 11 with Python 3.13; sources parse with the 3.10 grammar. The POSIX kill (`killpg`), `renameat2`/`renamex_np` publication and ELF/Mach-O executable checks were not executed. A file-symlink test skips without the Windows symlink privilege; the directory case runs with a junction.
 - On Windows a killed CLI's process tree is ended with `taskkill /T /F` on its own PID only.
 - Two `cli_media.py` processes writing proofs at the same moment can lose one record (last writer wins); the ledger itself is locked.
+- The session cap is a rolling window over the project's ledger (default 12 hours), not a per-conversation count: the ledger knows no agent session, and a window cannot be reset by rerunning a tool. Separate project folders have separate caps. The doctor's ROUTES does not look at the session usage (its `media.ledger` check WARNs once a cap is reached; `cli_media.py` refuses the call).
+- `--route auto` in a dry run cannot read a Grok version (or a Codex outside npm) without starting the CLI, so it plans with the newest VERIFIED proof (`verifiedFor`); `--execute` reads the version and checks again.
+- The Codex event handling stays an allowlist (reviewer note): an unknown item type stops the run as `UNEXPECTED_TOOL` and names the type; the first live run of a new Codex version shows whether a benign new type appears.
+- `routes.code_art` reports `ready` from `skills/codeart2d/scripts` while codeart2d has no SKILL.md yet (`skills.present` warns); this resolves when Z adds it.
 - `install_skills.py` copies every non-dot, non-bytecode file of each skill folder; it does not consult git, so untracked files inside a skill are installed too. `--check` compares exact bytes (a CRLF/LF difference counts as drift).
 - Deviations from the plan text, with reasons:
   - `cli_media.py` uses `--output-dir` with staged publication (Appendix D) instead of generate_media's create-first `--out-dir`; the run id is persisted early in `.forge/cli-runs/<run>.json`, so a failed run leaves no output folder but stays adoptable.

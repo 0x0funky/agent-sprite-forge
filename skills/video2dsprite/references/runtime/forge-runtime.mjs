@@ -171,6 +171,14 @@ export function eventsCrossed(clip, fromMs, toMs) {
 
 // --------------------------------------------------------------------------- manifests
 
+/**
+ * Events with the frame each one fires on. The time (atMs / at_ms) is authoritative: the frame is
+ * the played frame shown at that time (an event at the end edge names the last frame). A given
+ * played index (frame in animation.json, position in built and exported sprite clips) must agree
+ * with the time. A sprite clip's `at` is its AUTHORED position (sprite.schema builtClip, D12): in a
+ * pingpong clip played 0 1 2 1, an event authored at 1 fires on frames 1 and 3, so `at` is never
+ * read as a frame.
+ */
 function normalizeEvents(events, timeline, label) {
   if (events === undefined || events === null) return [];
   if (!Array.isArray(events)) throw new TypeError(`${label} events must be a list`);
@@ -179,14 +187,16 @@ function normalizeEvents(events, timeline, label) {
     if (typeof event?.name !== 'string' || !event.name || !isNumber(atMs) || atMs < 0 || atMs > timeline.totalMs) {
       throw new RangeError(`${label} event ${index} needs a name and a time inside the clip`);
     }
-    const frame = event.frame ?? event.at ?? frameAt(timeline, atMs, 'oneshot').frame;
-    if (!isIndex(frame) || frame >= timeline.durationsMs.length) {
-      throw new RangeError(`${label} event ${index} names frame ${frame} outside the clip`);
+    const frame = frameAt(timeline, atMs, 'oneshot').frame;
+    const given = event.frame ?? event.position;
+    if (given !== undefined && given !== frame) {
+      throw new RangeError(`${label} event ${index} (${event.name}) names frame ${given}, but frame ${frame} `
+        + `is shown at ${atMs} ms`);
     }
     const result = {name: event.name, atMs, frame};
     if (event.data !== undefined) result.data = event.data;
     return Object.freeze(result);
-  }).sort((a, b) => a.atMs - b.atMs);
+  }).sort((a, b) => a.atMs - b.atMs || a.frame - b.frame);
 }
 
 function resolveImpact(explicit, events) {
@@ -223,12 +233,21 @@ function modeFor(loop, loopPolicy, pingpongExpanded) {
  * Reads, by shape:
  *   - animation.json 2.0 or 3.0 (has schemaVersion; see normalizeAnimation);
  *   - a clip of animation-clips.json v1/v2 or of engine-export.json
- *     (duration_ms, loop, loop_policy, events_ms, keys, entry_frame, transitions,
- *     hitstop_ticks, stride_world_units, ...);
+ *     (duration_ms, loop, loop_policy, events_ms, keys, entry_frame,
+ *     transition_hints, hitstop_ticks, stride_world_units, ...);
  *   - a camelCase record with durationsMs (and optional loop, loopPolicy, events, ...);
  *   - a bare list of durations.
  * options: {name, manifest (the enclosing animation-clips.json, for sampling and
  * pixel_art), pingpongExpanded (default true: manifests list pingpong expanded)}.
+ *
+ * Sprite clips list the PLAYED frames: a pingpong clip arrives expanded
+ * (0 1 2 3 2 1). Events fire on the frame shown at their time (see
+ * normalizeEvents). keys, entry_frame and a hint's entry_frame are authored
+ * positions (D12); the played order starts with the authored forward pass, so
+ * authored position p is first shown as frame p and they index the timeline
+ * directly. Transition hints come from transition_hints; a clip without them
+ * falls back to transitions items that name a target clip with `to` (D13: built
+ * clips keep transitions for the frame-to-frame metrics).
  *
  * loopDistance is the travel in world units for one pass of the whole clip:
  * stride_world_units for sprite clips (declared per clip cycle) and
@@ -271,7 +290,9 @@ export function normalizeClip(input, options = {}) {
     terminal: input.terminal,
     keys: input.keys ?? null,
     entryFrame: input.entry_frame ?? input.entryFrame ?? 0,
-    transitions: Object.freeze(transitionHints(input.transitions ?? input.transition_hints)),
+    // D13: the hints first; legacy transitions items count only when they name a target with `to`.
+    transitions: Object.freeze(transitionHints(input.transition_hints ?? input.transitionHints
+      ?? input.transitions)),
     hitstopTicks: input.hitstop_ticks ?? input.hitstopTicks ?? 0,
     loopDistance,
     strideWorldUnits: isPositive(stride) ? stride : undefined,
@@ -371,7 +392,7 @@ export function normalizeAnimation(manifest, options = {}) {
     terminal: manifest.terminal,
     keys: manifest.keys ?? null,
     entryFrame: manifest.entryFrame ?? 0,
-    transitions: Object.freeze(transitionHints(manifest.transitions)),
+    transitions: Object.freeze(transitionHints(manifest.transitionHints ?? manifest.transitions)),
     hitstopTicks: manifest.hitstopTicks ?? 0,
     loopDistance: isPositive(stride) ? stride * cycles : undefined,
     strideWorldUnits: isPositive(stride) ? stride : undefined,

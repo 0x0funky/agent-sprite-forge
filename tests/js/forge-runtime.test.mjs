@@ -149,6 +149,40 @@ test('normalizeClip reads built sprite clips v1/v2 and engine-export clips', () 
   assert.throws(() => R.normalizeClip({duration_ms: [0, 100], loop: true}), TypeError);
 });
 
+test('built pingpong events fire on the played frame of their time, not on their authored position (D12)', () => {
+  // build_animation_clips.py output: idle authored 0 1 2 3 plays 0 1 2 3 2 1; sfx authored at 1 fires twice.
+  const built = fixture('sprite.animation_clips_v2.valid-builder.json');
+  const idle = R.normalizeClip(built.clips.idle, {name: 'idle', manifest: built});
+  assert.deepEqual(idle.events.map(e => [e.name, e.atMs, e.frame]), [['sfx', 100, 1], ['sfx', 500, 5]]);
+  for (const event of idle.events) assert.equal(R.frameAt(idle, event.atMs, 'oneshot').frame, event.frame);
+  // at is authored: an event that gives only at and at_ms still lands on the frame shown at at_ms.
+  const swing = R.normalizeClip({frames: [0, 1, 2, 1], duration_ms: [100, 100, 100, 100], loop: true,
+    loop_policy: 'pingpong', events_ms: [{name: 'step_l', at_ms: 300, at: 1}]});
+  assert.deepEqual(swing.events.map(e => e.frame), [3]);
+  // A played index that contradicts the time is refused, whether it is called position or frame.
+  for (const bad of [{name: 'step_l', at_ms: 300, at: 1, position: 1}, {name: 'step_l', atMs: 300, frame: 1}]) {
+    assert.throws(() => R.normalizeClip({duration_ms: [100, 100, 100, 100], loop: true, events_ms: [bad]}),
+      /names frame 1, but frame 3 is shown at 300 ms/);
+  }
+  // An event on the end edge names the last frame (D19).
+  const end = R.normalizeClip({duration_ms: [100, 100], loop: false, events_ms: [{name: 'end', at_ms: 200}]});
+  assert.deepEqual(end.events.map(e => e.frame), [1]);
+});
+
+test('transition hints come from transition_hints first, then from legacy transitions items with to (D13)', () => {
+  const metrics = [{from_position: 0, to_position: 1, premultiplied_rgb_mae: 3, alpha_mae: 0}];
+  const hint = {to: 'idle', entry_frame: 1, entry_ms: 100, dissolve_ms: 40, dissolve_ticks: 2, mode: 'premultiplied'};
+  const built = R.normalizeClip({duration_ms: [80, 120], loop: false, transitions: metrics, transition_hints: [hint]});
+  assert.deepEqual(R.transitionHint(built, 'idle'), {to: 'idle', entryFrame: 1, dissolveMs: 40, mode: 'premultiplied'});
+  assert.deepEqual(R.normalizeClip({duration_ms: [80, 120], loop: false, transitions: metrics}).transitions, []);
+  const legacy = R.normalizeClip({duration_ms: [80, 120], loop: false,
+    transitions: [...metrics, {to: 'run', entry_frame: 0, dissolve_ms: 0, mode: 'dither'}]});
+  assert.deepEqual(legacy.transitions.map(h => h.to), ['run']);
+  // An explicit empty list of hints means none, even beside legacy items.
+  assert.deepEqual(R.normalizeClip({duration_ms: [80], loop: false, transition_hints: [],
+    transitions: [{to: 'run'}]}).transitions, []);
+});
+
 test('anchoredRect places the anchor on the world point, optionally on whole pixels', () => {
   const a = R.normalizeAnimation(fixture('video.animation_v3.legacy-2.0-media.json'));
   // sourceRect [16, 16, 30, 40], sourceAnchor [32, 56]

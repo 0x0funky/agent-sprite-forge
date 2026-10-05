@@ -1,14 +1,21 @@
 #!/usr/bin/env python3
-"""Opt-in Codex and Grok CLI media routes with provenance. Dry-run by default.
+"""Local Codex and Grok CLI media routes with provenance. Dry-run by default.
 
 Each route makes one native media call on the user's own CLI sign-in (their
 subscription quota, never an API key) and records it as a quota call in
 <project>/.forge/ledger.jsonl:
 
-  image --route codex-cli   codex exec, native image_gen
-  image --route grok-cli    grok headless, native image_gen
-  edit  --route grok-cli    grok headless, native image_edit of one reference image
-  video --route grok-acp    grok agent stdio (ACP), native image_to_video of one reference
+  image --route codex-cli   Codex (local CLI): codex exec, native image_gen
+  image --route grok-cli    Grok (local CLI), one-shot mode: native image_gen
+  edit  --route grok-cli    Grok (local CLI), one-shot mode: native image_edit of one reference image
+  video --route grok-acp    Grok (local CLI), ACP mode (grok agent stdio): native image_to_video of one reference
+  --route auto              the first of these, in that order, that forge_doctor would call VERIFIED for the
+                            installed CLI version (local agent first, owner decision 13 / D22)
+
+A session cap limits the local routes to 8 images (image and edit) and 2 videos
+per project within the last 12 hours, counted in the ledger (--session-images,
+--session-videos, --session-hours or FORGE_SESSION_IMAGES, FORGE_SESSION_VIDEOS,
+FORGE_SESSION_HOURS change it).
 
 Without --execute nothing is spawned or written: the plan (consent, caps, the
 exact CLI arguments) is printed. With --execute the CLI runs in a fresh
@@ -56,11 +63,13 @@ if str(HERE) not in sys.path:
 import forge_doctor  # noqa: E402  (siblings in this skill's scripts/)
 import media_ledger  # noqa: E402
 
-TOOL_VERSION = "1.0"
+TOOL_VERSION = media_ledger.FORGE_PACKAGE_VERSION  # receipts name the package release (D29)
 TOOL = f"cli_media/{TOOL_VERSION}"
 RUNS_DIR = Path(".forge") / "cli-runs"
 PROFILE = HERE.parent / "references" / "agent-profiles" / "video-agent.md"
+# Routes per verb, in the order --route auto tries them (owner decision 13, D22: Codex CLI, then Grok).
 VERB_ROUTES = {"image": ("codex-cli", "grok-cli"), "edit": ("grok-cli",), "video": ("grok-acp",)}
+AUTO = "auto"
 VERB_TOOL = {"image": "image_gen", "edit": "image_edit", "video": "image_to_video"}
 PROVIDER = {"codex": "openai", "grok": "xai"}
 CLI_NAME = {"codex": "Codex CLI", "grok": "Grok Build CLI"}
@@ -132,9 +141,11 @@ AUTH_RE = re.compile(r"(?i)unauthori[sz]ed|unauthenticated|not (?:logged|signed)
                      r"please (?:log|sign) ?in|authentication (?:required|failed)|\b401\b|token (?:has )?expired")
 RATE_RE = re.compile(r"(?i)rate.?limit|quota|\b429\b|usage.?limit|insufficient|out of credits")
 MODERATION_RE = re.compile(r"(?i)moderation|content.?policy|safety system|flagged")
+# The blob pattern stops at "/": a token or key is one run of these characters, while a long relative
+# path (a job folder in a DUPLICATE message) is several short runs and stays readable.
 _SCRUB = ((re.compile(r"(?i)\b(?:https?|wss?)://\S+"), "[url]"),
           (re.compile(r"(?i)\b(?:sk|xai|rk)-[A-Za-z0-9*._-]{4,}|\bbearer\s+\S+"), "[redacted]"),
-          (re.compile(r"[A-Za-z0-9+/=_-]{40,}"), "[blob]"))
+          (re.compile(r"[A-Za-z0-9+=_-]{40,}"), "[blob]"))
 
 
 class CliMediaError(Exception):
@@ -168,6 +179,9 @@ class Request:
     timeout: float
     purpose: str | None
     max_calls: int | None
+    session: dict | None = None       # media_ledger.session_limits(): the local routes' session cap (D22)
+    verification: bool = False        # forge_doctor --verify-route: the CLI version joins the fingerprint (D23)
+    route_choice: dict | None = None  # how --route auto chose the route
 
     @property
     def kind(self) -> str:
@@ -603,8 +617,66 @@ def resolve_route_cli(cli: str) -> RouteCli:
 
 def capability_for(route: str, verb: str) -> forge_doctor.Capability:
     if route not in VERB_ROUTES[verb]:
-        raise CliMediaError("INVALID_REQUEST", f"{verb} supports --route {', '.join(VERB_ROUTES[verb])}")
+        raise CliMediaError("INVALID_REQUEST", f"{verb} supports --route {', '.join((*VERB_ROUTES[verb], AUTO))}")
     return next(c for c in forge_doctor.CAPABILITIES if c.route == route and c.tool == VERB_TOOL[verb])
+
+
+class RouteChooser:
+    """--route auto (owner decision 13, D22): the first local route of VERB_ROUTES, in order, with a
+    VERIFIED proof for the installed CLI version and recipe (as forge_doctor's ladder decides).
+
+    An executed run reads each candidate CLI's --version (local, no network). A dry run starts no
+    process, so where the version cannot be read without running the CLI (Grok, a Codex outside npm)
+    a route counts when its newest proof is VERIFIED, and --execute checks the version again."""
+
+    def __init__(self, project: Path, *, probe: bool):
+        self.project = Path(project)
+        self.probe = probe
+        self._clis: dict[str, RouteCli] = {}
+        self._versions: dict[str, str | None] = {}
+
+    def cli(self, name: str) -> RouteCli:
+        if name not in self._clis:
+            self._clis[name] = resolve_route_cli(name)
+        return self._clis[name]
+
+    def version(self, name: str) -> str | None:
+        if name not in self._versions:
+            cli = self.cli(name)
+            if cli.info.path is None or not cli.prefix:
+                self._versions[name] = None
+            elif self.probe:
+                self._versions[name] = forge_doctor.probe_version(cli.prefix, name)[1]
+            else:
+                self._versions[name] = forge_doctor.package_version(cli.info)
+        return self._versions[name]
+
+    def choose(self, verb: str) -> dict:
+        proofs, _ = forge_doctor.load_proofs(self.project)
+        order, skipped = list(VERB_ROUTES[verb]), []
+        for route in order:
+            capability = capability_for(route, verb)
+            cli = self.cli(capability.cli)
+            if cli.info.path is None or not cli.prefix:
+                skipped.append(f"{route}: {cli.info.problem or 'not installed'}")
+                continue
+            verified = [p for p in proofs if p["level"] == "VERIFIED" and (p["route"], p["tool"], p["recipe"])
+                        == (capability.route, capability.tool, capability.recipe)]
+            version = self.version(capability.cli)
+            choice = {"requested": AUTO, "route": route, "label": forge_doctor.ROUTE_LABEL[route], "order": order,
+                      "skipped": skipped}
+            if version is not None and any(p["version"] == version for p in verified):
+                return {**choice, "version": version}
+            if version is None and not self.probe and verified:
+                newest = max(verified, key=lambda p: p["verifiedAt"])
+                return {**choice, "version": None, "verifiedFor": newest["version"],
+                        "note": "dry run: the installed version is checked again at --execute"}
+            skipped.append(f"{route}: no VERIFIED proof for "
+                           + (version or ("this version" if self.probe else "the installed version")))
+        raise CliMediaError("NOT_VERIFIED", f"--route auto found no verified local route for {verb} "
+                            f"({'; '.join(skipped)}); verify one with the user's consent "
+                            "(forge_doctor.py --verify-route <route> --execute, one quota call) or use the REST "
+                            "route generate_media.py, which needs the user's consent for each paid call")
 
 
 def codex_argv(prefix: list[str], run_dir: Path) -> list[str]:
@@ -1048,9 +1120,20 @@ def load_prompt(path: Path) -> str:
     return prompt
 
 
-def build_request(args: argparse.Namespace) -> Request:
-    """Validate a request without spawning, writing or reading anything but its inputs."""
-    capability = capability_for(args.route, args.command)
+def session_limits(args: argparse.Namespace) -> dict:
+    """The local routes' session cap from --session-* or FORGE_SESSION_* (media_ledger.session_limits)."""
+    try:
+        return media_ledger.session_limits(getattr(args, "session_images", None), getattr(args, "session_videos", None),
+                                           getattr(args, "session_hours", None))
+    except media_ledger.LedgerError as exc:
+        raise CliMediaError("INVALID_REQUEST", str(exc)) from None
+
+
+def build_request(args: argparse.Namespace, chooser: RouteChooser | None = None) -> Request:
+    """Validate a request without writing or reading anything but its inputs. --route auto resolves
+    last, after every other check (a chooser of an executed run reads the CLIs' --version)."""
+    if args.route != AUTO:
+        capability_for(args.route, args.command)
     reference = Path(args.reference) if getattr(args, "reference", None) else None
     if args.command in ("edit", "video") and reference is None:
         raise CliMediaError("INVALID_REQUEST", f"{args.command} needs --reference")
@@ -1069,17 +1152,28 @@ def build_request(args: argparse.Namespace) -> Request:
     project = Path(args.project_dir)
     output = Path(args.output_dir)
     _portable(output, project)
+    session = session_limits(args)
     meta, data = inspect_reference(reference) if reference else (None, None)
-    return Request(args.command, args.route, capability, load_prompt(Path(args.prompt_file)), meta, data, duration,
-                   resolution, output, project, timeout, args.purpose, args.max_calls)
+    prompt = load_prompt(Path(args.prompt_file))
+    route, choice = args.route, None
+    if route == AUTO:
+        choice = (chooser or RouteChooser(project, probe=bool(getattr(args, "execute", False)))).choose(args.command)
+        route = choice["route"]
+    return Request(args.command, route, capability_for(route, args.command), prompt, meta, data, duration,
+                   resolution, output, project, timeout, args.purpose, args.max_calls, session,
+                   bool(getattr(args, "verification", False)), choice)
 
 
-def base_job(req: Request) -> dict:
-    """The job_v2 fields known before anything runs (also the dry-run plan)."""
+def base_job(req: Request, version: str | None = None) -> dict:
+    """The job_v2 fields known before anything runs (also the dry-run plan). A route verification
+    puts the installed CLI version (``version``) into its options, so the fingerprint changes with
+    every CLI update and a re-verification is never the same request (D23)."""
     cli = req.capability.cli
     options = {"tool": req.capability.tool}
     if req.kind == "video":
         options.update(duration=req.duration, resolution=req.resolution)
+    if req.verification:
+        options["verifies"] = version or "unknown"
     model = f"{cli}-{req.capability.tool}"
     identity = {"provider": PROVIDER[cli], "kind": req.kind, "route": req.route, "requestedModel": model,
                 "options": options, "promptSha256": sha256_bytes(req.prompt.encode("utf-8"))}
@@ -1099,6 +1193,8 @@ def base_job(req: Request) -> dict:
         del job["references"]
     if req.kind == "image":
         job["artSource"] = "host_image"
+    if req.route_choice is not None:
+        job["routeChoice"] = req.route_choice
     return job
 
 
@@ -1110,9 +1206,16 @@ def _proof_state(req: Request, version: str | None) -> dict:
             "lastProofVersion": newest["version"] if newest else None}
 
 
+def _session_view(usage: dict, limits: dict) -> dict:
+    return {"images": {"used": usage["image"], "cap": limits["image"]},
+            "videos": {"used": usage["video"], "cap": limits["video"]},
+            "hours": limits["hours"], "since": usage["since"]}
+
+
 def dry_run(req: Request, cli: RouteCli) -> dict:
     """Plan only: nothing is spawned or written."""
-    job = base_job(req)
+    version = forge_doctor.package_version(cli.info) if cli.info.path else None
+    job = base_job(req, version)
     run_dir = Path(tempfile.gettempdir()) / "forge-cli-<run>"
     if req.route == "codex-cli":
         argv = codex_argv(["codex"], run_dir)
@@ -1121,7 +1224,6 @@ def dry_run(req: Request, cli: RouteCli) -> dict:
     else:
         argv = acp_argv(["grok"])
     warnings = []
-    version = forge_doctor.package_version(cli.info) if cli.info.path else None
     proof = _proof_state(req, version)
     if cli.info.path is None:
         warnings.append(f"--execute would fail: the {CLI_NAME[req.capability.cli]} {cli.info.problem or 'is not installed'}")
@@ -1139,13 +1241,23 @@ def dry_run(req: Request, cli: RouteCli) -> dict:
     except media_ledger.LedgerError as exc:
         totals = ledger.totals(states)
         warnings.append(f"--execute would be refused: {exc}")
-    return {"execution": "dry-run", "route": req.route, "kind": req.kind, "tool": req.capability.tool,
-            **{k: job[k] for k in ("consent", "estimate", "fingerprint")},
+    limits = req.session or media_ledger.session_limits()
+    try:
+        usage = ledger.check_session_cap(req.kind, limits, states=states)
+    except media_ledger.SessionCapExceeded as exc:
+        usage = ledger.session_usage(limits["hours"], states=states)
+        warnings.append(f"--execute would be refused: {exc}")
+    plan = {"execution": "dry-run", "route": req.route, "label": forge_doctor.ROUTE_LABEL[req.route], "kind": req.kind,
+            "tool": req.capability.tool, **{k: job[k] for k in ("consent", "estimate", "fingerprint")},
             "cli": {"present": cli.info.path is not None, "recipe": req.capability.recipe, **proof,
                     "executable": forge_doctor.display_path(cli.info.path) if cli.info.path else None},
             "command": [forge_doctor.ascii_text(mask_home(a)) for a in argv], "outputDir": str(req.output_dir),
-            "ledger": {"path": ledger.path.as_posix(), "calls": totals["calls"], "quotaCalls": totals["quotaCalls"]},
+            "ledger": {"path": ledger.path.as_posix(), "calls": totals["calls"], "quotaCalls": totals["quotaCalls"],
+                       "session": _session_view(usage, limits)},
             "warnings": warnings}
+    if req.route_choice is not None:
+        plan["routeChoice"] = req.route_choice
+    return plan
 
 
 class RunRecord:
@@ -1178,7 +1290,7 @@ class RunRecord:
     def load(cls, project: Path, reference: str) -> RunRecord:
         path = project / RUNS_DIR / f"{reference}.json" if RUN_ID.fullmatch(reference) else Path(reference)
         try:
-            job = json.loads(path.read_text(encoding="utf-8"))
+            job = json.loads(path.read_text(encoding="utf-8-sig"))
         except (OSError, ValueError):
             raise CliMediaError("INVALID_REQUEST", f"cannot read the run record {path.name}") from None
         if not isinstance(job, dict) or not isinstance(job.get("cliRun"), dict) or job.get("route") not in DRIVERS:
@@ -1196,7 +1308,7 @@ def record_proof(project: Path, capability: forge_doctor.Capability, version: st
         return False
     path = project / forge_doctor.PROOFS_FILE
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
         data = {"schema": forge_doctor.PROOFS_SCHEMA, "proofs": []}
     except (OSError, ValueError):
@@ -1260,7 +1372,13 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
     if os.path.lexists(req.output_dir):
         raise CliMediaError("OUTPUT_EXISTS", f"{req.output_dir.name} already exists; choose a new --output-dir")
     version_text, version = forge_doctor.probe_version(cli.prefix, req.capability.cli)
-    job = base_job(req)
+    if req.route_choice is not None and req.route_choice.get("version") is None:
+        # --route auto in this process saw no version (it did not probe): check the proof now.
+        if not _proof_state(req, version)["verified"]:
+            raise CliMediaError("NOT_VERIFIED", f"--route auto chose {req.route}, but it has no VERIFIED proof for the "
+                                f"installed version {version or '(unknown)'}; verify it first")
+        req.route_choice = {**req.route_choice, "version": version}
+    job = base_job(req, version)
     proof = _proof_state(req, version)
     ledger = media_ledger.Ledger(req.project)
     out_rel = _portable(req.output_dir, req.project)
@@ -1269,7 +1387,8 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
     entry = {"jobDir": out_rel, "fingerprint": job["fingerprint"], "provider": job["provider"],
              "model": job["requestedModel"], "kind": job["kind"], "route": req.route, "reservedUsd": 0.0, "quotaCall": True}
     try:
-        reservation = ledger.reserve(entry, max_calls=args.max_calls, refuse_duplicate=not args.allow_duplicate)
+        reservation = ledger.reserve(entry, max_calls=args.max_calls, refuse_duplicate=not args.allow_duplicate,
+                                     session=req.session or media_ledger.session_limits())
     except media_ledger.DuplicateRequest as exc:
         raise CliMediaError("DUPLICATE", f"{exc}; reuse it, or pass --allow-duplicate to spend another call") from None
     except media_ledger.CapExceeded as exc:
@@ -1357,10 +1476,13 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
                         sessionId=state.cli_id if req.route != "codex-cli" else None)
         if run_dir.name.startswith("forge-cli-"):
             shutil.rmtree(run_dir, ignore_errors=True)
-    return {"status": "done", "route": req.route, "output": str(req.output_dir),
-            "artifact": str(req.output_dir / ("generated" + meta["ext"])), "metadata": str(req.output_dir / "job.json"),
-            "sha256": meta["sha256"], "runRecord": record.path.as_posix(), "version": version,
-            "verifiedBefore": bool(proof["verified"])}
+    result = {"status": "done", "route": req.route, "label": forge_doctor.ROUTE_LABEL[req.route],
+              "output": str(req.output_dir), "artifact": str(req.output_dir / ("generated" + meta["ext"])),
+              "metadata": str(req.output_dir / "job.json"), "sha256": meta["sha256"],
+              "runRecord": record.path.as_posix(), "version": version, "verifiedBefore": bool(proof["verified"])}
+    if req.route_choice is not None:
+        result["routeChoice"] = req.route_choice
+    return result
 
 
 def _finish_receipt(job: dict, code: str, started: datetime) -> None:
@@ -1583,8 +1705,9 @@ def job_args(job: dict, base: Path, args: argparse.Namespace) -> argparse.Namesp
             raise CliMediaError("INVALID_REQUEST", f"job {job['id']}: {key} must be a string or a number")
         argv += ["--" + key.replace("_", "-"), str(base / str(value)) if key in JOB_PATH_KEYS else str(value)]
     argv += ["--project-dir", str(args.project_dir)]
-    if args.max_calls is not None:
-        argv += ["--max-calls", str(args.max_calls)]
+    for name in ("max_calls", "session_images", "session_videos", "session_hours"):
+        if getattr(args, name, None) is not None:
+            argv += ["--" + name.replace("_", "-"), str(getattr(args, name))]
     if args.allow_duplicate:
         argv.append("--allow-duplicate")
     if "purpose" not in job:
@@ -1595,7 +1718,7 @@ def job_args(job: dict, base: Path, args: argparse.Namespace) -> argparse.Namesp
 def prior_output(output: Path) -> tuple[str, str | None]:
     """('reused', 'done') for a verified done output folder, else ('left-for-human', status)."""
     try:
-        job = json.loads((output / "job.json").read_text(encoding="utf-8"))
+        job = json.loads((output / "job.json").read_text(encoding="utf-8-sig"))
         artifact = job.get("artifact") or {}
         name = artifact.get("path")
         if job.get("status") == "done" and isinstance(name, str) and Path(name).name == name \
@@ -1606,16 +1729,26 @@ def prior_output(output: Path) -> tuple[str, str | None]:
         return "left-for-human", None
 
 
+def _progress_relative(path: Path, folder: Path) -> str:
+    """``path`` relative to the progress file's folder: progress files hold no absolute path (D25)."""
+    try:
+        return Path(os.path.relpath(Path(path).resolve(), folder)).as_posix()
+    except ValueError:
+        raise CliMediaError("INVALID_REQUEST", "the progress file, the jobs file and every output folder must be on "
+                            "one drive (progress files record relative paths)") from None
+
+
 def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
     """Validate every job, then dry-run (default) or run them one at a time. Never retries;
     stops dispatching on any outcome that is not about one job alone."""
     jobs_path = Path(args.jobs)
     base = jobs_path.resolve().parent
     entries, outputs, prints = [], {}, {}
+    chooser = RouteChooser(Path(args.project_dir), probe=args.execute)  # jobs with "route": "auto"
     for job in load_jobs(jobs_path):
         try:
             parsed = job_args(job, base, args)
-            req = build_request(parsed)
+            req = build_request(parsed, chooser)
         except CliMediaError as exc:
             raise CliMediaError(exc.code, f"job {job['id']}: {exc}") from None
         out = os.path.normcase(str(req.output_dir.resolve()))
@@ -1629,17 +1762,23 @@ def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
         entries.append((job["id"], parsed, req))
     clis = {req.capability.cli: resolve_route_cli(req.capability.cli) for _, _, req in entries}
     if not args.execute:
-        rows = []
+        rows, sends = [], {kind: 0 for kind in media_ledger.SESSION_KINDS}
         for job_id, _, req in entries:
             if os.path.lexists(req.output_dir):
                 state, prior = prior_output(req.output_dir)
                 rows.append({"id": job_id, "action": "reuse" if state == "reused" else "leave-for-human", "priorStatus": prior})
             else:
                 plan = dry_run(req, clis[req.capability.cli])
+                sends[media_ledger.session_kind(req.kind)] += 1
                 rows.append({"id": job_id, "action": "send", "route": req.route, "tool": req.capability.tool,
                              "calls": 1, "consent": "quota", "verified": plan["cli"]["verified"], "warnings": plan["warnings"]})
+        limits = session_limits(args)
+        usage = media_ledger.Ledger(Path(args.project_dir)).session_usage(limits["hours"])
+        warnings = [f"the session cap stops the batch after {max(0, limits[kind] - usage[kind])} more local CLI "
+                    f"{kind} call(s) ({usage[kind]} of {limits[kind]} used in the last {limits['hours']:g} h)"
+                    for kind in media_ledger.SESSION_KINDS if usage[kind] + sends[kind] > limits[kind]]
         return {"execution": "dry-run", "jobsFile": str(jobs_path), "jobs": len(entries),
-                "calls": sum(r["action"] == "send" for r in rows), "consent": rows}, None
+                "calls": sum(r["action"] == "send" for r in rows), "consent": rows, "warnings": warnings}, None
     versions = {}
     for cli, route_cli in clis.items():
         if route_cli.info.path is None or not route_cli.prefix:
@@ -1653,7 +1792,9 @@ def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
             raise CliMediaError("NOT_VERIFIED", "no proof for the installed CLI version of " + ", ".join(unverified)
                                 + "; verify one run first (forge_doctor.py --verify-route) or pass --allow-unverified")
     progress = Path(args.progress) if args.progress else jobs_path.with_name(jobs_path.stem + ".progress.json")
-    state = {"schema": BATCH_PROGRESS_SCHEMA, "jobsFile": str(jobs_path.resolve()), "execution": "execute",
+    folder = progress.resolve().parent
+    job_dirs = {job_id: _progress_relative(req.output_dir, folder) for job_id, _, req in entries}
+    state = {"schema": BATCH_PROGRESS_SCHEMA, "jobsFile": _progress_relative(jobs_path, folder), "execution": "execute",
              "workers": 1, "startedAt": utc_timestamp(), "updatedAt": None, "results": [], "inFlight": [],
              "remaining": [e[0] for e in entries], "stopped": False, "stopReason": None, "complete": False}
 
@@ -1668,7 +1809,7 @@ def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
         state["remaining"].remove(job_id)
         state["inFlight"].append(job_id)
         save()
-        out = str(req.output_dir)
+        out = job_dirs[job_id]
         if os.path.lexists(req.output_dir):
             kept, prior = prior_output(req.output_dir)
             result = {"id": job_id, "status": kept, "outcomeCode": "ok" if kept == "reused" else "prior", "jobDir": out}
@@ -1699,8 +1840,9 @@ def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
 # --------------------------------------------------------------------------- CLI
 
 def _add_request_options(command: argparse.ArgumentParser, verb: str) -> None:
-    command.add_argument("--route", required=True, choices=VERB_ROUTES[verb],
-                         help="the opt-in CLI route (no automatic choice or fallback)")
+    command.add_argument("--route", required=True, choices=(*VERB_ROUTES[verb], AUTO),
+                         help="the local CLI route; auto takes the first of "
+                              f"{', '.join(VERB_ROUTES[verb])} that is VERIFIED for the installed CLI version")
     command.add_argument("--prompt-file", required=True, help="UTF-8 art direction written by the agent")
     if verb != "image":
         command.add_argument("--reference", required=True, help="PNG, JPEG or WebP image (at most 20 MiB)")
@@ -1713,6 +1855,8 @@ def _add_request_options(command: argparse.ArgumentParser, verb: str) -> None:
                          "at most 1800)")
     _add_ledger_options(command)
     command.add_argument("--purpose", help="free text for the receipt (at most 200 characters)")
+    # forge_doctor.py --verify-route: the installed CLI version joins the request's fingerprint (D23).
+    command.add_argument("--verification", action="store_true", help=argparse.SUPPRESS)
 
 
 def _add_ledger_options(command: argparse.ArgumentParser) -> None:
@@ -1721,6 +1865,16 @@ def _add_ledger_options(command: argparse.ArgumentParser) -> None:
                          "paid or quota calls")
     command.add_argument("--allow-duplicate", action="store_true", help="run even if an identical request already "
                          "succeeded or is unsettled")
+    defaults = media_ledger.SESSION_DEFAULTS
+    command.add_argument("--session-images", type=int, metavar="N",
+                         help=f"session cap: local CLI images and edits per window (default {defaults['image']}, "
+                              f"or FORGE_SESSION_IMAGES; 0 blocks them)")
+    command.add_argument("--session-videos", type=int, metavar="N",
+                         help=f"session cap: local CLI videos per window (default {defaults['video']}, "
+                              f"or FORGE_SESSION_VIDEOS)")
+    command.add_argument("--session-hours", type=float, metavar="H",
+                         help=f"session window in hours, counted in the project's ledger (default {defaults['hours']:g}, "
+                              f"or FORGE_SESSION_HOURS)")
 
 
 def build_parser(parser_class=argparse.ArgumentParser) -> argparse.ArgumentParser:
@@ -1763,6 +1917,8 @@ def _error(message: object) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Usage errors exit 2 (argparse, D26); a typed failure prints ``error: CODE: message`` and exits 1
+    (130 on Ctrl+C); anything unexpected prints ``error: internal error (<Type>: <message>)`` (D27)."""
     media_ledger._local_utf8_stdio()
     args = build_parser().parse_args(argv)
     try:
@@ -1793,8 +1949,8 @@ def main(argv: list[str] | None = None) -> int:
         return 130
     except OSError as exc:
         _error(f"{type(exc).__name__}: local input/output failed")
-    except Exception as exc:  # noqa: BLE001  (tracebacks are never user-facing)
-        _error(f"unexpected {type(exc).__name__}; nothing was retried")
+    except Exception as exc:  # noqa: BLE001  (D27: tracebacks are never user-facing; the message is scrubbed)
+        _error(f"internal error ({type(exc).__name__}: {exc}); nothing was retried")
     return 1
 
 

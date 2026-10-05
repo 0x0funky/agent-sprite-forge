@@ -34,7 +34,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import media_ledger  # noqa: E402  (sibling module in this skill's scripts/)
 
-TOOL_VERSION = "2.0"
+TOOL_VERSION = media_ledger.FORGE_PACKAGE_VERSION  # receipts name the package release (D29)
 TOOL = "generate_media/" + TOOL_VERSION
 USER_AGENT = "agent-sprite-forge-media/" + TOOL_VERSION
 API = {"openai": "https://api.openai.com/v1", "xai": "https://api.x.ai/v1"}
@@ -897,7 +897,7 @@ def _submit(run, args, transport, body, content_type, key):
 def resume(args, transport=None):
     bounded_time(args)
     path = Path(args.job)
-    job = json.loads(path.read_text(encoding="utf-8"))
+    job = json.loads(path.read_text(encoding="utf-8-sig"))
     version = job.get("schemaVersion")
     if version not in (1, 2) or job.get("provider") != "xai" or job.get("kind") != "video":
         raise MediaError("Only known xAI video jobs can be resumed")
@@ -997,7 +997,7 @@ def job_argv(spec, base, args):
 def prior_state(out):
     """('reused', status) for a verified done job folder, else ('prior', status)."""
     try:
-        job = json.loads((out / "job.json").read_text(encoding="utf-8"))
+        job = json.loads((out / "job.json").read_text(encoding="utf-8-sig"))
         artifact = job.get("artifact") or {}
         name = artifact.get("path")
         if (job.get("status") == "done" and isinstance(name, str) and ARTIFACT_NAME.fullmatch(name)
@@ -1068,22 +1068,32 @@ def _batch_preview(jobs_path, entries, ledger, args):
             "ledger": {"path": ledger.path.as_posix(), "calls": totals["calls"], "usd": totals["usd"]}, "warnings": warnings}
 
 
-def _batch_job(job_id, job_args, transport_factory):
+def _batch_job(job_id, job_args, transport_factory, job_dir):
+    """One job's progress result; job_dir is its folder relative to the progress file (D25)."""
     out = Path(job_args.out_dir)
     if out.exists():  # earlier successes are reused; earlier failures are left for a human
         state, prior = prior_state(out)
         if state == "reused":
-            return {"id": job_id, "status": "reused", "outcomeCode": "ok", "jobDir": out.as_posix()}
-        return {"id": job_id, "status": "left-for-human", "priorStatus": prior, "outcomeCode": "prior", "jobDir": out.as_posix()}
+            return {"id": job_id, "status": "reused", "outcomeCode": "ok", "jobDir": job_dir}
+        return {"id": job_id, "status": "left-for-human", "priorStatus": prior, "outcomeCode": "prior", "jobDir": job_dir}
     try:
         job = execute(job_args, transport_factory())
     except MediaError as exc:
-        return {"id": job_id, "status": "failed", "outcomeCode": exc.code, "jobDir": out.as_posix(), "error": str(exc)}
+        return {"id": job_id, "status": "failed", "outcomeCode": exc.code, "jobDir": job_dir, "error": str(exc)}
     except Exception as exc:
-        return {"id": job_id, "status": "failed", "outcomeCode": "error", "jobDir": out.as_posix(),
+        return {"id": job_id, "status": "failed", "outcomeCode": "error", "jobDir": job_dir,
                 "error": f"unexpected {type(exc).__name__}"}
-    return {"id": job_id, "status": "generated", "outcomeCode": "ok", "jobDir": out.as_posix(),
+    return {"id": job_id, "status": "generated", "outcomeCode": "ok", "jobDir": job_dir,
             "artifact": job["artifact"]["path"], "estimateUsd": job["estimate"]["usd"]}
+
+
+def _progress_relative(path, folder):
+    """path relative to the progress file's folder: progress files hold no absolute path (D25)."""
+    try:
+        return Path(os.path.relpath(Path(path).resolve(), folder)).as_posix()
+    except ValueError:
+        raise MediaError("The progress file, the jobs file and every output directory must be on one drive "
+                         "(progress files record relative paths)", code="invalid_input", sent=False) from None
 
 
 def run_batch(args, transport=None):
@@ -1095,10 +1105,13 @@ def run_batch(args, transport=None):
     if not args.execute:
         return _batch_preview(jobs_path, entries, ledger, args), None
     progress_path = Path(args.progress) if args.progress else jobs_path.with_name(jobs_path.stem + ".progress.json")
+    folder = progress_path.resolve().parent
+    job_dirs = {job_id: _progress_relative(job_args.out_dir, folder) for job_id, job_args, _ in entries}
+    folder.mkdir(parents=True, exist_ok=True)  # --progress may name a folder that does not exist yet
     factory = (lambda: transport) if transport is not None else Transport
     queue = list(entries)
     lock = threading.Lock()
-    state = {"schema": BATCH_PROGRESS_SCHEMA, "jobsFile": str(jobs_path.resolve()), "execution": "execute",
+    state = {"schema": BATCH_PROGRESS_SCHEMA, "jobsFile": _progress_relative(jobs_path, folder), "execution": "execute",
              "workers": args.workers, "startedAt": media_ledger.utc_timestamp(), "updatedAt": None,
              "results": [], "inFlight": [], "remaining": [e[0] for e in entries],
              "stopped": False, "stopReason": None, "complete": False}
@@ -1120,7 +1133,7 @@ def run_batch(args, transport=None):
                 state["remaining"].remove(job_id)
                 state["inFlight"].append(job_id)
                 write_progress()
-            result = _batch_job(job_id, job_args, factory)
+            result = _batch_job(job_id, job_args, factory, job_dirs[job_id])
             with lock:
                 state["inFlight"].remove(job_id)
                 state["results"].append(result)
@@ -1217,7 +1230,9 @@ def _error(message):
 
 
 def main(argv=None, transport=None):
-    """CLI entry point; transport is injectable for offline tests."""
+    """CLI entry point; transport is injectable for offline tests. Usage errors exit 2 (argparse,
+    D26); failures print one ``error: ...`` line and exit 1 (130 when one request is interrupted);
+    anything unexpected prints ``error: internal error (<Type>: <message>)`` (D27)."""
     media_ledger._local_utf8_stdio()
     args = parser().parse_args(argv)
     try:
@@ -1238,8 +1253,8 @@ def main(argv=None, transport=None):
     except (OSError, ValueError) as exc:
         # Messages of local errors may include paths; report the type only.
         _error(type(exc).__name__ + ": local input/output failed")
-    except Exception as exc:
-        _error(f"unexpected {type(exc).__name__}; nothing was retried")
+    except Exception as exc:  # D27: never a traceback; the message is scrubbed (secrets, URLs, blobs)
+        _error(f"internal error ({type(exc).__name__}: {scrub(exc, _env_secrets())}); nothing was retried")
     return 1
 
 

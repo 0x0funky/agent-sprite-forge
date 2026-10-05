@@ -260,7 +260,10 @@ def test_ladder_levels_follow_version_keyed_proofs(tmp_path, cold, monkeypatch):
                       "grok-cli:image_edit": "PRESENT", "grok-acp:image_to_video": "TOOL_EXPOSED"}
     steps = {s["step"]: s["status"] for s in report["cli"]["grok-cli:image_gen"]["steps"]}
     assert steps == {"PRESENT": "OK", "AUTH_MODE": "UNKNOWN", "TOOL_EXPOSED": "UNKNOWN", "VERIFIED": "WARN"}
-    assert (report["routes"]["image"]["route"], report["routes"]["image"]["status"]) == ("codex-cli", "consent")
+    # D22: a VERIFIED local route is ready (no per-call question within the session cap) and named.
+    image = report["routes"]["image"]
+    assert (image["route"], image["status"]) == ("codex-cli", "ready")
+    assert image["options"][0]["label"] == "Codex (local CLI)" and "session cap" in image["detail"]
     video = report["routes"]["video"]
     assert video["route"] == "none" and video["options"][0]["status"] == "unverified"
     assert check(report, "route.codex-cli:image_gen")["status"] == "OK"
@@ -317,13 +320,20 @@ def test_skill_drift_is_reported(tmp_path, cold):
     report = forge_doctor.diagnose(project_dir=cold, skills_root=root, run_versions=False, console_encoding="utf-8")
     assert "scripts/forge_core.py" in check(report, "skills.vendored")["detail"]
     assert check(report, "skills.install")["status"] == "OK"
-    (root / "generate2dsprite" / "SKILL.md").write_text("edited\n", encoding="utf-8")
+    # D24: what running an installed skill writes (bytecode) and OS junk is never drift.
     (root / "codeart2d" / "scripts" / "__pycache__").mkdir(parents=True)
-    (root / "codeart2d" / "scripts" / "__pycache__" / "x.pyc").write_bytes(b"\0")
+    (root / "codeart2d" / "scripts" / "__pycache__" / "x.cpython-313.pyc").write_bytes(b"\0")
+    (root / "generate2dmap" / ".DS_Store").write_bytes(b"junk")
+    (root / "generate2dmap" / "Thumbs.db").write_bytes(b"junk")
+    report = forge_doctor.diagnose(project_dir=cold, skills_root=root, run_versions=False, console_encoding="utf-8")
+    assert check(report, "skills.install")["status"] == "OK"
+    (root / "generate2dsprite" / "SKILL.md").write_text("edited\n", encoding="utf-8")
+    (root / "codeart2d" / "scripts" / "stray_tool.py").write_text("print('not shipped')\n", encoding="utf-8")
     (root / "video2dsprite" / "SKILL.md").unlink()
     report = forge_doctor.diagnose(project_dir=cold, skills_root=root, run_versions=False, console_encoding="utf-8")
     install = check(report, "skills.install")
     assert install["status"] == "WARN" and "1 changed, 1 missing, 1 extra" in install["detail"]
+    assert "pyc" not in install["detail"] and "DS_Store" not in install["detail"]
     assert "video2dsprite" in check(report, "skills.present")["detail"]
 
 
@@ -405,4 +415,121 @@ def test_verify_route_execute_records_a_proof_the_ladder_uses(tmp_path, cold, mo
     fake_native(tmp_path / "grok-home" / "bin" / ("grok" + EXE))
     stub_versions(monkeypatch)
     report = forge_doctor.diagnose(host_tools="none", project_dir=cold, console_encoding="utf-8")
-    assert (report["routes"][need]["route"], report["routes"][need]["status"]) == (route, "consent")
+    assert (report["routes"][need]["route"], report["routes"][need]["status"]) == (route, "ready")
+
+
+# --------------------------------------------------------------------------- D22, D23, D27, D29
+
+
+def fake_route_clis(monkeypatch, tmp_path):
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
+    monkeypatch.setenv("FAKE_CLI_LOG", str(tmp_path / "fake.log"))
+    for name in ("FAKE_CLI_MODE", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION", "FAKE_THREAD_ID", "FAKE_SESSION_ID"):
+        monkeypatch.delenv(name, raising=False)
+
+    def fake(cli):
+        path = FAKES / f"fake_{cli}.py"
+        return cli_media.RouteCli([sys.executable, str(path)], forge_doctor.CliInfo(cli, path=path, source="test"))
+
+    monkeypatch.setattr(cli_media, "resolve_route_cli", fake)
+
+
+def test_reverification_after_a_cli_update(tmp_path, cold, monkeypatch, capsys):
+    """D23 (reviewer b22_spot.py case 1): after a CLI update the doctor's own remedy, --verify-route
+    --execute, must work again. The installed version is part of the verification request's fingerprint and
+    a consented verification may repeat an identical earlier one."""
+    fake_route_clis(monkeypatch, tmp_path)
+    assert forge_doctor.main(["--verify-route", "codex-cli", "--execute", "--project-dir", str(cold)]) == 0, \
+        capsys.readouterr().err
+    capsys.readouterr()
+    monkeypatch.setenv("FAKE_CODEX_VERSION", "codex-cli 0.156.0")
+    code = forge_doctor.main(["--verify-route", "codex-cli", "--execute", "--project-dir", str(cold)])
+    err = capsys.readouterr().err
+    assert code == 0 and "DUPLICATE" not in err, err
+    # Verifying the same version again (an explicit, consented re-check) is not refused either.
+    assert forge_doctor.main(["--verify-route", "codex-cli", "--execute", "--project-dir", str(cold)]) == 0
+    capsys.readouterr()
+    proofs = json.loads((cold / ".forge" / "route-proofs.json").read_text(encoding="utf-8"))
+    assert_valid_contract(proofs, "media", "route_proofs_v1", skill="generate2dmedia")
+    assert sorted((p["version"], p["level"]) for p in proofs["proofs"]) == [("0.155.1", "VERIFIED"),
+                                                                           ("0.156.0", "VERIFIED")]
+    records = [json.loads(p.read_text(encoding="utf-8")) for p in sorted((cold / ".forge" / "cli-runs").glob("*.json"))]
+    assert sorted(r["options"]["verifies"] for r in records) == ["0.155.1", "0.156.0", "0.156.0"]
+    by_version = {r["options"]["verifies"]: r["fingerprint"] for r in records}
+    assert by_version["0.155.1"] != by_version["0.156.0"]
+    assert [s["status"] for s in media_ledger.Ledger(cold).entries().values()] == ["done"] * 3
+    # The ladder now reads VERIFIED for the updated CLI.
+    monkeypatch.setenv("FORGE_CODEX_EXE", str(fake_native(tmp_path / "bin" / ("codex" + EXE))))
+    monkeypatch.setattr(forge_doctor, "probe_version", lambda argv, cli, timeout=0: ("codex-cli 0.156.0", "0.156.0"))
+    report = forge_doctor.diagnose(host_tools="none", project_dir=cold, console_encoding="utf-8")
+    assert report["cli"]["codex-cli:image_gen"]["level"] == "VERIFIED"
+
+
+def test_routes_put_the_local_agent_first(tmp_path, cold, monkeypatch):
+    """D22 / owner decision 13: images use the host tool, then Codex (local CLI), then Grok (local CLI), then
+    REST with consent; video uses Grok (local CLI, ACP), then REST with consent. Unverified local routes are
+    listed but never chosen, and the image_edit remedy names the run that really verifies edits."""
+    monkeypatch.setenv("FORGE_CODEX_EXE", str(fake_native(tmp_path / "bin" / ("codex" + EXE))))
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
+    fake_native(tmp_path / "grok-home" / "bin" / ("grok" + EXE))
+    monkeypatch.setenv("OPENAI_API_KEY", "set-but-never-read")
+    monkeypatch.setenv("XAI_API_KEY", "set-but-never-read")
+    stub_versions(monkeypatch)
+    write_proofs(cold, [proof("codex-cli", "image_gen", "0.155.1"), proof("grok-cli", "image_gen", "1.0.40"),
+                        proof("grok-acp", "image_to_video", "1.0.40")])
+    report = forge_doctor.diagnose(host_tools="image_gen", project_dir=cold, console_encoding="utf-8")
+    image = report["routes"]["image"]
+    assert [(o["route"], o["status"]) for o in image["options"]] == [
+        ("host_image", "ready"), ("codex-cli", "ready"), ("grok-cli", "ready"), ("api", "consent")]
+    assert image["route"] == "host_image"
+    assert [o["label"] for o in image["options"][1:3]] == ["Codex (local CLI)", "Grok (local CLI, one-shot image mode)"]
+    video = report["routes"]["video"]
+    assert [(o["route"], o["status"]) for o in video["options"]] == [("grok-acp", "ready"), ("api", "consent")]
+    assert video["options"][0]["label"] == "Grok (local CLI, ACP video mode)"
+    report = forge_doctor.diagnose(host_tools="none", project_dir=cold, console_encoding="utf-8")
+    assert report["routes"]["image"]["route"] == "codex-cli"
+    edit = report["routes"]["image_edit"]
+    assert edit["route"] == "api" and edit["options"][-1]["route"] == "grok-cli"
+    assert edit["options"][-1]["status"] == "unverified"
+    remedy = check(report, "route.grok-cli:image_edit")["remedy"]
+    assert "cli_media.py\" edit --route grok-cli" in remedy and "verifies image_gen only" in remedy
+
+
+def test_one_package_version_and_clean_internal_errors(cold, monkeypatch, capsys):
+    """D29: the doctor, the ledger and forge_core name one package version. D27: an unexpected error is one
+    line, exit 1, never a traceback."""
+    from forge_testutils import load_shared
+
+    assert forge_doctor.FORGE_PACKAGE_VERSION == media_ledger.FORGE_PACKAGE_VERSION \
+        == load_shared("forge_core").FORGE_PACKAGE_VERSION == "0.4.0"
+    report = forge_doctor.diagnose(project_dir=cold, run_versions=False, console_encoding="utf-8")
+    assert report["tool"] == {"name": "forge_doctor", "version": "0.4.0"}
+
+    def broken(**kwargs):
+        raise RuntimeError("unexpected state")
+    monkeypatch.setattr(forge_doctor, "diagnose", broken)
+    assert forge_doctor.main(["--project-dir", str(cold)]) == 1
+    captured = capsys.readouterr()
+    assert captured.err.strip() == "error: internal error (RuntimeError: unexpected state)" and not captured.out
+
+
+def test_ledger_check_reports_the_session_cap(cold, monkeypatch):
+    """The doctor shows the local routes' session usage (D22) and warns once a kind's cap is used up."""
+    for name in media_ledger.SESSION_ENV.values():
+        monkeypatch.delenv(name, raising=False)
+    ledger = media_ledger.Ledger(cold)
+    for index in range(2):
+        reservation = ledger.reserve({"jobDir": f"out/{index}", "fingerprint": f"{index:02d}" * 32, "provider": "openai",
+                                      "model": "codex-image_gen", "kind": "image", "route": "codex-cli",
+                                      "reservedUsd": 0.0})
+        ledger.commit(reservation, status="done")
+    report = forge_doctor.diagnose(project_dir=cold, run_versions=False, console_encoding="utf-8")
+    entry = check(report, "media.ledger")
+    assert entry["status"] == "OK" and "2 of 8 images, 0 of 2 videos" in entry["detail"]
+    monkeypatch.setenv("FORGE_SESSION_IMAGES", "2")
+    entry = check(forge_doctor.diagnose(project_dir=cold, run_versions=False, console_encoding="utf-8"), "media.ledger")
+    assert entry["status"] == "WARN" and "session cap is reached for images" in entry["detail"]
+    monkeypatch.setenv("FORGE_SESSION_IMAGES", "lots")
+    entry = check(forge_doctor.diagnose(project_dir=cold, run_versions=False, console_encoding="utf-8"), "media.ledger")
+    assert entry["status"] == "WARN" and "FORGE_SESSION_IMAGES" in entry["detail"]
