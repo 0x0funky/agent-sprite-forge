@@ -27,7 +27,7 @@ Entry points, as single-line Python calls:
 - Review: `codeart_core.review_sheet(frames, palette=..., qa=..., anchor=(16, 31)).save("review.png")`.
 - Output:
   - `codeart_core.save_png(rgba, path)`
-  - `codeart_core.write_codeart_meta(path, generator=..., spec_sha256=..., renderer=..., palette=..., outputs=[...], qa=...)`
+  - `codeart_core.write_codeart_meta(path, generator=..., spec_sha256=..., renderer=..., palette=..., outputs=[...], qa=..., inputs=[spec_path])`
 
 Contracts that B18 to B21 depend on:
 
@@ -55,7 +55,15 @@ Contracts that B18 to B21 depend on:
 - **Doctor report shape.** B18 writes this to `doctor.json`:
   - `{status, primary, cases[], backends: {name: {status, renderer | reason, results: [{case, zoom, status, method, ...}]}}, lint: [...], hint?}`.
   - `method` is one of `truth`, `palette`, `sha256`, `probes` or `lint`.
-- **QA envelope.** `qa_pixels` returns raw metrics. A CLI that writes QA JSON must wrap them in the common qaEnvelope: `method`, `notProven`, and input/output sha256.
+- **QA envelope.** `qa_pixels` returns raw metrics. Every QA JSON, including the `qa` of `codeart-meta.json`, is the common qaEnvelope: `status`, `method`, `notProven`, `checks`, `inputs`, `outputs`, `tool`, optional `createdAt`.
+  - `write_codeart_meta(qa=<ready envelope>)` checks the qaEnvelope rules (required keys, status values, no failed check under `pass`, fileRefs, tool) and stores the envelope as given. `inputs=` is refused here, because the envelope lists its own.
+  - `write_codeart_meta(qa=<qa_pixels metrics>, inputs=[spec_path])` wraps the metrics:
+    - one check `{id, status, value, threshold}` per `QA_PIXEL_GATES` entry: `partial_alpha` 0, `off_palette` 0, `outline_gaps` 0, `l_corners` 10. A metric above its gate fails. A gate that qa_pixels could not measure (no palette or outline colour) is `skipped`;
+    - `status` is the worst measured check;
+    - `method` is `QA_PIXELS_METHOD`; `notProven` is `QA_PIXELS_NOT_PROVEN` plus the skipped measurements;
+    - `outputs` are the meta's outputs; `inputs` are the given source files (paths or fileRefs; a file on another drive is recorded by file name);
+    - `tool` is `{"name": "codeart_core", "version": CODEART_CORE_API_VERSION}`, and the raw metrics stay under `qa.metrics`.
+  - Any other `qa`, and an empty `outputs`, raise `CodeArtError`. Nothing is written then.
   - `rgba_sha256(rgba)` hashes the canonical pixel bytes, independent of PNG encoding.
 
 ## 2. SKILL.md routing rows
@@ -105,7 +113,7 @@ Tool table: `codeart2d/scripts/codeart_core.py` is a shared library, not a CLI. 
     - pixel finishing route D;
     - pixel QA metrics and grid detection;
     - review sheets;
-    - the codeart-meta writer (`art_source: "code"`, disclosure "code-drawn, no image model").
+    - the codeart-meta writer (`art_source: "code"`, disclosure "code-drawn, no image model", `qa` as the common qaEnvelope).
 - **Fixed**
   - Fox probe, roadmap 4.4: a Python complex (`61.13-0.00j`) or NaN leaking into SVG geometry is now rejected by `compile_svg` and flagged by lint. Chrome used to draw such frames wrong without any error.
   - Fox probe, roadmap 4.4: clipPath/gradient ids colliding between frames batched in one page. `compile_svg(id_prefix=...)` now namespaces ids and every reference to them.
@@ -187,8 +195,8 @@ These go in `shared/schemas/codeart.schema.json` (A0). `codeart_core` produces a
         "palette": {"type": "object", "required": ["colors"], "properties": {
           "colors": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"}},
           "variants": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "string", "pattern": "^#[0-9a-f]{6}([0-9a-f]{2})?$"}}}}},
-        "outputs": {"type": "array", "items": {"$ref": "COMMON#/$defs/fileRef"}},
-        "qa": {"type": "object"}
+        "outputs": {"type": "array", "minItems": 1, "items": {"$ref": "COMMON#/$defs/fileRef"}},
+        "qa": {"$ref": "COMMON#/$defs/qaEnvelope"}
       }
     }
   }
@@ -198,8 +206,11 @@ These go in `shared/schemas/codeart.schema.json` (A0). `codeart_core` produces a
 Notes:
 
 - `codeart_meta_v1.palette` is always an object `{colors, variants}`. Appendix B left its type open.
+- `codeart_meta_v1.qa` is the common `qaEnvelope`, as in A0's frozen schema; no looser type is requested. A ready envelope is stored as given. Wrapped `qa_pixels` metrics add one extra key, `qa.metrics`, which the open envelope allows. `outputs` is never empty, matching A0's `minItems: 1`.
 - `renderer` carries the extra keys from `rasterize()`.
-- `test_meta_validates_against_schema` checks `skills/codeart2d/references/schemas/codeart.schema.json` `#/$defs/codeart_meta_v1` as soon as A0's vendored copy exists.
+- `test_meta_validates_against_schema` validates two metas against `skills/codeart2d/references/schemas/codeart.schema.json` `#/$defs/codeart_meta_v1`: one with a ready envelope and one with wrapped metrics. It skips until A0's vendored copy is in this branch.
+  - Checked against A0-contracts' current copy, read from outside this worktree: the only error is `$.palette`, because A0's `{colors, variants}` palette branch has not landed yet.
+  - With that branch added to a temporary copy, the test passes.
 - The PixelSpec schema spelling is unresolved. Roadmap 4.5 writes `codeart.pixelspec.v1`, while the namespace rule says `codeart2d.*`. The library accepts both; examples should use `codeart2d.pixelspec.v1`.
 
 ## 6. Shared-helper promotion requests
@@ -207,7 +218,11 @@ Notes:
 No promotions into `forge_*` are needed. Once `skills/codeart2d/scripts/forge_core.py` (A1) is vendored, replace these private stand-ins:
 
 - `_local_sha256_file(path)` becomes `forge_core.sha256_file(path)`.
-- `_local_write_json(path, data)` becomes `forge_core.write_json(path, data, no_clobber=True)`. The behaviour is identical: UTF-8, indent 2, `ensure_ascii=False`, trailing newline, refuses to overwrite.
+- `_local_write_json(path, data)` becomes `forge_core.write_json(path, data, no_clobber=True)`. The behaviour is identical:
+  - UTF-8, indent 2, `ensure_ascii=False`, trailing newline;
+  - numpy values are converted, and NaN or infinity is refused;
+  - data that cannot be encoded leaves no file behind;
+  - an existing file is never overwritten.
 - `save_png` stays in the codeart_core API (frozen in Appendix A). It may delegate to `forge_core.save_png` once A1 confirms the same contract: RGBA, RGB zeroed where alpha is 0, no metadata chunks.
 
 Optional, for B04 or later: `detect_grid` and `qa_pixels` are free of image-model assumptions. B04's `pixel_reduce` could reuse them if they are ever moved into `forge_palette`.
@@ -247,6 +262,10 @@ Optional, for B04 or later: `detect_grid` and `qa_pixels` are free of image-mode
 - **`detect_grid`** finds integer periods 2-24 with per-axis phases. Fractional periods, such as the earlier 3.46 px case, are deferred to `pixelize.py`.
   - The no-grid acceptance (score < 0.05) uses synthetic painted crops: measured about 0.002.
   - The real meadow crop is A0's fixture and was not available in this worktree.
+- **QA envelopes from metrics** (`write_codeart_meta(qa=qa_pixels(...))`):
+  - The metrics are recorded as given. The meta writer does not re-measure the output files; a `notProven` entry says so.
+  - A meta that lists several frames gets the metrics of whatever image the caller measured. CLIs that check every frame should pass their own envelope.
+  - The gates are pixel counts per image. The `l_corners` limit of 10 comes from one synthetic 64 px biped.
 - **`review_sheet`** text uses Pillow's default font, so glyphs differ between Pillow/FreeType builds while sheet sizes do not.
 - **`save_png`** gives identical bytes for a given Pillow/zlib build only. Cross-version tests compare pixel sha256 instead.
 - **Not runnable in this worktree:**

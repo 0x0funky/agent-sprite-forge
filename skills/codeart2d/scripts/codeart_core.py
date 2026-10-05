@@ -1695,6 +1695,12 @@ def render_pixelspec(spec: Mapping, frame: Any = None, variant: str | Mapping | 
 
 # ----------------------------------------------------------------------------- QA
 
+# Pixel-art gates (plan A3-T4, B18, B19): at most this many pixels per metric, so 0 partial
+# alpha, 0 off-palette, 0 outline gaps and at most 10 L-corners. write_codeart_meta checks
+# qa_pixels metrics against them; a metric above its limit fails.
+QA_PIXEL_GATES = (("partial_alpha", 0), ("off_palette", 0), ("outline_gaps", 0), ("l_corners", 10))
+
+
 def qa_pixels(rgba: Any, palette: Any = None, outline: Any = None) -> dict:
     """Pixel-art QA metrics.
 
@@ -1703,7 +1709,8 @@ def qa_pixels(rgba: Any, palette: Any = None, outline: Any = None) -> dict:
     identical 4-neighbour); l_corners (outline pixels removable for a pixel-perfect line)
     and outline_gaps (non-outline visible pixels touching transparency or the canvas
     edge), both None unless `outline` gives the outline colour or a list of them; bbox
-    [x0, y0, x1, y1) of the visible pixels (None when empty).
+    [x0, y0, x1, y1) of the visible pixels (None when empty). These are raw metrics, not
+    a QA document: write_codeart_meta wraps them in a qaEnvelope (see QA_PIXEL_GATES).
     """
     pixels = _as_rgba(rgba)
     alpha = pixels[..., 3]
@@ -1946,36 +1953,201 @@ def _local_sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _json_default(value: Any) -> Any:
+    """numpy scalars and arrays as plain JSON values, as forge_core.write_json does."""
+    if isinstance(value, (np.generic, np.ndarray)):
+        return value.tolist()
+    raise TypeError(f"{type(value).__name__} is not JSON data")
+
+
+def _json_text(data: Any, indent: int | None = None) -> str:
+    """Strict JSON: numpy values become plain JSON; NaN and infinity are refused."""
+    return json.dumps(data, indent=indent, ensure_ascii=False, allow_nan=False, default=_json_default)
+
+
+def _json_data(value: Any, label: str) -> Any:
+    """`value` as plain JSON data: tuples become lists and numpy values Python numbers."""
+    try:
+        return json.loads(_json_text(value))
+    except (TypeError, ValueError) as exc:
+        raise CodeArtError(f"{label} must be JSON data without NaN or infinity: {_ascii(exc)}") from None
+
+
 def _local_write_json(path: Path, data: Any) -> None:
-    """UTF-8 JSON, indent 2, trailing newline; refuses to replace an existing file."""
+    """UTF-8 JSON, indent 2, trailing newline; refuses to replace an existing file.
+
+    As in forge_core.write_json, numpy values are converted, NaN and infinity are refused,
+    and data that cannot be encoded raises before the file is created."""
+    text = _json_text(data, indent=2) + "\n"
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "x", encoding="utf-8", newline="\n") as handle:
-        handle.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        handle.write(text)
 
 
-def _file_ref(item: Any, base: Path) -> dict:
+# common.schema.json (A0): qaStatus, qaCheck status, the required qaEnvelope keys, sha256, relPath, timestamp.
+QA_STATUSES = ("pass", "fail", "warn", "needs-visual-review")
+QA_CHECK_STATUSES = QA_STATUSES + ("skipped",)
+QA_ENVELOPE_KEYS = ("status", "method", "notProven", "checks", "inputs", "outputs", "tool")
+QA_PIXELS_METHOD = ("codeart_core.qa_pixels: census of the rendered 8-bit RGBA pixels (partial alpha, exact palette "
+                    "lookup, 4-neighbour outline gaps and L-corners), each against its gate in "
+                    "codeart_core.QA_PIXEL_GATES")
+QA_PIXELS_NOT_PROVEN = (
+    "Readability, silhouette and appeal at game scale; check them on the review sheet.",
+    "Motion, timing and consistency between frames.",
+    "That the art matches the brief and the intent of the spec.",
+    "That the metrics were measured on the listed outputs: write_codeart_meta records them as given.",
+)
+_QA_SEVERITY = {"pass": 0, "needs-visual-review": 1, "warn": 2, "fail": 3}
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
+_REL_PATH = re.compile(r"(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\]+")
+_TIMESTAMP = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})")
+
+
+def _check_file_ref(item: Any, label: str) -> None:
+    """The common fileRef rules: {path: relPath, sha256: lowercase hex, bytes?: integer >= 0}."""
+    if not isinstance(item, Mapping):
+        raise CodeArtError(f"{label} must be a fileRef {{path, sha256, bytes?}}")
+    path, size = item.get("path"), item.get("bytes")
+    if not isinstance(path, str) or not _REL_PATH.fullmatch(path):
+        raise CodeArtError(f"{label} path must be a relative POSIX path (no drive, URL scheme, leading / or "
+                           f"backslash), got {ascii(path)}")
+    if not isinstance(item.get("sha256"), str) or not _SHA256_HEX.fullmatch(item["sha256"]):
+        raise CodeArtError(f"{label} needs a lowercase sha256 hex 'sha256'")
+    if "bytes" in item and (isinstance(size, bool) or not isinstance(size, int) or size < 0):
+        raise CodeArtError(f"{label} bytes must be a whole number >= 0")
+
+
+def _file_list(items: Any, label: str) -> list:
+    if isinstance(items, (str, bytes, os.PathLike, Mapping)):
+        raise CodeArtError(f"{label} must be a list of file paths or fileRef dicts, not a single item")
+    try:
+        return list(items)
+    except TypeError:
+        raise CodeArtError(f"{label} must be a list of file paths or fileRef dicts") from None
+
+
+def _file_ref(item: Any, base: Path, kind: str = "output") -> dict:
+    """A checked fileRef: a ready dict, or a file recorded relative to `base` (POSIX) with
+    sha256 and bytes. An input on another drive records its file name (common relPath)."""
     if isinstance(item, Mapping):
-        if not isinstance(item.get("path"), str) or not re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256", ""))):
-            raise CodeArtError("an output fileRef needs 'path' and a lowercase sha256 hex 'sha256'")
+        _check_file_ref(item, f"an {kind} fileRef")
         return dict(item)
     file = Path(item)
     if not file.is_file():
-        raise CodeArtError(f"output file not found: {file}")
-    relative = Path(os.path.relpath(file.resolve(), base.resolve())).as_posix()
-    return {"path": relative, "sha256": _local_sha256_file(file), "bytes": file.stat().st_size}
+        raise CodeArtError(f"{kind} file not found: {file}")
+    try:
+        relative = Path(os.path.relpath(file.resolve(), base.resolve())).as_posix()
+    except ValueError:  # Windows, another drive
+        if kind != "input":
+            raise CodeArtError(f"{kind} file {file} is not on the drive of the meta file") from None
+        relative = file.name
+    ref = {"path": relative, "sha256": _local_sha256_file(file), "bytes": file.stat().st_size}
+    _check_file_ref(ref, f"{kind} file {_ascii(file)}")
+    return ref
+
+
+def _check_qa_envelope(qa: Mapping) -> None:
+    """The common qaEnvelope rules, raised as CodeArtError."""
+    missing = [key for key in QA_ENVELOPE_KEYS if key not in qa]
+    if missing:
+        raise CodeArtError(f"the qa envelope lacks {', '.join(missing)}; a qaEnvelope has "
+                           f"{', '.join(QA_ENVELOPE_KEYS)} and optionally createdAt")
+    if qa["status"] not in QA_STATUSES:
+        raise CodeArtError(f"qa status must be one of {', '.join(QA_STATUSES)}")
+    if not isinstance(qa["method"], str) or not qa["method"].strip():
+        raise CodeArtError("qa method must say how the outputs were judged")
+    if not isinstance(qa["notProven"], list) or not all(isinstance(text, str) and text for text in qa["notProven"]):
+        raise CodeArtError("qa notProven must be a list of non-empty strings")
+    checks = qa["checks"]
+    if not isinstance(checks, list) or not all(isinstance(check, Mapping) and isinstance(check.get("id"), str)
+                                               and check["id"] and check.get("status") in QA_CHECK_STATUSES
+                                               for check in checks):
+        raise CodeArtError("qa checks must be a list of {id, status, value, threshold} with status one of "
+                           + ", ".join(QA_CHECK_STATUSES))
+    if qa["status"] == "pass" and any(check["status"] == "fail" for check in checks):
+        raise CodeArtError("a pass qa envelope cannot contain a failed check")
+    for key in ("inputs", "outputs"):
+        if not isinstance(qa[key], list):
+            raise CodeArtError(f"qa {key} must be a list of fileRefs")
+        for item in qa[key]:
+            _check_file_ref(item, f"a qa {key[:-1]}")
+    tool = qa["tool"]
+    if not isinstance(tool, Mapping) or not all(isinstance(tool.get(key), str) and tool[key]
+                                                for key in ("name", "version")):
+        raise CodeArtError("qa tool must give name and version strings")
+    if "createdAt" in qa and not (isinstance(qa["createdAt"], str) and _TIMESTAMP.fullmatch(qa["createdAt"])):
+        raise CodeArtError("qa createdAt must be an RFC 3339 date-time with an offset, e.g. 2026-10-05T04:16:00Z")
+
+
+def _qa_from_metrics(metrics: dict, inputs: list, outputs: list) -> dict:
+    """qa_pixels() metrics wrapped in a qaEnvelope over `outputs` (see write_codeart_meta)."""
+    missing = [name for name, _ in QA_PIXEL_GATES if name not in metrics]
+    if missing:
+        raise CodeArtError(f"qa_pixels metrics lack {', '.join(missing)}")
+    checks = []
+    for name, limit in QA_PIXEL_GATES:
+        value = metrics[name]
+        if value is None and name != "partial_alpha":
+            status = "skipped"  # qa_pixels had no palette or outline colour to measure it
+        elif isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            status = "pass" if value <= limit else "fail"
+        else:
+            raise CodeArtError(f"qa_pixels metric {name} must be a pixel count >= 0, got {_ascii(value)}")
+        checks.append({"id": name, "status": status, "value": value, "threshold": limit})
+    not_proven = list(QA_PIXELS_NOT_PROVEN)
+    if metrics["off_palette"] is None:
+        not_proven.append("Palette conformance: qa_pixels was given no palette.")
+    if metrics["outline_gaps"] is None or metrics["l_corners"] is None:
+        not_proven.append("Outline continuity and pixel-perfect lines: qa_pixels was given no outline colour.")
+    envelope = {"status": max((check["status"] for check in checks if check["status"] != "skipped"),
+                              key=_QA_SEVERITY.__getitem__),
+                "method": QA_PIXELS_METHOD, "notProven": not_proven, "checks": checks, "inputs": inputs,
+                "outputs": outputs, "tool": {"name": "codeart_core", "version": CODEART_CORE_API_VERSION},
+                "metrics": metrics}
+    _check_qa_envelope(envelope)
+    return envelope
+
+
+def _codeart_qa(qa: Any, inputs: Any, outputs: list, base: Path) -> dict:
+    """codeart-meta qa: a ready qaEnvelope (checked), or qa_pixels() metrics wrapped in one."""
+    data = _json_data(dict(qa), "qa") if isinstance(qa, Mapping) else None
+    if data is not None and any(key in data for key in QA_ENVELOPE_KEYS):
+        if inputs is not None:
+            raise CodeArtError("inputs only applies to qa_pixels metrics; a ready qaEnvelope lists its own inputs")
+        _check_qa_envelope(data)
+        return data
+    if data is not None and "partial_alpha" in data:
+        input_refs = [_file_ref(item, base, "input") for item in _file_list(inputs or [], "inputs")]
+        return _qa_from_metrics(data, input_refs, list(outputs))
+    raise CodeArtError("qa must be a qaEnvelope (status, method, notProven, checks, inputs, outputs, tool) "
+                       "or the metrics dict from qa_pixels()")
 
 
 def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: str, renderer: Mapping,
-                       palette: Any, outputs: Sequence, qa: Mapping, extra: Mapping | None = None) -> dict:
+                       palette: Any, outputs: Sequence, qa: Mapping, extra: Mapping | None = None,
+                       inputs: Sequence | None = None) -> dict:
     """Write codeart-meta (codeart_meta_v1, art_source "code") and return it.
 
     renderer: {"name", "version", ...}, e.g. the info dict from rasterize() or
     {"name": "codeart_core.render_pixelspec", "version": CODEART_CORE_API_VERSION}.
-    outputs: file paths (recorded relative to the meta file, POSIX, with sha256 and
-    bytes) or ready fileRef dicts. palette: anything parse_palette reads, written as
-    {"colors": {name: hex}, "variants": {...}}. extra: more top-level fields; they may
-    not replace core ones. Refuses to overwrite. No timestamps, so identical inputs give
-    identical bytes.
+    outputs: one or more file paths (recorded relative to the meta file, POSIX, with
+    sha256 and bytes) or ready fileRef dicts. palette: anything parse_palette reads,
+    written as {"colors": {name: hex}, "variants": {...}}. extra: more top-level fields;
+    they may not replace core ones. Refuses to overwrite. No timestamps, so identical
+    inputs give identical bytes.
+
+    qa is stored as a common qaEnvelope {status, method, notProven, checks, inputs,
+    outputs, tool, createdAt?}:
+      - a ready envelope is checked against the qaEnvelope rules and stored as given;
+      - the metrics dict from qa_pixels() is wrapped in one: a check per QA_PIXEL_GATES
+        entry ({id, status, value, threshold}; skipped when qa_pixels had no palette or
+        outline colour for it), status = the worst measured check, method
+        QA_PIXELS_METHOD, notProven QA_PIXELS_NOT_PROVEN plus the skipped measurements,
+        outputs = this meta's outputs, inputs = `inputs` (the spec and other source files
+        as paths or fileRefs; one on another drive records its file name), tool
+        {"name": "codeart_core", "version": CODEART_CORE_API_VERSION}, and the raw
+        metrics under "metrics".
+    Any other qa, and `inputs` given with a ready envelope, raise CodeArtError.
     """
     target = Path(path)
     if not isinstance(generator, str) or not generator.strip():
@@ -1985,6 +2157,9 @@ def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: 
     if not isinstance(renderer, Mapping) or not renderer.get("name") or not renderer.get("version"):
         raise CodeArtError("renderer must give at least name and version")
     parsed = parse_palette(palette)
+    output_refs = [_file_ref(item, target.parent) for item in _file_list(outputs, "outputs")]
+    if not output_refs:
+        raise CodeArtError("outputs must list at least one file that the meta describes")
     meta = {
         "schema": CODEART_META_SCHEMA,
         "art_source": "code",
@@ -1996,12 +2171,13 @@ def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: 
         "palette": {"colors": parsed.hex(),
                     "variants": {name: {key: rgba_to_hex(value) for key, value in over.items()}
                                  for name, over in parsed.variants.items()}},
-        "outputs": [_file_ref(item, target.parent) for item in outputs],
-        "qa": dict(qa),
+        "outputs": output_refs,
+        "qa": _codeart_qa(qa, inputs, output_refs, target.parent),
     }
     clashes = sorted(set(extra or {}) & set(meta))
     if clashes:
         raise CodeArtError(f"extra fields may not replace core codeart-meta fields: {', '.join(clashes)}")
     meta.update(extra or {})
+    meta = _json_data(meta, "codeart-meta")
     _local_write_json(target, meta)
     return meta

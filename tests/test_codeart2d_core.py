@@ -6,6 +6,7 @@ raster-test corpus (see goldens.json); slime.pixelspec.json is the code-generate
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from pathlib import Path
@@ -647,7 +648,29 @@ def test_review_sheet_dimensions():
     assert np.array_equal(cell[frames[0][..., 3] > 0][:, :3], frames[0][frames[0][..., 3] > 0][:, :3])
 
 
-CODEART_META_FALLBACK_SCHEMA = {
+FILE_REF_SCHEMA = {"type": "object", "required": ["path", "sha256"], "properties": {
+    "path": {"type": "string", "pattern": r"^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\]+$"},
+    "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "bytes": {"type": "integer", "minimum": 0}}}
+QA_ENVELOPE_SCHEMA = {  # plan Appendix B common qaEnvelope, with A0's rule that a pass holds no failed check
+    "type": "object",
+    "required": ["status", "method", "notProven", "checks", "inputs", "outputs", "tool"],
+    "properties": {
+        "status": {"enum": ["pass", "fail", "warn", "needs-visual-review"]},
+        "method": {"type": "string", "minLength": 1},
+        "notProven": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "checks": {"type": "array", "items": {"type": "object", "required": ["id", "status"], "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "status": {"enum": ["pass", "fail", "warn", "needs-visual-review", "skipped"]}}}},
+        "inputs": {"type": "array", "items": FILE_REF_SCHEMA},
+        "outputs": {"type": "array", "items": FILE_REF_SCHEMA},
+        "tool": {"type": "object", "required": ["name", "version"], "properties": {
+            "name": {"type": "string", "minLength": 1}, "version": {"type": "string", "minLength": 1}}},
+    },
+    "if": {"properties": {"status": {"const": "pass"}}, "required": ["status"]},
+    "then": {"properties": {"checks": {"items": {"properties": {"status": {"not": {"const": "fail"}}}}}}},
+}
+CODEART_META_FALLBACK_SCHEMA = {  # plan Appendix B codeart_meta_v1; A0's vendored schema is checked separately
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "type": "object",
     "required": ["art_source", "generator", "spec_sha256", "renderer", "palette", "outputs", "qa"],
@@ -657,47 +680,202 @@ CODEART_META_FALLBACK_SCHEMA = {
         "spec_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "renderer": {"type": "object", "required": ["name", "version"],
                      "properties": {"name": {"type": "string"}, "version": {"type": "string"}}},
-        "outputs": {"type": "array", "items": {"type": "object", "required": ["path", "sha256"], "properties": {
-            "path": {"type": "string"}, "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
-            "bytes": {"type": "integer", "minimum": 0}}}},
-        "qa": {"type": "object"},
+        "outputs": {"type": "array", "minItems": 1, "items": FILE_REF_SCHEMA},
+        "qa": QA_ENVELOPE_SCHEMA,
     },
 }
+CODEART_SCHEMAS = ROOT / "skills" / "codeart2d" / "references" / "schemas"  # A0's vendored copies
+META_RENDERER = {"name": "codeart_core.render_pixelspec", "version": core.CODEART_CORE_API_VERSION}
+SLIME_COLOURS = list(SLIME["palette"].values())  # the green variant keeps the base colours
 
 
-def test_meta_validates_against_schema(tmp_path):
-    """Validates against plan Appendix B codeart_meta_v1, and the vendored A0 schema once it exists."""
-    jsonschema = pytest.importorskip("jsonschema")
+def file_ref(path: Path, base: Path) -> dict:
+    data = path.read_bytes()
+    return {"path": path.relative_to(base).as_posix(), "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+
+
+def slime_meta_case(tmp_path: Path, spec_dir: str = "") -> tuple[np.ndarray, Path, dict]:
+    """The green rest frame saved as frames/rest.png, a copy of the spec, and the shared meta arguments."""
     frame = core.render_pixelspec(SLIME, "rest", "green")
-    core.save_png(frame, tmp_path / "frames" / "rest.png")
-    spec_sha = core._local_sha256_file(FIXTURES / "slime.pixelspec.json")
-    renderer = {"name": "codeart_core.render_pixelspec", "version": core.CODEART_CORE_API_VERSION}
-    palette = {"colors": SLIME["palette"], "variants": SLIME["variants"]}
-    meta = core.write_codeart_meta(tmp_path / "codeart-meta.json", generator="test", spec_sha256=spec_sha,
-                                   renderer=renderer, palette=palette, outputs=[tmp_path / "frames" / "rest.png"],
-                                   qa=core.qa_pixels(frame))
+    png = tmp_path / "frames" / "rest.png"
+    core.save_png(frame, png)
+    spec = tmp_path / spec_dir / "slime.pixelspec.json"
+    spec.parent.mkdir(parents=True, exist_ok=True)
+    spec.write_bytes((FIXTURES / "slime.pixelspec.json").read_bytes())
+    kwargs = {"generator": "test", "spec_sha256": core._local_sha256_file(spec), "renderer": META_RENDERER,
+              "palette": {"colors": SLIME["palette"], "variants": SLIME["variants"]}, "outputs": [png]}
+    return frame, spec, kwargs
+
+
+def ready_envelope(frame: np.ndarray, spec: Path, base: Path) -> dict:
+    """A qaEnvelope as a QA CLI writes it (the shape of A0's codeart_meta_v1 example)."""
+    metrics = core.qa_pixels(frame, SLIME_COLOURS)
+    return {"status": "pass", "method": "pixel_qa.py: exact palette lookup and alpha census on every output",
+            "notProven": ["Readability and appeal at game scale need a visual review."],
+            "checks": [{"id": "off_palette_px", "status": "pass", "value": metrics["off_palette"], "threshold": 0},
+                       {"id": "partial_alpha_px", "status": "pass", "value": metrics["partial_alpha"], "threshold": 0}],
+            "inputs": [file_ref(spec, base)], "outputs": [file_ref(base / "frames" / "rest.png", base)],
+            "tool": {"name": "pixel_qa.py", "version": "0.4.0"}, "createdAt": "2026-10-05T04:16:00Z"}
+
+
+def test_meta_stores_a_ready_qa_envelope(tmp_path):
+    """codeart_meta_v1.qa is the common qaEnvelope: a ready envelope is checked and stored as given."""
+    jsonschema = pytest.importorskip("jsonschema")
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    envelope = ready_envelope(frame, spec, tmp_path)
+    meta = core.write_codeart_meta(tmp_path / "codeart-meta.json", qa=envelope, **kwargs)
     written = json.loads((tmp_path / "codeart-meta.json").read_text(encoding="utf-8"))
     assert written == meta and written["art_source"] == "code" and written["disclosure"] == core.DISCLOSURE
+    assert written["qa"] == envelope and written["outputs"] == envelope["outputs"]
     assert written["outputs"][0]["path"] == "frames/rest.png"
     assert written["palette"]["variants"]["blue"]["g"] == "#3b5dc9"
     jsonschema.Draft202012Validator(CODEART_META_FALLBACK_SCHEMA).validate(written)
-    vendored = ROOT / "skills" / "codeart2d" / "references" / "schemas"
-    if (vendored / "codeart.schema.json").is_file():
-        from referencing import Registry, Resource
-
-        resources = []
-        for path in vendored.glob("*.schema.json"):
-            document = json.loads(path.read_text(encoding="utf-8"))
-            resources.append((document.get("$id", path.name), Resource.from_contents(document)))
-        codeart = json.loads((vendored / "codeart.schema.json").read_text(encoding="utf-8"))
-        assert "codeart_meta_v1" in codeart.get("$defs", {}), "Appendix B names the def codeart_meta_v1"
-        validator = jsonschema.Draft202012Validator(
-            {"$ref": f"{codeart.get('$id', 'codeart.schema.json')}#/$defs/codeart_meta_v1"},
-            registry=Registry().with_resources(resources))
-        validator.validate(written)
     with pytest.raises(FileExistsError):
-        core.write_codeart_meta(tmp_path / "codeart-meta.json", generator="test", spec_sha256=spec_sha,
-                                renderer=renderer, palette=SLIME["palette"], outputs=[], qa={})
+        core.write_codeart_meta(tmp_path / "codeart-meta.json", qa=envelope, **kwargs)
     with pytest.raises(core.CodeArtError, match="core codeart-meta"):
-        core.write_codeart_meta(tmp_path / "other.json", generator="test", spec_sha256=spec_sha, renderer=renderer,
-                                palette=SLIME["palette"], outputs=[], qa={}, extra={"art_source": "api"})
+        core.write_codeart_meta(tmp_path / "other.json", qa=envelope, extra={"art_source": "api"}, **kwargs)
+    assert not (tmp_path / "other.json").exists()
+
+
+@pytest.mark.parametrize("change, message", [
+    (lambda qa: qa.pop("method"), "lacks method"),
+    (lambda qa: qa.pop("notProven"), "lacks notProven"),
+    (lambda qa: qa.update(status="excellent"), "status must be one of"),
+    (lambda qa: qa["checks"][0].update(status="fail"), "cannot contain a failed check"),
+    (lambda qa: qa["checks"].append({"status": "pass"}), "checks must be a list"),
+    (lambda qa: qa["inputs"][0].update(sha256="abc"), "lowercase sha256"),
+    (lambda qa: qa["outputs"][0].update(path="C:/art/rest.png"), "relative POSIX path"),
+    (lambda qa: qa.update(tool={"name": "pixel_qa.py"}), "name and version"),
+    (lambda qa: qa.update(createdAt="yesterday"), "RFC 3339"),
+    (lambda qa: qa["checks"][0].update(value=float("nan")), "NaN"),
+], ids=["no-method", "no-notProven", "bad-status", "pass-with-failed-check", "check-without-id", "bad-sha256",
+        "drive-path", "tool-without-version", "bad-createdAt", "nan-value"])
+def test_meta_refuses_an_invalid_qa_envelope(tmp_path, change, message):
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    envelope = ready_envelope(frame, spec, tmp_path)
+    change(envelope)
+    with pytest.raises(core.CodeArtError, match=message):
+        core.write_codeart_meta(tmp_path / "codeart-meta.json", qa=envelope, **kwargs)
+    assert not (tmp_path / "codeart-meta.json").exists()
+
+
+@pytest.mark.parametrize("qa, message", [
+    (None, "qaEnvelope"), ([], "qaEnvelope"), ("pass", "qaEnvelope"), ({}, "qaEnvelope"),
+    ({"visible": 3, "colors": 2}, "qaEnvelope"),
+    ({"partial_alpha": 0, "off_palette": 0, "outline_gaps": 0}, "lack l_corners"),
+    ({"partial_alpha": None, "off_palette": 0, "outline_gaps": 0, "l_corners": 0}, "pixel count"),
+    ({"partial_alpha": -1, "off_palette": 0, "outline_gaps": 0, "l_corners": 0}, "pixel count"),
+    ({"partial_alpha": 0, "off_palette": 0.5, "outline_gaps": 0, "l_corners": 0}, "pixel count"),
+], ids=["none", "list", "string", "empty", "no-gates", "missing-gate", "unmeasured-alpha", "negative", "fraction"])
+def test_meta_refuses_qa_that_is_neither_envelope_nor_metrics(tmp_path, qa, message):
+    _, _, kwargs = slime_meta_case(tmp_path)
+    with pytest.raises(core.CodeArtError, match=message):
+        core.write_codeart_meta(tmp_path / "codeart-meta.json", qa=qa, **kwargs)
+    assert not (tmp_path / "codeart-meta.json").exists()
+
+
+def test_meta_refuses_inputs_with_an_envelope_and_missing_outputs(tmp_path):
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    target = tmp_path / "codeart-meta.json"
+    with pytest.raises(core.CodeArtError, match="inputs only applies"):
+        core.write_codeart_meta(target, qa=ready_envelope(frame, spec, tmp_path), inputs=[spec], **kwargs)
+    for outputs, message in (([], "at least one file"), (str(kwargs["outputs"][0]), "not a single item")):
+        with pytest.raises(core.CodeArtError, match=message):
+            core.write_codeart_meta(target, qa=core.qa_pixels(frame), **{**kwargs, "outputs": outputs})
+    assert not target.exists()
+
+
+def test_meta_wraps_qa_pixels_metrics_in_an_envelope(tmp_path):
+    """qa_pixels metrics become a qaEnvelope: a check per gate, status = worst check, hashed inputs and outputs."""
+    jsonschema = pytest.importorskip("jsonschema")
+    validator = jsonschema.Draft202012Validator(CODEART_META_FALLBACK_SCHEMA)
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    metrics = core.qa_pixels(frame, SLIME_COLOURS, SLIME["palette"]["k"])
+    meta = core.write_codeart_meta(tmp_path / "codeart-meta.json", qa=metrics, inputs=[spec], **kwargs)
+    assert json.loads((tmp_path / "codeart-meta.json").read_text(encoding="utf-8")) == meta
+    validator.validate(meta)
+    qa = meta["qa"]
+    assert core.QA_PIXEL_GATES == (("partial_alpha", 0), ("off_palette", 0), ("outline_gaps", 0), ("l_corners", 10))
+    assert qa["status"] == "pass" and qa["method"] == core.QA_PIXELS_METHOD
+    assert qa["checks"] == [{"id": name, "status": "pass", "value": metrics[name], "threshold": limit}
+                            for name, limit in core.QA_PIXEL_GATES]
+    assert qa["notProven"] == list(core.QA_PIXELS_NOT_PROVEN)
+    assert qa["outputs"] == meta["outputs"] == [file_ref(kwargs["outputs"][0], tmp_path)]
+    assert qa["inputs"] == [file_ref(spec, tmp_path)] and qa["inputs"][0]["sha256"] == meta["spec_sha256"]
+    assert qa["tool"] == {"name": "codeart_core", "version": core.CODEART_CORE_API_VERSION}
+    assert qa["metrics"] == metrics  # the raw metrics ride along; the qaEnvelope is open
+
+    # Gates qa_pixels could not measure (no palette, no outline colour) are skipped, not passed,
+    # and the worst measured check sets the status.
+    soft = frame.copy()
+    y, x = np.argwhere(soft[..., 3] == 255)[0]
+    soft[y, x, 3] = 128
+    core.save_png(soft, tmp_path / "soft" / "rest.png")
+    meta = core.write_codeart_meta(tmp_path / "soft" / "codeart-meta.json", qa=core.qa_pixels(soft),
+                                   **{**kwargs, "outputs": [tmp_path / "soft" / "rest.png"]})
+    validator.validate(meta)
+    qa = meta["qa"]
+    assert qa["status"] == "fail" and qa["inputs"] == [] and qa["outputs"][0]["path"] == "rest.png"
+    assert [(check["id"], check["status"], check["value"]) for check in qa["checks"]] == [
+        ("partial_alpha", "fail", 1), ("off_palette", "skipped", None), ("outline_gaps", "skipped", None),
+        ("l_corners", "skipped", None)]
+    assert qa["notProven"][:len(core.QA_PIXELS_NOT_PROVEN)] == list(core.QA_PIXELS_NOT_PROVEN)
+    assert any("no palette" in text for text in qa["notProven"])
+    assert any("no outline colour" in text for text in qa["notProven"])
+    corners = core.write_codeart_meta(tmp_path / "corners.json", qa={**metrics, "l_corners": 11}, **kwargs)["qa"]
+    assert corners["status"] == "fail"
+    assert corners["checks"][3] == {"id": "l_corners", "status": "fail", "value": 11, "threshold": 10}
+
+
+def test_meta_input_on_another_drive_records_its_file_name(tmp_path, monkeypatch):
+    """common relPath: an input on another drive keeps its file name and sha256; an output may not be there."""
+    frame, spec, kwargs = slime_meta_case(tmp_path, spec_dir="src")
+    metrics, relpath = core.qa_pixels(frame), core.os.path.relpath
+    meta = core.write_codeart_meta(tmp_path / "a.json", qa=metrics, inputs=[spec], **kwargs)
+    assert meta["qa"]["inputs"] == [file_ref(spec, tmp_path)]
+    assert meta["qa"]["inputs"][0]["path"] == "src/slime.pixelspec.json"
+
+    def other_drive(path, start=None):
+        if Path(path).name == spec.name:
+            raise ValueError("path is on mount 'E:', start on mount 'D:'")
+        return relpath(path, start)
+
+    monkeypatch.setattr(core.os.path, "relpath", other_drive)
+    meta = core.write_codeart_meta(tmp_path / "b.json", qa=metrics, inputs=[spec], **kwargs)
+    assert meta["qa"]["inputs"] == [{**file_ref(spec, tmp_path), "path": "slime.pixelspec.json"}]
+    with pytest.raises(core.CodeArtError, match="not on the drive"):
+        core.write_codeart_meta(tmp_path / "c.json", qa=metrics, **{**kwargs, "outputs": [spec]})
+
+
+def vendored_codeart_validator(definition: str):
+    """Draft 2020-12 validator for a $def of A0's vendored codeart.schema.json, or None while it is absent."""
+    if not (CODEART_SCHEMAS / "codeart.schema.json").is_file():
+        return None
+    jsonschema = pytest.importorskip("jsonschema")
+    referencing = pytest.importorskip("referencing")
+    from referencing.jsonschema import DRAFT202012
+
+    documents = {path.name: json.loads(path.read_text(encoding="utf-8"))
+                 for path in sorted(CODEART_SCHEMAS.glob("*.schema.json"))}
+    codeart = documents["codeart.schema.json"]
+    assert definition in codeart.get("$defs", {}), f"Appendix B names the def {definition}"
+    registry = referencing.Registry().with_resources(
+        (document.get("$id", name), DRAFT202012.create_resource(document)) for name, document in documents.items())
+    return jsonschema.Draft202012Validator(
+        {"$ref": f"{codeart.get('$id', 'codeart.schema.json')}#/$defs/{definition}"}, registry=registry)
+
+
+def test_meta_validates_against_schema(tmp_path):
+    """Plan A3-T7: both qa forms validate as A0's vendored codeart_meta_v1. Skips until A0 is merged."""
+    validator = vendored_codeart_validator("codeart_meta_v1")
+    if validator is None:
+        pytest.skip("A0-contracts codeart.schema.json is not vendored into this branch yet")
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    paths = [tmp_path / "codeart-meta.json", tmp_path / "codeart-meta.metrics.json"]
+    core.write_codeart_meta(paths[0], qa=ready_envelope(frame, spec, tmp_path), **kwargs)
+    core.write_codeart_meta(paths[1], qa=core.qa_pixels(frame, SLIME_COLOURS, SLIME["palette"]["k"]), inputs=[spec],
+                            **kwargs)
+    for path in paths:
+        written = json.loads(path.read_text(encoding="utf-8"))
+        errors = [f"{error.json_path}: {error.message}" for error in validator.iter_errors(written)]
+        assert not errors, f"{path.name}: {errors}"
