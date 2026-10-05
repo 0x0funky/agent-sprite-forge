@@ -1,0 +1,43 @@
+{
+  "schema": "codeart2d.rig_anim.v1",
+  "rig": "hero.rig.svg",
+  "states": {"idle": "idle", "moving": "walk"},
+  "entry_reference": "idle",
+  "clips": {
+    "walk": {
+      "frames": 8, "loop": true, "duration_ms": 100, "ease": "linear",
+      "stride_world_units": 24,
+      "events": [{"t": 0, "name": "step_r"}, {"t": 0.5, "name": "step_l"}],
+      "tracks": {
+        "hips":   {"translate": [[0, [0, 2]], [0.125, [0, 1]], [0.25, [0, 0]], [0.375, [0, 1]],
+                                 [0.5, [0, 2]], [0.625, [0, 1]], [0.75, [0, 0]], [0.875, [0, 1]], [1, [0, 2]]]},
+        "torso":  {"rotate": [[0, 3], [1, 3]]},
+        "head":   {"rotate": [[0, -2], [0.25, 0], [0.5, -2], [0.75, 0], [1, -2]], "ease": "sine"},
+        "arm_f":  {"rotate": [[0, 24], [0.5, -24], [1, 24]], "ease": "sine"},
+        "fore_f": {"rotate": [[0, -10], [0.5, -30], [1, -10]], "ease": "sine"},
+        "arm_b":  {"rotate": [[0, -24], [0.5, 24], [1, -24]], "ease": "sine"},
+        "fore_b": {"rotate": [[0, -30], [0.5, -10], [1, -30]], "ease": "sine"}
+      },
+      "ik": {
+        "leg_f": {"bones": ["thigh_f", "shin_f"], "end": "foot_f", "pole": [1, 0],
+                  "gait": {"phase": 0.0625, "stance": 0.625, "lift": 3, "roll": 15, "x": 33.5}},
+        "leg_b": {"bones": ["thigh_b", "shin_b"], "end": "foot_b", "pole": [1, 0],
+                  "gait": {"phase": 0.5625, "stance": 0.625, "lift": 3, "roll": 15, "x": 31.5}}
+      }
+    },
+    "idle": {
+      "frames": 4, "loop": true, "duration_ms": [220, 180, 220, 180], "ease": "linear",
+      "tracks": {
+        "torso":  {"translate": [[0, [0, 0]], [0.25, [0, 1]], [0.5, [0, 2]], [0.75, [0, 1]], [1, [0, 0]]]},
+        "arm_f":  {"rotate": [[0, 4], [0.25, 6], [0.5, 8], [0.75, 6], [1, 4]]},
+        "fore_f": {"rotate": [[0, -6], [0.5, -10], [1, -6]]},
+        "arm_b":  {"rotate": [[0, -4], [0.25, -6], [0.5, -8], [0.75, -6], [1, -4]]},
+        "fore_b": {"rotate": [[0, -10], [0.5, -14], [1, -10]]}
+      },
+      "ik": {
+        "leg_f": {"bones": ["thigh_f", "shin_f"], "end": "foot_f", "pole": [1, 0], "target": [[0, [35, 60]]]},
+        "leg_b": {"bones": ["thigh_b", "shin_b"], "end": "foot_b", "pole": [1, 0], "target": [[0, [29, 60]]]}
+      }
+    }
+  }
+}
