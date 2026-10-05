@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import copy
 import json
-import math
 import os
 import tempfile
 import unittest
@@ -461,7 +460,8 @@ class PivotTests(unittest.TestCase):
         passes = 0
         for trial in range(240):
             viewport = [float(rng.choice([32, 48, 64])), float(rng.choice([16, 24, 32]))]
-            pivot = ["top-left", "center", [float(rng.uniform(0, viewport[0])), float(rng.uniform(0, viewport[1]))]][trial % 3]
+            point = [float(rng.uniform(0, viewport[0])), float(rng.uniform(0, viewport[1]))]
+            pivot = ["top-left", "center", point][trial % 3]
             camera = {"x": sorted(rng.uniform(-50, 150, 2).tolist()), "y": sorted(rng.uniform(-20, 20, 2).tolist()),
                       "zoom": sorted(rng.uniform(0.5, 2.0, 2).tolist()), "pivot": pivot}
             layer = {"id": "sky", "role": "sky", "image": "sky.png", "alpha": "opaque",
@@ -688,7 +688,8 @@ class AspectSweepTests(unittest.TestCase):
         self.assertEqual(centred["aspect_sweep"]["aspects"][0]["camera_shift"], [-20.0, -0.0])
         self.assertTrue(centred["aspect_sweep"]["aspects"][0]["passed"])
         plan["camera"]["pivot"] = "top-left"
-        self.assertFalse(PARALLAX.validate_plan(plan, self.root, aspects=["2.8"])["aspect_sweep"]["aspects"][0]["passed"])
+        top_left = PARALLAX.validate_plan(plan, self.root, aspects=["2.8"])
+        self.assertFalse(top_left["aspect_sweep"]["aspects"][0]["passed"])
         for bad in ("wide", "0:9", "-4:3"):
             with self.subTest(aspect=bad), self.assertRaises(ValueError):
                 PARALLAX.parse_aspect(bad)
@@ -717,6 +718,21 @@ class ParallaxCliTests(unittest.TestCase):
 
     def test_help_works_under_cp1252(self):
         assert_cli_help(SKILL, "validate_parallax")
+
+    def test_reference_example_plan_passes_as_documented(self):
+        """parallax-backgrounds.md section 2: the example plan passes with the stated image sizes."""
+        text = (SKILLS_DIR / SKILL / "references" / "parallax-backgrounds.md").read_text(encoding="utf-8")
+        plan = json.loads(text.split("```json\n", 1)[1].split("\n```", 1)[0])
+        assert_valid_contract(plan, "map", "parallax_plan", skill=SKILL)
+        Image.new("RGB", (1040, 480), "navy").save(self.root / "sky.png")
+        for name, size in (("far.png", (1200, 480)), ("near.png", (1920, 540))):
+            layer = Image.new("RGBA", size)
+            layer.paste((60, 70, 90, 255), (0, size[1] - 200, size[0], size[1]))
+            layer.save(self.root / name)
+        result = PARALLAX.validate_plan(plan, self.root)
+        self.assertTrue(result["passed"], result["issues"])
+        self.assertEqual(result["warnings"], ["aspect 4:3 (960x720 viewport, expand): sky, far, near do not cover it."])
+        self.assertTrue({entry["aspect"]: entry for entry in result["aspect_sweep"]["aspects"]}["19.5:9"]["required"])
 
     def test_plan_and_result_follow_their_contracts(self):
         assert_valid_contract(self.plan, "map", "parallax_plan", skill=SKILL)
@@ -760,7 +776,8 @@ class ParallaxCliTests(unittest.TestCase):
 
     def test_cli_options_reach_the_validator(self):
         probe = {"viewport": [96, 54], "camera": {"x": [0, 384]},
-                 "layers": [{"id": "sky", "role": "sky", "image": "sky.png", "alpha": "opaque", "scroll_factor": [0, 0]},
+                 "layers": [{"id": "sky", "role": "sky", "image": "sky.png", "alpha": "opaque",
+                             "scroll_factor": [0, 0]},
                             {"id": "near", "role": "near", "image": "far.png", "alpha": "transparent",
                              "scroll_factor": [0.5, 0]}]}
         (self.root / "probe.json").write_text(json.dumps(probe), encoding="utf-8")

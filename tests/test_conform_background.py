@@ -323,7 +323,8 @@ class ValidateCropsTests(unittest.TestCase):
         self.assertEqual(status, 0, stderr)
         self.assertEqual(json.loads(stdout)["status"], "pass")
         for extra in (["--subject", "crest=560,40,720,200", "--subject", "crest=1,1,2,2"], ["--subject", "x"],
-                      ["--subject", "crest=1,1,2,2", "--aspects", "wide"], ["--subject", "crest=1,1,2,2", "--zoom", "0.5"],
+                      ["--subject", "crest=1,1,2,2", "--aspects", "wide"],
+                      ["--subject", "crest=1,1,2,2", "--zoom", "0.5"],
                       ["--aspects", "16:9"]):
             with self.subTest(extra=extra):
                 status, _, stderr = conform_main("validate-crops", "--input", self.plate, "--output-dir",

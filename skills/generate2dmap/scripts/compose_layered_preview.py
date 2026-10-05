@@ -485,7 +485,8 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
     elif "anchorPx" in prop:
         anchor_source = "px"
         if anchor_name is not None and anchor_name != "px":
-            reason = "is ignored because anchorPx is given" if known_name else "is unknown and ignored (anchorPx is given)"
+            reason = ("is ignored because anchorPx is given" if known_name
+                      else "is unknown and ignored (anchorPx is given)")
             warnings.append(f"{ident}: anchor {anchor_name!r} {reason}.")
     elif anchor_name == "px":
         raise ValueError(f"{ident}: anchor 'px' needs anchorPx.")
@@ -793,7 +794,8 @@ def load_bundle(path: Path, geometry: Geometry, base_size: tuple[int, int], scal
     for index, interaction in enumerate(data.get("interactions") or []):
         if not isinstance(interaction, dict):
             raise ValueError(f"{path.name}: interactions[{index}] must be an object.")
-        point = transform(_number(interaction.get("x"), "interaction x"), _number(interaction.get("y"), "interaction y"))
+        point = transform(_number(interaction.get("x"), "interaction x"),
+                          _number(interaction.get("y"), "interaction y"))
         geometry.interactions.append({"id": str(interaction.get("id", f"interaction-{index}")), "point": point,
                                       "reach": _number(interaction.get("reach", 0), "interaction reach") * kx})
     material_map = data.get("material_map")
@@ -1128,18 +1130,23 @@ def render_debug_overlay(canvas: Image.Image, ordered: Sequence[Placed], geometr
     line = max(1, round(min(width, height) / 360))
     mark = max(3, line * 3)
     font = _font(max(10, round(min(width, height) / 55)))
-    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-    tint = np.zeros((height, width, 4), np.uint8)
-    for entry in geometry.masks:
-        tint[entry["mask"]] = (*entry["color"], 90)
-    layer.alpha_composite(Image.fromarray(tint))
-    draw = ImageDraw.Draw(layer)
     measure_kwargs: dict[str, Any] = {"font": font}
     if isinstance(font, ImageFont.FreeTypeFont):
         measure_kwargs["stroke_width"] = max(1, line // 2)
     text_kwargs = dict(measure_kwargs)
     if "stroke_width" in text_kwargs:
         text_kwargs["stroke_fill"] = (0, 0, 0, 255)
+    composite = canvas.copy()
+    layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(layer)
+
+    def flush() -> None:
+        """Blend the finished layer onto the picture and start a new one: ImageDraw replaces the pixels of an
+        RGBA layer instead of blending, so each category gets its own layer and they stack in order."""
+        nonlocal layer, draw
+        composite.alpha_composite(layer)
+        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(layer)
 
     def text(xy: tuple[float, float], value: str, color: tuple[int, int, int]) -> None:
         """A label beside a point, flipped to the other side when it would leave the canvas."""
@@ -1182,6 +1189,11 @@ def render_debug_overlay(canvas: Image.Image, ordered: Sequence[Placed], geometr
                      width=line)
         for hole in holes:
             draw.polygon([tuple(p) for p in hole], fill=(0, 0, 0, 70), outline=(*COLORS["hole"], 255), width=line)
+    flush()
+    tint = np.zeros((height, width, 4), np.uint8)
+    for entry in geometry.masks:
+        tint[entry["mask"]] = (*entry["color"], 90)
+    composite.alpha_composite(Image.fromarray(tint))
     for region in geometry.protected:
         color = COLORS["protected"] if region["kind"] == "protected" else COLORS["walk"]
         draw.polygon([tuple(p) for p in region["polygon"]], fill=(*color, 60), outline=(*color, 255), width=line)
@@ -1191,12 +1203,15 @@ def render_debug_overlay(canvas: Image.Image, ordered: Sequence[Placed], geometr
         text(tuple(effect["polygon"][0]), f"{effect['id']} ({effect['kind']})", COLORS["effect"])
     for row in geometry.bands:
         draw.line([(0, row), (width, row)], fill=(*COLORS["approach"], 255), width=line)
+    flush()
     for shape in geometry.solids:
         draw.polygon(_shape_outline(shape), fill=(*COLORS["solid"], 70), outline=(*COLORS["solid"], 255), width=line)
+    flush()
     for item in ordered:
         if item.footprint is not None:
             color = COLORS["footprint"] if item.footprint["solid"] else COLORS["hole"]
             draw.polygon(_shape_outline(item.footprint), fill=(*color, 60), outline=(*color, 255), width=line)
+    flush()
     for portal in geometry.portals:
         if "rect" in portal:
             draw.rectangle(portal["rect"], outline=(*COLORS["portal"], 255), fill=(*COLORS["portal"], 50), width=line)
@@ -1257,8 +1272,7 @@ def render_debug_overlay(canvas: Image.Image, ordered: Sequence[Placed], geometr
         (f"mask ({len(geometry.masks)})", MASK_COLORS[0]),
         (f"foot ({len(ordered)}; red = invalid actor)", COLORS["foot"]),
     ]
-    composite = canvas.copy()
-    composite.alpha_composite(layer)
+    flush()
     step = (font.size if isinstance(font, ImageFont.FreeTypeFont) else 11) + 6
     measure = ImageDraw.Draw(composite)
     panel_w = 16 + step + max(measure.textbbox((0, 0), forge_core.ascii_text(label), **measure_kwargs)[2]

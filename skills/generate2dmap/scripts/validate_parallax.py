@@ -257,7 +257,8 @@ def _check_layer(layer: Any, base_dir: Path, context: dict[str, Any],
     if not isinstance(expected, str) or expected not in {"opaque", "transparent"}:
         raise ValueError(f"{identity}: alpha must explicitly be opaque or transparent.")
     if any(key in layer for key in ("width", "height", "display_size", "scale_xy", "repeat_width", "repeat_height")):
-        raise ValueError(f"{identity}: use one uniform scale; display size and repeat period come from the actual image.")
+        raise ValueError(f"{identity}: use one uniform scale; display size and repeat period come from the "
+                         f"actual image.")
     scale = number(layer.get("scale", 1), f"{identity}.scale", positive=True)
     offset = pair(layer.get("offset", [0, 0]), f"{identity}.offset")
     anchor = pair(layer.get("anchor_px", [0, 0]), f"{identity}.anchor_px")
@@ -494,7 +495,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: Sequence[str] | None = None) -> int:
     forge_core.utf8_stdio()
     args = build_parser().parse_args(argv)
-    aspects = [] if args.aspects.strip().lower() == "none" else [text for text in args.aspects.split(",") if text.strip()]
+    aspects = ([] if args.aspects.strip().lower() == "none"
+               else [text for text in args.aspects.split(",") if text.strip()])
     plan = None
     errors: list[str] = []
     try:

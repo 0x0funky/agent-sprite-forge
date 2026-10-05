@@ -94,8 +94,9 @@ REQUESTED_MAP_DEFS = {
                 "file": {"$ref": "common.schema.json#/$defs/relPath"},
                 "viewport": {"$ref": "common.schema.json#/$defs/size2"},
                 "zoom": {"type": "number", "minimum": 1}, "gap_px": {"type": "integer", "minimum": 0},
-                "frames": {"type": "array", "items": {"type": "object", "required": ["u", "v", "window"],
-                                                      "properties": {"window": {"$ref": "common.schema.json#/$defs/box"}}}}}},
+                "frames": {"type": "array", "items": {
+                    "type": "object", "required": ["u", "v", "window"],
+                    "properties": {"window": {"$ref": "common.schema.json#/$defs/box"}}}}}},
         },
     },
 }
@@ -292,7 +293,8 @@ class GroundLineSortTests(unittest.TestCase):
             for anchor in ("center", "top-left"):
                 with self.subTest(anchor=anchor):
                     run = compose("--base", root / "base.png", "--placements", root / f"placements-{anchor}.json",
-                                  "--output", root / f"preview-{anchor}.png", "--report", root / f"report-{anchor}.json")
+                                  "--output", root / f"preview-{anchor}.png",
+                                  "--report", root / f"report-{anchor}.json")
                     self.assertEqual(run.returncode, 0, run.stderr)
                     report = json.loads((root / f"report-{anchor}.json").read_text(encoding="utf-8"))
                     order = [(item["id"], item["top"] + item["h"], item["sortY"], item["sort_source"])
@@ -368,7 +370,8 @@ class GroundLineSortTests(unittest.TestCase):
                                   anchor_source="px", anchor_canvas=(x, sort_y), sort_y=sort_y,
                                   sort_source="ground-line", layer="props", band=band, resampler="lanczos",
                                   footprint=None)
-        items = [item("b", 10, 5), item("a", 10, 5), item("c", 2, 5), item("top", 0, 1), item("fg", 0, -9, "foreground")]
+        items = [item("b", 10, 5), item("a", 10, 5), item("c", 2, 5), item("top", 0, 1),
+                 item("fg", 0, -9, "foreground")]
         self.assertEqual([entry.id for entry in COMPOSE.draw_order(items)], ["top", "c", "a", "b", "fg"])
         self.assertEqual([entry.id for entry in COMPOSE.draw_order(items, "raw-y")], ["top", "b", "a", "c", "fg"])
 
@@ -721,7 +724,8 @@ class OverlayAndAuditTests(unittest.TestCase):
             walk, hole, wall, masked = region[160, 100], region[135, 165], region[60, 40], region[20, 190]
             self.assertGreater(walk[1], walk[0])                      # green walk-area tint
             self.assertLess(hole[:3].sum(), walk[:3].sum())          # holes are darker
-            self.assertGreater(wall[0], wall[1] + 40)                 # red solid
+            self.assertGreater(wall[0], walk[0] + 30)                 # the red solid blends over the walk area
+            self.assertLess(wall[1], walk[1])
             self.assertGreater(masked[2], preview[20, 190, 2] + 20)   # blue mask tint
             np.testing.assert_array_equal(region[175, 5], preview[175, 5])  # untouched outside the geometry
             portal_edge = region[60, 210]
@@ -780,6 +784,44 @@ class OverlayAndAuditTests(unittest.TestCase):
             audit = json.loads((root / "out" / "audit.json").read_text(encoding="utf-8"))
             checks = {check["id"]: check for check in audit["checks"]}
             self.assertEqual(checks["actors_visible"]["value"]["hidden"], ["hero"])
+
+    def test_bundle_world_scale_material_map_and_unused_geometry_warning(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            placements, bundle = self.scene(root)
+            materials = Image.new("RGB", (120, 90), (0, 0, 0))
+            materials.paste((255, 0, 0), (10, 10, 30, 30))
+            materials.save(root / "materials.png")
+            palette = Image.new("P", (120, 90), 0)
+            palette.putpalette([0, 0, 0, 9, 9, 9])
+            palette.paste(1, (90, 60, 110, 80))
+            palette.save(root / "indexed.png")
+            bundle["world"] = {"width": 120, "height": 90, "unit": "px"}
+            bundle["collision"]["solids"] = [{"shape": "rect", "id": "wall", "x": 15, "y": 25, "w": 10, "h": 10}]
+            bundle["material_map"] = {"image": "materials.png", "materials": {
+                "pond": {"class": "liquid", "color": "#ff0000"}, "lava": {"class": "magma", "color": "#00ff00"}}}
+            assert_valid_contract({**bundle, "material_map": {"image": "materials.png", "materials": {
+                "pond": {"class": "liquid", "color": "#ff0000"}}}}, "map", "map_bundle_v2", skill=SKILL)
+            (root / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
+            run = self.run_scene(root, "--debug-overlay", root / "out" / "overlay.png", "--report",
+                                 root / "out" / "report.json")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            overlay = rgba(root / "out" / "overlay.png").astype(int)
+            # The wall spans world 15..25, canvas 30..50 after the 2x world-to-base scale.
+            self.assertGreater(overlay[60, 40][0], overlay[160, 100][0] + 30)
+            pond = overlay[40, 40]                                            # world (10..30)*2: liquid tint
+            self.assertGreater(pond[2], pond[0])
+            self.assertIn("class 'magma'", run.stderr)
+            bundle["material_map"] = {"image": "indexed.png", "materials": {"tar": {"class": "hazard", "index": 1}}}
+            (root / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
+            run = self.run_scene(root, "--debug-overlay", root / "out" / "indexed.png", "--output",
+                                 root / "out" / "preview-2.png")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            tar = rgba(root / "out" / "indexed.png").astype(int)[140, 200]
+            self.assertGreater(tar[0], tar[2] + 30)                           # orange hazard tint
+            run = self.run_scene(root, "--output", root / "out" / "plain.png")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            self.assertIn("--bundle, --stage and --mask are read only with", run.stderr)
 
     def test_stage_ground_polygons_are_the_walk_area_without_a_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -261,7 +261,8 @@ def _file_ref(path: Path, base_dir: Path, sha256: str | None = None) -> dict[str
 
 # --------------------------------------------------------------------------- overlay
 
-def render_crops_overlay(image: Image.Image, checks: list[dict[str, Any]], subjects: list[dict[str, Any]]) -> Image.Image:
+def render_crops_overlay(image: Image.Image, checks: list[dict[str, Any]],
+                         subjects: list[dict[str, Any]]) -> Image.Image:
     """The plate with every crop window outlined and labelled, and each subject green (kept) or red (cut)."""
     overlay = image.convert("RGBA").copy()
     layer = Image.new("RGBA", overlay.size, (0, 0, 0, 0))
