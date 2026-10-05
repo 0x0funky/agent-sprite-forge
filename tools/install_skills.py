@@ -57,6 +57,12 @@ def _local_utf8_stdio() -> None:
             stream.reconfigure(errors="backslashreplace")
 
 
+def _ascii(text: object) -> str:
+    """Console-safe ASCII (Appendix D): non-ASCII characters, such as a user name in a path, become
+    backslash escapes on every console code page, not only on one that cannot encode them."""
+    return str(text).encode("ascii", "backslashreplace").decode("ascii")
+
+
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with open(path, "rb") as stream:
@@ -250,7 +256,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             problems = drift(source, dest, skills)
             for kind, path in problems:
-                print(f"{kind}: {path}", file=sys.stderr)
+                print(_ascii(f"{kind}: {path}"), file=sys.stderr)
             if problems:
                 print(f"error: {len(problems)} file(s) differ from this checkout; run with --apply to reinstall "
                       "(the old copies are backed up first)", file=sys.stderr)
@@ -258,10 +264,10 @@ def main(argv: list[str] | None = None) -> int:
             summary = {"status": "in-sync", "dest": str(dest), "skills": skills,
                        "files": sum(len(skill_files(source / s)) for s in skills)}
     except (InstallError, OSError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(_ascii(f"error: {exc}"), file=sys.stderr)
         return 1
     except Exception as exc:  # noqa: BLE001  (D27: tracebacks are never user-facing)
-        print(f"error: internal error ({type(exc).__name__}: {exc})", file=sys.stderr)
+        print(_ascii(f"error: internal error ({type(exc).__name__}: {exc})"), file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0

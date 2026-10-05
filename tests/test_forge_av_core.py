@@ -41,9 +41,10 @@ def test_forge_av_imports_its_sibling_forge_core():
         scripts = SKILLS_DIR / skill / "scripts"
         code = ("import sys; sys.path.insert(0, sys.argv[1]); import forge_av, forge_core; "
                 "print(forge_av.forge_core.__file__); print(forge_av.forge_core is forge_core)")
-        done = subprocess.run([sys.executable, "-c", code, str(scripts)], capture_output=True, text=True,
-                              cwd=str(REPO_ROOT / "tests"), check=True)
-        location, same = done.stdout.split()
+        done = subprocess.run([sys.executable, "-c", code, str(scripts)], capture_output=True, encoding="utf-8",
+                              errors="replace", cwd=str(REPO_ROOT / "tests"), check=True,
+                              env={**os.environ, "PYTHONIOENCODING": "utf-8"})
+        location, same = done.stdout.splitlines()
         assert Path(location).resolve() == (scripts / "forge_core.py").resolve() and same == "True", skill
 
 
@@ -152,9 +153,17 @@ def test_failed_verification_publishes_nothing(tmp_path, monkeypatch):
 
 
 def test_forge_av_refuses_a_foreign_forge_core(tmp_path):
-    """A stale or foreign forge_core beside forge_av is refused at import, not half-used."""
-    (tmp_path / "forge_core.py").write_text('FORGE_CORE_API_VERSION = "2.0"\n', encoding="utf-8")
-    (tmp_path / "forge_av.py").write_bytes((REPO_ROOT / "shared" / "forge_av.py").read_bytes())
-    done = subprocess.run([sys.executable, "-c", "import forge_av"], capture_output=True, text=True,
-                          cwd=str(tmp_path), env={**os.environ, "PYTHONPATH": str(tmp_path)})
+    """A stale or foreign forge_core beside forge_av is refused at import, not half-used.
+
+    r3-platform finding 5: the folder name is non-ASCII on purpose, so the child's traceback always holds
+    non-ASCII text. The output is decoded as UTF-8 with errors=replace (Appendix D); decoding it with the
+    locale codec (text=True) raised UnicodeDecodeError under cp950 and left stderr None."""
+    folder = tmp_path / "測試 ü"
+    folder.mkdir()
+    (folder / "forge_core.py").write_text('FORGE_CORE_API_VERSION = "2.0"\n', encoding="utf-8")
+    (folder / "forge_av.py").write_bytes((REPO_ROOT / "shared" / "forge_av.py").read_bytes())
+    done = subprocess.run([sys.executable, "-c", "import forge_av"], capture_output=True, encoding="utf-8",
+                          errors="replace", cwd=str(folder),
+                          env={**os.environ, "PYTHONPATH": str(folder), "PYTHONIOENCODING": "utf-8"})
     assert done.returncode != 0 and "forge_av needs forge_core API version 1.x" in done.stderr
+    assert "測試 ü" in done.stderr  # the traceback's path survives the round trip

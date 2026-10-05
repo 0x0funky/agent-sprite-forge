@@ -142,6 +142,26 @@ def test_unlisted_copy_is_reported(tmp_path):
     assert result.returncode == 1 and "unlisted copy: skills/c/scripts/forge_demo.py" in result.stderr
 
 
+@pytest.mark.parametrize("encoding", ["cp1252", "utf-8", "cp950"])
+def test_error_and_problem_lines_escape_non_ascii_paths(tmp_path, encoding):
+    """r2-conventions finding 14: with --root in a folder named '測試 ü', the 'error: cannot read' line put raw
+    bytes on stderr (0xFC for 'ü' under cp1252, raw UTF-8 or Big5 otherwise). Every line is ASCII now."""
+    root = tmp_path / "測試 ü"
+    root.mkdir()
+    result = run_cli([TOOL, "--check", "--root", root], encoding)
+    assert result.returncode == 1 and result.stderr.isascii(), result.stderr
+    assert result.stderr.startswith("error: cannot read shared/VENDORED.json") and "\\u6e2c\\u8a66 \\xfc" in result.stderr
+    manifest = [{"canonical": "shared/forge_測.py", "targets": ["skills/測試/scripts/forge_測.py"]},
+                {"canonical": "shared/forge_試.py", "targets": ["skills/測試/scripts/forge_試.py"]}]
+    tree = make_tree(tmp_path / "tree", manifest, {"skills/測試/scripts/forge_測.py": b"X = 1\n",
+                                                    "shared/forge_試.py": b"Y = 2\n",
+                                                    "skills/測試/scripts/forge_試.py": b"Y = 1\n"})
+    result = run_cli([TOOL, "--check", "--root", tree], encoding)
+    assert result.returncode == 1 and result.stderr.isascii(), result.stderr
+    assert "stale copy: skills/\\u6e2c\\u8a66/scripts/forge_\\u8a66.py (canonical shared/forge_\\u8a66.py)" in result.stderr
+    assert "copy without canonical: skills/\\u6e2c\\u8a66/scripts/forge_\\u6e2c.py" in result.stderr
+
+
 @pytest.mark.parametrize("entry", [
     {"canonical": "shared/forge_demo.py", "targets": ["tools/forge_demo.py"]},
     {"canonical": "shared/forge_demo.py", "targets": ["skills/a/scripts/other.py"]},

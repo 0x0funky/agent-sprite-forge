@@ -129,6 +129,27 @@ def test_refuses_an_existing_backup_dir(source, home, capsys):
     assert code == 1 and "already exists" in err and not list(backup.iterdir())
 
 
+def test_console_text_is_ascii_for_non_ascii_paths(source, home, capsys, tmp_path):
+    """r3-platform finding 4 (TEMP or a Windows user name in Chinese made test_refuses_an_existing_backup_dir fail):
+    error and drift lines escape non-ASCII paths on every console code page, not only where the console cannot
+    encode them (raw Big5 under cp950, raw UTF-8 under utf-8 before)."""
+    (source / "alpha" / "references" / "筆記 ü.md").write_text("notes\n", encoding="utf-8")
+    dest = home / ".claude" / "skills"
+    assert run(capsys, "--apply", "--host", "claude", "--source", source)[0] == 0
+    (dest / "alpha" / "references" / "筆記 ü.md").write_text("edited\n", encoding="utf-8")
+    code, _, err = run(capsys, "--check", "--host", "claude", "--source", source)  # run() asserts ASCII
+    assert code == 1 and "changed (edited locally): alpha/references/\\u7b46\\u8a18 \\xfc.md" in err
+    backup = tmp_path / "備份 ü"
+    backup.mkdir()
+    code, _, err = run(capsys, "--apply", "--host", "claude", "--source", source, "--backup-dir", backup)
+    assert code == 1 and "\\u5099\\u4efd \\xfc already exists" in err
+    for encoding in ("cp950", "utf-8", "cp1252"):
+        result = run_cli([TOOL, "--apply", "--host", "claude", "--source", source, "--backup-dir", backup], encoding,
+                         env={"HOME": str(home), "USERPROFILE": str(home)}, timeout=120)
+        assert result.returncode == 1 and result.stderr.isascii(), (encoding, result.stderr)
+        assert "\\u5099\\u4efd \\xfc already exists" in result.stderr, (encoding, result.stderr)
+
+
 def test_a_failed_apply_restores_everything(source, home, capsys, monkeypatch):
     dest = home / ".claude" / "skills"
     assert run(capsys, "--apply", "--host", "claude", "--source", source)[0] == 0
