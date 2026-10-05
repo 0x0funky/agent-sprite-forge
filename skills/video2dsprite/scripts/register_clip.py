@@ -6,9 +6,10 @@
                     prepare_i2v_input.py: premultiplied resampling, action padding that
                     grows the canvas and shifts the anchor (never shrinks the body),
                     optional feet/x/hip locks in whole output pixels, and an actor or
-                    fx profile (edge fade, dissolve tail, displayScale). Writes frames/,
-                    registration.json and review-contact.png to a new --output-dir
-                    after registration QA.
+                    fx profile (edge fade, dissolve tail, displayScale), then the alpha
+                    hygiene floor (alpha <= 4 cleared: invisible resampling halo). Writes
+                    frames/, registration.json and review-contact.png to a new
+                    --output-dir after registration QA.
   profile           Write a character profile (video2dsprite.character_profile.v1) from
                     registered clips; later clips inherit it with apply
                     --character-profile.
@@ -17,7 +18,8 @@
   qc                Judge a raw take against its job: landmark and identity NCC
                     (36 px patches, +-15 px search), camera drift and scale in the
                     calm spans, edge key purity. Appends one take.v1 line to
-                    takes.jsonl.
+                    takes.jsonl (an audit log: kept and rejected takes exit 0;
+                    --strict exits 1 on a rejection, the line still written).
   palette-repair    Remap off-palette flashes inside given regions to colours sampled
                     from the master. Alpha never changes; writes an audit report.
 
@@ -47,7 +49,7 @@ import forge_matte  # noqa: E402
 import prepare_i2v_input as prep  # noqa: E402  (sibling script: action templates, placement, key helpers)
 
 TOOL_NAME = "register_clip"
-TOOL_VERSION = "1"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 REGISTRATION_SCHEMA = "video2dsprite.registration.v1"
 PROFILE_SCHEMA = "video2dsprite.character_profile.v1"
 TAKE_SCHEMA = "video2dsprite.take.v1"
@@ -80,6 +82,8 @@ DEFAULT_MAX_DRIFT = 2.0           # source px
 DEFAULT_MIN_LANDMARK_NCC = 0.6
 DEFAULT_MIN_IDENTITY_NCC = 0.5
 DEFAULT_MAX_EDGE_IMPURE = 0.0005  # share of the border band
+HYGIENE_FLOOR = 4                 # D18: registered frames lose alpha <= 4 (forge_core.alpha_hygiene floor)
+MATTE_MODES = ("soft", "dominance", "binary")
 
 
 class RegistrationQAError(ValueError):
@@ -92,8 +96,7 @@ def _ascii(text: Any) -> str:
     return forge_core.ascii_text(str(text))
 
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
+_round_half_up = forge_core.round_half_up  # floor(value + 1/2), never banker's rounding (D30)
 
 
 def _natural_key(path: Path) -> list:
@@ -112,15 +115,13 @@ def list_frames(directory: str | Path, pattern: str = "*.png") -> list[Path]:
 
 def ref_path(path: str | Path, base: str | Path) -> str:
     """Manifest-relative POSIX path, or just the file name when no relative path exists
-    (another drive): manifests never hold absolute paths."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        return Path(path).name
-    return relative
+    (another drive): manifests never hold absolute paths (forge_core.manifest_path, D30)."""
+    return forge_core.manifest_path(path, base)
 
 
 def _file_ref(path: Path, base: Path, digest: str | None = None) -> dict[str, Any]:
-    return {"path": ref_path(path, base), "sha256": digest or forge_core.sha256_file(path)}
+    """A common fileRef {path, sha256, bytes} (forge_core.file_ref, D30)."""
+    return forge_core.file_ref(path, base, sha256=digest)
 
 
 def _load_pixels(path: Path) -> tuple[np.ndarray, str]:
@@ -242,7 +243,7 @@ def load_job(path: str | Path) -> Job:
     path = Path(path)
     raw = path.read_bytes()
     try:
-        data = json.loads(raw.decode("utf-8-sig"))
+        data = forge_core.parse_json(raw)  # UTF-8 with or without a BOM (D28)
     except ValueError:
         raise ValueError(f"{path.name} is not valid JSON") from None
     if not isinstance(data, dict) or data.get("schema") != prep.JOB_SCHEMA:
@@ -532,9 +533,9 @@ def identity_mismatches(expected: dict[str, Any], actual: dict[str, Any], scale_
 def _load_document(path: str | Path, schema: str) -> dict[str, Any]:
     path = Path(path)
     try:
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        data = forge_core.read_json(path)  # UTF-8 with or without a BOM (D28)
     except (OSError, ValueError) as error:
-        raise ValueError(f"Cannot read {path}: {error}") from None
+        raise ValueError(f"Cannot read {path.name}: {error}") from None
     if not isinstance(data, dict) or data.get("schema") != schema:
         raise ValueError(f"{path.name} is not a {schema} document")
     return data
@@ -814,6 +815,7 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
     records: list[dict[str, Any]] = []
     video_edge, overflow_frames, empty_frames, clipped_locks = [], [], [], []
     needed = [0.0, 0.0, 0.0, 0.0]
+    hygiene = {"floor_px": 0, "max_removed_alpha": 0, "frames": []}
     with forge_core.staged_output(output) as stage:
         (stage / "frames").mkdir()
         for index, path in enumerate(plan.files):
@@ -836,6 +838,14 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
                     needed = [max(need, value) for need, value in zip(needed, over)]
             if plan.fx:
                 registered = _scale_alpha(registered, fade * _fx_time_fade(index, count, args.fade_in_frames, tail))
+            # D18: lanczos resampling (forge_core.resample_rgba) rings just outside edges and unpremultiplying
+            # alpha 1-4 invents saturated, often key-leaning colours; they are invisible but read as key spill.
+            cleaned, floor = forge_core.alpha_hygiene(registered, mode="floor", floor=HYGIENE_FLOOR)
+            if floor["floor_px"]:
+                registered = np.asarray(cleaned)
+                hygiene["floor_px"] += floor["floor_px"]
+                hygiene["max_removed_alpha"] = max(hygiene["max_removed_alpha"], floor["max_removed_alpha"])
+                hygiene["frames"].append(index)
             name = f"frames/frame_{index:06d}.png"
             forge_core.save_png(registered, stage / name)
             records.append({"file": name, "sha256": forge_core.sha256_file(stage / name),
@@ -851,6 +861,11 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
                             stage / "review-contact.png")
         document = _registration_document(args, plan, final, records, checks, master_sil, master_hip, master_anchor,
                                           band, rest_measures, targets, contact, character)
+        document["hygiene"] = {"mode": "floor", "floor": HYGIENE_FLOOR, "floor_px": hygiene["floor_px"],
+                               "max_removed_alpha": hygiene["max_removed_alpha"],
+                               "frames_changed": len(hygiene["frames"]),
+                               "method": "forge_core.alpha_hygiene(mode='floor', floor=4) after resampling, locks and "
+                                         "fx fades: pixels with 0 < alpha <= 4 become (0, 0, 0, 0) (D18)"}
         if plan.fx:
             document["fx"] = {"edgeFadePx": fade_px, "fadeRect": fade_rect, "fadeInFrames": args.fade_in_frames,
                               "dissolveTailFrames": tail}
@@ -931,8 +946,9 @@ def _registration_document(args: argparse.Namespace, plan: ApplyPlan, final: Pat
         "qa": {
             "status": "needs-visual-review",
             "method": "register_clip apply v1: one inverse transform from registration_job.v1 (registration by "
-                      "construction), forge_core.resample_rgba anchor-pinned premultiplied resampling; subject = "
-                      "alpha > 16; edge, overflow and rest-pose checks on the source and registered alpha",
+                      "construction), forge_core.resample_rgba anchor-pinned premultiplied resampling, then the "
+                      "alpha hygiene floor (alpha <= 4 cleared, D18); subject = alpha > 16; edge, overflow and "
+                      "rest-pose checks on the source and registered alpha",
             "notProven": ["identity, contact and pose quality (look at review-contact.png and the frames)",
                           "matte quality of the input frames", "loop seams and timing (gait_loop, retime)"],
             "checks": checks,
@@ -1009,10 +1025,25 @@ def _apply_checks(fx: bool, args: argparse.Namespace, video_edge: list[int], ove
 
 # --------------------------------------------------------------------------- profile and validate-profile
 
+def profile_matte(mode: str, key: str, erode: int, unmix: bool | None, despill: str) -> dict[str, Any]:
+    """The ``matte`` block video2dsprite --matte-profile reads (D21): ``unmix`` defaults to the soft matte
+    (the dominance alpha is a ramp and binary alpha has nothing to un-mix, so only soft may un-mix) and
+    ``erode`` is a whole number of px."""
+    if mode not in MATTE_MODES:
+        raise ValueError(f"--matte-mode must be one of {', '.join(MATTE_MODES)}")
+    if unmix and mode != "soft":
+        raise ValueError(f"--unmix belongs to the soft matte; a {mode} profile pins unmix false")
+    if isinstance(erode, bool) or not isinstance(erode, int) or erode < 0:
+        raise ValueError(f"--erode must be a whole number of px >= 0, got {erode!r}")
+    return {"mode": mode, "key": key, "erode": erode, "unmix": (mode == "soft") if unmix is None else bool(unmix),
+            "despill": despill}
+
+
 def cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
     output = Path(args.output)
     if output.exists():
         raise FileExistsError(f"Refusing to replace existing output: {output}")
+    matte = profile_matte(args.matte_mode, args.key or None, args.erode, args.unmix, args.despill_mode)
     registrations = [(Path(path), load_registration(path)) for path in args.registration]
     reference = registrations[0][1]
     expected = _identity_from_registration(reference)
@@ -1045,8 +1076,7 @@ def cmd_profile(args: argparse.Namespace) -> dict[str, Any]:
             "groundMinRun": reference.get("lock", {}).get("groundMinRun"),
             "restFootBottom": geometry.get("groundLine"),
         },
-        "matte": {"mode": args.matte_mode, "key": args.key or reference.get("keyColor", "magenta"),
-                  "erode": args.erode, "unmix": args.unmix, "despill": args.despill_mode},
+        "matte": {**matte, "key": matte["key"] or reference.get("keyColor", "magenta")},
         "clips": clips,
         "nativeFootBottomRange": [min(feet), max(feet)] if feet else None,
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
@@ -1736,10 +1766,11 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--id", required=True, help="character id")
     pr.add_argument("--output", required=True, help="new profile JSON file")
     pr.add_argument("--world-scale", type=_positive, help="world units per source px")
-    pr.add_argument("--matte-mode", choices=("soft", "dominance", "binary"), default="soft")
+    pr.add_argument("--matte-mode", choices=MATTE_MODES, default="soft")
     pr.add_argument("--key", type=prep.normalise_key, help="matte key (default: the clips' key)")
-    pr.add_argument("--erode", type=float, default=0.0, help="matte erosion in px (default 0)")
-    pr.add_argument("--unmix", action=argparse.BooleanOptionalAction, default=True, help="un-mix edge colours")
+    pr.add_argument("--erode", type=_non_negative_int, default=0, help="matte erosion in whole px (default 0)")
+    pr.add_argument("--unmix", action=argparse.BooleanOptionalAction,
+                    help="soft matte only: un-mix edge colours (default: on for soft, off for dominance and binary)")
     pr.add_argument("--despill-mode", choices=forge_matte.DESPILL_MODES, default="auto")
     pr.add_argument("--scale-tolerance", type=_fraction, default=0.005)
     pr.set_defaults(func=cmd_profile)
@@ -1815,15 +1846,18 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     return args.func(args)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    try:
-        summary = run(argv)
-    except Exception as exc:  # noqa: BLE001 - CLI surface: no tracebacks for users
-        print(f"error: {_ascii(exc)}", file=sys.stderr)
-        return 1
-    print(json.dumps(summary))
+def _run(argv: Sequence[str] | None = None) -> int:
+    print(json.dumps(run(argv), ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2; refused input, failed registration QA, a failed profile validation and a take
+    rejected under --strict exit 1 with ``error: ...``; anything unexpected prints ``error: internal error
+    (...)`` (D26, D27; forge_core.run_cli). qc is an append-only verdict log, not a verify tool: a rejected
+    take is recorded and exits 0 unless --strict."""
+    import forge_av  # qc --video decodes with ffmpeg: its errors are refused input, not internal errors
+    return forge_core.run_cli(_run, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (forge_av.ForgeAVError,))
 
 
 if __name__ == "__main__":

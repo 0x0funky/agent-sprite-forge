@@ -4,7 +4,12 @@ Branch `asf/B05-video-keying` (from `wip/asf-upgrade-20261005` @ 3f9252d). Modul
 [skills/video2dsprite/scripts/video2dsprite.py](../skills/video2dsprite/scripts/video2dsprite.py) (rewritten keying,
 new verbs `key-plan` and `triage`), [skills/video2dsprite/references/matte.md](../skills/video2dsprite/references/matte.md),
 [tests/test_video2dsprite.py](../tests/test_video2dsprite.py) (the 13 engine_export copies deleted, 12 tests added) and
-[tests/test_video2dsprite_matte.py](../tests/test_video2dsprite_matte.py) (30 tests plus one opt-in bench).
+[tests/test_video2dsprite_matte.py](../tests/test_video2dsprite_matte.py) (30 tests plus one opt-in bench; integration added 8 more: thread equality, a failing frame stopping the
+threads, the exhaustive integer hysteresis, the crop and rim helpers, key-plan on opaque masters, package and verify
+verbs, internal errors).
+
+Integration status (Phase 3, group video, branch `asf/int-g-video`): D20 (package/verify wiring), D33 (key-plan for
+an opaque master), the whole-pass speed work and D26-D30 are done; resolved items below cite their decision.
 
 ## 1. CLIs
 
@@ -17,6 +22,8 @@ Run from the user's project root; `<skill-dir>` is `${CLAUDE_SKILL_DIR}` in Clau
     python "<skill-dir>/scripts/video2dsprite.py" clean --raw-dir work/hero-idle-raw --output-dir work/hero-idle-clean --matte-profile art/hero-profile.json
     python "<skill-dir>/scripts/video2dsprite.py" sample --clean-dir work/hero-idle-clean --output-dir work/hero-idle-sample --frame-counts 12,24 --playback-duration 2
     python "<skill-dir>/scripts/video2dsprite.py" clean --raw-dir work/hero-idle-raw --output-dir work/hero-idle-legacy --matte binary --despill-mode off
+    python "<skill-dir>/scripts/video2dsprite.py" package --clean-dir work/hero-idle-reg/frames --registration work/hero-idle-reg/registration.json --output-dir game/hero/idle --name idle --fps 24 --loop --formats png,webm,packed
+    python "<skill-dir>/scripts/video2dsprite.py" verify --package game/hero/idle
     python "<skill-dir>/scripts/video2dsprite.py" doctor
 
 - Every verb that writes files takes a new `--output-dir` (`--out-dir` is accepted as the old name): an existing
@@ -26,7 +33,9 @@ Run from the user's project root; `<skill-dir>` is `${CLAUDE_SKILL_DIR}` in Clau
 - Keying flags of `clean` and `process`: `--matte soft|dominance|binary` (default soft), `--key auto|magenta|green|blue|#rrggbb`,
   `--key-mode auto|always|magenta|none`, `--despill-mode auto|edge|all|off`, `--despill-radius N`, `--pockets auto|remove|keep`,
   `--protect-color HEX` (repeatable) and `--protect-tol`, `--erode N`, `--unmix/--no-unmix` (soft only),
-  `--temporal-stability auto|off|alpha`, `--local-background [PX]`, `--matte-profile FILE`, `--reference FILE`, `--strict`;
+  `--temporal-stability auto|off|alpha`, `--local-background [PX]`, `--matte-profile FILE`, `--reference FILE`, `--strict`,
+  `--workers N` (threads that decode, estimate and matte frames; default 0 = min(4, CPUs), capped so that at most
+  8 megapixels of frames are matted at once; the output bytes never depend on it);
   `--dist` and `--despill` (strength) belong to `--matte binary` and are refused with other mattes.
 - `extract`/`process`: `--fps 0|N|N/D` (0 = every frame), `--start`, `--duration` (frames timed in [start, start + duration)),
   `--alpha auto|on|off`; `--decoder libvpx-vp9` stays as the old spelling of `--alpha auto`.
@@ -36,8 +45,15 @@ Run from the user's project root; `<skill-dir>` is `${CLAUDE_SKILL_DIR}` in Clau
   `metadata` (`extract`: null; `clean`: `matte-report.json`; `sample` and `process`: `pipeline-meta.json`; `triage`:
   `raw-triage.json` plus `sheet`), `process` adds `outputs` (frames_raw, frames_clean, matte_report, sprite, readme),
   `frames`, `matte` (mode, status, key, opaque_key_px, enclosed_key_pockets, flips_per_frame_pair), `sets` and
-  `key_seconds_per_frame`. `key-plan` prints the plan itself; `doctor` prints `forge_av.ffmpeg_info()` plus the old
-  `webm`/`packed`/`png` keys (now functional results). `package` is unchanged apart from the `--output-dir` alias.
+  `key_seconds_per_frame`. `key-plan` prints the plan itself (with `master_keying`: how an opaque master was keyed,
+  per D33); `doctor` prints `forge_av.ffmpeg_info()` plus the old `webm`/`packed`/`png` keys (now functional
+  results). `package` and `verify` are engine_export's verbs with every 3.0 flag (`--allow-key-residue`, `--key`,
+  `--selection`, `--registration`, `--tiers`, ...; `--out-dir` stays an alias) and print its summary with `output`
+  and `metadata` (per D20).
+- Exit codes and errors (per D26, D27): usage errors exit 2; refused input exits 1 with `error: ...`; a matte QA
+  failure publishes the frames with a warning (exit 0) unless `--strict` (exit 1, nothing published); anything
+  unexpected prints `error: internal error (<Type>: <message>)` (forge_core.run_cli). The matte profile is read with
+  forge_core.read_json (BOM-tolerant, per D28); QA envelopes record `tool.version` 0.4.0 (per D29).
 - `process` layout: `frames-raw/frame_000000.png...`, `frames-clean/clean_0000.png...` plus `frames-clean/matte-report.json`,
   `sprite/`, `pipeline-meta.json` (its `matte` block is the matte report without the file lists), `README.txt`.
 
@@ -55,6 +71,8 @@ video2dsprite:
 | A design colour near the key disappears | `--protect-color #rrggbb`, or regenerate on the key `key-plan` recommends |
 | Fail a CI run on key residue | add `--strict` |
 | Reproduce cfed170 keying | `--matte binary --despill-mode off` |
+| Package or verify keyed frames | `scripts/video2dsprite.py package ...` / `verify --package <dir>` (the engine_export verbs; see pipeline.md) |
+| Key on a busy or small machine | `--workers 1` (one frame at a time; same bytes) |
 
 Processing-notes bullets: soft matte is the default (enclosed key holes are background, edges are soft and un-mixed,
 interior despill is decided once per clip, alpha hysteresis damps flicker); plan the key before generation; triage
@@ -67,7 +85,7 @@ before processing; every verb needs a new `--output-dir`; keying claims quote th
 |---|---|---|
 | `video2dsprite.py key-plan` | Picks the chroma key a master does not fight and writes the prompt's background sentence | `tests/test_video2dsprite_matte.py::test_key_plan_rejects_magenta_for_pink_master` |
 | `video2dsprite.py triage` | Reports size, fps, frames, audio/cover-art streams, border-touching frames and key drift of a raw clip, with an overview sheet | `tests/test_video2dsprite.py::test_triage_flags_border_frames_and_audio` |
-| `video2dsprite.py clean` / `process` | Soft-matte keying with pocket removal, auto despill, protected colours, alpha hysteresis and a hash-bound matte report | `test_ring_hole_keyed`, `test_purple_costume_kept`, `test_binary_matches_cfed170`, `test_meta_matte_block_validates`; opt-in bench on the Ryo clip |
+| `video2dsprite.py clean` / `process` | Soft-matte keying with pocket removal, auto despill, protected colours, alpha hysteresis and a hash-bound matte report, on up to four threads (0.34 s per 960x960 frame on the Ryo clip) | `test_ring_hole_keyed`, `test_purple_costume_kept`, `test_binary_matches_cfed170`, `test_meta_matte_block_validates`, `test_threads_give_the_same_bytes`; opt-in bench on the Ryo clip |
 
 ## 4. CHANGELOG entries
 
@@ -82,6 +100,12 @@ before processing; every verb needs a new `--output-dir`; keying claims quote th
 - Added: `key-plan --master` and `--matte-profile` (character_profile.v1 matte pins with deviation warnings) (B05-T6).
 - Added: exact per-frame preview GIF delays (`gif_durations_ms`, forge_core.frame_durations over centiseconds) (B05-T7).
 - Added: references/matte.md (B05-T8).
+- Added: `video2dsprite.py package` takes every engine_export 3.0 flag (the `--allow-key-residue` legacy switch
+  included) and a `verify` verb (integration D20).
+- Added: `--workers N` for clean and process: frames are decoded, estimated and matted on up to four threads; the
+  whole keying pass on the Ryo clip went from 1.21 to 0.34 s per frame (4-core machine) with byte-identical output.
+- Changed: `key-plan` keys an opaque master on its own backdrop first and lists its design colours at risk
+  (integration D33); it no longer prints a note instead.
 - Changed: `extract`/`process` decode through forge_av: input-side trimming, WebM alpha kept automatically (libvpx),
   `--alpha`, rational `--fps`; `doctor` reports forge_av's functional probe (B05-T4, A5).
 - Changed: console output is ASCII (`->`), `utf8_stdio()` runs first, subprocesses decode UTF-8 with replacement; stdout
@@ -104,12 +128,13 @@ before processing; every verb needs a new `--output-dir`; keying claims quote th
 - Fixed: report v2 3.4/3.5: the per-pixel Python BFS (video2dsprite.py:125-148 at cfed170) is gone; Grok's audio track and
   cover art are reported by triage and dropped by extract.
 - Fixed: video2dsprite.py:386 at cfed170 rounded one GIF delay for all frames; delays now sum exactly.
+- Fixed: `video2dsprite.py package --allow-key-residue` exited 2 (unrecognized argument) and green-keyed clips were
+  gated against magenta through this verb (Wave B review, integration D17, D20).
 
 ## 5. Schema change requests
 
-None blocks this module: every document B05 writes validates against the frozen schemas (tests:
-`test_meta_matte_block_validates`, `test_process_meta_matte_block_validates`, `test_triage_flags_border_frames_and_audio`).
-Optional documentation of the extra fields producers now write (objects are open), for integration to add.
+Resolved: integration S1 applied this section to shared/schemas/video.schema.json (commit f3d7eb2); the tests
+validate against the vendored schemas. Kept for reference:
 
 `shared/schemas/video.schema.json`, `$defs.matte_report_v1.properties` (producer B05, consumer B08):
 
@@ -172,32 +197,33 @@ takes edge colour from the neighbouring subject (KeyParams.unmix_from 1.0); must
   with `_key_model`), used by triage's border rule.
 - `_local_erode_alpha` (video2dsprite.py:690): `forge_matte.erode_alpha(rgba, steps)`, the 4-neighbour min filter of
   game-opus55 pixelate.py `_erode`, RGB zeroed under alpha 0. Test: `test_despill_modes_unmix_and_erode`.
-- `_local_portable` and `_local_file_ref` (video2dsprite.py:112, 118): `forge_core.file_ref(path, base, sha256=None)`
-  returning a common fileRef whose path falls back to the bare file name when `portable_path` has no relative route
-  (A1 section 5 asks every writer to do this by hand). Tests: `test_meta_matte_block_validates`, `test_process_publishes_once_with_portable_meta`.
+- Resolved (per D30): `_local_portable` and `_local_file_ref` are gone; video2dsprite.py calls
+  forge_core.manifest_path and forge_core.file_ref.
+- Still pending (forge_matte, not covered by D30): `AlphaHysteresis`, `pair_flips`, `key_dominance`, `erode_alpha`
+  as above. Integration changed the local twins without changing their results: `_LocalAlphaHysteresis` now works in
+  integers (equal to the float32 library filter for every previous value, state and alpha, tested exhaustively, at
+  about half the cost), and the pair flips test colour only where alpha changed (`_local_pair_flip_counts`). If
+  forge_matte promotes them, take these versions. Also new and local: matte_qa and pocket removal on the alpha > 0
+  crop (`_local_matte_qa`, `_local_remove_pockets`; exact, tested against the library); forge_matte could run them
+  on that crop itself.
 
 ## 7. Cross-module links that Z must add
 
-- B08 pipeline.md (owner B08): commands must use new output folders (`--output-dir`; reruns into an existing folder
-  fail); `clean --despill 0..1` now needs `--matte binary` (the default soft matte despills with `--despill-mode`);
-  `extract --decoder libvpx-vp9` is the old spelling of `--alpha auto`; raw frames are `frame_000000.png`; name the
-  outputs `work/pipeline-meta.json` and `work/frames-clean/matte-report.json`; link references/matte.md.
-- B08 engine_export residue gate: read `matte-report.json` next to the clean frames for the key the matte used (`key`,
-  and per-frame `frames[].key`), because a keyed frame has no backdrop left to estimate it from.
-- B08 package flags: engine_export.py has no CLI; the `package` verb's parser is in video2dsprite.py `build_parser`
-  (B05's file). Integration adds B08's new `package` flags and verbs (`--selection`, `--registration`, `--tiers`,
-  `--allow-key-residue`, `verify`) there, or B08 exposes a hook that build_parser calls. `cmd_package` still passes the
-  namespace to `engine_export.package(args)` with `args.out_dir`.
+- Resolved (integration, group video): pipeline.md names new output folders, `frames-clean/matte-report.json`,
+  apply's `frames/` and links matte.md.
+- Resolved (per D17): the residue gate reads `<clean-dir>/matte-report.json` (`key`, `mode`) first; it uses the
+  clip key, not the per-frame keys.
+- Resolved (per D20): `package` and `verify` are wired to engine_export's argument builders and commands.
 - B08 tests: tests/test_engine_export.py loads video2dsprite.py by path without registering it in `sys.modules`, so the
   script must not define dataclasses under postponed annotations (B05 uses NamedTuple). Switching that test to
   `forge_testutils.load_script` removes the constraint.
-- B06 profiles: register_clip's `profile` should write the `matte` block that `--matte-profile` reads (mode, key, erode,
-  unmix, despill, optional `params`); `params.interior_despill` pins the auto despill decision; `unmix` must be false
-  for dominance or binary. prepare_i2v_input can call `key-plan` (or forge_matte.choose_key_color) for the background
-  sentence.
+- Resolved (per D21): register_clip's `profile` writes `unmix` true only for the soft matte and `erode` as whole px,
+  so `--matte-profile` accepts every mode. prepare_i2v_input can still call `key-plan` (or
+  forge_matte.choose_key_color) for the background sentence.
 - B07: gait_loop and animation_review read `frames-clean/clean_0000.png` onwards (unchanged names).
 - Z, video SKILL.md: the rows of section 2; the current "`--despill 0.5`" and "`process --out-dir work`" guidance must
-  change; "soft matte is the default; key-plan before generation; triage before processing".
+  change; "soft matte is the default; key-plan before generation; triage before processing; package and verify
+  through video2dsprite.py or engine_export.py".
 - Z, README and CHANGELOG: sections 3 and 4.
 
 ## 8. Known limitations and what is not proven
@@ -206,12 +232,15 @@ takes edge colour from the neighbouring subject (KeyParams.unmix_from 1.0); must
   Ryo clip (magenta, black-outlined cartoon, H.264 4:2:0, 960x960, 145 frames; report v2 section 7). Green and blue keys,
   outline-free art, other codecs and fast motion are covered by synthetic tests only.
 - Bench (`FORGE_BENCH_CLIP` = outputs/fresh-agent-20261005/grok-native/grok-native.mp4, `FORGE_BENCH_REFERENCE` =
-  input.png; default settings; this machine with up to 16 agents running): fringe 0 and leak 0 on frames 57-87 (report v2
-  metrics via tests/benchmarks/keyer_bench.py), leak 0 on all 145 frames, enclosed pockets in 0 of 145 frames, opaque key
-  px 0, 3.6 flips per frame pair (report metric; the 2.0 stretch goal is not met), soft keyer 0.728 and 0.672 s per
-  frame in two runs (gate 0.8). The whole `clean` pipeline (plan pass, decode, matte, pockets, QA, hysteresis, PNG
-  write) took 1.27-1.28 s per frame; the keyer alone measured about 0.37 s per frame when the machine was quieter (A2
-  and an early run here). No parallel keying.
+  input.png; default settings): fringe 0 and leak 0 on frames 57-87 (report v2 metrics via
+  tests/benchmarks/keyer_bench.py), leak 0 on all 145 frames, enclosed pockets in 0 of 145 frames, opaque key px 0,
+  3.6 flips per frame pair (report metric; the 2.0 stretch goal is not met), soft keyer 0.66 s per frame (gate 0.8)
+  and the whole keying pass 0.342 s per frame on four threads (gate 0.8, now asserted by the bench; integration run on
+  a 4-core Windows 11 machine). Per stage on one thread (s per frame, integration profile): soft_matte 0.66, plan
+  (decode + border key estimate) 0.12, PNG write 0.10, matte_qa on the visible crop 0.07 (0.12 on the whole frame),
+  pockets on the crop 0.03 (0.05), hysteresis 0.02 (0.04 in float32), flips 0.015 (0.07 with a whole-frame colour
+  mask), auto despill 0.02, sha256 0.01: 1.09 in all (1.21 before integration). Output bytes are identical to the
+  pre-integration run on all 145 frames.
 - The report's flips (forge_matte.flip_count over the whole frame) differ from report v2's band-restricted metric: on Ryo
   57-87 the report says 10.07 before and 3.6 after, the band metric 3.6 after. An eroded silhouette that moves counts as
   flips in either metric, so the flips check only warns.
@@ -224,8 +253,14 @@ takes edge colour from the neighbouring subject (KeyParams.unmix_from 1.0); must
 - `--matte binary` equals cfed170 pixel for pixel, except that RGB hidden under alpha 0 is zeroed in every output PNG
   (plan Appendix D); that only touches frames passed through with their native alpha.
 - Triage's border rule is colour-based on a 1 px ring (at least 4 subject px; Dusk used more than 3 with a chroma-contrast
-  rule): key-coloured props or haze at the border can hide or fake a touch. key-plan lists at-risk colours only for an
-  RGBA master; `clean`/`process --reference` also key an opaque reference first.
+  rule): key-coloured props or haze at the border can hide or fake a touch. key-plan keys an opaque master on its own
+  backdrop first (per D33: a magenta, green or blue backdrop holding at least half of the border ring, with the soft
+  still matte; else a uniform white or grey backdrop, by distance); a master with neither (a full scene) gets a note,
+  and the design colours listed for a keyed master miss the outer column a matte un-mixes or trims (about 5-7% of a
+  colour region that touches the backdrop).
+- Threads: the keying pass runs on min(4, CPUs) threads by default, at most 8 megapixels of frames at once (soft_matte
+  peaks near 112 MB per megapixel, so 960x960 keys four frames at a time and 4K one); `--workers 1` restores one at a
+  time.
 - Not run: Linux, macOS, Python 3.10, numpy 1.26, Pillow 10.1 (sources parse with the 3.10 grammar), ffmpeg older than 8.
 - Deviations from the plan and why:
   - `--temporal-stability` defaults to `auto` (alpha for soft and dominance, off for binary): the plan names no default;

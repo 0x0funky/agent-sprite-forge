@@ -21,7 +21,7 @@ from forge_testutils import (assert_cli_help, assert_valid_contract, load_script
 V = load_script("video2dsprite", "video2dsprite")
 SCRIPT = script_path("video2dsprite", "video2dsprite")
 SKILL = "video2dsprite"
-VERBS = ("triage", "key-plan", "extract", "clean", "sample", "process", "package", "doctor")
+VERBS = ("triage", "key-plan", "extract", "clean", "sample", "process", "package", "verify", "doctor")
 
 
 def frame(box=(10, 10, 22, 28), color=(40, 160, 210, 255), size=(32, 32)):

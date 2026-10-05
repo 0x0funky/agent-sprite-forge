@@ -9,7 +9,10 @@ Verbs (``python engine_export.py <verb> --help``):
   Frames come from a clean RGBA directory, optionally cut and timed by a frame selection
   (forge-frame-selection v1/v2), placed by a registration job and accepted by a review
   verdict. A key-residue gate refuses frames with opaque key pixels or more than 1% key
-  spill on the outer ring unless --allow-key-residue records an override.
+  spill on the outer ring unless --allow-key-residue records an override. With --key auto
+  the gate's key comes from <clean-dir>/matte-report.json, then the registration keyColor,
+  then --pipeline-meta, then magenta (keySource records which). Uneven whole-tick durations
+  (retime --ticks rows, held frames) are expanded into repeated frames for video transports.
 * ``verify`` decodes every encoded file completely, compares it with the lossless atlas
   and publishes verify-qa.json beside the manifest; nothing is written when a gate fails.
 * ``doctor`` prints the functional ffmpeg capabilities as one JSON line.
@@ -22,6 +25,7 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import itertools
 import json
 import math
 import os
@@ -42,7 +46,8 @@ import forge_av  # noqa: E402  (the skill's vendored copies)
 import forge_core  # noqa: E402
 import forge_matte  # noqa: E402
 
-ENGINE_EXPORT_VERSION = "3.0.0"
+ENGINE_EXPORT_VERSION = "3.0.0"  # the animation.json 3.0 writer; QA envelopes record the package version (D29)
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION
 SCHEMA_VERSION = "3.0"
 TOOL_NAME = "engine_export.py"
 FORMATS = ("png", "webm", "packed")
@@ -52,6 +57,7 @@ DECODED_PIXEL_BUDGET = 128_000_000
 MANIFEST_FILE, QA_FILE, PROVENANCE_FILE, VERIFY_FILE = (
     "animation.json", "animation-qa.json", "provenance.json", "verify-qa.json")
 SELECTION_V1, SELECTION_V2 = "forge-frame-selection/v1", "forge-frame-selection/v2"
+MATTE_REPORT_FILE, MATTE_REPORT_SCHEMA = "matte-report.json", "video2dsprite.matte_report.v1"
 REGISTRATION_JOB = "video2dsprite.registration_job.v1"
 REVIEW_VERDICT = "video2dsprite.review_verdict.v1"
 PROVENANCE_SCHEMA = "video2dsprite.provenance.v1"
@@ -69,6 +75,14 @@ DEFAULT_TIERS: dict[str, tuple[int, Fraction]] = {
 # Key-residue gate (report v2 P0-3): any opaque key pixel, or key spill on more than 1% of the
 # outer visible ring (cfed170 shipped about 70%), refuses the package.
 RESIDUE_LIMITS = {"opaqueKeyPx": 0, "outerRingSpillFraction": 0.01}
+# The gate measures a copy with alpha <= 16 cleared (D18): lanczos registration (forge_core.resample_rgba)
+# leaves invisible alpha 1-4 halo pixels with invented key-leaning colours that are not residue. A real
+# key fringe is visible (alpha 255 on the cfed170 frames) and still fails.
+RESIDUE_ALPHA_FLOOR = forge_core.ALPHA_GEOMETRY_THRESHOLD
+# Video transports play one constant rate: uneven whole-tick durations are expanded into repeated frames at
+# the first of these rates whose tick grid holds every frame edge within this many ms (D21).
+TICK_EDGE_TOLERANCE_MS = 1
+DEFAULT_TICK_HZ = 60
 # A loop's wrap may exceed the 95th-percentile adjacent step by 10% before it counts as a pop.
 SEAM_TOLERANCE = 1.10
 # verify gates: Dusk iOS packed-alpha transport (validate-packed-alpha.py) and hd2d seam findings.
@@ -113,8 +127,16 @@ RUNTIME_NOTES = (
 )
 
 
-class QualityGateError(RuntimeError):
+class PackageError(RuntimeError):
+    """A deliberate packaging failure (missing encoder, refused input); the CLI prints it as ``error: ...``."""
+
+
+class QualityGateError(PackageError):
     """A strict QA gate refused the input; nothing was published."""
+
+
+# Errors the CLI reports as plain ``error: <message>``; anything else is an internal error (D27).
+CLI_ERRORS = forge_core.CLI_EXPECTED_ERRORS + (PackageError, forge_av.ForgeAVError)
 
 
 # --------------------------------------------------------------------------- small helpers
@@ -166,9 +188,7 @@ def digest(path: Path) -> dict:
     return {"file": path.name, "bytes": path.stat().st_size, "sha256": forge_core.sha256_file(path)}
 
 
-def _local_round_half_up(value: Fraction | float) -> int:
-    """floor(value + 1/2), exact for Fractions (twin of the private forge_core._round_half_up)."""
-    return math.floor(value + Fraction(1, 2)) if isinstance(value, Fraction) else math.floor(value + 0.5)
+round_half_up = forge_core.round_half_up  # floor(value + 1/2), exact for Fractions (D30)
 
 
 def rational(rate: Fraction) -> str:
@@ -210,11 +230,12 @@ def _whole(value: Any, name: str, minimum: int = 0) -> int:
 
 
 def _read_object(path: Path, label: str) -> dict:
+    """A JSON object read as UTF-8 with or without a BOM (forge_core.read_json, D28; strict JSON)."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = forge_core.read_json(path, strict=True)
     except FileNotFoundError:
         raise ValueError(f"{label} not found: {path.name}") from None
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+    except ValueError as exc:
         raise ValueError(f"{label} is not valid UTF-8 JSON: {exc}") from None
     if not isinstance(data, dict):
         raise ValueError(f"{label} must be a JSON object")
@@ -318,6 +339,7 @@ class PackageOptions(NamedTuple):
     placeholder: bool = False
     crf_webm: int = 28
     crf_packed: int = 18
+    action_padding: tuple[int, int, int, int] | None = None
 
     @classmethod
     def from_args(cls, args: argparse.Namespace) -> "PackageOptions":
@@ -371,11 +393,14 @@ class PackageOptions(NamedTuple):
             resampler=resampler, shadow=_parse_shadow(get("shadow")), terminal=bool(get("terminal", False)),
             art_source=art_source, placeholder=bool(get("placeholder", False)),
             crf_webm=_crf(get("crf_webm", 28), 63, "crf-webm"), crf_packed=_crf(get("crf_packed", 18), 51, "crf-packed"),
-            **numbers)
+            action_padding=_parse_padding(get("action_padding")), **numbers)
         if options.source_size is not None and min(options.source_size) <= 0:
             raise ValueError("source-size must be positive")
         if options.pixel_art and options.resampler != "nearest":
             raise ValueError("--pixel-art resamples with nearest; drop --resampler or set it to nearest")
+        if options.action_padding is not None and options.registration is None:
+            raise ValueError("--action-padding applies to a --registration job (the padding register_clip apply "
+                             "used); pass the job, or the registration.json apply wrote")
         return options
 
     @property
@@ -385,6 +410,20 @@ class PackageOptions(NamedTuple):
 
 def _optional_path(value: Any) -> Path | None:
     return None if value in (None, "") else Path(value)
+
+
+def _parse_padding(value: Any) -> tuple[int, int, int, int] | None:
+    """``L,T,R,B`` whole source px (register_clip apply --action-padding), or None."""
+    if value in (None, ""):
+        return None
+    parts = value if isinstance(value, (list, tuple)) else str(value).split(",")
+    try:
+        numbers = [int(str(part).strip()) for part in parts]
+    except ValueError:
+        raise ValueError(f"action-padding must be L,T,R,B whole px, got {forge_core.ascii_text(str(value))!r}") from None
+    if len(numbers) != 4 or min(numbers) < 0:
+        raise ValueError(f"action-padding must be four whole px >= 0 (L,T,R,B), got {numbers}")
+    return tuple(numbers)  # type: ignore[return-value]
 
 
 def _crf(value: Any, maximum: int, flag: str) -> int:
@@ -452,7 +491,7 @@ def constant_timeline(indices: Sequence[int], fps: Fraction) -> Timeline:
     """Evenly spaced frames at ``fps``; durations are frame_durations of the rounded length."""
     count = len(indices)
     seconds = Fraction(count) / fps
-    total = max(count, _local_round_half_up(seconds * 1000))
+    total = max(count, round_half_up(seconds * 1000))
     return Timeline(tuple(indices), tuple(forge_core.frame_durations(total, count)), fps, seconds)
 
 
@@ -460,7 +499,7 @@ def duration_timeline(indices: Sequence[int], durations: Sequence[int], declared
     """Frames with explicit durations; a declared fps is kept when the durations are its rounding."""
     count = len(indices)
     if declared is not None:
-        expected = forge_core.frame_durations(max(count, _local_round_half_up(Fraction(count) * 1000 / declared)), count)
+        expected = forge_core.frame_durations(max(count, round_half_up(Fraction(count) * 1000 / declared)), count)
         if list(durations) == expected:
             return Timeline(tuple(indices), tuple(durations), declared, Fraction(count) / declared)
     total = sum(durations)
@@ -487,7 +526,7 @@ def cap_timeline(timeline: Timeline, max_fps: Fraction) -> tuple[Timeline, list[
         if i + 1 < count and starts[i + 1] - t <= t - starts[i]:
             i += 1
         positions.append(i)
-    total = max(new_count, _local_round_half_up(timeline.seconds * 1000))
+    total = max(new_count, round_half_up(timeline.seconds * 1000))
     capped = Timeline(tuple(timeline.indices[p] for p in positions),
                       tuple(forge_core.frame_durations(total, new_count)), rate, timeline.seconds)
     return capped, positions
@@ -505,6 +544,38 @@ def bake_pingpong(timeline: Timeline) -> Timeline:
     return duration_timeline(indices, [timeline.durations[i] for i in order])
 
 
+def expand_ticks(timeline: Timeline, rates: Iterable[Fraction]) -> tuple[Timeline, dict] | None:
+    """Uneven whole-tick durations as repeated frames at one constant rate, for video transports (D21).
+
+    A video plays one constant rate, so a frame that lasts ``k`` ticks becomes ``k`` copies of the
+    frame at the tick rate. The first rate in ``rates`` (at most 60 fps) whose tick grid holds every
+    authored frame edge within TICK_EDGE_TOLERANCE_MS (1 ms), and keeps the clip length to the
+    millisecond, wins. Returns the expanded constant timeline and a record of the expansion
+    (``rate``, ``ticks`` per authored frame, the authored ``sourceIndices`` and ``durationsMs``), or
+    None when no rate fits (durations that are not whole ticks).
+    """
+    edges = list(itertools.accumulate(timeline.durations, initial=0))
+    tried = []
+    for rate in rates:
+        if rate in tried or not 0 < rate <= MAX_FPS:
+            continue
+        tried.append(rate)
+        marks = [round_half_up(Fraction(edge) * rate / 1000) for edge in edges]
+        ticks = [b - a for a, b in zip(marks, marks[1:])]
+        if min(ticks) < 1:
+            continue
+        indices = [index for index, count in zip(timeline.indices, ticks) for _ in range(count)]
+        expanded = constant_timeline(indices, rate)
+        if expanded.total_ms != edges[-1]:
+            continue
+        grid = list(itertools.accumulate(expanded.durations, initial=0))
+        if any(abs(grid[mark] - edge) > TICK_EDGE_TOLERANCE_MS for mark, edge in zip(marks, edges)):
+            continue
+        return expanded, {"rate": rational(rate), "ticks": ticks, "authoredSourceIndices": list(timeline.indices),
+                          "authoredDurationsMs": list(timeline.durations)}
+    return None
+
+
 # --------------------------------------------------------------------------- input documents
 
 class _FrameHashes:
@@ -520,6 +591,8 @@ class _FrameHashes:
 
 
 def _event_list(raw: Any, total_ms: int, label: str) -> list[dict]:
+    """Gameplay events in whole ms with ``0 <= atMs <= total_ms``: the end edge is allowed (D19), so an
+    ``end`` event at the last tick edge (retime --ticks) names the last frame. impactMs/holdMs stay strict."""
     if raw is None:
         return []
     if not isinstance(raw, list):
@@ -534,8 +607,9 @@ def _event_list(raw: Any, total_ms: int, label: str) -> list[dict]:
                              "(in, tell, hit, active_end, cancel, chain, impact, hold, end, sfx, step_l, "
                              "step_r or custom:<name>)")
         at = _whole(item.get("atMs"), f"{label} event {name} atMs")
-        if at >= total_ms:
-            raise ValueError(f"{label} event {name} at {at} ms lies outside the {total_ms} ms clip")
+        if at > total_ms:
+            raise ValueError(f"{label} event {name} at {at} ms lies outside the {total_ms} ms clip (events may sit "
+                             f"at 0..{total_ms} ms, the end edge included)")
         event = {"name": name, "atMs": at}
         if "data" in item:
             event["data"] = item["data"]
@@ -619,13 +693,22 @@ def load_selection(path: Path, count: int, frame_hash: Any, declared: Fraction |
     extras = {}
     for key in ("cadenceMs", "strideWorldUnits", "speedRef", "cycles"):
         if data.get(key) is not None:
-            extras[key] = float(_finite(data[key], f"selection {key}", positive=True))
+            value = _finite(data[key], f"selection {key}", positive=True)
+            extras[key] = value if isinstance(value, int) else float(value)  # a whole cycle count stays an integer
+    tick_hz = None
+    if schema == SELECTION_V2 and data.get("ticks") is not None:
+        ticks = data["ticks"]
+        if not isinstance(ticks, list) or len(ticks) != len(timeline.indices):
+            raise ValueError("selection ticks need one whole tick count per sourceIndices entry")
+        for tick in ticks:
+            _whole(tick, "selection ticks entry", 1)
+        tick_hz = _whole(data.get("tickHz", DEFAULT_TICK_HZ), "selection tickHz", 1)
     return {
         "schema": schema, "sha256": digest_sha, "timeline": timeline, "loopPolicy": policy,
         "events": _event_list(raw_events, total, "selection"),
         "impactMs": _instant(data.get("impactMs"), total, "selection impactMs"),
         "holdMs": _instant(data.get("holdMs"), total, "selection holdMs"),
-        "extras": extras, "terminal": data.get("terminal") is True,
+        "extras": extras, "terminal": data.get("terminal") is True, "fps": rate, "tickHz": tick_hz,
         "summary": {"schema": schema, "start": start, "endExclusive": end, "status": status or None,
                     "method": data.get("method"), "loopPolicy": policy, "sha256": digest_sha},
     }
@@ -649,23 +732,51 @@ def _padding(value: Any, label: str) -> list[int]:
     return [_whole(v, label) for v in value]
 
 
-def load_registration(path: Path) -> dict:
+def _job_base(data: Mapping) -> tuple[list[int], list[float]]:
+    """The base canvas of a registration_job.v1: the job's ``sourceSize``/``sourceAnchor`` (D21), else the
+    master size and anchor, cut to ``master.viewBox`` for one view of a sheet (register_clip load_job)."""
+    master = data.get("master")
+    if not isinstance(master, dict):
+        raise ValueError("registration job needs master {size, anchor}")
+    size, anchor = _size(master.get("size"), "master.size"), _point(master.get("anchor"), "master.anchor")
+    box = master.get("viewBox")
+    if box is not None:
+        whole = isinstance(box, list) and len(box) == 4 and all(
+            isinstance(v, int) and not isinstance(v, bool) and v >= 0 for v in box)
+        if not (whole and box[0] < box[2] <= size[0] and box[1] < box[3] <= size[1]):
+            raise ValueError(f"registration job master.viewBox must be an integer box inside master.size, got {box!r}")
+        size, anchor = [box[2] - box[0], box[3] - box[1]], [anchor[0] - box[0], anchor[1] - box[1]]
+    if data.get("sourceSize") is not None:
+        stated = _size(data["sourceSize"], "registration job sourceSize")
+        if stated != size:
+            raise ValueError(f"registration job sourceSize {stated} disagrees with master.size/viewBox {size}")
+    if data.get("sourceAnchor") is not None:
+        stated_anchor = _point(data["sourceAnchor"], "registration job sourceAnchor")
+        if max(abs(a - b) for a, b in zip(stated_anchor, anchor)) > 1e-6:
+            raise ValueError(f"registration job sourceAnchor {stated_anchor} disagrees with master.anchor/viewBox "
+                             f"{anchor}")
+        anchor = stated_anchor
+    return size, anchor
+
+
+def load_registration(path: Path, action_padding: Sequence[int] | None = None) -> dict:
     """The 3.0 registration block from a registration job or a register_clip registration record.
 
-    A ``video2dsprite.registration_job.v1`` means registration by construction: the master canvas
-    plus ``padding`` [left, top, right, bottom] is the source canvas, and the master anchor moves by
-    (left, top). Any other document must state ``mode`` (construction, fixed-envelope, preserved);
-    its ``jobSha256``, ``padding``, ``baseSize``/``baseAnchor`` (or ``master.size``/``anchor``),
-    ``sourceSize`` and ``sourceAnchor`` are taken when present.
+    A ``video2dsprite.registration_job.v1`` means registration by construction: the job's base canvas
+    (its ``sourceSize``/``sourceAnchor``; else ``master.size``/``anchor``, cut to ``master.viewBox``) plus
+    ``padding`` [left, top, right, bottom] is the source canvas, and the base anchor moves by (left, top).
+    ``action_padding`` replaces the job's padding exactly as ``register_clip.py apply --action-padding``
+    did (D21). Any other document must state ``mode`` (construction, fixed-envelope, preserved); its
+    ``jobSha256``, ``padding``, ``baseSize``/``baseAnchor`` (or ``master.size``/``anchor``), ``sourceSize``
+    and ``sourceAnchor`` are taken when present (register_clip's registration.json is the best input: it
+    records the padding apply used).
     """
     data = _read_object(path, "registration")
     sha = forge_core.sha256_file(path)
+    override = None if action_padding is None else _padding(list(action_padding), "--action-padding")
     if data.get("schema") == REGISTRATION_JOB:
-        master = data.get("master")
-        if not isinstance(master, dict):
-            raise ValueError("registration job needs master {size, anchor}")
-        base_size, base_anchor = _size(master.get("size"), "master.size"), _point(master.get("anchor"), "master.anchor")
-        padding = _padding(data.get("padding"), "registration padding")
+        base_size, base_anchor = _job_base(data)
+        padding = override or _padding(data.get("padding"), "registration padding")
         block = {"mode": "construction", "jobSha256": sha, "baseSize": base_size, "baseAnchor": base_anchor,
                  "padding": padding,
                  "sourceSize": [base_size[0] + padding[0] + padding[2], base_size[1] + padding[1] + padding[3]],
@@ -677,6 +788,10 @@ def load_registration(path: Path) -> dict:
     if mode not in REGISTRATION_MODES:
         raise ValueError(f"--registration needs a {REGISTRATION_JOB} document or a registration record with "
                          f"mode {'|'.join(REGISTRATION_MODES)}")
+    if override is not None and (data.get("padding") is None or
+                                 _padding(data["padding"], "registration padding") != override):
+        raise ValueError(f"--action-padding {override} conflicts with the registration record (padding "
+                         f"{data.get('padding')}); a registration.json already records the padding apply used")
     block: dict[str, Any] = {"mode": mode, "registrationSha256": sha}
     job = data.get("jobSha256")
     if job is not None:
@@ -736,25 +851,58 @@ def load_review(path: Path, bindings: Mapping[str, str]) -> dict:
             "sha256": forge_core.sha256_file(path)}
 
 
-def resolve_key(option: str, pipeline_meta: Path | None) -> tuple[tuple[int, int, int] | None, str]:
-    """Key colour for the residue gate and where it came from.
+class KeyChoice(NamedTuple):
+    """The residue gate's key (None skips the gate), where it came from (keySource) and the document."""
+    key: tuple[int, int, int] | None
+    source: str
+    document: Path | None = None
 
-    ``none`` skips the gate (native-alpha footage). ``auto`` reads the matte block of a
-    video2dsprite pipeline-meta.json (``matte.key``; mode ``none`` skips) and falls back to magenta.
+
+def resolve_key(option: str, pipeline_meta: Path | None = None, *, clean_dir: Path | None = None,
+                registration: Path | None = None) -> KeyChoice:
+    """Key colour for the residue gate and where it came from (D17).
+
+    ``none`` skips the gate (native-alpha footage); a key name, ``#rrggbb`` or an RGB triple is used as
+    given (keySource ``flag``). ``auto`` takes the first of:
+
+    1. ``<clean_dir>/matte-report.json`` (video2dsprite clean/process): its ``key`` (the clip key the
+       matte used); mode ``none`` skips the gate (keySource ``matte-report``);
+    2. the ``registration`` document's ``keyColor`` (register_clip registration.json or the job; for
+       registered frames, whose folder holds no matte report) (``registration``);
+    3. ``pipeline_meta`` ``matte.key``; mode ``none`` skips (``pipeline-meta``);
+    4. magenta (``default``).
+
+    A ``matte-report.json`` in ``clean_dir`` that is not a video2dsprite.matte_report.v1 document is an
+    error: the gate would otherwise measure the wrong key silently.
     """
     text = option.strip().lower()
     if text == "none":
-        return None, "flag"
+        return KeyChoice(None, "flag")
     if text != "auto":
-        return _key_rgb(text, "--key"), "flag"
+        return KeyChoice(_key_rgb(text, "--key"), "flag")
+    report = None if clean_dir is None else Path(clean_dir) / MATTE_REPORT_FILE
+    if report is not None and report.is_file():
+        data = _read_object(report, MATTE_REPORT_FILE)
+        if data.get("schema") != MATTE_REPORT_SCHEMA:
+            raise ValueError(f"{MATTE_REPORT_FILE} in clean-dir is not a {MATTE_REPORT_SCHEMA} document; pass --key "
+                             "with the key the frames were keyed against")
+        if data.get("mode") == "none":
+            return KeyChoice(None, "matte-report", report)
+        if data.get("key") is None:
+            raise ValueError(f"{MATTE_REPORT_FILE} in clean-dir names no key; pass --key")
+        return KeyChoice(_key_rgb(data["key"], f"{MATTE_REPORT_FILE} key"), "matte-report", report)
+    if registration is not None:
+        key_color = _read_object(registration, "registration").get("keyColor")
+        if key_color is not None:
+            return KeyChoice(_key_rgb(key_color, "registration keyColor"), "registration", registration)
     if pipeline_meta is not None:
         matte = _read_object(pipeline_meta, "pipeline-meta").get("matte")
         if isinstance(matte, dict):
             if matte.get("mode") == "none":
-                return None, "pipeline-meta"
+                return KeyChoice(None, "pipeline-meta", pipeline_meta)
             if matte.get("key") is not None:
-                return _key_rgb(matte["key"], "pipeline-meta matte.key"), "pipeline-meta"
-    return KEY_NAMES["magenta"], "default"
+                return KeyChoice(_key_rgb(matte["key"], "pipeline-meta matte.key"), "pipeline-meta", pipeline_meta)
+    return KeyChoice(KEY_NAMES["magenta"], "default")
 
 
 def _key_rgb(value: Any, label: str) -> tuple[int, int, int]:
@@ -767,7 +915,7 @@ def _key_rgb(value: Any, label: str) -> tuple[int, int, int]:
             digits = match.group(1)
             return tuple(int(digits[i:i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
     elif isinstance(value, (list, tuple)) and len(value) == 3:
-        channels = [_local_round_half_up(_finite(v, label)) for v in value]
+        channels = [round_half_up(_finite(v, label)) for v in value]
         if all(0 <= c <= 255 for c in channels):
             return tuple(channels)  # type: ignore[return-value]
     raise ValueError(f"{label} must be magenta, green, blue, #rrggbb, an RGB triple or none")
@@ -824,8 +972,9 @@ def analyze(frames: list[Image.Image], fps: float, loop: bool, *, key: Any = "ma
 def key_residue(frames: Sequence[Any], key: Any) -> dict:
     """forge_matte.matte_qa over every distinct frame, aggregated for the residue gate (report v2 P0-3).
 
-    Pixel counts are sums over distinct frames; fractions are the worst frame; frame lists are
-    0-based clip positions.
+    Each frame is measured on a copy with alpha <= RESIDUE_ALPHA_FLOOR (16) cleared (D18): invisible
+    resampling halo is not key residue, a visible key fringe is. Pixel counts are sums over distinct
+    frames; fractions are the worst frame; frame lists are 0-based clip positions.
     """
     key_rgb = _key_rgb(key, "key") if not isinstance(key, tuple) else key
     measured: dict[int, dict] = {}
@@ -833,7 +982,7 @@ def key_residue(frames: Sequence[Any], key: Any) -> dict:
     for frame in frames:
         qa = measured.get(id(frame))
         if qa is None:
-            qa = measured[id(frame)] = forge_matte.matte_qa(_visible_crop(frame), key_rgb)
+            qa = measured[id(frame)] = forge_matte.matte_qa(_residue_view(frame), key_rgb)
         per_position.append(qa)
     distinct = list(measured.values())
     spill = [q["outer_ring_spill_fraction"] for q in per_position]
@@ -850,8 +999,9 @@ def key_residue(frames: Sequence[Any], key: Any) -> dict:
         "enclosedKeyPockets": int(sum(q["enclosed_key_pockets"] for q in distinct)),
         "keyHuedPx": int(sum(q["key_hued_px"] for q in distinct)),
         "limits": dict(RESIDUE_LIMITS),
-        "thresholds": distinct[0]["thresholds"],
-        "method": distinct[0]["method"],
+        "thresholds": {**distinct[0]["thresholds"], "alpha_floor": RESIDUE_ALPHA_FLOOR},
+        "method": (f"{distinct[0]['method']}; each frame measured on a copy with alpha <= {RESIDUE_ALPHA_FLOOR} "
+                   "cleared, so invisible resampling halo is not counted (D18)"),
     }
 
 
@@ -863,6 +1013,18 @@ def _visible_crop(frame: Any) -> np.ndarray:
     if box is None:
         return np.zeros((1, 1, 4), np.uint8)
     return pixels[box[1]:box[3], box[0]:box[2]]
+
+
+def _residue_view(frame: Any, floor: int = RESIDUE_ALPHA_FLOOR) -> np.ndarray:
+    """What the residue gate measures (D18): the frame with alpha <= ``floor`` cleared, cropped to the
+    box of what is left (matte_qa gives the same numbers on that crop as on the whole cleared frame)."""
+    pixels = np.asarray(frame)
+    box = forge_core.subject_bbox(pixels, floor)
+    if box is None:
+        return np.zeros((1, 1, 4), np.uint8)
+    crop = pixels[box[1]:box[3], box[0]:box[2]].copy()
+    crop[crop[..., 3] <= floor] = 0
+    return crop
 
 
 def residue_checks(residue: Mapping | None, allow: bool) -> list[dict]:
@@ -927,7 +1089,7 @@ def prepare(frames: list[Image.Image], source_size: tuple, source_anchor: tuple,
         scale, cw, ch = 1 / factor, w // factor, h // factor
     else:
         scale = min(1, max_side/max(w, h))
-        cw, ch = max(1, _local_round_half_up(w*scale)), max(1, _local_round_half_up(h*scale))
+        cw, ch = max(1, round_half_up(w*scale)), max(1, round_half_up(h*scale))
     ew, eh = (cw+1)//2*2, (ch+1)//2*2
     prepared, cache = [], {}
     for im in frames:
@@ -971,7 +1133,7 @@ def plan_tier(spec: TierSpec, geometry: Mapping, timeline: Timeline, name: str, 
         width, height = cw // factor, ch // factor
     else:
         ratio = min(Fraction(1), Fraction(spec.edge, max(cw, ch)))
-        width, height = max(1, _local_round_half_up(cw * ratio)), max(1, _local_round_half_up(ch * ratio))
+        width, height = max(1, round_half_up(cw * ratio)), max(1, round_half_up(ch * ratio))
     packed = forge_av.packed_geometry(width, height)
     tier_timeline, positions = cap_timeline(timeline, spec.fps)
     ax, ay = geometry["encodedAnchor"]
@@ -1090,6 +1252,19 @@ class _Clip(NamedTuple):
     capped: bool
     input_rate: Fraction
     terminal: bool
+    tick_expansion: dict | None = None
+
+
+def _tick_rates(selection: Mapping | None) -> list[Fraction]:
+    """Rates whose ticks may hold uneven durations: the selection's tick grid (retime --ticks), its source
+    fps (gait_loop's held frames), then the 60 Hz forge tick grid (D11)."""
+    rates = []
+    if selection is not None:
+        if selection.get("tickHz"):
+            rates.append(Fraction(selection["tickHz"]))
+        if selection.get("fps"):
+            rates.append(Fraction(selection["fps"]))
+    return rates + [Fraction(DEFAULT_TICK_HZ)]
 
 
 def _clip(opts: PackageOptions, paths: Sequence[Path], frame_hash: _FrameHashes) -> _Clip:
@@ -1121,13 +1296,21 @@ def _clip(opts: PackageOptions, paths: Sequence[Path], frame_hash: _FrameHashes)
     baked = policy == "pingpong" and len(timeline.indices) >= 3
     if baked:
         timeline, policy = bake_pingpong(timeline), "cycle"
+    expansion = None
+    if (opts.video_formats or opts.tiers) and not timeline.uniform:
+        rates = _tick_rates(selection)
+        expanded = expand_ticks(timeline, rates)
+        if expanded is None:
+            shown = ", ".join(sorted({rational(rate) for rate in rates if rate <= MAX_FPS}))
+            raise ValueError(f"webm/packed transports play one constant frame rate, but these durations (from "
+                             f"{min(timeline.durations)} to {max(timeline.durations)} ms) are not whole ticks of "
+                             f"{shown} fps; package --formats png (the atlas keeps uneven durations), or retime "
+                             "onto a tick grid (retime.py --ticks) so every frame lasts whole ticks")
+        timeline, expansion = expanded
     input_rate = timeline.rate
     timeline, _ = cap_timeline(timeline, MAX_FPS)
-    if (opts.video_formats or opts.tiers) and not timeline.uniform:
-        raise ValueError("webm/packed transports play one constant frame rate, but these durations differ by more "
-                         "than 1 ms; retime with a fixed --fps (holds as repeated frames) or package --formats png")
     return _Clip(timeline, policy, events, impact, hold, extras, selection and selection["summary"], baked,
-                 timeline.rate != input_rate, input_rate, terminal)
+                 timeline.rate != input_rate, input_rate, terminal, expansion)
 
 
 def _load_unique(paths: Sequence[Path], indices: Iterable[int]) -> dict[int, Image.Image]:
@@ -1198,12 +1381,12 @@ def package(args: argparse.Namespace) -> dict:
         caps = capabilities()
         for fmt in sorted(opts.video_formats | ({"packed"} if opts.tiers else set())):
             if not caps.get(fmt):
-                raise RuntimeError(f"{fmt} needs ffmpeg with {'libx264' if fmt == 'packed' else 'libvpx-vp9'}; "
+                raise PackageError(f"{fmt} needs ffmpeg with {'libx264' if fmt == 'packed' else 'libvpx-vp9'}; "
                                    "use --formats png for offline fallback")
     frame_hash = _FrameHashes(paths)
     clip = _clip(opts, paths, frame_hash)
     timeline = clip.timeline
-    registration = load_registration(opts.registration) if opts.registration else None
+    registration = load_registration(opts.registration, opts.action_padding) if opts.registration else None
     sequence_hashes = [frame_hash(i) for i in timeline.indices]
     input_digest = frames_digest(sequence_hashes)
     review = None
@@ -1211,8 +1394,12 @@ def package(args: argparse.Namespace) -> dict:
         bindings = {"inputDigest": input_digest}
         if opts.selection is not None:
             bindings = {"selection": clip.selection["sha256"], **bindings}
+        if clip.tick_expansion is not None:  # a review of the authored (unexpanded) frame list still binds
+            authored = [frame_hash(i) for i in clip.tick_expansion["authoredSourceIndices"]]
+            bindings["authoredDigest"] = frames_digest(authored)
         review = load_review(opts.review, bindings)
-    key, key_source = resolve_key(opts.key, opts.pipeline_meta)
+    key, key_source, key_document = resolve_key(opts.key, opts.pipeline_meta, clean_dir=source,
+                                                registration=opts.registration)
 
     images = _load_unique(paths, timeline.indices)
     frame_size = next(iter(images.values())).size
@@ -1255,22 +1442,23 @@ def package(args: argparse.Namespace) -> dict:
                    if record]
         input_refs = [_input_ref(paths[i], "frame") for i in sorted(images)]
         documents = [(opts.selection, "selection"), (opts.registration, "registration"), (opts.review, "review"),
-                     (opts.pipeline_meta, "pipelineMeta")]
+                     (opts.pipeline_meta, "pipelineMeta"),
+                     (key_document if key_source == "matte-report" else None, "matteReport")]
         input_refs += [_input_ref(p, role) for p, role in documents if p is not None]
         output_refs = [_file_ref(poster)] + [_file_ref(stage / page["file"]) for page in pages]
         output_refs += [_file_ref(stage / r["file"]) for r in
                         [files.get("webm"), files.get("packedAlpha"), *files.get("mobilePackedAlpha", [])] if r]
         qa = {
             "status": _qa_status(checks),
-            "method": ("engine_export package: forge_matte.matte_qa key-residue gate on every packaged source frame; "
-                       "body-bounds and premultiplied seam diagnostics; selection, registration and review bound by "
-                       "sha256; forge_av encoders verify packet counts and keyframes; every encoded file is decoded "
-                       "completely"),
+            "method": ("engine_export package: forge_matte.matte_qa key-residue gate on every packaged source frame "
+                       f"(alpha <= {RESIDUE_ALPHA_FLOOR} cleared, D18; key from {key_source}, D17); body-bounds and "
+                       "premultiplied seam diagnostics; selection, registration and review bound by sha256; forge_av "
+                       "encoders verify packet counts and keyframes; every encoded file is decoded completely"),
             "notProven": list(PACKAGE_NOT_PROVEN),
             "checks": checks,
             "inputs": [{k: v for k, v in ref.items() if k != "role"} for ref in input_refs],
             "outputs": output_refs,
-            "tool": {"name": TOOL_NAME, "version": ENGINE_EXPORT_VERSION},
+            "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
             **{k: v for k, v in diagnostics.items() if k != "status"},
             "allowKeyResidue": opts.allow_key_residue,
             "keySource": key_source,
@@ -1288,7 +1476,8 @@ def package(args: argparse.Namespace) -> dict:
 
 
 def _file_ref(path: Path) -> dict:
-    return {"path": path.name, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+    """fileRef of a packaged file, relative to the package folder it sits in (forge_core.file_ref, D30)."""
+    return forge_core.file_ref(path, path.parent)
 
 
 def _rounded(report: Mapping) -> dict:
@@ -1314,6 +1503,12 @@ def _clip_checks(diagnostics: Mapping, seam: Mapping | None, clip: _Clip, regist
                    "value": registration["mode"] if registration else None, "threshold": None})
     checks.append({"id": "fps_cap", "status": "pass", "value": rational(clip.timeline.rate),
                    "threshold": rational(MAX_FPS)})
+    if clip.tick_expansion is not None:
+        expansion = clip.tick_expansion
+        checks.append({"id": "tick_expansion", "status": "pass",
+                       "value": {"rate": expansion["rate"], "authoredFrames": len(expansion["ticks"]),
+                                 "frames": len(clip.timeline.indices)},
+                       "threshold": {"edgeToleranceMs": TICK_EDGE_TOLERANCE_MS, "maxFps": rational(MAX_FPS)}})
     if review is None:
         checks.append({"id": "review_verdict", "status": "needs-visual-review", "value": None,
                        "threshold": "accepted"})
@@ -1362,6 +1557,8 @@ def _manifest(opts: PackageOptions, clip: _Clip, geometry: Mapping, registration
         manifest["mobilePackedAlpha"] = files["mobilePackedAlpha"]
     if clip.pingpong_baked:
         manifest["pingpongBaked"] = True
+    if clip.tick_expansion is not None:
+        manifest["tickExpansion"] = dict(clip.tick_expansion)
     if clip.capped:
         manifest["fpsCapped"], manifest["inputFps"] = True, rational(clip.input_rate)
     manifest.update({"provenanceFile": PROVENANCE_FILE, "artSource": opts.art_source,
@@ -1380,9 +1577,12 @@ def _provenance(opts: PackageOptions, clip: _Clip, registration: Mapping | None,
         "allowKeyResidue": opts.allow_key_residue, "crfWebm": opts.crf_webm, "crfPacked": opts.crf_packed,
         "sourceSize": list(opts.source_size) if opts.source_size else None,
         "sourceAnchor": list(opts.source_anchor) if opts.source_anchor else None,
+        "actionPadding": list(opts.action_padding) if opts.action_padding else None,
+        "tickExpansion": clip.tick_expansion["rate"] if clip.tick_expansion else None,
+        "engineExport": ENGINE_EXPORT_VERSION,
     }
     record: dict[str, Any] = {
-        "schema": PROVENANCE_SCHEMA, "tool": TOOL_NAME, "version": ENGINE_EXPORT_VERSION, "params": params,
+        "schema": PROVENANCE_SCHEMA, "tool": TOOL_NAME, "version": TOOL_VERSION, "params": params,
         "inputs": input_refs, "inputDigest": input_digest,
         "libraries": {"forge_core": forge_core.FORGE_CORE_API_VERSION, "forge_matte": forge_matte.FORGE_MATTE_API_VERSION,
                       "forge_av": forge_av.FORGE_AV_API_VERSION},
@@ -1640,7 +1840,7 @@ def verify_package(package_dir: Path) -> dict:
                    "faststart and VP9 alpha tag"),
         "notProven": list(VERIFY_NOT_PROVEN),
         "checks": checks, "inputs": inputs, "outputs": outputs,
-        "tool": {"name": TOOL_NAME, "version": ENGINE_EXPORT_VERSION},
+        "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "manifestSha256": manifest_ref["sha256"], "transports": transports, "thresholds": dict(VERIFY_LIMITS),
     }
 
@@ -1655,7 +1855,11 @@ def add_package_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--name", default="clip", help="file stem: letters, digits, - and _ (default clip)")
     parser.add_argument("--fps", help="constant playback rate, e.g. 12 or 30000/1001; optional with --selection")
     parser.add_argument("--selection", help="forge-frame-selection v1/v2 JSON: frames, durations, events, loop policy")
-    parser.add_argument("--registration", help="registration_job.v1 or register_clip registration JSON")
+    parser.add_argument("--registration",
+                        help="register_clip registration.json (best: it records the padding apply used) or the "
+                             "registration_job.v1; also supplies the key for --key auto")
+    parser.add_argument("--action-padding", metavar="L,T,R,B",
+                        help="with a --registration job: the padding register_clip apply --action-padding used")
     parser.add_argument("--review", help="review_verdict.v1 JSON bound to the selection file or the input digest")
     parser.add_argument("--pipeline-meta", help="video2dsprite pipeline-meta.json; supplies the matte key")
     parser.add_argument("--source-size", help="original art geometry W,H; defaults to the registration or input frames")
@@ -1668,7 +1872,8 @@ def add_package_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--loop", action="store_true", help="loop the clip (cycle policy); seam still needs review")
     parser.add_argument("--loop-policy", choices=LOOP_POLICIES, help="cycle, pingpong (baked into one cycle) or oneshot")
     parser.add_argument("--key", default="auto",
-                        help="residue-gate key: auto (pipeline-meta, else magenta), magenta, green, blue, #rrggbb or none")
+                        help="residue-gate key: auto (clean-dir matte-report.json, then the registration keyColor, "
+                             "then --pipeline-meta, else magenta), magenta, green, blue, #rrggbb or none")
     parser.add_argument("--allow-key-residue", action="store_true",
                         help="ship frames that fail the key-residue gate; recorded in QA (legacy behaviour)")
     parser.add_argument("--pixel-art", action="store_true", help="nearest sampling and whole-factor reductions only")
@@ -1694,18 +1899,24 @@ def add_verify_arguments(parser: argparse.ArgumentParser) -> None:
 
 
 def cmd_package(args: argparse.Namespace) -> int:
+    """``package``: one ASCII JSON line with the output folder and the metadata (animation.json) path (D20)."""
     manifest = package(args)
     output = Path(args.out_dir).resolve()
-    provenance = json.loads((output / PROVENANCE_FILE).read_text(encoding="utf-8"))
-    print(json.dumps({"output": str(output), "manifest": str(output / MANIFEST_FILE), "qa": str(output / QA_FILE),
-                      "provenance": str(output / PROVENANCE_FILE), "status": manifest["qa"]["status"],
-                      "reviewStatus": manifest["reviewStatus"], "frameCount": manifest["frameCount"],
-                      "fps": manifest["fpsRational"], "durationMs": sum(manifest["durationsMs"]),
-                      "inputDigest": provenance["inputDigest"]}))
+    provenance = forge_core.read_json(output / PROVENANCE_FILE)
+    summary = {"output": str(output), "metadata": str(output / MANIFEST_FILE), "manifest": str(output / MANIFEST_FILE),
+               "qa": str(output / QA_FILE), "provenance": str(output / PROVENANCE_FILE),
+               "status": manifest["qa"]["status"], "reviewStatus": manifest["reviewStatus"],
+               "frameCount": manifest["frameCount"], "fps": manifest["fpsRational"],
+               "durationMs": sum(manifest["durationsMs"]), "keySource": manifest["qa"]["keySource"],
+               "inputDigest": provenance["inputDigest"]}
+    if "tickExpansion" in manifest:
+        summary["tickExpansion"] = manifest["tickExpansion"]["rate"]
+    print(json.dumps(summary, ensure_ascii=True))
     return 0
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
+    """``verify``: writes the report only when every gate passes, so a published report never says fail (D26)."""
     package_dir = Path(args.package)
     report_path = Path(args.report) if args.report else package_dir / VERIFY_FILE
     if os.path.lexists(report_path):
@@ -1721,14 +1932,15 @@ def cmd_verify(args: argparse.Namespace) -> int:
         forge_core.publish_file_no_replace(stage, report_path)
     finally:
         stage.unlink(missing_ok=True)
-    print(json.dumps({"report": str(report_path.resolve()), "manifest": str((package_dir / MANIFEST_FILE).resolve()),
-                      "status": report["status"], "checks": len(report["checks"]),
-                      "transports": sorted(report["transports"])}))
+    written = str(report_path.resolve())
+    print(json.dumps({"output": written, "metadata": written, "report": written,
+                      "manifest": str((package_dir / MANIFEST_FILE).resolve()), "status": report["status"],
+                      "checks": len(report["checks"]), "transports": sorted(report["transports"])}, ensure_ascii=True))
     return 0
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
-    print(json.dumps(capabilities()))
+    print(json.dumps(capabilities(), ensure_ascii=True))
     return 0
 
 
@@ -1751,14 +1963,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        return int(args.func(args))
-    except Exception as exc:  # noqa: BLE001 - CLI surface: tracebacks are never user-facing
-        print("error: " + forge_core.ascii_text(str(exc)), file=sys.stderr)
-        return 1
+    return int(args.func(args))
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2 (argparse), refused inputs and failed gates print ``error: ...`` and exit 1, and
+    anything unexpected prints ``error: internal error (...)`` and exits 1 (D26, D27; forge_core.run_cli)."""
+    return forge_core.run_cli(_run, argv, expected=CLI_ERRORS)
 
 
 if __name__ == "__main__":

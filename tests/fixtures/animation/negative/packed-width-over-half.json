@@ -1,0 +1,14 @@
+{
+  "rule": "packed-geometry",
+  "why": "the logical width never exceeds halfWidth (D21: width <= halfWidth, which JSON Schema cannot express)",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/packedAlpha/width",
+      "value": 50
+    }
+  ],
+  "alsoFails": []
+}

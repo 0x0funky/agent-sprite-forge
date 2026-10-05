@@ -1,0 +1,14 @@
+{
+  "rule": "ffprobe-timestamps",
+  "why": "decode timestamps strictly increase; a remux that repeats packet 3's timestamp (ffmpeg setts) keeps the size, packets, duration and VP9 alpha tag",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "duplicate-timestamp",
+      "file": "idle.webm",
+      "packet": 3
+    }
+  ],
+  "alsoFails": []
+}

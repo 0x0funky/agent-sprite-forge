@@ -35,7 +35,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 import forge_core  # noqa: E402  (this skill's vendored copy)
 
-GAIT_LOOP_VERSION = "1"
+GAIT_LOOP_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 SELECTION_V1 = "forge-frame-selection/v1"
 SELECTION_V2 = "forge-frame-selection/v2"
 SELECTED_STATUS = "selected-needs-visual-review"
@@ -99,11 +99,7 @@ NOT_PROVEN = [
 
 # --------------------------------------------------------------------------- small helpers
 
-def round_half_up(value: float | Fraction) -> int:
-    """floor(value + 1/2), the rounding forge_core uses everywhere (never banker's rounding)."""
-    if isinstance(value, Fraction):
-        return int(math.floor(value + Fraction(1, 2)))
-    return int(math.floor(value + 0.5))
+round_half_up = forge_core.round_half_up  # floor(value + 1/2), exact for Fractions; never banker's rounding (D30)
 
 
 def _clamp(value: float) -> float:
@@ -207,23 +203,16 @@ def jsonable(value: Any, digits: int = 6) -> Any:
     return value
 
 
-def _relative_or_name(path: Path, base: Path) -> str:
-    """forge_core.portable_path, or only the name when there is no relative route (another
-    drive): manifests never store absolute paths; hashes bind the content instead."""
-    rel = forge_core.portable_path(path, base)
-    if rel.startswith("/") or (len(rel) > 1 and rel[1] == ":"):
-        return Path(path).resolve().name
-    return rel
-
-
 def directory_ref(directory: Path, base: Path) -> str:
-    """Manifest-relative POSIX path of ``directory`` seen from ``base`` (its name off-drive)."""
-    return _relative_or_name(directory, base)
+    """Manifest-relative POSIX path of ``directory`` seen from ``base``, or only its name when there is
+    no relative route (another drive): manifests never store absolute paths (forge_core.manifest_path, D30)."""
+    return forge_core.manifest_path(directory, base)
 
 
 def file_ref(path: Path, base: Path, sha256: str | None = None) -> dict:
-    """common.schema fileRef: manifest-relative path (the bare name off-drive) plus sha256."""
-    return {"path": _relative_or_name(path, base), "sha256": sha256 or forge_core.sha256_file(path)}
+    """common.schema fileRef {path, sha256, bytes}: manifest-relative path (the bare name off-drive)
+    (forge_core.file_ref, D30)."""
+    return forge_core.file_ref(path, base, sha256=sha256)
 
 
 def resolve_directory(value: str, selection_path: Path, frames_dir: Path) -> bool:
@@ -1294,8 +1283,8 @@ def read_selection(path: Path) -> dict:
     ``durations`` (ms; from fps for v1), ``fps`` (Fraction or None) and ``policy``.
     """
     try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+        data = forge_core.read_json(path, strict=True)  # UTF-8 with or without a BOM (D28)
+    except ValueError as error:
         raise ValueError(f"selection {Path(path).name} is not valid JSON: {error}") from None
     if not isinstance(data, dict):
         raise ValueError("selection must be a JSON object")
@@ -1932,17 +1921,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        summary = cmd_select(args) if args.command == "select" else cmd_measure_stride(args)
-    except (ValueError, OSError) as error:
-        print(forge_core.ascii_text(f"error: {error}"), file=sys.stderr)
-        return 1
+def _run(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    summary = cmd_select(args) if args.command == "select" else cmd_measure_stride(args)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2; refused input (no loop, a changed frame, an existing output) exits 1 with
+    ``error: ...``; anything unexpected prints ``error: internal error (...)`` (D26, D27; forge_core.run_cli)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

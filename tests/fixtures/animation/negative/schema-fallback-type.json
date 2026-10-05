@@ -1,0 +1,14 @@
+{
+  "rule": "schema",
+  "why": "fallback.type is the constant png-atlas in video.schema.json animation_v3 (checked with the vendored forge_schema, never skipped)",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/fallback/type",
+      "value": "sprite-sheet"
+    }
+  ],
+  "alsoFails": []
+}

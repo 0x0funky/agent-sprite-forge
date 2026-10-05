@@ -23,9 +23,12 @@ is one JSON line naming the output and its metadata file.
    It prints the key (`magenta`, `green` or `blue`, first acceptable in that order)
    and `background_sentence` for the video prompt. A key is rejected when more than
    0.5% of the master's subject pixels lean to it by 40 or more, so a purple, violet
-   or pink design rejects magenta. With an RGBA master it also lists
-   `design_colours_at_risk`: colours the video matte would still key out with that
-   key. `--strict` exits 1 when every candidate fights the design.
+   or pink design rejects magenta. It also lists `design_colours_at_risk`: colours the
+   video matte would still key out with that key. An opaque master is keyed on its own
+   backdrop first (`master_keying`: the soft still matte on a magenta, green or blue
+   backdrop, or the distance from a uniform white or grey one), so its backdrop is never
+   listed; a master with no uniform backdrop gets a note instead. `--strict` exits 1
+   when every candidate fights the design.
 
 2. Triage the raw clip before processing it:
 
@@ -48,14 +51,23 @@ is one JSON line naming the output and its metadata file.
    ```
 
    Raw frames are `frame_000000.png` onwards (0-based); `--start/--duration` keep the
-   frames timed in [start, start + duration).
+   frames timed in [start, start + duration). Frames are decoded, estimated and matted
+   on up to four threads (`--workers N`, default `0` = min(4, CPUs); `1` keys one frame at
+   a time); the frames and the report are the same bytes whatever the thread count.
 
 4. Read the report's `status`, `checks` and `warnings`, then look at the frames over a
-   light and a dark background before packaging them:
+   light and a dark background before registering (`register_clip.py apply`) and
+   packaging them:
 
    ```text
-   python "<skill-dir>/scripts/video2dsprite.py" package --clean-dir work/hero-idle/frames-clean --out-dir assets/hero-idle --name hero-idle --fps 24 --formats png,webm,packed --loop
+   python "<skill-dir>/scripts/video2dsprite.py" package --clean-dir work/hero-idle/frames-clean --output-dir assets/hero-idle --name hero-idle --fps 24 --formats png,webm,packed --loop
+   python "<skill-dir>/scripts/video2dsprite.py" verify --package assets/hero-idle
    ```
+
+   `package` and `verify` are `engine_export.py`'s verbs with every flag
+   ([pipeline.md](pipeline.md)): its key-residue gate reads the key from
+   `frames-clean/matte-report.json`, and `--allow-key-residue` is the legacy switch that
+   ships residue with a recorded override.
 
 ## Matte modes (`--matte`)
 
@@ -141,7 +153,8 @@ python "<skill-dir>/scripts/video2dsprite.py" clean --raw-dir work/hero-attack-r
 A flag that contradicts the profile wins, prints a warning and is recorded in the
 report's `profile.deviations`, because that clip's matte now differs from the others.
 `unmix` belongs to the soft matte (`--no-unmix` takes edge colour from the
-neighbouring subject only).
+neighbouring subject only), so `register_clip.py profile` writes `unmix` true only for a
+soft profile, and `erode` as whole pixels.
 
 ## Gates and the report
 
@@ -174,7 +187,8 @@ reference were tuned and verified on one clip: Ryo, magenta key, black-outlined
 cartoon, H.264 4:2:0, 960x960, 145 frames (report v2 section 7). Green and blue keys,
 outline-free art, other codecs and fast motion are covered by synthetic tests only.
 On that clip the default run measured fringe 0, leak 0, no enclosed pockets in 145
-frames, 3.6 flips per frame pair (sprite-gen best: 1.1) and about 0.7 s of keyer time
-per frame. Narrow gaps filled with bright key glow can stay opaque (about 170
+frames, 3.6 flips per frame pair (sprite-gen best: 1.1), about 0.66 s of soft-matte time
+per frame and 0.34 s per frame for the whole keying pass on four threads of a 4-core
+Windows machine (1.09 s on one). Narrow gaps filled with bright key glow can stay opaque (about 170
 key-hued pixels per Ryo frame), and rims under about a third coverage of a dark
 outline are eroded. Look at the frames.

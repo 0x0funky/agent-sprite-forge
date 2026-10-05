@@ -372,5 +372,18 @@ class CutV2Tests(unittest.TestCase):
             self.assertFalse((root / "changed").exists())
 
 
+class IntegrationTests(unittest.TestCase):
+    """D27: an unexpected exception is one 'error: internal error (...)' line and exit 1 (SystemExit, as the
+    review and cut verbs always exited)."""
+
+    def test_internal_error_is_one_line(self):
+        stderr = io.StringIO()
+        with mock.patch.object(R, "review", side_effect=ZeroDivisionError("boom")), \
+                contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+            R.main(["review", "--frames-dir", "src", "--out-dir", "out", "--fps", "24"])
+        self.assertEqual(caught.exception.code, 1)
+        self.assertEqual(stderr.getvalue().strip(), "error: internal error (ZeroDivisionError: boom)")
+
+
 if __name__ == "__main__":
     unittest.main()

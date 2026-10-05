@@ -261,3 +261,21 @@ def test_retime_cli_prints_one_ascii_json_line(strike, tmp_path):
     summary = json.loads(lines[0])
     assert summary["impactMs"] == 391 and summary["durationMs"] == 950
     assert Path(summary["selection"]).is_file() and Path(summary["metadata"]).is_file()
+
+
+def test_internal_errors_are_one_line(monkeypatch, capsys):
+    """D27: an exception that is not a refused input prints 'error: internal error (<Type>: <msg>)', no traceback."""
+    monkeypatch.setattr(R, "retime", lambda args: [][3])
+    code = R.main(["--frames-dir", "frames", "--fps", "24", "--output-dir", "out", "--kind", "attack", "--spans", "0:2"])
+    assert code == 1 and capsys.readouterr().err.strip() == "error: internal error (IndexError: list index out of range)"
+
+
+def test_selection_with_a_bom_is_read(strike, tmp_path):
+    """D28: a selection saved with a UTF-8 BOM (PowerShell 5.1) is read like any other."""
+    first = tmp_path / "first"
+    assert R.main(["--frames-dir", str(strike), "--fps", "24", "--output-dir", str(first), "--kind", "attack",
+                   "--spans", "0:6"]) == 0
+    raw = (first / "selection.json").read_bytes()
+    (tmp_path / "bom.json").write_bytes(b"\xef\xbb\xbf" + raw)
+    selection = R.gait_loop.read_selection(tmp_path / "bom.json")
+    assert selection["indices"] == [0, 1, 2, 3, 4, 5]

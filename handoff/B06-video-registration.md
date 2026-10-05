@@ -7,6 +7,10 @@ Branch `asf/B06-video-registration` (from `wip/asf-upgrade-20261005` @ 3f9252d).
 rewritten [video prompt-rules.md](../skills/video2dsprite/references/prompt-rules.md) and
 [sprite video-handoff.md](../skills/generate2dsprite/references/video-handoff.md).
 
+Integration status (Phase 3, group video, branch `asf/int-g-video`): D18 (hygiene floor on registered frames), D21
+(profile unmix default and whole-px erode) and D26-D30 are done; resolved items below cite their decision. Tests:
+26 (4 added by integration).
+
 How it works: `prepare` places the master (or one view of a sheet) on the provider canvas with the root on a fixed
 pixel (640, 620 on 1280x720) at one scale, and records `referenceScale`/`referenceOffset` in
 `registration_job.v1`. `apply` maps every keyed frame back with the single inverse (output = video *
@@ -44,7 +48,12 @@ Claude Code).
 - `apply` reads keyed RGBA frames at the video's size (B05 process `frames-clean`; natural sort, `--pattern`),
   writes `frames/frame_000000.png...`, `registration.json` and `review-contact.png`. `--fit auto` (default) is one
   factor when the aspect matches and a centred crop otherwise; `stretch`, `cover`, `contain` are explicit.
-  `--action-padding` overrides the job's padding. Registration QA (fails with nothing published): subject touching
+  `--action-padding` overrides the job's padding (package the frames with registration.json, or with the job plus the
+  same `--action-padding`). After resampling, locks and fx fades every registered frame runs
+  `forge_core.alpha_hygiene(mode='floor', floor=4)`: lanczos rings just outside edges and unpremultiplying alpha 1-4
+  invents saturated key-leaning colours that are invisible but read as key spill; registration.json records
+  `hygiene` (`mode`, `floor`, `floor_px`, `max_removed_alpha`, `frames_changed`, `method`) (per D18). Registration
+  QA (fails with nothing published): subject touching
   the video frame (regenerate), subject past the padded canvas (the error prints the exact `--action-padding` that
   contains it), rest pose more than 2 px from the master's anchor or 3% off its height (both measured on the 50%
   alpha contour). `--allow-edge-touch` downgrades the first two to warnings. `--rest-frames` are source indices
@@ -52,7 +61,10 @@ Claude Code).
   `sourceSize`, `sourceAnchor`, `fitApplied`, `qa`, `warnings`.
 - `profile` writes one `video2dsprite.character_profile.v1` file (`--output`, refused when it exists) from one or
   more registrations that agree on master, base canvas, anchor, anchor mode and reference scale (0.5% tolerance);
-  matte settings come from flags (`--matte-mode soft`, `--key`, `--erode 0`, `--unmix`, `--despill-mode auto`).
+  matte settings come from flags (`--matte-mode soft`, `--key`, `--erode 0` whole px, `--unmix/--no-unmix`,
+  `--despill-mode auto`). `unmix` defaults to the soft matte (true for soft, false for dominance and binary) and
+  `--unmix` with another mode is refused; a fractional `--erode` is a usage error (per D21). video2dsprite
+  `--matte-profile` accepts every profile `profile` writes.
 - `validate-profile` writes nothing; it prints the JSON report (status, per-clip issues, `nativeFootBottomRange`)
   and exits 1 with `error: profile validation failed: ...` on a mismatch or a foot-line spread over
   `--foot-tolerance` (2 px).
@@ -64,6 +76,12 @@ Claude Code).
   with nothing published when the rule would change more than `--max-changed-fraction` (0.6) of a frame's visible
   region pixels.
 - Every `--help` (both scripts, every verb) is ASCII and exits 0 under cp1252 and cp950 (tested).
+- Exit codes and errors (per D26, D27): usage errors exit 2; refused input, failed registration or placement QA, a
+  failed profile validation and a take rejected under `--strict` exit 1 with `error: ...`; anything unexpected prints
+  `error: internal error (<Type>: <message>)` (forge_core.run_cli). qc stays an append-only verdict log: a rejected
+  take is recorded and exits 0 without `--strict` (D26's exit-1 rule names verify, validate and conform tools; the
+  Wave B review's chain checks rely on this). JSON documents are read with forge_core (BOM-tolerant, per D28); QA
+  envelopes, jobs and profiles record `tool.version` 0.4.0 (per D29).
 
 ## 2. SKILL.md routing rows
 
@@ -114,6 +132,10 @@ generate2dsprite:
 - Changed: video `prompt-rules.md` (prompt contract, timelines, amplitude and cycle table, negatives, no famous names,
   FX) and sprite `video-handoff.md` (construction workflow, padding contract, "regenerate, don't pad", early calm
   span) (B06-T6).
+- Changed: registered frames lose alpha 1-4 halo (forge_core.alpha_hygiene floor 4), recorded as `hygiene` in
+  registration.json (integration D18); `profile` pins `unmix` only for the soft matte and `erode` as whole px
+  (integration D21); fileRefs carry `bytes` (forge_core.file_ref, D30); `tool.version` 0.4.0 (D29); unexpected
+  errors read `error: internal error (...)` (D27).
 - BREAKING: none (new tools; `video2dsprite.py` keeps its fixed-envelope registration, owned by B05).
 - Fixed: registration fitted to alpha bounds pumps body scale between frames and clips (amber-quay 2.2-4.8%,
   study-hd2d-demos/amber-quay-registration-findings.json; video2dsprite.py:226-254 fits a per-clip envelope);
@@ -121,14 +143,16 @@ generate2dsprite:
   MOTION-v2.md:15) are linted. A 1264x720 reply to a 1280x720 input is a centre crop (hd2d MOTION-v2.md, checked
   with 12 landmarks); `--fit auto` registers it as one, where the stretch formula `sx = W/1280` would be off by up
   to 4 px across a centred subject.
+- Fixed: registered frames failed the packaging residue gate at default settings (5.9% ring spill from invisible
+  alpha 1-4 halo; now 0.55% measured without a floor, 0.10% with the gate's floor 16); dominance and binary profiles
+  were refused by video2dsprite `--matte-profile` (Wave B review; integration D18, D21).
 
 ## 5. Schema change requests
 
-Exact JSON Schema additions for `shared/schemas/video.schema.json` (then `tools/vendor_sync.py --write`). They are
-additive: no existing field changes and no new required field on the frozen `$defs`. `tests/test_video_registration.py`
-holds the same JSON (`REQUESTED_DEFS`, `REQUESTED_PROPERTIES`) and validates every document B06 writes against the
-vendored schema with these additions applied in memory (`assert_requested`); delete that helper once integration
-applies them and use `assert_valid_contract`.
+Resolved: integration S1 applied this section to shared/schemas/video.schema.json (commit f3d7eb2), adding
+`registration_v1.hygiene` (per D18); `assert_requested` is now `assert_valid_contract` on the vendored schemas. One
+part waits: `uniqueItems` on `registration_v1.lock.modes` returns once B13 and B18 adopt forge_schema (integration
+S1 note). Kept for reference:
 
 **5.1 New `$defs.registration_v1`** in `shared/schemas/video.schema.json`. Producer: B06 `register_clip.py apply`. Consumers: B06 `profile` and `validate-profile`, B08 `package --registration`, B07 (frame selection on `frames/`). Reason: the plan names registration.json but A0 froze no contract for it.
 
@@ -410,7 +434,9 @@ and to `$defs.character_profile_v1.properties.clips.additionalProperties.propert
 
 ## 6. Shared-helper promotion requests
 
-- forge_core (integration): `register_clip._local_resample_anisotropic(pixels, scale_xy, resampler, anchor_src,
+- Resolved (per D30): `ref_path`, `_file_ref` and `_round_half_up` are forge_core.manifest_path, file_ref and
+  round_half_up; prepare_i2v_input's `round_half_up` is forge_core's.
+- Still pending, forge_core (integration): `register_clip._local_resample_anisotropic(pixels, scale_xy, resampler, anchor_src,
   anchor_dst, out_size)` with `_local_unpremultiply(planes)` (skills/video2dsprite/scripts/register_clip.py, "the
   transform" section). It is `forge_core.resample_rgba`'s anchor-pinned path with separate x and y scales (same
   premultiplied float planes, the same box filter for reductions of 2x or more, the same padded canvas). Request:
@@ -431,11 +457,14 @@ and to `$defs.character_profile_v1.properties.clips.additionalProperties.propert
   apply`, gait_loop select or retime (B07), package and verify (B08). Registration is by construction, not by
   bounding box; link references/prompt-rules.md for briefs. Add the section 2 rows.
 - B05 (matte.md, `--matte-profile`): the profile's `matte` block is written by `register_clip.py profile` (mode, key,
-  erode, unmix, despill; `params` optional). B05's frames-clean at the video's native size are `apply`'s input; any
-  frame naming works (natural sort, `--pattern`). matte.md should link prompt-rules.md for the key choice.
-- B08 (engine_export `package --registration`, pipeline.md): copy `{mode: "construction", jobSha256}` from
-  registration.json into animation_v3 `registration`, take `sourceSize`/`sourceAnchor` (the padded canvas) and, for
-  fx, `displayScale` from it; pipeline.md should name the padding contract in generate2dsprite's video-handoff.md.
+  erode, unmix, despill; `params` optional); resolved per D21 (unmix by mode, whole-px erode). B05's frames-clean at
+  the video's native size are `apply`'s input; any frame naming works (natural sort, `--pattern`). Z: matte.md could
+  link prompt-rules.md for the key choice.
+- B08 (engine_export `package --registration`, pipeline.md): resolved. Package takes `sourceSize`/`sourceAnchor`,
+  the mode and `jobSha256` from registration.json, honours a job's view box and `--action-padding` (per D21), and
+  takes the residue gate's key from its `keyColor` (per D17); pipeline.md recommends registration.json. Z: pipeline.md
+  could also name the padding contract in generate2dsprite's video-handoff.md; `displayScale` of an fx registration is
+  not yet copied into animation.json (pass `--display-scale`).
 - B07 (gait_loop, retime, animation-review.md): run on `apply`'s `frames/`; `registration.json` `frames[].sourceIndex`
   maps each registered frame back to the take. Keep the early calm span until retime cuts it.
 - generate2dmedia and B22 docs: an image-to-video request sends the job folder's `input.png` and `prompt.txt`.
@@ -472,8 +501,12 @@ and to `$defs.character_profile_v1.properties.clips.additionalProperties.propert
   frames. Not run: Linux, macOS, Python 3.10, Pillow 10.1, numpy 1.26.
 - No provider was called: the templates follow the Dusk, hd2d and game-opus55 prompts that produced accepted takes,
   but their effect on any provider is not measured here.
-- B05, B07 and B08 are not merged on this branch, so the full chain (process, apply, gait_loop, package) was not run;
-  `apply` was exercised with synthetic perfect-matte frames and the cfed170 frames-clean of the Ryo clip.
+- Integration ran the full chain (key-plan, prepare, take, process, qc, apply, gait_loop, retime, package, verify,
+  validate) at default settings on a synthetic 64-frame take and in `tests/test_engine_export_v3.py::
+  test_canonical_chain`; the Wave B review's chain scripts pass (62 of 62 steps). Real providers were not called.
+- qc's end calm span misreads a looping take (run, walk) that ends mid-stride as a push-in (the review's synthetic
+  run: camera scale 1.052 in the end span, rejected and recorded, exit 0); the take contract asks for an end calm
+  span, so such takes are rejected by design, but the reason text names a camera move.
 - Deviations from the plan, with reasons:
   - `apply --profile actor|fx` is the processing profile the plan names; the character profile is inherited with
     `apply --character-profile <file>` because `--profile` was taken. The `profile` verb writes the character profile.

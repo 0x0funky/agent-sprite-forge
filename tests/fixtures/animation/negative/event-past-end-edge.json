@@ -1,0 +1,14 @@
+{
+  "rule": "events",
+  "why": "an event may sit on the end edge (atMs == duration, D19) but not after it",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/events/1/atMs",
+      "value": 501
+    }
+  ],
+  "alsoFails": []
+}

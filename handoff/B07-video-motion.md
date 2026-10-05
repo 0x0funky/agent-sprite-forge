@@ -9,6 +9,10 @@ v2-aware `cut` in [animation_review.py](../skills/video2dsprite/scripts/animatio
 [test_animation_review.py](../tests/test_animation_review.py); opt-in bench
 [loop_bench.py](../tests/benchmarks/loop_bench.py).
 
+Integration status (Phase 3, group video, branch `asf/int-g-video`): the review's B07 items are resolved: tick-row
+`end` events at the clip edge package (D19, B08 side), uneven whole-tick durations package as video (D21, B08 side),
+every CLI has the D27 catch-all, and D28-D30 are adopted. Resolved items below cite their decision.
+
 ## 1. CLIs
 
     python "<skill-dir>/scripts/gait_loop.py" select --frames-dir work/frames-clean --fps 24 --output-dir work/loop
@@ -47,7 +51,14 @@ v2-aware `cut` in [animation_review.py](../skills/video2dsprite/scripts/animatio
 - Every verb's `--help` is ASCII and works under cp1252 and cp950 (tested with `assert_cli_help`). Errors print
   `error: ...` to stderr and exit 1 (the existing `animation_review` verbs keep `SystemExit(1)`); outputs are
   staged with `forge_core.staged_output` and nothing is published on failure (no period, no valid window, a
-  ping-pong walk, a reversed recovery, changed source frames, an existing output directory).
+  ping-pong walk, a reversed recovery, changed source frames, an existing output directory). Any other exception
+  prints `error: internal error (<Type>: <message>)` instead of a traceback (forge_core.run_cli, per D27); usage
+  errors exit 2 (D26). Selections are read with forge_core.read_json (BOM-tolerant, strict, per D28); QA envelopes
+  record `tool.version` 0.4.0 (per D29). `animation_review review` and `cut` also print `metadata` (review.json or
+  selection.json).
+- Packaging (B08): a tick-row selection packages with its `end` event on the clip edge (per D19) and, for WebM and
+  packed MP4, with each frame repeated for its ticks at `tickHz` (per D21); held frames merged by `select` repeat at
+  the source fps. No holds-as-repeats option is needed here.
 
 ## 2. SKILL.md routing rows
 
@@ -93,15 +104,16 @@ Walks ship cadence and stride."
   stance-aligned silhouette XOR against the rest pose (B07-T5).
 - Changed: `references/animation-review.md` covers classified candidates, the loop policy table, the early calm
   span, retiming and stride fields (B07-T6). `animation_review.py` calls `utf8_stdio()` and prints ASCII errors.
+- Changed: fileRefs in selections and reports carry `bytes` (forge_core.file_ref, integration D30); `tool.version`
+  is 0.4.0 (D29); unexpected errors read `error: internal error (...)` (D27).
 - BREAKING: none. `review`, v1 `cut` and frame selection v1 behave as before.
 - Fixed: report v2 P0-4: six of the eight old helper candidates on the report clip were invalid; they are now
   listed as rejected with their reasons, and an 8-frame single step is rejected even when its seam looks normal.
 
 ## 5. Schema change requests
 
-No frozen schema blocks this module: every document is validated against the vendored
-`skills/video2dsprite/references/schemas` as is. Please document the optional fields my producers add, and three
-semantics, in `shared/schemas/video.schema.json`.
+Resolved: integration S1 applied this section to shared/schemas/video.schema.json (commit f3d7eb2), including
+`videoEvent.tick` and the end-edge rule (per D19). Kept for reference:
 
 Add to `/$defs/frame_selection_v2/properties` (producers: gait_loop select, measure-stride, retime,
 animation_review select and cut; consumers: B08 package `--selection`, B09 runtime, B02 clip conversion):
@@ -153,13 +165,8 @@ common `qaEnvelope` (validated in the tests). Promote them to `$defs` only if a 
 
 All in `skills/video2dsprite/scripts`; none is needed by another skill yet.
 
-- `gait_loop.round_half_up(value: float | Fraction) -> int` (gait_loop.py:102): forge_core has the private
-  `_round_half_up`; a public, Fraction-aware version would serve every timing module. Tests: test_gait_loop
-  `test_parse_fps_and_durations`.
-- `gait_loop.file_ref(path, base, sha256=None) -> dict` and `directory_ref(directory, base) -> str`
-  (gait_loop.py:210-226): `forge_core.portable_path` plus the A1 rule "no absolute path; store the name and
-  sha256 off-drive". Proposed `forge_core.file_ref(path, base, sha256=None)`. Tests: the no-absolute-path check
-  in `test_select_writes_contract_valid_selection_report_and_aids`.
+- Resolved (per D30): `gait_loop.round_half_up` is forge_core.round_half_up; `gait_loop.file_ref` and
+  `directory_ref` are forge_core.file_ref and manifest_path (fileRefs now carry `bytes`).
 - `gait_loop.kept_durations` (gait_loop.py:162) and `retime.scaled_edges` (retime.py:144): integer durations for
   weighted frames that sum exactly; a generalisation of `forge_core.frame_durations(total_ms, n)` as
   `frame_durations(total_ms, n, *, weights=None)`. Tests: `test_parse_fps_and_durations`,
@@ -176,9 +183,9 @@ All in `skills/video2dsprite/scripts`; none is needed by another skill yet.
 
 - video2dsprite SKILL.md: replace the "Recurrence suggestions require visual phase/contact review" paragraph with
   the routing rows above and link references/animation-review.md for loops, retiming and stride.
-- references/pipeline.md (B08): `package --selection` reads the selection v2 these tools write; `durations_ms`
-  are the playback timing; pingpong selections are baked as `indices + indices[-2:0:-1]`; copy `impactMs`,
-  `holdMs`, `events`, `cadenceMs`, `strideWorldUnits`, `speedRef`, `entryFrame` into animation.json 3.0.
+- references/pipeline.md (B08): resolved for `--selection`, durations, pingpong baking, the end edge (D19) and tick
+  expansion (D21). Still open for B08: `entryFrame` is not copied into animation.json 3.0 yet (`impactMs`, `holdMs`,
+  `events`, `cadenceMs`, `strideWorldUnits`, `speedRef`, `cycles` are).
 - B09 forge-runtime.mjs: `walkPlayback`/`gaitFrame` take `strideWorldUnits` (one cycle per stride) or
   `stridePxPerFrame`, `cadenceMs` and `entryFrame`; `mapActionTime` reads `impactMs` and the events.
 - B02 build_animation_clips v2: a selection maps to clips_input as `frames` = sourceIndices (after a cut: 0..n-1),

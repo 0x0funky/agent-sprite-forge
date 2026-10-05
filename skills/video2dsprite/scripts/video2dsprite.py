@@ -8,7 +8,8 @@ Verbs (deterministic only; no creative generation, no network):
   clean     -> chroma-key frames (soft matte by default) plus matte-report.json
   sample    -> even-index frame sets + fixed-envelope feet/center registration
   process   -> extract + clean + sample in one shot, plus pipeline-meta.json
-  package   -> fixed-canvas PNG fallback plus optional alpha video
+  package   -> engine_export package: animation.json 3.0, PNG atlas, alpha video, residue gate
+  verify    -> engine_export verify: decode every encoded file against the atlas
   doctor    -> functional ffmpeg capability probe
 
 Every verb that writes files takes a new --output-dir (--out-dir is the old
@@ -17,7 +18,9 @@ run and its QA succeed, so a failed run leaves nothing behind.
 
 Keying defaults to the soft matte with enclosed-pocket removal, auto despill
 and alpha hysteresis; ``--matte binary --despill-mode off`` reproduces the
-cfed170 keyer bit for bit (references/matte.md).
+cfed170 keyer bit for bit (references/matte.md). Frames are decoded, estimated
+and matted on up to four threads (``--workers``); the output bytes do not depend
+on the thread count.
 
 Generation is a separate provider step. This processor never makes API calls.
 """
@@ -25,15 +28,21 @@ Generation is a separate provider step. This processor never makes API calls.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import functools
 import importlib.util
 import json
 import math
+import os
 import re
 import shutil
 import sys
 import time
+from collections import deque
 from collections.abc import Sequence as SequenceABC
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
+from itertools import islice
 from pathlib import Path
 from typing import Any, Callable, NamedTuple, Sequence
 
@@ -47,7 +56,7 @@ import forge_av as fa  # noqa: E402  (this skill's vendored copies; never a sibl
 import forge_core as fc  # noqa: E402
 import forge_matte as fm  # noqa: E402
 
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = fc.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 RAW_DIR, CLEAN_DIR = "frames-raw", "frames-clean"
 PIPELINE_META, MATTE_REPORT = "pipeline-meta.json", "matte-report.json"
 TRIAGE_REPORT, TRIAGE_SHEET = "raw-triage.json", "triage-sheet.png"
@@ -69,8 +78,9 @@ MAX_ERODE = 16
 BORDER_MIN_PX = 4              # triage: subject pixels on the ring that flag a frame (Dusk qa-review-raw.py: > 3)
 TRIAGE_THUMBS = 12
 KEY_PLAN_CANDIDATES = ("magenta", "green", "blue")
+KEY_WORKERS_MAX = 4               # threads that decode, estimate and matte frames (--workers)
+PARALLEL_MATTE_BUDGET_MPX = 8.0   # frame megapixels matted at once: soft_matte peaks near 112 MB per megapixel
 
-_DRIVE = re.compile(r"^[A-Za-z]:")
 _HEX = re.compile(r"^#?([0-9a-f]{6})$")
 
 
@@ -109,19 +119,6 @@ def sample_indices(n_total: int, n_want: int) -> list[int]:
     return [int(round(i * (n_total - 1) / (n_want - 1))) for i in range(n_want)]
 
 
-def _local_portable(path: Path, base: Path) -> str:
-    """Manifest-relative POSIX path, or the bare file name when no relative path exists (another drive)."""
-    relative = fc.portable_path(path, base)
-    return Path(path).name if relative.startswith("/") or _DRIVE.match(relative) else relative
-
-
-def _local_file_ref(path: Path, base: Path, sha256: str | None = None) -> dict:
-    """A common fileRef: path relative to ``base`` (the bare name on another drive), sha256 and size."""
-    path = Path(path)
-    return {"path": _local_portable(path, base), "sha256": sha256 or fc.sha256_file(path),
-            "bytes": path.stat().st_size}
-
-
 def _round_key(values: Sequence[float]) -> list[int]:
     """Whole-number RGB (half-up) for keyColor fields; forge_matte reports float keys."""
     return [int(math.floor(float(v) + 0.5)) for v in values]
@@ -153,6 +150,48 @@ class _FrameSequence(SequenceABC):
 
     def __getitem__(self, index: int) -> np.ndarray:
         return _load_pixels(self.paths[index])[0]
+
+
+class FrameInputError(RuntimeError):
+    """A refused frame input (no frames found or decoded); a RuntimeError as in cfed170, reported as error: ..."""
+
+
+def frame_workers(requested: int | None, size: tuple[int, int], count: int) -> int:
+    """Threads for the per-frame work: ``requested`` (0 or None: min(4, CPUs)), at most one per frame and no
+    more than PARALLEL_MATTE_BUDGET_MPX megapixels of frames matted at once (4K frames key one at a time)."""
+    cap = requested if requested else min(KEY_WORKERS_MAX, os.cpu_count() or 1)
+    megapixels = max(size[0] * size[1] / 1e6, 1e-6)
+    return max(1, min(int(cap), int(PARALLEL_MATTE_BUDGET_MPX // megapixels), count))
+
+
+def ordered_map(function: Callable[[Any], Any], items: Sequence[Any], workers: int):
+    """Yield ``function(item)`` for every item in order, at most ``workers`` calls at once on threads.
+
+    The per-frame work (PNG decode, key estimate, matte, pockets) is pure and numpy releases the GIL, so
+    threads give the bytes a sequential run gives, about 3x faster on four cores. At most 2 x ``workers``
+    results wait; an error is raised in the caller and the calls not yet started are cancelled.
+    """
+    if workers <= 1 or len(items) <= 1:
+        for item in items:
+            yield function(item)
+        return
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="video2dsprite") as pool:
+        iterator = iter(items)
+        pending = deque(pool.submit(function, item) for item in islice(iterator, 2 * workers))
+        try:
+            while pending:
+                result = pending.popleft().result()
+                for item in islice(iterator, 1):
+                    pending.append(pool.submit(function, item))
+                yield result
+        finally:
+            for future in pending:
+                future.cancel()
+
+
+def _frame_size(path: Path) -> tuple[int, int]:
+    with Image.open(path) as image:
+        return image.size
 
 
 # --------------------------------------------------------------------------- extraction
@@ -394,8 +433,8 @@ def load_matte_profile(path: Path) -> dict:
     """Read the ``matte`` block a character profile (video2dsprite.character_profile.v1) pins."""
     path = Path(path)
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        document = fc.read_json(path, strict=True)  # UTF-8 with or without a BOM (D28)
+    except ValueError as exc:
         raise ValueError(f"matte profile {path.name} is not valid JSON: {exc}") from None
     if not isinstance(document, dict) or document.get("schema") != PROFILE_SCHEMA:
         raise ValueError(f"matte profile {path.name} is not a {PROFILE_SCHEMA} document")
@@ -508,12 +547,28 @@ class _ClipPlan(NamedTuple):
     temporal_reason: str | None
 
 
+def _estimate_frame(path: Path, declared: str, settings: MatteSettings) -> tuple:
+    """Per-frame plan facts (thread-safe): sha256, shape, the border-ring key estimate and passthrough."""
+    pixels, info = _load_pixels(path)
+    key_rgb, estimate = fm.estimate_key(pixels, declared)
+    if settings.key_mode == "none":
+        skip = True
+    elif settings.key_mode != "auto":
+        skip = False
+    elif settings.matte == "binary":
+        skip = bool((pixels[..., 3] < 255).any())  # the cfed170 rule: any transparency keeps the frame
+    else:
+        skip = bool(estimate["use_native_alpha"])
+    return info["sha256"], pixels.shape, key_rgb, estimate, skip
+
+
 def _plan_clip(paths: list[Path], settings: MatteSettings, reference: np.ndarray | None,
-               despill_sample: tuple[list, list] | None = None) -> _ClipPlan:
+               despill_sample: tuple[list, list] | None = None, workers: int = 1) -> _ClipPlan:
     """Decide everything clip-wide before keying: the key per frame, native alpha, despill and params.
 
     ``despill_sample`` is ``(frames, source_indices)`` from the whole source clip; the
     auto interior despill rule then judges the clip rather than a trimmed window.
+    Frames are read and estimated on ``workers`` threads (same results).
     """
     frames = _FrameSequence(paths)
     warnings: list[str] = []
@@ -531,22 +586,14 @@ def _plan_clip(paths: list[Path], settings: MatteSettings, reference: np.ndarray
     explicit = declared.startswith("#")
     explicit_rgb = np.array([int(declared[i:i + 2], 16) for i in (1, 3, 5)], np.float32) if explicit else None
     keys, passthrough, estimates, digests, shapes = [], [], [], [], set()
-    for index in range(len(frames)):
-        pixels, info = _load_pixels(paths[index])
-        digests.append(info["sha256"])
-        shapes.add(pixels.shape)
-        key_rgb, estimate = fm.estimate_key(pixels, declared)
-        if settings.key_mode == "none":
-            skip = True
-        elif settings.key_mode != "auto":
-            skip = False
-        elif settings.matte == "binary":
-            skip = bool((pixels[..., 3] < 255).any())  # the cfed170 rule: any transparency keeps the frame
-        else:
-            skip = bool(estimate["use_native_alpha"])
-        keys.append(explicit_rgb.copy() if explicit else key_rgb)
-        passthrough.append(skip)
-        estimates.append(None if explicit else estimate)
+    estimate_one = functools.partial(_estimate_frame, declared=declared, settings=settings)
+    with contextlib.closing(ordered_map(estimate_one, paths, workers)) as stream:  # threads end before we go on
+        for digest, shape, key_rgb, estimate, skip in stream:
+            digests.append(digest)
+            shapes.add(shape)
+            keys.append(explicit_rgb.copy() if explicit else key_rgb)
+            passthrough.append(skip)
+            estimates.append(None if explicit else estimate)
     keyable = [i for i, skip in enumerate(passthrough) if not skip]
     if not explicit:
         valid = [keys[i] for i in keyable if estimates[i]["valid"]]
@@ -638,6 +685,12 @@ class _LocalAlphaHysteresis:
     state that flips only when alpha leaves the (0.4, 0.6) band on the other
     side; while it holds, alpha moves at most ``max_step`` per frame; a decisive
     change passes at once and alpha 0 always passes.
+
+    It works on the 8-bit grid in integers: the band edges are the library's own
+    float32 comparisons tabulated per alpha value, and a held step is a whole
+    number of levels (63 for 0.25), so every result equals the library's rounded
+    float result (an exhaustive test over every previous value, state and alpha
+    proves it) at about half the cost.
     """
 
     def __init__(self, band: tuple[float, float] = HYSTERESIS_BAND, max_step: float = HYSTERESIS_MAX_STEP):
@@ -646,23 +699,25 @@ class _LocalAlphaHysteresis:
             raise ValueError("band needs 0 <= lo < hi <= 1 and max_step > 0.")
         self.lo, self.hi = lo, hi
         self.max_step = math.floor(max_step * 255 + 1e-6) / 255  # a held step stays on the 8-bit grid
+        self._step = int(math.floor(max_step * 255 + 1e-6))
+        levels = np.arange(256, dtype=np.float32) / np.float32(255.0)  # the library's float32 planes
+        self._on, self._off = levels >= hi, levels <= lo
         self._previous: np.ndarray | None = None
         self._state: np.ndarray | None = None
 
     def push(self, alpha: np.ndarray) -> np.ndarray:
         """Filter the next uint8 alpha plane; the first frame passes unchanged."""
         source = np.asarray(alpha, np.uint8)
-        plane = source.astype(np.float32) / np.float32(255.0)
         if self._previous is None:
-            self._previous, self._state = plane, plane >= 0.5
+            self._previous, self._state = source.astype(np.int16), source >= 128  # plane >= 0.5
             return source.copy()
-        decided = np.where(plane >= self.hi, True, np.where(plane <= self.lo, False, self._state))
-        held = np.clip(plane, self._previous - self.max_step, self._previous + self.max_step)
-        result = np.where(decided == self._state, held, plane)
-        result = np.where(plane == 0, 0.0, result).astype(np.float32)
-        result = (np.floor(result * 255 + 0.5) / 255).astype(np.float32)
+        decided = self._on[source] | (~self._off[source] & self._state)
+        current = source.astype(np.int16)
+        held = np.clip(current, self._previous - self._step, self._previous + self._step)
+        result = np.where(decided == self._state, held, current)
+        result[source == 0] = 0  # alpha 0 always passes: never invent coverage without colour
         self._previous, self._state = result, decided
-        return np.floor(result * 255.0 + 0.5).astype(np.uint8)
+        return result.astype(np.uint8)
 
 
 def _absdiff(first: np.ndarray, second: np.ndarray) -> np.ndarray:
@@ -683,6 +738,49 @@ def _local_pair_flips(previous_alpha: np.ndarray, current_alpha: np.ndarray, sti
     built once (_local_still_mask). Equality with the library is tested.
     """
     return int(((_absdiff(previous_alpha, current_alpha) >= 64) & still).sum())
+
+
+def _local_pair_flip_counts(previous_rgb: np.ndarray, current_rgb: np.ndarray, previous_before: np.ndarray,
+                            before: np.ndarray, previous_after: np.ndarray, after: np.ndarray,
+                            tolerance: int = 20) -> tuple[int, int]:
+    """Flips of one frame pair before and after the hysteresis, as _local_pair_flips over _local_still_mask.
+
+    A flip needs an alpha change of 64 or more AND a raw colour change of at most ``tolerance``; the colour
+    test runs only at the pixels whose alpha changed (a thin rim), not over the whole frame. Equal counts.
+    """
+    changed_before = _absdiff(previous_before, before) >= 64
+    changed_after = _absdiff(previous_after, after) >= 64
+    rows, columns = np.nonzero(changed_before | changed_after)
+    if rows.size == 0:
+        return 0, 0
+    still = _absdiff(previous_rgb[rows, columns], current_rgb[rows, columns]).max(-1) <= tolerance
+    return int((changed_before[rows, columns] & still).sum()), int((changed_after[rows, columns] & still).sum())
+
+
+def _visible_box(rgba: np.ndarray) -> tuple[int, int, int, int] | None:
+    """Box of the alpha > 0 pixels: matte_qa and pocket removal read and change only these and their
+    transparent or off-canvas neighbours, so running them on this crop is exact (tests prove it)."""
+    return fc.subject_bbox(rgba[..., 3], 0)
+
+
+def _local_matte_qa(rgba: np.ndarray, key_rgb: np.ndarray) -> dict:
+    """forge_matte.matte_qa on the alpha > 0 crop: the same numbers, about twice as fast on video frames."""
+    box = _visible_box(rgba)
+    crop = np.zeros((1, 1, 4), np.uint8) if box is None else rgba[box[1]:box[3], box[0]:box[2]]
+    return fm.matte_qa(crop, key_rgb)
+
+
+def _local_remove_pockets(rgba: np.ndarray, key_rgb: np.ndarray) -> tuple[np.ndarray, int]:
+    """forge_matte.remove_enclosed_pockets on the alpha > 0 crop, pasted back: the same pixels and count
+    (a pocket is made of visible pixels, all inside the box)."""
+    box = _visible_box(rgba)
+    if box is None:
+        return np.array(rgba, copy=True), 0
+    x0, y0, x1, y1 = box
+    cleaned, count = fm.remove_enclosed_pockets(rgba[y0:y1, x0:x1], key_rgb)
+    out = np.array(rgba, copy=True)
+    out[y0:y1, x0:x1] = cleaned
+    return out, count
 
 
 def _local_erode_alpha(rgba: np.ndarray, steps: int) -> np.ndarray:
@@ -713,7 +811,7 @@ def _key_frame(pixels: np.ndarray, key_rgb: np.ndarray, settings: MatteSettings,
         keyed = fm.soft_matte(pixels, plan.params, key_rgb, local_background=settings.local_background,
                               protect=guard)
     if settings.remove_pockets:
-        cleaned, stats["pockets_removed"] = fm.remove_enclosed_pockets(keyed, key_rgb)
+        cleaned, stats["pockets_removed"] = _local_remove_pockets(keyed, key_rgb)
         if guard is not None:
             cleaned[guard] = keyed[guard]
         keyed = cleaned
@@ -842,7 +940,7 @@ def _matte_report(settings: MatteSettings, plan: _ClipPlan, rows: list[dict], ou
     if plan.at_risk:
         report["design_colours_at_risk"] = plan.at_risk
     if profile is not None:
-        report["profile"] = {"file": _local_file_ref(profile["path"], base, profile["sha256"]), "id": profile["id"],
+        report["profile"] = {"file": fc.file_ref(profile["path"], base, sha256=profile["sha256"]), "id": profile["id"],
                              "pinned": profile["pinned"], "deviations": profile["deviations"]}
         if profile["params"] is not None:
             report["profile"]["params"] = profile["params"]
@@ -852,8 +950,8 @@ def _matte_report(settings: MatteSettings, plan: _ClipPlan, rows: list[dict], ou
         "method": _QA_METHOD,
         "notProven": not_proven,
         "checks": checks,
-        "inputs": [_local_file_ref(path, base, digest) for path, digest in zip(plan.paths, plan.sha256)],
-        "outputs": [_local_file_ref(path, base, digest) for path, digest in zip(outputs, output_sha256)],
+        "inputs": [fc.file_ref(path, base, sha256=digest) for path, digest in zip(plan.paths, plan.sha256)],
+        "outputs": [fc.file_ref(path, base, sha256=digest) for path, digest in zip(outputs, output_sha256)],
         "tool": {"name": tool, "version": TOOL_VERSION},
     })
     return report
@@ -883,10 +981,22 @@ def sample_source_frames(video: Path, total: int, sample: int = 16) -> tuple[lis
     return (frames, indices) if frames else None
 
 
+def _matte_one(index: int, paths: Sequence[Path], settings: MatteSettings, plan: _ClipPlan) -> tuple:
+    """Decode and key one frame (thread-safe): pixels, keyed frame, stats and the protect guard."""
+    pixels, _ = _load_pixels(paths[index])
+    if plan.passthrough[index]:
+        return pixels, pixels.copy(), {"pockets_removed": 0}, None
+    guard = None
+    if settings.protect_colors:
+        guard = fm.protect_mask(pixels[..., :3], list(settings.protect_colors), settings.protect_tol)
+    keyed, stats = _key_frame(pixels, plan.keys[index], settings, plan, guard)
+    return pixels, keyed, stats, guard
+
+
 def key_frames(raw_dir: Path, clean_dir: Path, settings: MatteSettings = MatteSettings(), *,
                reference: np.ndarray | None = None, profile: dict | None = None,
                despill_sample: tuple[list, list] | None = None, tool: str = "video2dsprite.py clean",
-               log: Callable[[str], None] | None = None) -> dict:
+               log: Callable[[str], None] | None = None, workers: int | None = None) -> dict:
     """Key ``raw_dir/frame_*.png`` into ``clean_dir/clean_0000.png`` onwards and write matte-report.json.
 
     The clip is planned first (key per frame, native alpha, the auto interior
@@ -898,17 +1008,21 @@ def key_frames(raw_dir: Path, clean_dir: Path, settings: MatteSettings = MatteSe
     and indices of the whole source clip, see sample_source_frames) lets that
     rule judge the clip, not a trimmed window. Returns the matte report
     (video2dsprite.matte_report.v1, a QA envelope); a ``clean_dir`` that
-    already holds keyed frames is refused.
+    already holds keyed frames is refused. ``workers`` threads decode,
+    estimate and matte frames (None or 0: min(4, CPUs), see frame_workers);
+    the hysteresis, QA and writing stay in order, so the bytes never depend
+    on it.
     """
     settings.validate()
     raw_dir, clean_dir = Path(raw_dir), Path(clean_dir)
     paths = sorted(raw_dir.glob("frame_*.png"))
     if not paths:
-        raise RuntimeError(f"no raw frames in {raw_dir}")
+        raise FrameInputError(f"no raw frames in {raw_dir}")
     _ensure_dir(clean_dir)
     if any(clean_dir.glob("clean_*.png")) or (clean_dir / MATTE_REPORT).exists():
         raise FileExistsError(f"{clean_dir} already holds keyed frames; key into a new directory")
-    plan = _plan_clip(paths, settings, reference, despill_sample)
+    workers = frame_workers(workers, _frame_size(paths[0]), len(paths))
+    plan = _plan_clip(paths, settings, reference, despill_sample, workers)
     if log:
         for warning in plan.warnings:
             log(f"warning: {warning}")
@@ -918,44 +1032,40 @@ def key_frames(raw_dir: Path, clean_dir: Path, settings: MatteSettings = MatteSe
     pairs = 0
     previous = None
     post_despill = settings.matte != "soft" and plan.despill_applied != "off"
-    for index, path in enumerate(paths):
-        pixels, _ = _load_pixels(path)
-        key_rgb = plan.keys[index]
-        guard = None
-        if plan.passthrough[index]:
-            keyed, stats = pixels.copy(), {"pockets_removed": 0}
-        else:
-            if settings.protect_colors:
-                guard = fm.protect_mask(pixels[..., :3], list(settings.protect_colors), settings.protect_tol)
-            keyed, stats = _key_frame(pixels, key_rgb, settings, plan, guard)
-        before = keyed[..., 3].copy()
-        if hysteresis is not None:
-            keyed[..., 3] = hysteresis.push(before)
-            keyed[keyed[..., 3] == 0, :3] = 0
-        if previous is not None and previous[0].shape == pixels[..., :3].shape:
-            still = _local_still_mask(previous[0], pixels[..., :3])
-            flips_before += _local_pair_flips(previous[1], before, still)
-            flips_after += _local_pair_flips(previous[2], keyed[..., 3], still)
-            pairs += 1
-        previous = (pixels[..., :3], before, keyed[..., 3].copy())
-        # Residue is counted before the despill pass: neutralising a key-coloured pocket
-        # would hide it as an opaque grey or black blob instead of removing it.
-        qa = fm.matte_qa(keyed, key_rgb)
-        if post_despill and not plan.passthrough[index]:
-            keyed, despilled = fm.despill(keyed, plan.despill_applied, settings.despill_radius, protect=guard,
-                                          key=key_rgb)
-            stats["despill_px"] = despilled["changed_px"]
-            final = fm.matte_qa(keyed, key_rgb)
-            qa = {**qa, **{name: final[name] for name in ("outer_ring_spill_fraction", "semitransparent_fraction",
-                                                          "visible_px")}}
-        target = clean_dir / f"clean_{index:04d}.png"
-        fc.save_png(keyed, target)
-        outputs.append(target)
-        digests.append(fc.sha256_file(target))
-        rows.append({"index": index, "key": _round_key(key_rgb), "passthrough": plan.passthrough[index],
-                     **{name: qa[name] for name in _FRAME_FIELDS}, **stats})
-        if log and ((index + 1) % 25 == 0 or index + 1 == len(paths)):
-            log(f"  keyed {index + 1}/{len(paths)}")
+    matte_one = functools.partial(_matte_one, paths=paths, settings=settings, plan=plan)
+    # closing() stops the threads before an error leaves key_frames (and staged_output removes the stage)
+    with contextlib.closing(ordered_map(matte_one, range(len(paths)), workers)) as stream:
+        for index, (pixels, keyed, stats, guard) in enumerate(stream):
+            key_rgb = plan.keys[index]
+            before = keyed[..., 3].copy()
+            if hysteresis is not None:
+                keyed[..., 3] = hysteresis.push(before)
+                keyed[keyed[..., 3] == 0, :3] = 0
+            if previous is not None and previous[0].shape == pixels[..., :3].shape:
+                pair = _local_pair_flip_counts(previous[0], pixels[..., :3], previous[1], before, previous[2],
+                                               keyed[..., 3])
+                flips_before += pair[0]
+                flips_after += pair[1]
+                pairs += 1
+            previous = (pixels[..., :3], before, keyed[..., 3].copy())
+            # Residue is counted before the despill pass: neutralising a key-coloured pocket
+            # would hide it as an opaque grey or black blob instead of removing it.
+            qa = _local_matte_qa(keyed, key_rgb)
+            if post_despill and not plan.passthrough[index]:
+                keyed, despilled = fm.despill(keyed, plan.despill_applied, settings.despill_radius, protect=guard,
+                                              key=key_rgb)
+                stats["despill_px"] = despilled["changed_px"]
+                final = _local_matte_qa(keyed, key_rgb)
+                qa = {**qa, **{name: final[name] for name in ("outer_ring_spill_fraction", "semitransparent_fraction",
+                                                              "visible_px")}}
+            target = clean_dir / f"clean_{index:04d}.png"
+            fc.save_png(keyed, target)
+            outputs.append(target)
+            digests.append(fc.sha256_file(target))
+            rows.append({"index": index, "key": _round_key(key_rgb), "passthrough": plan.passthrough[index],
+                         **{name: qa[name] for name in _FRAME_FIELDS}, **stats})
+            if log and ((index + 1) % 25 == 0 or index + 1 == len(paths)):
+                log(f"  keyed {index + 1}/{len(paths)}")
     flips = (flips_before / pairs, flips_after / pairs) if pairs else None
     report = _matte_report(settings, plan, rows, outputs, digests, flips, profile, clean_dir, tool)
     fc.write_json(clean_dir / MATTE_REPORT, report)
@@ -1121,7 +1231,7 @@ def sample_and_export(
         raise ValueError("playback-duration must be positive and finite")
     cleans = sorted(Path(clean_dir).glob("clean_*.png"))
     if not cleans:
-        raise RuntimeError(f"no cleaned frames in {clean_dir}")
+        raise FrameInputError(f"no cleaned frames in {clean_dir}")
     out_dir = Path(out_dir)
     sprite_dir = _ensure_dir(out_dir / "sprite")
     n_total = len(cleans)
@@ -1146,9 +1256,9 @@ def sample_and_export(
             build_exports(sprites, sprite_dir, tag="x8", n_frames=n_want, gif_ms=gif_ms, durations_ms=durations)
         else:
             info = build_exports(sprites, sprite_dir, tag=tag, n_frames=n_want, gif_ms=gif_ms, durations_ms=durations)
-        info["sprites"] = [_local_portable(Path(p), out_dir) for p in info["sprites"]]
+        info["sprites"] = [fc.manifest_path(Path(p), out_dir) for p in info["sprites"]]
         for name in ("strip", "grid", "gif"):
-            info[name] = _local_portable(Path(info[name]), out_dir)
+            info[name] = fc.manifest_path(Path(info[name]), out_dir)
         info["indices"] = idxs
         info["requestedCount"] = n_want
         info["count"] = len(sprites)
@@ -1276,7 +1386,7 @@ def triage_clip(video: Path, out_dir: Path, *, key: str = "auto", border_px: int
     finally:
         stream.close()
     if not count:
-        raise RuntimeError(f"no frames decoded from {video.name}")
+        raise FrameInputError(f"no frames decoded from {video.name}")
     fps_text = info["fps_rational"]
     if fps_text is None and info["duration"]:
         fps_text = fc.rational_fps(count, max(1, int(round(info["duration"] * 1000))))
@@ -1316,7 +1426,7 @@ def triage_clip(video: Path, out_dir: Path, *, key: str = "auto", border_px: int
     if thumbs:
         sheet = out_dir / TRIAGE_SHEET
         fc.save_png(_contact_sheet(thumbs, set(flagged), Fraction(fps_text)), sheet)
-        outputs.append(_local_file_ref(sheet, out_dir))
+        outputs.append(fc.file_ref(sheet, out_dir))
     report = {
         "schema": TRIAGE_SCHEMA,
         "size": [info["width"], info["height"]],
@@ -1348,7 +1458,7 @@ def triage_clip(video: Path, out_dir: Path, *, key: str = "auto", border_px: int
             "Audio and cover art are only reported; extract and process drop them.",
         ],
         "checks": checks,
-        "inputs": [_local_file_ref(video, out_dir)],
+        "inputs": [fc.file_ref(video, out_dir)],
         "outputs": outputs,
         "tool": {"name": "video2dsprite.py triage", "version": TOOL_VERSION},
     }
@@ -1362,14 +1472,56 @@ def triage_clip(video: Path, out_dir: Path, *, key: str = "auto", border_px: int
 
 # --------------------------------------------------------------------------- key plan
 
+def _keyed_master(pixels: np.ndarray) -> tuple[np.ndarray | None, dict]:
+    """The master with its backdrop removed, for listing design colours at risk (D33).
+
+    A master with transparency is used as it is. An opaque master is keyed first, as ``clean
+    --reference`` keys an opaque reference: on a magenta, green or blue backdrop (the declared key whose
+    border-ring estimate is valid and holds at least half of the ring within 48 RGB) with
+    forge_matte.key_still's soft matte;
+    on another uniform backdrop (white, grey: at least half of the 8 px border ring within 48 RGB of its
+    median) the subject is every pixel farther than 48 from that colour and more than 2 px inside it, as
+    forge_matte.choose_key_color reads an opaque master. Otherwise (no uniform backdrop) None.
+    """
+    if (pixels[..., 3] < 255).any():
+        return pixels, {"method": "alpha"}
+    best = None
+    for name in fm.DECLARED_KEYS:
+        _, estimate = fm.estimate_key(pixels, name)
+        if estimate["valid"] and estimate["ring_share"] >= 0.5 and (
+                best is None or estimate["ring_share"] > best[1]["ring_share"]):
+            best = (name, estimate)
+    if best is not None:
+        keyed, info = fm.key_still(pixels, quality="soft", key=best[0])
+        if info["quality"] != "native_alpha":
+            return np.asarray(keyed), {"method": "soft matte (forge_matte.key_still)", "backdrop": best[0],
+                                       "backdrop_rgb": _round_key(best[1]["key"])}
+    height, width = pixels.shape[:2]
+    ring = min(8, max(1, height // 2), max(1, width // 2))
+    border = np.ones((height, width), bool)
+    border[ring:height - ring, ring:width - ring] = False
+    samples = pixels[..., :3][border].astype(np.float32)
+    backdrop = np.median(samples, axis=0)
+    if np.mean(np.sqrt(((samples - backdrop) ** 2).sum(-1)) <= fm.KEY_TOLERANCE) < 0.5:
+        return None, {"method": "none", "reason": "the master has no transparency and no uniform backdrop"}
+    near = np.sqrt(((pixels[..., :3].astype(np.float32) - backdrop) ** 2).sum(-1)) <= fm.KEY_TOLERANCE
+    inside = fc.distance_to(near, 2) > 2
+    if not inside.any():
+        return None, {"method": "none", "reason": "the master is all backdrop"}
+    keyed = pixels.copy()
+    keyed[~inside] = 0
+    return keyed, {"method": "backdrop distance", "backdrop_rgb": _round_key(backdrop)}
+
+
 def key_plan(master: Path, candidates: Sequence[str] = KEY_PLAN_CANDIDATES) -> dict:
     """Recommend the chroma key for an approved master before generation (Dusk prepare-actors.py L18).
 
     A key is rejected when more than 0.5% of the master's subject pixels lean
     to it by 40 or more (forge_matte.choose_key_color): a purple, violet or pink
     design rejects magenta. Also returns the background sentence for the
-    video prompt and, for a master with transparency, the design colours the
-    video soft matte would still key out with the recommended key.
+    video prompt and the design colours the video soft matte would still key
+    out with the recommended key; an opaque master is keyed on its own backdrop
+    first (D33, see _keyed_master), so its backdrop is never listed.
     """
     names = [_normalise_key(candidate) for candidate in candidates]
     if not names or "auto" in names:
@@ -1390,13 +1542,15 @@ def key_plan(master: Path, candidates: Sequence[str] = KEY_PLAN_CANDIDATES) -> d
         "rule": choice["rule"],
         "subject_px": choice["subject_px"],
     }
-    if (pixels[..., 3] < 255).any():
-        _, risk = fm.protect_design_colours(pixels, choice["rgb"])
+    subject, keying = _keyed_master(pixels)
+    if subject is not None:
+        _, risk = fm.protect_design_colours(subject, choice["rgb"])
         plan["design_colours_at_risk"] = sorted(risk["colors"], key=lambda row: -row["px"])[:8]
         plan["unprotectable_colours"] = risk["unprotectable"][:8]
     else:
         plan["design_colours_at_risk"] = None
-        plan["note"] = "the master has no transparency; pass a keyed master to list design colours at risk"
+        plan["note"] = f"{keying['reason']}; pass a keyed (RGBA) master to list design colours at risk"
+    plan["master_keying"] = keying
     return plan
 
 
@@ -1437,7 +1591,7 @@ def cmd_clean(args: argparse.Namespace) -> int:
     started = time.perf_counter()
     with fc.staged_output(final) as stage:
         report = key_frames(Path(args.raw_dir), stage, settings, reference=reference, profile=profile,
-                            tool="video2dsprite.py clean", log=_log)
+                            tool="video2dsprite.py clean", log=_log, workers=args.workers)
         _check_matte_gate(report, settings)
     _summary(output=_published(final), metadata=_published(final / MATTE_REPORT), frames=report["frames_total"],
              matte=report["mode"], key=report["key"], status=report["status"],
@@ -1455,9 +1609,9 @@ def cmd_sample(args: argparse.Namespace) -> int:
                                  foot_y=args.foot_y, anchor=args.anchor, registration=args.registration,
                                  duration=args.playback_duration)
         full = {"mode": "sample", "tool": {"name": "video2dsprite.py sample", "version": TOOL_VERSION},
-                "clean_dir": _local_portable(clean_dir, stage), **meta}
+                "clean_dir": fc.manifest_path(clean_dir, stage), **meta}
         if (clean_dir / MATTE_REPORT).is_file():
-            full["matte_report"] = _local_file_ref(clean_dir / MATTE_REPORT, stage)
+            full["matte_report"] = fc.file_ref(clean_dir / MATTE_REPORT, stage)
         fc.write_json(stage / PIPELINE_META, full)
         write_readme(stage, full)
     _summary(output=_published(final), metadata=_published(final / PIPELINE_META),
@@ -1484,7 +1638,8 @@ def cmd_process(args: argparse.Namespace) -> int:
         _log(f"key {len(frames)} frames ({settings.matte} matte)")
         started = time.perf_counter()
         report = key_frames(stage / RAW_DIR, stage / CLEAN_DIR, settings, reference=reference, profile=profile,
-                            despill_sample=despill_sample, tool="video2dsprite.py process", log=_log)
+                            despill_sample=despill_sample, tool="video2dsprite.py process", log=_log,
+                            workers=args.workers)
         key_seconds = time.perf_counter() - started
         _check_matte_gate(report, settings)
         _log(f"sample counts={counts}")
@@ -1506,7 +1661,7 @@ def cmd_process(args: argparse.Namespace) -> int:
             "platform": "provider-independent offline processor",
             "tool": {"name": "video2dsprite.py process", "version": TOOL_VERSION},
             "name": args.name,
-            "video": _local_file_ref(video, stage),
+            "video": fc.file_ref(video, stage),
             "probe": {name: probe[name] for name in ("codec", "width", "height", "pix_fmt", "fps_rational",
                                                      "nb_frames", "duration", "has_alpha", "audio_streams",
                                                      "attached_pics")},
@@ -1567,7 +1722,9 @@ def cmd_key_plan(args: argparse.Namespace) -> int:
     return 0
 
 
+@functools.lru_cache(maxsize=1)
 def engine_module():
+    """The sibling engine_export.py (same skill), loaded once: package and verify are its verbs (D20)."""
     spec = importlib.util.spec_from_file_location("forge_engine_export", Path(__file__).with_name("engine_export.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -1575,10 +1732,14 @@ def engine_module():
 
 
 def cmd_package(args: argparse.Namespace) -> int:
-    result = engine_module().package(args)
-    print(json.dumps({"manifest": str((Path(args.out_dir)/"animation.json").resolve()),
-                      "frameCount": result["frameCount"], "reviewStatus": result["reviewStatus"]}))
-    return 0
+    """engine_export package (D20): every 3.0 flag, the residue gate and its legacy switch; the one-line
+    summary names the output folder and the metadata file (animation.json)."""
+    return engine_module().cmd_package(args)
+
+
+def cmd_verify(args: argparse.Namespace) -> int:
+    """engine_export verify (D20): decode every encoded file of a package against its atlas."""
+    return engine_module().cmd_verify(args)
 
 
 def cmd_doctor(args: argparse.Namespace) -> int:
@@ -1654,6 +1815,9 @@ def build_parser() -> argparse.ArgumentParser:
                            help="approved master still: joins the auto despill rule and names design colours at risk")
         group.add_argument("--strict", action="store_true",
                            help="fail and publish nothing when matte QA finds key residue")
+        group.add_argument("--workers", type=_workers_argument, default=0, metavar="N",
+                           help="threads that decode and matte frames (default 0: min(4, CPUs); 1 = one at a "
+                                "time); the output bytes do not depend on it")
         group.add_argument("--dist", type=float, help="binary only: flood key distance (default 55)")
         group.add_argument("--despill", type=float, help="binary only: first-ring despill strength 0..1")
 
@@ -1702,19 +1866,19 @@ def build_parser() -> argparse.ArgumentParser:
     add_common_sample(pp)
     pp.set_defaults(func=cmd_process)
 
-    pk = sub.add_parser("package", help="fixed-canvas PNG fallback plus optional alpha video")
-    pk.add_argument("--clean-dir", required=True, help="RGBA PNG frames sorted lexically")
-    pk.add_argument("--out-dir", "--output-dir", dest="out_dir", required=True,
-                    help="new package directory; it must not exist")
-    pk.add_argument("--name", default="clip")
-    pk.add_argument("--fps", type=float, required=True, help="constant playback frame rate")
-    pk.add_argument("--source-size", help="original art geometry W,H; defaults to input frames")
-    pk.add_argument("--source-anchor", help="original art anchor X,Y; defaults to bottom-center")
-    pk.add_argument("--max-side", type=int, default=384, help="encoding cap, never upscales")
-    pk.add_argument("--crop-union", action="store_true", help="one shared alpha envelope for all frames")
-    pk.add_argument("--formats", default="png", help="png,webm,packed; PNG fallback always included")
-    pk.add_argument("--loop", action="store_true", help="request looping; seam still needs visual review")
+    engine = engine_module()
+    pk = sub.add_parser("package", help="animation.json 3.0 package (engine_export package; same flags)",
+                        description="engine_export.py package: PNG poster and atlas, optional WebM, packed MP4 and "
+                                    "mobile tiers behind the key-residue gate (--allow-key-residue records an "
+                                    "override). --out-dir is the old name of --output-dir.")
+    engine.add_package_arguments(pk)
     pk.set_defaults(func=cmd_package)
+
+    pv = sub.add_parser("verify", help="decode a package's video files against its atlas (engine_export verify)",
+                        description="engine_export.py verify: decode every encoded file completely, compare it with "
+                                    "the PNG atlas and write verify-qa.json only when every gate passes.")
+    engine.add_verify_arguments(pv)
+    pv.set_defaults(func=cmd_verify)
 
     pd = sub.add_parser("doctor", help="prove which ffmpeg encoders and decoders really work")
     pd.set_defaults(func=cmd_doctor)
@@ -1722,20 +1886,30 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    fc.utf8_stdio()
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def _workers_argument(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"--workers needs a whole number >= 0, got {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"--workers needs a whole number >= 0, got {text!r}")
+    return value
+
+
+def _run(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         return int(args.func(args))
     except FileExistsError as exc:
         target = exc.filename or exc
-        print(fc.ascii_text(f"error: {target} already exists; choose a new --output-dir (runs never overwrite)"),
-              file=sys.stderr)
-        return 1
-    except Exception as exc:  # noqa: BLE001 - CLI surface
-        print(fc.ascii_text(f"error: {exc}"), file=sys.stderr)
-        return 1
+        raise FileExistsError(f"{target} already exists; choose a new --output-dir (runs never overwrite)") from None
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2 (argparse); refused input and failed gates print ``error: ...`` and exit 1; anything
+    unexpected prints ``error: internal error (...)`` and exits 1 (D26, D27; forge_core.run_cli)."""
+    expected = fc.CLI_EXPECTED_ERRORS + (FrameInputError, fa.ForgeAVError, engine_module().PackageError)
+    return fc.run_cli(_run, argv, expected=expected)
 
 
 if __name__ == "__main__":

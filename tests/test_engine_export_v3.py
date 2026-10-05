@@ -7,7 +7,6 @@ FORGE_BENCH_CYCLE_FRAMES (report v2 P0-3: the forge-cycle frames must fail the r
 from __future__ import annotations
 
 import argparse
-import copy
 import functools
 import hashlib
 import json
@@ -36,69 +35,6 @@ V2_KEYS = {"schemaVersion", "name", "sourceSize", "sourceAnchor", "inputFrameSiz
 V2_QA_KEYS = {"status", "loopRequested", "frameCount", "durationSeconds", "blankFrames", "edgeTouchFrames",
               "boundsBottomSpanPx", "boundsCenterXSpanPx", "seamPremultipliedMAE", "adjacentMedianMAE",
               "seamToMedianRatio", "adjacentMaxMAE", "notes"}
-
-
-# handoff/B08-video-packaging.md section 5: additions to video.schema.json, applied here in memory so the
-# documents B08 writes are proven against exactly the diff integration will apply.
-PROPOSED_ANIMATION_V3_PROPERTIES = {
-    "fpsRational": {"description": "Exact transport rate of the video files, num/den; fps keeps the 2.0 number.",
-                    "type": "string", "pattern": "^[1-9][0-9]*/[1-9][0-9]*$"},
-    "fpsCapped": {"description": "The clip was reduced to at most 60 fps without changing its length.",
-                  "type": "boolean"},
-    "inputFps": {"$ref": "common.schema.json#/$defs/fpsValue"},
-    "pingpongBaked": {"description": "A pingpong policy was baked into one cycle (0 1 2 3 2 1).", "type": "boolean"},
-}
-PROPOSED_VIDEO_DEFS = {
-    "package_provenance_v1": {
-        "description": "provenance.json beside animation.json (engine_export.py package): common provenance plus the "
-                       "input digest a review verdict may bind.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/provenance"}],
-        "type": "object",
-        "required": ["schema", "inputDigest"],
-        "properties": {
-            "schema": {"const": "video2dsprite.provenance.v1"},
-            "inputDigest": {"$ref": "common.schema.json#/$defs/sha256"},
-            "inputDirectory": {"$ref": "common.schema.json#/$defs/relPath"},
-        },
-    },
-    "verify_report_v1": {
-        "description": "verify-qa.json (engine_export.py verify): a QA envelope over the encoded files of one package, "
-                       "bound to its animation.json by sha256.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "type": "object",
-        "required": ["schema", "manifestSha256", "transports"],
-        "properties": {
-            "schema": {"const": "video2dsprite.verify.v1"},
-            "manifestSha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            "transports": {"type": "object"},
-            "thresholds": {"type": "object"},
-        },
-    },
-    "validation_report_v1": {
-        "description": "validate_animation.py --report: a QA envelope with one check per rule and package.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "type": "object",
-        "required": ["schema"],
-        "properties": {"schema": {"const": "video2dsprite.validation.v1"}},
-    },
-}
-
-
-def proposed_errors(instance, name: str) -> list[str]:
-    """Errors against the vendored video schema with the section 5 additions applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in folder.glob("*.schema.json")}
-    video = copy.deepcopy(schemas["video.schema.json"])
-    video["$defs"]["animation_v3"]["properties"].update(PROPOSED_ANIMATION_V3_PROPERTIES)
-    video["$defs"].update(PROPOSED_VIDEO_DEFS)
-    schemas["video.schema.json"] = video
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in schemas.values())
-    validator = Draft202012Validator({"$ref": f"{video['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(instance)]
 
 
 def ffmpeg_test(test):
@@ -323,9 +259,9 @@ def test_manifest_validates_as_animation_v3(tmp_path):
     assert_valid_contract(on_disk, "video", "animation_v3", skill=SKILL)
     assert_valid_contract(read(out / "animation-qa.json"), "common", "qaEnvelope", skill=SKILL)
     assert_valid_contract(read(out / "provenance.json"), "common", "provenance", skill=SKILL)
-    assert proposed_errors(on_disk, "animation_v3") == []
-    assert proposed_errors(read(out / "provenance.json"), "package_provenance_v1") == []
-    assert len(proposed_errors({**on_disk, "fpsRational": "12"}, "animation_v3")) == 1
+    assert_valid_contract(read(out / "provenance.json"), "video", "package_provenance_v1", skill=SKILL)
+    with pytest.raises(AssertionError, match="fpsRational"):
+        assert_valid_contract({**on_disk, "fpsRational": "12"}, "video", "animation_v3", skill=SKILL)
     assert read(out / "animation-qa.json") == manifest["qa"]
     # selection timing, events and gameplay fields
     assert manifest["sourceIndices"] == [1, 2, 2, 3, 4] and manifest["durationsMs"] == [83, 83, 84, 83, 84]
@@ -728,7 +664,7 @@ def test_verify_passes_good_package(tmp_path):
     assert summary["status"] == "pass" and summary["transports"] == ["packedAlpha", "tier:actor", "tier:prop", "webm"]
     report = read(tmp_path / "pkg" / "verify-qa.json")
     assert_valid_contract(report, "common", "qaEnvelope", skill=SKILL)
-    assert proposed_errors(report, "verify_report_v1") == []
+    assert_valid_contract(report, "video", "verify_report_v1", skill=SKILL)
     assert report["schema"] == "video2dsprite.verify.v1" and report["status"] == "pass"
     assert report["inputs"][0] == {"path": "animation.json", "sha256": sha(tmp_path / "pkg" / "animation.json"),
                                    "bytes": (tmp_path / "pkg" / "animation.json").stat().st_size}
@@ -807,3 +743,329 @@ def test_cli_qc_failure_publishes_nothing(tmp_path, monkeypatch, capsys):
     assert E.main(["verify", "--package", str(pkg)]) == 1
     assert "packedAlpha.alpha_mae 9.0 (limit 3.5)" in capsys.readouterr().err
     assert not (pkg / "verify-qa.json").exists() and not list(pkg.glob(".verify-qa*"))
+
+
+# --------------------------------------------------------------------------- integration fixes (D17-D21, D26-D30)
+
+def _pink(d: int) -> np.ndarray:
+    """A pink costume with a pink outline: magenta reads its whole outer ring as key spill, green does not."""
+    return body(dx=d, colour=(235, 70, 200), outline=(235, 70, 200))
+
+
+def _job(path: Path, key: str, size=(48, 48), anchor=(24, 48), padding=(0, 0, 0, 0), **extra) -> Path:
+    data = {"schema": "video2dsprite.registration_job.v1",
+            "master": {"path": "master.png", "sha256": "0" * 64, "size": list(size), "anchor": list(anchor)},
+            "referenceCanvas": [1280, 720], "referenceScale": 1.0, "referenceOffset": [0, 0], "keyColor": key,
+            "workRegion": [0, 0, 1280, 720], "action": "walk", "padding": list(padding), "prompt": {"sha256": "1" * 64}}
+    data.update(extra)
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def V_module():
+    return load_script("video2dsprite", "validate_animation")
+
+
+def test_key_auto_resolution_order(tmp_path):
+    """D17: --key auto takes <clean-dir>/matte-report.json, then the --registration keyColor, then
+    --pipeline-meta, then magenta, and records keySource. A green-keyed pink clip is no longer measured
+    against magenta (the reviewer's 39.2% false refusal)."""
+    clean = tmp_path / "clean"
+    write_frames(clean, [_pink(d) for d in range(3)])
+    with pytest.raises(E.QualityGateError, match=r"outer-ring spill 100\.0%"):
+        E.package(options(clean, tmp_path / "magenta"))  # nothing says green: the default key refuses it
+    green_meta = tmp_path / "pipeline-meta.json"
+    green_meta.write_text(json.dumps({"matte": {"mode": "soft", "key": [0, 255, 0]}}), encoding="utf-8")
+    magenta_meta = tmp_path / "magenta-meta.json"
+    magenta_meta.write_text(json.dumps({"matte": {"mode": "soft", "key": "magenta"}}), encoding="utf-8")
+    manifest = E.package(options(clean, tmp_path / "meta", pipeline_meta=str(green_meta)))
+    assert manifest["qa"]["keySource"] == "pipeline-meta" and manifest["qa"]["keyResidue"]["key"] == [0, 255, 0]
+    job = _job(tmp_path / "job.json", "green")
+    manifest = E.package(options(clean, tmp_path / "reg", registration=str(job), pipeline_meta=str(magenta_meta)))
+    assert manifest["qa"]["keySource"] == "registration" and manifest["qa"]["keyResidue"]["key"] == [0, 255, 0]
+    (clean / "matte-report.json").write_text(json.dumps({"schema": "video2dsprite.matte_report.v1", "mode": "soft",
+                                                         "key": [1, 254, 2]}), encoding="utf-8")
+    manifest = E.package(options(clean, tmp_path / "report", registration=str(_job(tmp_path / "m.json", "magenta")),
+                                 pipeline_meta=str(magenta_meta)))
+    assert manifest["qa"]["keySource"] == "matte-report" and manifest["qa"]["keyResidue"]["key"] == [1, 254, 2]
+    assert manifest["qa"]["status"] != "fail" and "key from matte-report" in manifest["qa"]["method"]
+    provenance = read(tmp_path / "report" / "provenance.json")
+    roles = {ref["role"]: ref for ref in provenance["inputs"]}
+    assert roles["matteReport"]["path"] == "matte-report.json" and provenance["params"]["keySource"] == "matte-report"
+    assert E.package(options(clean, tmp_path / "flag", key="green"))["qa"]["keySource"] == "flag"
+    (clean / "matte-report.json").write_text(json.dumps({"schema": "video2dsprite.matte_report.v1", "mode": "none",
+                                                         "key": [255, 0, 255]}), encoding="utf-8")
+    manifest = E.package(options(clean, tmp_path / "none"))
+    assert manifest["qa"]["keySource"] == "matte-report" and "keyResidue" not in manifest["qa"]
+    (clean / "matte-report.json").write_text(json.dumps({"schema": "something.else", "key": "green"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="not a video2dsprite.matte_report.v1 document; pass --key"):
+        E.package(options(clean, tmp_path / "bad"))
+    assert not any((tmp_path / name).exists() for name in ("magenta", "bad"))
+
+
+def test_green_pocket_is_found_with_the_matte_report_key(tmp_path):
+    """D17: a green clip's opaque green pocket used to be measured against magenta and shipped (108 px)."""
+    clean = tmp_path / "clean"
+    frames = [body(dx=d) for d in range(3)]
+    for frame in frames:
+        frame[20:26, 20:26] = (0, 255, 0, 255)
+    write_frames(clean, frames)
+    (clean / "matte-report.json").write_text(json.dumps({"schema": "video2dsprite.matte_report.v1", "mode": "soft",
+                                                         "key": [0, 255, 0]}), encoding="utf-8")
+    with pytest.raises(E.QualityGateError, match="key residue: 108 opaque key px"):
+        E.package(options(clean, tmp_path / "out"))
+
+
+def test_residue_gate_ignores_invisible_halo_but_not_a_real_fringe(tmp_path):
+    """D18: lanczos registration leaves alpha 1-4 halo pixels with invented key-leaning colours (255, 222,
+    247); the gate measures a copy with alpha <= 16 cleared, so they pass, while the same ring at alpha 17
+    or 255 is visible key spill and fails."""
+    def halo(alpha: int) -> list[np.ndarray]:
+        frames = []
+        for d in range(3):
+            frame = body(dx=d)
+            ring = np.zeros(frame.shape[:2], bool)
+            ring[9:41, 13 + d:35 + d] = True
+            ring[10:40, 14 + d:34 + d] = False
+            frame[ring] = (255, 222, 247, alpha)
+            frames.append(frame)
+        return frames
+    write_frames(tmp_path / "faint", halo(3))
+    manifest = E.package(options(tmp_path / "faint", tmp_path / "faint-out"))
+    residue = manifest["qa"]["keyResidue"]
+    assert residue["maxOuterRingSpillFraction"] == 0.0 and residue["opaqueKeyPx"] == 0
+    assert residue["thresholds"]["alpha_floor"] == E.RESIDUE_ALPHA_FLOOR == 16
+    assert "alpha <= 16 cleared" in residue["method"]
+    for alpha in (17, 255):
+        write_frames(tmp_path / f"ring-{alpha}", halo(alpha))
+        with pytest.raises(E.QualityGateError, match=r"outer-ring spill 100\.0%"):
+            E.package(options(tmp_path / f"ring-{alpha}", tmp_path / f"ring-{alpha}-out"))
+
+
+def test_end_event_on_the_clip_edge_is_packaged(tmp_path):
+    """D19: an event may sit on the end edge (retime --ticks adds end at the last tick edge); it names
+    the last frame. impactMs and holdMs stay strictly inside the clip."""
+    clean = tmp_path / "clean"
+    frames = write_frames(clean, [body(dx=d) for d in range(4)])
+    selection = selection_v2(tmp_path / "sel.json", frames, 0, 4, [0, 1, 2, 3], [100] * 4, loopPolicy="oneshot",
+                             events=[{"name": "in", "atMs": 0}, {"name": "end", "atMs": 400}])
+    manifest = E.package(options(clean, tmp_path / "out", fps=None, selection=str(selection)))
+    assert manifest["events"][-1] == {"name": "end", "atMs": 400, "frame": 3}
+    assert V_module().validate([tmp_path / "out"])["failed"] == []
+    late = selection_v2(tmp_path / "late.json", frames, 0, 4, [0, 1, 2, 3], [100] * 4, loopPolicy="oneshot",
+                        events=[{"name": "end", "atMs": 401}])
+    with pytest.raises(ValueError, match="end at 401 ms lies outside the 400 ms clip"):
+        E.package(options(clean, tmp_path / "late", fps=None, selection=str(late)))
+    impact = selection_v2(tmp_path / "impact.json", frames, 0, 4, [0, 1, 2, 3], [100] * 4, loopPolicy="oneshot",
+                          impactMs=400)
+    with pytest.raises(ValueError, match="impactMs 400 ms lies outside the 400 ms clip"):
+        E.package(options(clean, tmp_path / "impact", fps=None, selection=str(impact)))
+
+
+def test_registration_job_honours_view_box_and_action_padding(tmp_path):
+    """D21: a prepare_i2v_input --view-box job animates one view of a sheet: its base canvas is the view
+    box (the job's sourceSize/sourceAnchor), not the whole master; --action-padding is the padding
+    register_clip apply --action-padding used."""
+    job = _job(tmp_path / "job.json", "magenta", size=(156, 118), anchor=(110, 105), sourceSize=[92, 118],
+               sourceAnchor=[46, 105])
+    job_data = read(job)
+    job_data["master"]["viewBox"] = [64, 0, 156, 118]
+    job.write_text(json.dumps(job_data), encoding="utf-8")
+    block = E.load_registration(job)
+    assert (block["baseSize"], block["baseAnchor"], block["sourceSize"], block["sourceAnchor"]) == \
+        ([92, 118], [46.0, 105.0], [92, 118], [46.0, 105.0])
+    padded = E.load_registration(job, (8, 6, 8, 2))
+    assert (padded["padding"], padded["sourceSize"], padded["sourceAnchor"]) == ([8, 6, 8, 2], [108, 126], [54.0, 111.0])
+    clean = tmp_path / "clean"
+    write_frames(clean, [body(size=(108, 126), box=(40, 40, 70, 120), dx=d) for d in range(3)])
+    manifest = E.package(options(clean, tmp_path / "out", registration=str(job), action_padding="8,6,8,2"))
+    assert manifest["sourceSize"] == [108, 126] and manifest["sourceAnchor"] == [54.0, 111.0]
+    assert manifest["registration"]["baseSize"] == [92, 118] and manifest["registration"]["padding"] == [8, 6, 8, 2]
+    assert read(tmp_path / "out" / "provenance.json")["params"]["actionPadding"] == [8, 6, 8, 2]
+    no_fields = _job(tmp_path / "plain.json", "magenta", size=(156, 118), anchor=(110, 105))
+    plain = read(no_fields)
+    plain["master"]["viewBox"] = [64, 0, 156, 118]
+    no_fields.write_text(json.dumps(plain), encoding="utf-8")
+    assert E.load_registration(no_fields)["sourceSize"] == [92, 118]  # derived from the view box
+    job_data["sourceSize"] = [156, 118]
+    job.write_text(json.dumps(job_data), encoding="utf-8")
+    with pytest.raises(ValueError, match="sourceSize .* disagrees with master.size/viewBox"):
+        E.load_registration(job)
+    record = tmp_path / "registration.json"
+    record.write_text(json.dumps({"mode": "construction", "padding": [0, 0, 0, 0], "baseSize": [92, 118],
+                                  "baseAnchor": [46, 105]}), encoding="utf-8")
+    with pytest.raises(ValueError, match="--action-padding .* conflicts with the registration record"):
+        E.load_registration(record, (8, 6, 8, 2))
+    with pytest.raises(ValueError, match="--action-padding applies to a --registration job"):
+        E.package(options(clean, tmp_path / "x", action_padding="8,6,8,2"))
+
+
+def test_tick_rows_expand_into_repeated_frames_for_video(tmp_path, monkeypatch):
+    """D21: retime --ticks rows give uneven whole-tick durations; video transports get each frame repeated
+    for its ticks at the selection's tickHz instead of a refusal. Events keep their ms (the end edge
+    names the last frame) and validate_animation accepts the package."""
+    fake = FakeEncoders(monkeypatch)
+    clean = tmp_path / "clean"
+    frames = write_frames(clean, [body(dx=d) for d in range(4)])
+    selection = selection_v2(tmp_path / "ticks.json", frames, 0, 4, [0, 1, 2, 3], [17, 33, 50, 67],
+                             loopPolicy="oneshot", ticks=[1, 2, 3, 4], tickHz=60, fps="24/1", impactMs=50,
+                             events=[{"name": "in", "atMs": 0, "tick": 0}, {"name": "hit", "atMs": 50, "tick": 3},
+                                     {"name": "end", "atMs": 167, "tick": 10}])
+    png = E.package(options(clean, tmp_path / "png", fps=None, selection=str(selection)))
+    assert png["durationsMs"] == [17, 33, 50, 67] and "tickExpansion" not in png  # the atlas keeps uneven timing
+    manifest = E.package(options(clean, tmp_path / "video", fps=None, selection=str(selection),
+                                 formats="png,webm,packed"))
+    assert manifest["sourceIndices"] == [0, 1, 1, 2, 2, 2, 3, 3, 3, 3] and manifest["frameCount"] == 10
+    assert manifest["fpsRational"] == "60/1" and sum(manifest["durationsMs"]) == 167
+    assert manifest["tickExpansion"] == {"rate": "60/1", "ticks": [1, 2, 3, 4], "authoredSourceIndices": [0, 1, 2, 3],
+                                         "authoredDurationsMs": [17, 33, 50, 67]}
+    assert [(e["name"], e["atMs"], e["frame"]) for e in manifest["events"]] == [("in", 0, 0), ("hit", 50, 3),
+                                                                                ("end", 167, 9)]
+    assert {c["id"]: c["status"] for c in manifest["qa"]["checks"]}["tick_expansion"] == "pass"
+    assert [len(call[2]) for call in fake.calls] == [10, 10]
+    assert_valid_contract(manifest, "video", "animation_v3", skill=SKILL)
+    assert V_module().validate([tmp_path / "video"], ffprobe=False)["failed"] == []
+
+
+def test_held_frames_expand_at_the_source_rate(tmp_path, monkeypatch):
+    """D21: gait_loop drops held duplicates and gives the kept frame their time; the durations are whole
+    source frames (24 fps), so the video repeats the held frame at 24 fps."""
+    FakeEncoders(monkeypatch)
+    clean = tmp_path / "clean"
+    frames = write_frames(clean, [body(dx=d) for d in range(4)])
+    selection = selection_v2(tmp_path / "held.json", frames, 0, 4, [0, 2, 3], [84, 41, 42], fps="24/1")
+    manifest = E.package(options(clean, tmp_path / "out", fps=None, selection=str(selection), formats="png,webm"))
+    assert manifest["sourceIndices"] == [0, 0, 2, 3] and manifest["fpsRational"] == "24/1"
+    assert manifest["tickExpansion"]["ticks"] == [2, 1, 1] and manifest["durationsMs"] == [42, 42, 41, 42]
+    uneven = selection_v2(tmp_path / "uneven.json", frames, 0, 3, [0, 1, 2], [40, 200, 41])
+    with pytest.raises(ValueError, match="not whole ticks of 60/1 fps"):
+        E.package(options(clean, tmp_path / "uneven", fps=None, selection=str(uneven), formats="png,webm"))
+
+
+def test_expand_ticks_rules():
+    timeline = E.duration_timeline([5, 6, 7], [17, 33, 50])
+    expanded, record = E.expand_ticks(timeline, [Fraction(60)])
+    assert expanded.indices == (5, 6, 6, 7, 7, 7) and expanded.rate == 60 and record["ticks"] == [1, 2, 3]
+    assert E.expand_ticks(timeline, [Fraction(120)]) is None  # above the 60 fps transport cap
+    assert E.expand_ticks(E.duration_timeline([0, 1], [40, 200]), [Fraction(60)]) is None
+    assert E.expand_ticks(E.duration_timeline([0, 1], [40, 200]), [Fraction(60), Fraction(25)])[1]["rate"] == "25/1"
+
+
+def test_cycles_stay_whole_and_tool_version_is_the_package_version(tmp_path):
+    """Reviewer nit: a whole cycle count is re-emitted as an integer. D29: QA envelopes record the package
+    version 0.4.0."""
+    clean = tmp_path / "clean"
+    frames = write_frames(clean, [body(dx=d) for d in range(4)])
+    selection = selection_v2(tmp_path / "sel.json", frames, 0, 4, [0, 1, 2, 3], [83, 83, 84, 83], cycles=2)
+    manifest = E.package(options(clean, tmp_path / "out", fps=None, selection=str(selection)))
+    assert manifest["cycles"] == 2 and isinstance(manifest["cycles"], int)
+    assert manifest["qa"]["tool"] == {"name": "engine_export.py", "version": "0.4.0"}
+    assert read(tmp_path / "out" / "provenance.json")["version"] == "0.4.0"
+
+
+def test_cli_summary_and_internal_errors(tmp_path, monkeypatch, capsys):
+    """D20: the one-line summary names the output folder and the metadata file. D27: an unexpected
+    exception prints 'error: internal error (...)', never a traceback; usage errors exit 2 (D26)."""
+    clean = tmp_path / "clean"
+    write_frames(clean, walk_frames(3))
+    result = run_cli([SCRIPT, "package", "--clean-dir", clean, "--output-dir", tmp_path / "pkg", "--fps", "12"])
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["output"] == str((tmp_path / "pkg").resolve())
+    assert summary["metadata"] == summary["manifest"] == str((tmp_path / "pkg" / "animation.json").resolve())
+    assert summary["keySource"] == "default"
+    monkeypatch.setattr(E, "package", lambda args: {}["missing"])
+    assert E.main(["package", "--clean-dir", str(clean), "--output-dir", str(tmp_path / "x"), "--fps", "12"]) == 1
+    assert capsys.readouterr().err.strip() == "error: internal error (KeyError: 'missing')"
+    usage = run_cli([SCRIPT, "package", "--clean-dir", clean])
+    assert usage.returncode == 2 and "usage:" in usage.stderr
+
+
+# --------------------------------------------------------------------------- the canonical chain (e2e)
+
+def _limb(draw, x0, y0, angle, length, width, colour, foot=None, knee=0.0):
+    xk, yk = x0 + 0.5 * length * np.sin(angle), y0 + 0.5 * length * np.cos(angle)
+    x1, y1 = xk + 0.5 * length * np.sin(angle - knee), yk + 0.5 * length * np.cos(angle - knee)
+    draw.line((x0, y0, xk, yk), fill=colour, width=width)
+    draw.line((xk, yk, x1, y1), fill=colour, width=width)
+    draw.ellipse((xk - width / 2, yk - width / 2, xk + width / 2, yk + width / 2), fill=colour)
+    if foot:
+        draw.ellipse((x1 - 9, y1 - 6, x1 + 13, y1 + 6), fill=foot)
+
+
+def _runner(t: float, period: int = 16) -> Image.Image:
+    """A side-view runner on a 256 px transparent canvas (the video review's chain check figure)."""
+    from PIL import ImageDraw
+    image = Image.new("RGBA", (256, 256), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+    phase = 2 * np.pi * t / period
+    cx, hip = 128, 150 + 6 * np.cos(2 * phase)
+    near, far = 0.6 * np.sin(phase), 0.6 * np.sin(phase + np.pi)
+    knee_near, knee_far = 1.1 * max(0.0, np.cos(phase)), 1.1 * max(0.0, np.cos(phase + np.pi))
+    _limb(draw, cx, hip, far, 70, 18, (28, 36, 60), foot=(110, 70, 40), knee=knee_far)
+    _limb(draw, cx, hip - 55, -0.7 * np.sin(phase + np.pi), 45, 12, (28, 100, 98))
+    draw.rounded_rectangle((cx - 22, hip - 75, cx + 22, hip + 4), 8, fill=(36, 128, 126))
+    draw.ellipse((cx - 26, hip - 125, cx + 26, hip - 73), fill=(240, 200, 170))
+    _limb(draw, cx, hip, near, 70, 18, (40, 52, 84), foot=(110, 70, 40), knee=knee_near)
+    _limb(draw, cx, hip - 55, -0.7 * np.sin(phase), 45, 12, (36, 128, 126))
+    return image
+
+
+@pytest.mark.e2e
+@ffmpeg_test
+def test_canonical_chain(tmp_path):
+    """The canonical video chain on a synthetic take, every step at its default settings except the small
+    provider canvas (320x180, for speed; the 1280x720 default was run by hand in the integration pass):
+    key-plan -> prepare_i2v_input -> take -> process -> qc -> register_clip apply -> gait_loop select ->
+    retime --ticks (with the end event at the last tick edge) -> package png,webm,packed (+ an actor tier)
+    -> verify -> validate_animation. Registration halo passes the residue gate (D18), the gate's key comes
+    from the registration (D17), the tick rows expand for video (D21) and the end event is packaged (D19)."""
+    scripts = SKILLS_DIR / SKILL / "scripts"
+
+    def step(script: str, *args, expect: int = 0) -> dict | None:
+        result = run_cli([scripts / script, *args], cwd=tmp_path)
+        assert result.returncode == expect, (script, args[:2], result.stderr)
+        return json.loads(result.stdout.splitlines()[-1]) if result.returncode == 0 else None
+
+    (tmp_path / "art").mkdir()
+    _runner(0).save(tmp_path / "art" / "hero.png")
+    assert step("video2dsprite.py", "key-plan", "--master", "art/hero.png")["key"] == "magenta"
+    step("prepare_i2v_input.py", "prepare", "--master", "art/hero.png", "--action", "run", "--canvas", "320,180",
+         "--output-dir", "jobs/hero-run")
+    job = read(tmp_path / "jobs" / "hero-run" / "registration_job.json")
+    frames = []
+    for t in range(64):
+        placed = np.asarray(E.forge_core.resample_rgba(_runner(t), job["referenceScale"], "lanczos",
+                                                        anchor_src=(0.0, 0.0), anchor_dst=tuple(job["referenceOffset"]),
+                                                        out_size=tuple(job["referenceCanvas"])))
+        alpha = placed[..., 3:].astype(np.float64) / 255
+        frames.append(np.floor(placed[..., :3] * alpha + np.array([255.0, 0.0, 255.0]) * (1 - alpha) + 0.5)
+                      .astype(np.uint8))
+    (tmp_path / "takes").mkdir()
+    AV.encode_h264_loop(frames, tmp_path / "takes" / "run-1.mp4", "24/1", crf=12)
+    processed = step("video2dsprite.py", "process", "--video", "takes/run-1.mp4", "--output-dir", "work/run",
+                     "--reference", "art/hero.png", "--frame-counts", "8")
+    assert processed["matte"]["opaque_key_px"] == 0 and processed["matte"]["enclosed_key_pockets"] == 0
+    step("register_clip.py", "qc", "--job", "jobs/hero-run/registration_job.json", "--video", "takes/run-1.mp4")
+    step("register_clip.py", "apply", "--job", "jobs/hero-run/registration_job.json", "--frames",
+         "work/run/frames-clean", "--output-dir", "work/run-reg")
+    assert read(tmp_path / "work" / "run-reg" / "registration.json")["hygiene"]["floor"] == 4
+    step("gait_loop.py", "select", "--frames-dir", "work/run-reg/frames", "--fps", "24", "--output-dir", "work/loop")
+    step("retime.py", "--frames-dir", "work/run-reg/frames", "--fps", "24", "--kind", "attack", "--spans", "0:15",
+         "--ticks", "1,1,1,1,2,1,2,1,1,1,2,3,3,3,4", "--impact-source", "6", "--event", "cancel@12t",
+         "--output-dir", "work/attack")
+    attack = step("engine_export.py", "package", "--clean-dir", "work/run-reg/frames", "--selection",
+                  "work/attack/selection.json", "--registration", "work/run-reg/registration.json", "--output-dir",
+                  "game/hero/attack", "--name", "attack", "--formats", "png,webm,packed")
+    assert attack["keySource"] == "registration" and attack["tickExpansion"] == "60/1" and attack["durationMs"] == 450
+    step("video2dsprite.py", "package", "--clean-dir", "work/run-reg/frames", "--selection", "work/loop/selection.json",
+         "--registration", "work/run-reg/registration.json", "--output-dir", "game/hero/run", "--name", "run",
+         "--formats", "png,webm,packed", "--tiers", "actor")
+    step("engine_export.py", "verify", "--package", "game/hero/attack")
+    step("video2dsprite.py", "verify", "--package", "game/hero/run")
+    validated = step("validate_animation.py", "game/hero", "--require-states", "attack,run", "--require-verify",
+                     "--static-sprite", "art/hero.png", "--static-anchor", ",".join(map(str, job["sourceAnchor"])))
+    assert validated["status"] == "pass" and sorted(validated["packages"]) == ["attack", "run"]
+    manifest = read(tmp_path / "game" / "hero" / "attack" / "animation.json")
+    assert manifest["events"][-1] == {"name": "end", "atMs": 450, "frame": manifest["frameCount"] - 1}
+    assert manifest["qa"]["keyResidue"]["maxOuterRingSpillFraction"] <= 0.01

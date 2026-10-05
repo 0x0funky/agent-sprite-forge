@@ -114,7 +114,8 @@ Many generated clips hold each pose for two or three 24 fps frames (12 or 8 fps
 content). A frame whose step from its predecessor is at most `--dedupe-cap` (default
 1.2 on a 0-255 scale) and well below its neighbours' steps is a hold. Holds are dropped
 from `sourceIndices`; their time goes to the frame they repeat, so the loop keeps its
-exact length. `--dedupe-cap 0` keeps every frame.
+exact length. `--dedupe-cap 0` keeps every frame. The durations stay whole source frames,
+so a WebM or packed package repeats the held frame at the source fps again.
 
 ## Retime actions
 
@@ -134,6 +135,10 @@ python "<skill-dir>/scripts/retime.py" --frames-dir work/frames-clean --fps 24 -
   seconds with an `s` suffix.
 - `--ticks`: a total or one count per frame on a 60 Hz grid (`--tick-hz`). Writes `ticks`,
   `tickHz` and the `in`, `hit` and `end` events; add `cancel@12t` and others with `--event`.
+  The `end` event sits on the clip's end edge (its `atMs` is the duration) and packages as
+  the last frame. Tick rows give uneven durations: `engine_export.py package` keeps them in
+  a PNG-only package and, for WebM and packed MP4, repeats each frame for its ticks at
+  `tickHz` (`tickExpansion` in animation.json; see pipeline.md).
 - `--stride` and `--speed` (walks): cadence = 1000 x stride / speed ms per cycle, for
   example 1.65 units at 3.65 units/s = 452 ms; writes `cadenceMs`, `strideWorldUnits` and
   `speedRef`.

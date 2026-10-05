@@ -364,8 +364,7 @@ def cut_selection(directory: Path, out: Path, selection_path: Path) -> dict:
     return rebased
 
 
-def main(argv=None) -> int:
-    forge_core.utf8_stdio()
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
     rv = sub.add_parser("review")
@@ -394,46 +393,59 @@ def main(argv=None) -> int:
     sl.add_argument("--min-cycle", type=int, default=6)
     sl.add_argument("--max-cycle", type=int, default=48)
     sl.add_argument("--limit", type=int, default=8, help="recurrence candidates to classify (default 8)")
-    args = parser.parse_args(argv)
-    try:
-        if args.command == "review":
-            result = review(args.frames_dir, args.out_dir, args.fps, args.min_cycle, args.max_cycle, args.preview_size)
-        elif args.command == "select":
-            result = select(args.frames_dir, args.out_dir, args.fps, args.kind, args.state, args.min_cycle,
-                            args.max_cycle, args.limit)
-            print(json.dumps({"output": str(args.out_dir.resolve()),
-                              "selection": str((args.out_dir / "selection.json").resolve()),
-                              "metadata": str((args.out_dir / "candidates.json").resolve()),
-                              "status": result["status"], "recommended": result["recommendation"],
-                              "counts": result["counts"]}))
-            return 0
-        else:
-            expected = data = None
-            if args.selection:
-                if any(v is not None for v in (args.start, args.end, args.fps)):
-                    raise ValueError("use selection OR start/end/fps, not both")
-                data = json.loads(args.selection.read_text(encoding="utf-8"))
-                if not isinstance(data, dict):
-                    raise ValueError("selection must be a JSON object")
-            if data is not None and data.get("schema") == gait_loop.SELECTION_V2:
-                result = cut_selection(args.frames_dir, args.out_dir, args.selection)
-            else:
-                if data is not None:
-                    if not isinstance(data.get("sourceDirectory"), str) or not data["sourceDirectory"].strip():
-                        raise ValueError("selection sourceDirectory must be a nonempty path string")
-                    if data.get("schema") != "forge-frame-selection/v1" or Path(data["sourceDirectory"]).resolve() != args.frames_dir.resolve():
-                        raise ValueError("selection schema/source directory mismatch")
-                    args.start, args.end, args.fps = data["start"], data["endExclusive"], data["fps"]
-                    expected = data["sourceHashes"]
-                    if not isinstance(expected, list):
-                        raise ValueError("selection sourceHashes must be an array; hash validation cannot be omitted")
-                if any(v is None for v in (args.start, args.end, args.fps)):
-                    raise ValueError("cut requires --selection or --start/--end/--fps")
-                result = cut(args.frames_dir, args.out_dir, args.start, args.end, args.fps, expected)
-        print(json.dumps({"output": str(args.out_dir.resolve()), "status": result["status"]}))
+    return parser
+
+
+def _run(argv=None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.command == "review":
+        result = review(args.frames_dir, args.out_dir, args.fps, args.min_cycle, args.max_cycle, args.preview_size)
+        metadata = args.out_dir / "review.json"
+    elif args.command == "select":
+        result = select(args.frames_dir, args.out_dir, args.fps, args.kind, args.state, args.min_cycle,
+                        args.max_cycle, args.limit)
+        print(json.dumps({"output": str(args.out_dir.resolve()),
+                          "selection": str((args.out_dir / "selection.json").resolve()),
+                          "metadata": str((args.out_dir / "candidates.json").resolve()),
+                          "status": result["status"], "recommended": result["recommendation"],
+                          "counts": result["counts"]}, ensure_ascii=True))
         return 0
-    except (ValueError, OSError, KeyError, TypeError) as exc:
-        parser.exit(1, forge_core.ascii_text(f"error: {exc}") + "\n")
+    else:
+        expected = data = None
+        if args.selection:
+            if any(v is not None for v in (args.start, args.end, args.fps)):
+                raise ValueError("use selection OR start/end/fps, not both")
+            data = forge_core.read_json(args.selection, strict=True)  # UTF-8 with or without a BOM (D28)
+            if not isinstance(data, dict):
+                raise ValueError("selection must be a JSON object")
+        if data is not None and data.get("schema") == gait_loop.SELECTION_V2:
+            result = cut_selection(args.frames_dir, args.out_dir, args.selection)
+        else:
+            if data is not None:
+                if not isinstance(data.get("sourceDirectory"), str) or not data["sourceDirectory"].strip():
+                    raise ValueError("selection sourceDirectory must be a nonempty path string")
+                if data.get("schema") != "forge-frame-selection/v1" or Path(data["sourceDirectory"]).resolve() != args.frames_dir.resolve():
+                    raise ValueError("selection schema/source directory mismatch")
+                args.start, args.end, args.fps = data["start"], data["endExclusive"], data["fps"]
+                expected = data["sourceHashes"]
+                if not isinstance(expected, list):
+                    raise ValueError("selection sourceHashes must be an array; hash validation cannot be omitted")
+            if any(v is None for v in (args.start, args.end, args.fps)):
+                raise ValueError("cut requires --selection or --start/--end/--fps")
+            result = cut(args.frames_dir, args.out_dir, args.start, args.end, args.fps, expected)
+        metadata = args.out_dir / "selection.json"
+    print(json.dumps({"output": str(args.out_dir.resolve()), "metadata": str(metadata.resolve()),
+                      "status": result["status"]}, ensure_ascii=True))
+    return 0
+
+
+def main(argv=None) -> int:
+    """Refused input prints ``error: ...`` and anything unexpected ``error: internal error (...)`` (D27); both
+    leave through SystemExit(1), as the review and cut verbs always did. Usage errors exit 2."""
+    code = forge_core.run_cli(_run, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (KeyError, TypeError))
+    if code:
+        raise SystemExit(code)
+    return 0
 
 
 if __name__ == "__main__":
