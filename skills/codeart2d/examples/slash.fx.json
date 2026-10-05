@@ -1,0 +1,49 @@
+{
+  "schema": "codeart2d.fx.v1",
+  "canvas": [64, 64],
+  "origin": [32, 34],
+  "palette": {
+    "white": "#ffffff", "gold": "#ffcd75", "ember": "#ef7d57", "red": "#b13e53",
+    "ice": "#a6f0ff", "cyan": "#41a6f6", "blue": "#3b5dc9",
+    "dust-hi": "#d8c8aa", "dust-mid": "#a8957a", "dust-lo": "#6f6050",
+    "ink": "#1a1c2c"
+  },
+  "routes": ["pixel", "runtime"],
+  "effects": [
+    {
+      "id": "slash", "durationMs": 400, "impactMs": 150, "seed": 7,
+      "ramps": {"blade": ["white", "gold", "ember", "red"], "spark": ["white", "gold", "ember"]},
+      "primitives": [
+        {"type": "slash", "ramp": "blade", "center": [30, 32], "radius": 18, "from": -150, "to": 30, "width": 8,
+         "trail": 0.9},
+        {"type": "flash", "ramp": "spark", "origin": [45.5, 41], "radius": 3, "rays": 4, "rayLength": 8,
+         "rotation": 45, "lifeMs": 100},
+        {"type": "sparks", "ramp": "spark", "origin": [45.5, 41], "count": 8, "angle": 20, "spread": 130,
+         "speed": 55, "lifeMs": 220, "length": 4, "gravity": 60}
+      ]
+    },
+    {
+      "id": "impact", "durationMs": 300, "impactMs": 0, "seed": 11,
+      "ramps": {"hit": ["white", "gold", "ember", "red"]},
+      "primitives": [
+        {"type": "ring", "ramp": "hit", "radius": [3, 20], "width": [4, 1], "lifeMs": 260},
+        {"type": "flash", "ramp": "hit", "radius": 4, "rays": 4, "rayLength": 11, "lifeMs": 120},
+        {"type": "sparks", "ramp": "hit", "count": 12, "spread": 360, "speed": 70, "lifeMs": 240, "length": 4}
+      ]
+    },
+    {
+      "id": "dust", "durationMs": 400, "impactMs": 0, "seed": 3,
+      "primitives": [
+        {"type": "dust", "colors": ["dust-hi", "dust-mid", "dust-lo"], "origin": [32, 56], "count": 8,
+         "spread": 26, "rise": 10, "drift": 6, "radius": [1.5, 3.5], "lifeMs": 380}
+      ]
+    },
+    {
+      "id": "orb", "durationMs": 400, "impactMs": 0, "seed": 5, "loop": true, "outline": "ink",
+      "primitives": [
+        {"type": "projectile", "colors": ["white", "ice", "cyan", "blue"], "angle": 0, "radius": 4,
+         "trail": 16, "orbiters": 3}
+      ]
+    }
+  ]
+}
