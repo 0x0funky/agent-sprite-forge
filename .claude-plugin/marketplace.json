@@ -1,0 +1,13 @@
+{
+  "name": "agent-sprite-forge",
+  "description": "Agent Sprite Forge skills for 2D game art",
+  "owner": { "name": "0x0funky" },
+  "plugins": [
+    {
+      "name": "agent-sprite-forge",
+      "source": "./",
+      "version": "0.4.0",
+      "description": "Sprites, maps, code art, video-to-sprite and media API skills"
+    }
+  ]
+}

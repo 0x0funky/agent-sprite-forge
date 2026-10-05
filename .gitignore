@@ -7,3 +7,5 @@ outputs/
 .env
 .env.*
 !.env.example
+.forge/
+AGENTS.md
