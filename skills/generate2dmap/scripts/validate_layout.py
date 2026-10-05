@@ -37,6 +37,12 @@ graph, not the top-down collision grid of forge_nav (whose grid_bfs serves the
 Without --output-dir only the one-line summary is printed; with it,
 layout-report.json and layout-debug.png are published into the new folder.
 Exit 1 when a check fails; --strict-qc then publishes nothing.
+
+Size limit: the level (its segments), each deck and each prop may span at most
+1,000,000 px horizontally. The checks hold per-column arrays (about 90 bytes per
+px of width), so a wider layout, usually a mistyped bound such as 1e9, is refused
+with an error before anything is allocated. layout-debug.png is drawn at one
+pixel per world px up to 4096 x 8192 px, and scaled down as a whole beyond that.
 """
 
 from __future__ import annotations
@@ -75,6 +81,9 @@ DEFAULT_ASPECTS = ("16:9", "19.5:9")
 DEFAULT_DECK_THICKNESS = 4
 DEFAULT_GROUND_TOLERANCE = 1.0
 MAX_SAMPLES = 64
+MAX_EXTENT_PX = 1_000_000  # widest level, deck or prop: the checks hold per-column arrays (review r1, finding 4)
+DEBUG_WIDTH, DEBUG_HEIGHT = 4096, 8192  # layout-debug.png fits this box; a larger side view is scaled down whole
+DEBUG_MAX_PIXELS = DEBUG_WIDTH * DEBUG_HEIGHT  # so the canvas never holds more than 32 Mpx
 EPSILON = 1e-6
 NOT_PROVEN = [
     "The actor is a point at its feet: collider width, head room under decks and ceilings are not modelled.",
@@ -101,6 +110,18 @@ def _number(value: Any, name: str, *, minimum: float | None = None, exclusive: b
     if minimum is not None and (value <= minimum if exclusive else value < minimum):
         raise ValueError(f"{name} must be {'greater than' if exclusive else 'at least'} {minimum:g}.")
     return float(value)
+
+
+def _px(value: float) -> str:
+    """A world-px number written out in full (1,000,001, not 1e+06)."""
+    return f"{value:,.6f}".rstrip("0").rstrip(".")
+
+
+def _check_extent(extent: float, what: str) -> None:
+    """Refuse a horizontal extent above MAX_EXTENT_PX before its per-column arrays exist (about 90 bytes per px)."""
+    if extent > MAX_EXTENT_PX:
+        raise ValueError(f"{what} ({_px(extent)} px); the limit is {MAX_EXTENT_PX:,} px: split the level, or check for "
+                         "a mistyped number.")
 
 
 def _whole(value: Any, name: str) -> int:
@@ -251,6 +272,7 @@ def parse_level(document: Any) -> Level:
         segments.append((x0, x1, entry[2], mapping[entry[2]]))
     level_x0 = min(segment[0] for segment in segments)
     level_x1 = max(segment[1] for segment in segments)
+    _check_extent(level_x1 - level_x0, f"the level's segments span x {_px(level_x0)} to {_px(level_x1)}")
     classes = np.full(level_x1 - level_x0, 1, np.int8)  # undefined columns count as gaps
     for x0, x1, _, cls in reversed(segments):
         classes[x0 - level_x0:x1 - level_x0] = CLASSES.index(cls)
@@ -275,15 +297,16 @@ def parse_level(document: Any) -> Level:
                 x0, x1 = center - width / 2, center + width / 2
             if x1 <= x0:
                 raise ValueError(f"deck {ident} needs x1 > x0.")
+            _check_extent(x1 - x0, f"deck {ident} spans x {_px(x0)} to {_px(x1)}")
             if "thickness" not in prop:
                 raise ValueError(f"deck {ident} needs thickness (rows of solid deck under its top).")
             decks.append({"id": ident, "x0": x0, "x1": x1, "y": _number(prop.get("y"), f"deck {ident} y"),
                           "thickness": _number(prop["thickness"], f"deck {ident} thickness", minimum=0)})
         else:
-            width = prop.get("w", prop.get("width", 0))
+            width = _number(prop.get("w", prop.get("width", 0)), f"prop {ident} w", minimum=0)
+            _check_extent(width, f"prop {ident} is too wide")
             props.append({"id": ident, "x": _number(prop.get("x"), f"prop {ident} x"),
-                          "y": _number(prop.get("y"), f"prop {ident} y"),
-                          "w": _number(width, f"prop {ident} w", minimum=0),
+                          "y": _number(prop.get("y"), f"prop {ident} y"), "w": width,
                           "floating": bool(prop.get("floating", False))})
     spawns = [_point(item, f"spawns[{index}]", needs_y=True) for index, item in enumerate(document.get("spawns", [])
                                                                                           or [])]
@@ -743,20 +766,29 @@ def render_debug(report: dict[str, Any]) -> Image.Image:
     y_top = math.floor(values.min() - physics.jump_height - 24)
     y_bottom = math.ceil(values.max() + 40)
     width, height = level.width, max(1, y_bottom - y_top)
-    canvas = np.empty((height, width, 4), np.uint8)
+    # Drawn at one world px per pixel, or scaled down as a whole to fit DEBUG_WIDTH x DEBUG_HEIGHT: a full-size
+    # canvas of a very wide or tall level would take gigabytes (review r1, finding 4).
+    scale = min(1.0, DEBUG_WIDTH / width, DEBUG_HEIGHT / height)
+    fit = (lambda size: max(1, math.floor(size * scale * (1 + 1e-12))))  # never past the box (rounding snapped)
+    columns = (np.arange(width) if scale == 1.0 else
+               np.minimum((np.arange(fit(width)) + 0.5) / scale, width - 1).astype(np.int64))
+    canvas_h = height if scale == 1.0 else fit(height)
+    classes, heights = level.classes[columns], level.heights[columns]
+    canvas = np.empty((canvas_h, columns.size, 4), np.uint8)
     canvas[...] = COLORS["sky"]
-    rows = np.arange(height)[:, None] + y_top
-    ground = (level.classes == 0)[None, :] & (rows >= np.nan_to_num(level.heights, nan=np.inf)[None, :])
+    rows = np.arange(canvas_h)[:, None] / scale + y_top
+    ground = (classes == 0)[None, :] & (rows >= np.nan_to_num(heights, nan=np.inf)[None, :])
     canvas[ground] = COLORS["ground"]
-    face = ground & level.face[None, :]
+    face = ground & level.face[columns][None, :]
     canvas[face] = COLORS["face"]
-    canvas[height - 24:, level.classes == 2] = COLORS["hazard"]
-    canvas[height - 6:, level.classes == 1] = COLORS["gap"]
+    canvas[canvas_h - max(1, round(24 * scale)):, classes == 2] = COLORS["hazard"]
+    canvas[canvas_h - max(1, round(6 * scale)):, classes == 1] = COLORS["gap"]
     image = Image.fromarray(canvas)
     draw = ImageDraw.Draw(image)
+    step = max(1, math.floor(1 / scale))  # one span point per drawn pixel column is enough
 
     def at(x: float, y: float) -> tuple[float, float]:
-        return x - level.x0, y - y_top
+        return (x - level.x0) * scale, (y - y_top) * scale
 
     for deck in level.decks:
         color = COLORS["bad"] if deck["thickness"] < physics.min_deck_thickness - EPSILON else COLORS["deck"]
@@ -764,7 +796,8 @@ def render_debug(report: dict[str, Any]) -> Image.Image:
                         at(max(deck["x0"], deck["x1"] - 1), deck["y"] + max(deck["thickness"], 1) - 1)], fill=color)
     for span in spans:
         color = COLORS["ok"] if span.reachable else COLORS["bad"]
-        points = [at(x + 0.5, y) for x, y in zip(span.columns, span.heights)]
+        keep = np.unique(np.r_[np.arange(0, span.columns.size, step), span.columns.size - 1])
+        points = [at(x + 0.5, y) for x, y in zip(span.columns[keep], span.heights[keep])]
         if len(points) == 1:
             points.append((points[0][0] + 1, points[0][1]))
         draw.line(points, fill=color, width=2)
@@ -794,9 +827,7 @@ def render_debug(report: dict[str, Any]) -> Image.Image:
                    else y_top + height - 30)
         x, y = at(exit_point["x"], exit_point.get("y", surface))
         draw.rectangle([x - 4, y - 16, x + 4, y], fill=COLORS["exit"])
-    if width > 4096:
-        image = image.resize((4096, max(1, round(height * 4096 / width))), Image.Resampling.BOX)
-    elif width < 512:
+    if scale == 1.0 and width < 512:
         factor = max(1, 512 // width)
         image = image.resize((width * factor, height * factor), Image.Resampling.NEAREST)
     return image

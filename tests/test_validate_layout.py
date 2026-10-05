@@ -10,6 +10,7 @@ import json
 import math
 import re
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -253,6 +254,50 @@ class ValidateLayoutTests(unittest.TestCase):
             result = self.cli(document)
             self.assertEqual(result.returncode, 1)
             self.assertTrue(result.stderr.startswith("error: "), result.stderr)
+
+    def test_extent_cap_refuses_a_huge_level_before_allocating(self):
+        """Review r1, finding 4: memory grows about 90 bytes per px of level width, and the reviewers' layout (a gap
+        segment ending at 1e9) reached 35 GB. A level, deck or prop wider than 1,000,000 px is now refused with a
+        clean error before any per-column array exists; a level at the limit still validates."""
+        huge = {"schema": "generate2dmap.layout.v1", "segments": [[0, 100, "ground"], [100, 1000000000.0, "gap"]],
+                "groundY": 50, "physics": {"jumpHeight": 40, "jumpDistance": 80, "maxSlopeDeg": 40, "stepUp": 6}}
+        started = time.perf_counter()
+        result = self.cli(huge)
+        self.assertLess(time.perf_counter() - started, 60)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "error: the level's segments span x 0 to 1,000,000,000 "
+                                                "(1,000,000,000 px); the limit is 1,000,000 px: split the level, or "
+                                                "check for a mistyped number.")
+        edge = level(segments=[[0, 300, "ground"], [300, 380, "gap"], [380, 1_000_000, "ground"]])
+        self.assertIn(LAYOUT.validate(edge)["status"], ("pass", "warn"))  # the limit itself is fine
+        with self.assertRaisesRegex(ValueError, r"span x 0 to 1,000,001 \(1,000,001 px\); the limit is 1,000,000 px"):
+            LAYOUT.validate(level(segments=[[0, 300, "ground"], [300, 380, "gap"], [380, 1_000_001, "ground"]]))
+        deck = level()
+        deck["props"][1].update(x0=-500000, x1=600000)
+        with self.assertRaisesRegex(ValueError, r"deck plank spans x -500,000 to 600,000 \(1,100,000 px\)"):
+            LAYOUT.validate(deck)
+        prop = level()
+        prop["props"][0]["w"] = 2e6
+        with self.assertRaisesRegex(ValueError, r"prop lamp is too wide \(2,000,000 px\)"):
+            LAYOUT.validate(prop)
+
+    def test_debug_image_of_a_wide_level_is_drawn_small(self):
+        """Review r1, finding 4: layout-debug.png was drawn at one pixel per world px and then shrunk, so a wide level
+        allocated width x height RGBA first; it is now drawn to fit 4096 x 8192 px (32 Mpx), scaled as a whole."""
+        out = self.root / "wide"
+        wide = level(segments=[[0, 300, "ground"], [300, 380, "gap"], [380, 1_000_000, "ground"]],
+                     exits=[{"id": "goal", "x": 999_000}])
+        result = self.cli(wide, "--output-dir", out)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        with Image.open(out / "layout-debug.png") as image:
+            self.assertEqual(image.width, 4096)
+            self.assertLessEqual(image.width * image.height, LAYOUT.DEBUG_MAX_PIXELS)
+        tall = level()
+        tall["props"][0]["y"] = 200 + 60_000  # a sunk lamp 60,000 px below: a 900 x 60,000 side view
+        report = LAYOUT.validate(tall)
+        image = LAYOUT.render_debug(report)
+        self.assertLessEqual(image.width * image.height, LAYOUT.DEBUG_MAX_PIXELS)
+        self.assertLess(image.width, 900, "scaled down as a whole")
 
     def test_help_works_under_cp1252_and_cp950(self):
         assert_cli_help(SKILL, "validate_layout")  # cp1252 and cp950
