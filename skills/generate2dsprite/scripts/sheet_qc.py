@@ -18,8 +18,10 @@ Run from the project root, for example:
   python "<skill-dir>/scripts/sheet_qc.py" spill --input raw/run-sheet.png --rows 2 --cols 4 --output-dir qc/run-spill
   python "<skill-dir>/scripts/sheet_qc.py" frames --sheet raw/run-sheet.png --rows 2 --cols 4 --cycle run --game-pixel 8 --output-dir qc/run-frames
 
-The report is published even when a check fails (exit 0, "status" in the
-summary). With --strict a failed check exits 1 and publishes nothing.
+The report is published even when a check fails; the run then exits 1 (D26:
+a published report whose status is fail exits 1; pass and warn exit 0). With
+--strict a failed check exits 1 and publishes nothing. Usage errors exit 2
+(argparse); other errors print one "error: ..." line and exit 1.
 """
 
 from __future__ import annotations
@@ -27,7 +29,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import re
 import sys
 from pathlib import Path
@@ -39,8 +40,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_palette  # noqa: E402  (this skill's vendored copy: OKLab, D16)
 
-TOOL = {"name": "sheet_qc.py", "version": "0.4.0"}
+TOOL = {"name": "sheet_qc.py", "version": forge_core.FORGE_PACKAGE_VERSION}  # the package version (D29)
 SCHEMA = "generate2dsprite.sheet_qc.v1"
 REPORT_NAME = "sheet-qc.json"
 SOLID_THRESHOLD = 127  # alpha > 127 (>= 128): the solid body; faint glow never joins two subjects
@@ -52,8 +54,6 @@ PHASE_SAMPLE_BAND = 0.18  # bottom share of the body used for stride width (repo
 AUTO_FEET_BAND = 0.18  # bottom share used by the colour-free NEAR/FAR test
 AUTO_MIN_DELTA_L = 0.015  # OKLab lightness gap that counts as "one shade darker"
 _SEVERITY = {"pass": 0, "needs-visual-review": 1, "warn": 2, "fail": 3}
-# Neighbour order of the report v2 ownership prototype: the first direction that reaches a soft pixel wins.
-_GROW_DIRECTIONS = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))
 _HEX = re.compile(r"#?([0-9a-fA-F]{6})")
 
 
@@ -61,29 +61,7 @@ class QcError(ValueError):
     """A user-facing input problem, printed as 'error: ...'."""
 
 
-class ArgumentParser(argparse.ArgumentParser):
-    """argparse with the forge CLI convention: a usage problem is one 'error: ...' line and exit status 1."""
-
-    def error(self, message: str):
-        self.exit(1, f"error: {forge_core.ascii_text(message)} (see {self.prog} --help)\n")
-
-
 # --------------------------------------------------------------------------- small helpers
-
-def fail(error: BaseException) -> int:
-    """Print one 'error: ...' line and return exit status 1; users never see a traceback.
-
-    Input problems (ValueError, OSError and their kin) print their message;
-    anything else is reported as an internal error. FORGE_DEBUG=1 re-raises so
-    a developer gets the traceback.
-    """
-    if os.environ.get("FORGE_DEBUG", "") not in ("", "0"):
-        raise error
-    expected = isinstance(error, (ValueError, OSError))
-    message = str(error) if expected else f"internal error ({type(error).__name__}: {error}); please report it"
-    print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
-    return 1
-
 
 def worst_status(statuses: Sequence[str]) -> str:
     """Overall verdict: the most severe status, ignoring skipped checks (pass when none ran)."""
@@ -125,26 +103,6 @@ def parse_fraction_pair(text: str, name: str) -> tuple[float, float]:
 
 def hex_color(rgb: Sequence[float]) -> str:
     return "#" + "".join(f"{int(round(float(value))):02x}" for value in rgb[:3])
-
-
-def file_ref(path: Path, base: Path) -> dict:
-    """fileRef {path, sha256, bytes} relative to ``base``; a file on another drive records its name."""
-    path = Path(path)
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"[A-Za-z]:", relative):
-        relative = path.name  # common.relPath: never an absolute path
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
-
-
-def oklab_lightness(rgb: np.ndarray) -> np.ndarray:
-    """OKLab L (0..1) of 8-bit sRGB values, any leading shape."""
-    channels = np.asarray(rgb, np.float64)[..., :3] / 255.0
-    linear = np.where(channels <= 0.04045, channels / 12.92, ((channels + 0.055) / 1.055) ** 2.4)
-    l_cone = 0.4122214708 * linear[..., 0] + 0.5363325363 * linear[..., 1] + 0.0514459929 * linear[..., 2]
-    m_cone = 0.2119034982 * linear[..., 0] + 0.6806995451 * linear[..., 1] + 0.1073969566 * linear[..., 2]
-    s_cone = 0.0883024619 * linear[..., 0] + 0.2817188376 * linear[..., 1] + 0.6299787005 * linear[..., 2]
-    return (0.2104542553 * np.cbrt(l_cone) + 0.7936177850 * np.cbrt(m_cone)
-            - 0.0040720468 * np.cbrt(s_cone))
 
 
 def _round(value: float, digits: int = 2) -> float:
@@ -397,102 +355,38 @@ def render_spill_overlay(rgba: np.ndarray, analysis: dict) -> Image.Image:
 
 # --------------------------------------------------------------------------- ownership slicing
 
-def _dilate(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Chebyshev dilation by ``radius`` px (summed-area table)."""
-    if radius <= 0:
-        return mask.copy()
-    size = 2 * radius + 1
-    table = np.pad(np.pad(mask, radius).astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
-    return (table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]) > 0
-
-
-def _attach_soft(owner: np.ndarray, soft: np.ndarray, radius: int) -> np.ndarray:
-    """Give soft pixels the owner they reach within ``radius`` steps through soft pixels.
-
-    Breadth-first, 8 neighbours per step, in the neighbour order of the report
-    v2 prototype (the first neighbour that reaches a pixel wins), so the result
-    equals its full-image iteration. Only soft pixels within ``radius`` px of
-    an owned pixel can be reached, so only those are visited.
-    """
-    height, width = owner.shape
-    owner = owner.copy()
-    ys, xs = np.nonzero(soft & _dilate(owner >= 0, radius))
-    for _ in range(radius):
-        if ys.size == 0:
-            break
-        found = np.full(ys.size, -1, owner.dtype)
-        for dy, dx in _GROW_DIRECTIONS:
-            open_ = found < 0
-            sy, sx = ys[open_] - dy, xs[open_] - dx
-            inside = (sy >= 0) & (sy < height) & (sx >= 0) & (sx < width)
-            values = np.full(sy.size, -1, owner.dtype)
-            values[inside] = owner[sy[inside], sx[inside]]
-            found[np.flatnonzero(open_)[values >= 0]] = values[values >= 0]
-        reached = found >= 0
-        owner[ys[reached], xs[reached]] = found[reached]
-        ys, xs = ys[~reached], xs[~reached]
-    return owner
-
-
 def ownership_slice(rgba: np.ndarray, boxes: Sequence[Sequence[int]], *, threshold: int = SOLID_THRESHOLD,
                     min_area: int = 64, attach_radius: int = 6,
                     count: int | None = None) -> tuple[list[np.ndarray], dict]:
     """Slice a sheet so no part is cut: every frame keeps its nominal cell origin plus one shared padding.
 
-    Solid components (``alpha > threshold``, at least ``min_area`` px) belong to
+    forge_core.ownership_slice with the spill-QC policy of D14 (haze ``drop``):
+    solid components (``alpha > threshold``, at least ``min_area`` px) belong to
     the cell holding most of their pixels; softer pixels join the owner they
-    reach within ``attach_radius`` steps through soft pixels. Pixels nobody owns
+    reach within ``attach_radius`` steps through soft pixels (report v2
+    prototype order: left, right, above, below, diagonals). Pixels nobody owns
     (detached haze) are dropped and counted. Every frame gets the same canvas,
     so the registration of the grid is unchanged (report v2 5.4). Only the
-    first ``count`` cells (default all) are returned; later cells may be empty.
+    first ``count`` cells (default all) are returned; later cells may be empty,
+    but each returned cell must hold a subject.
     """
-    height, width = rgba.shape[:2]
-    alpha = rgba[..., 3]
     cells = len(boxes)
     count = cells if count is None else count
     if not 1 <= count <= cells:
         raise QcError(f"--count must be between 1 and {cells} (rows x cols); got {count}.")
-    cell_map = _cell_map(height, width, boxes)
-    table = _components(alpha > threshold, cell_map, cells)
-    owner_of = np.full(table["count"] + 1, -1, np.int16)
-    big = table["area"] >= min_area
-    big[0] = False
-    owner_of[big] = np.argmax(table["counts"][big], axis=1)
-    owner = owner_of[table["labels"]]
-    owner = _attach_soft(owner, (alpha > 0) & (owner < 0), attach_radius)
-    cols = len({box[0] for box in boxes})
-    boxes = boxes[:count]
-    extents = []
-    for index, (x0, y0, _x1, _y1) in enumerate(boxes):
-        ys, xs = np.nonzero(owner == index)
-        if xs.size == 0:
-            raise QcError(f"Cell {_cell_rc(index, cols)} holds no subject; check --rows/--cols, --count or the key.")
-        extents.append((int(xs.min()) - x0, int(ys.min()) - y0, int(xs.max()) + 1 - x0, int(ys.max()) + 1 - y0))
-    cell_w = max(box[2] - box[0] for box in boxes)
-    cell_h = max(box[3] - box[1] for box in boxes)
-    pad_l = max(0, -min(extent[0] for extent in extents))
-    pad_t = max(0, -min(extent[1] for extent in extents))
-    pad_r = max(0, max(extent[2] for extent in extents) - cell_w)
-    pad_b = max(0, max(extent[3] for extent in extents) - cell_h)
-    canvas = (cell_h + pad_t + pad_b, cell_w + pad_l + pad_r)
-    frames = []
-    for index, (x0, y0, _x1, _y1) in enumerate(boxes):
-        frame = np.zeros(canvas + (4,), np.uint8)
-        ys, xs = np.nonzero(owner == index)
-        frame[ys - y0 + pad_t, xs - x0 + pad_l] = rgba[ys, xs]
-        frames.append(frame)
-    dropped = (alpha > 0) & (owner < 0)
-    info = {
-        "method": "ownership: solid components to the cell holding most of their pixels, soft pixels to the "
-                  "owner they reach through soft pixels; nominal cell origin plus one shared padding",
-        "threshold": threshold, "min_area": min_area, "attach_radius": attach_radius, "cells_used": count,
-        "unused_cells_px": int(((owner >= count) & (alpha > 0)).sum()),
-        "padding": [int(pad_l), int(pad_t), int(pad_r), int(pad_b)],
-        "canvas": [int(canvas[1]), int(canvas[0])],
-        "frame_origins_in_sheet": [[int(box[0]) - pad_l, int(box[1]) - pad_t] for box in boxes],
-        "dropped_px": int(dropped.sum()),
-        "dropped_max_alpha": int(alpha[dropped].max()) if dropped.any() else 0,
-    }
+    frames, shared = forge_core.ownership_slice(rgba, boxes=boxes, alpha_threshold=threshold, min_area=min_area,
+                                                haze="drop", attach_radius=attach_radius, count=count)
+    if shared["empty_cells"]:
+        cols = len({box[0] for box in boxes})
+        raise QcError(f"Cell {_cell_rc(shared['empty_cells'][0], cols)} holds no subject; check --rows/--cols, "
+                      "--count or the key.")
+    info = {"method": "ownership (forge_core.ownership_slice, haze drop): solid components to the cell holding most "
+                      "of their pixels, soft pixels to the owner they reach through soft pixels; nominal cell origin "
+                      "plus one shared padding",
+            "haze": shared["haze"]}
+    info.update({key: shared[key] for key in ("threshold", "min_area", "attach_radius", "cells_used",
+                                              "unused_cells_px", "padding", "canvas", "frame_origins_in_sheet",
+                                              "dropped_px", "dropped_max_alpha")})
     return frames, info
 
 
@@ -620,7 +514,7 @@ def leg_lead(frame: np.ndarray, *, facing: str = "right", near: Sequence[Sequenc
     assign, centres = _two_means(xs.astype(np.float64))
     front = int(np.argmax(centres * sign))
     back = 1 - front
-    lightness = oklab_lightness(frame[ys + first, xs, :3])
+    lightness = forge_palette.to_oklab(frame[ys + first, xs, :3])[..., 0]  # OKLab L (D16)
 
     def midtone(selection: np.ndarray) -> float:
         values = lightness[selection]
@@ -1135,8 +1029,9 @@ def cmd_spill(args: argparse.Namespace) -> dict:
         overlay = stage / "spill-overlay.png"
         forge_core.save_png(render_spill_overlay(pixels, analysis), overlay)
         method = SPILL_METHOD.format(threshold=args.alpha_threshold, edge=args.edge_threshold)
-        document = _envelope("spill", analysis, inputs=[file_ref(source, stage)], outputs=[file_ref(overlay, stage)],
-                             method=method, not_proven=list(SPILL_NOT_PROVEN), extra={"image": info})
+        document = _envelope("spill", analysis, inputs=[forge_core.file_ref(source, stage)],
+                             outputs=[forge_core.file_ref(overlay, stage)], method=method,
+                             not_proven=list(SPILL_NOT_PROVEN), extra={"image": info})
         if args.strict and document["status"] == "fail":
             raise QcError(_strict_failure(document))
         forge_core.write_json(stage / REPORT_NAME, document)
@@ -1190,16 +1085,16 @@ def cmd_frames(args: argparse.Namespace) -> dict:
         review = stage / "frames-review.png"
         forge_core.save_png(render_frames_review(frames, analysis, columns=row_size), review)
         unique = list(dict.fromkeys(source["file"] for source in sources))
-        inputs = [file_ref(path, stage) for path in unique]
+        inputs = [forge_core.file_ref(path, stage) for path in unique]
         if args.master:
-            inputs.append(file_ref(Path(args.master), stage))
+            inputs.append(forge_core.file_ref(Path(args.master), stage))
         method = FRAMES_METHOD.format(
             threshold=args.alpha_threshold,
             lead="the declared NEAR/FAR colours" if near else "the lightness of the two feet (FAR one shade darker)",
             torso="the declared torso colours" if torso_colors else "the trunk columns of the torso band")
         grid_rows = math.ceil(len(frames) / row_size)
-        document = _envelope("frames", analysis, inputs=inputs, outputs=[file_ref(review, stage)], method=method,
-                             not_proven=list(FRAMES_NOT_PROVEN),
+        document = _envelope("frames", analysis, inputs=inputs, outputs=[forge_core.file_ref(review, stage)],
+                             method=method, not_proven=list(FRAMES_NOT_PROVEN),
                              extra={"grid": {"rows": grid_rows, "cols": row_size}, "input": input_info})
         if args.strict and document["status"] == "fail":
             raise QcError(_strict_failure(document))
@@ -1229,7 +1124,7 @@ def _key(text: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
 
     def common(sub: argparse.ArgumentParser) -> None:
@@ -1240,7 +1135,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--alpha-threshold", type=_alpha, default=SOLID_THRESHOLD,
                          help="solid pixels have alpha above this (default 127, i.e. >= 128)")
         sub.add_argument("--strict", action="store_true",
-                         help="exit 1 and publish nothing when a check fails")
+                         help="publish nothing when a check fails (a failing report exits 1 either way)")
 
     spill = commands.add_parser("spill", help="cross-cell spill on the raw sheet, before slicing",
                                 description="Cross-cell spill, sheet-edge cuts, empty cells, boundary band, safe frame "
@@ -1304,15 +1199,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = args.handler(args)
-    except Exception as error:  # every failure becomes one 'error:' line
-        return fail(error)
+    summary = args.handler(args)
     print(json.dumps(summary, ensure_ascii=True))
-    return 0
+    return 1 if summary["status"] == "fail" else 0  # D26: a published failing report exits 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry (D26, D27): usage errors exit 2 (argparse); a published report whose status is fail
+    exits 1; every other failure prints one ``error: ...`` line and exits 1."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

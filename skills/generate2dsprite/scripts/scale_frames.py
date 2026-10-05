@@ -21,10 +21,16 @@ nothing published).
           --action-padding L,T,R,B.
 
 Writes frames/<name>.png, scale-frames.json (the scale, canvas, root and every
-shift) and, with --emit-clips, clips.json for build_animation_clips.py.
+shift) and, with --emit-clips, clips.json for build_animation_clips.py: a
+generate2dsprite.animation_clips.v2 manifest timed in --ticks at --tick-hz (D11;
+6 ticks at 60 Hz by default, or exact --duration-ms), with pixel_art and nearest
+sampling for --resampler nearest.
+
+Usage errors exit 2 (argparse); every other error prints one "error: ..." line,
+publishes nothing and exits 1.
 
 Run from the project root, for example:
-  python "<skill-dir>/scripts/scale_frames.py" --sheet raw/run-sheet.png --rows 2 --cols 4 --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips --duration-ms 80 --output-dir out/run-game
+  python "<skill-dir>/scripts/scale_frames.py" --sheet raw/run-sheet.png --rows 2 --cols 4 --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips --ticks 5 --output-dir out/run-game
 """
 
 from __future__ import annotations
@@ -44,9 +50,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
 import sheet_qc  # noqa: E402  (sibling: input loading, ownership slicing, torso measure)
 
-TOOL = {"name": "scale_frames.py", "version": "0.4.0"}
+TOOL = {"name": "scale_frames.py", "version": forge_core.FORGE_PACKAGE_VERSION}  # the package version (D29)
 SCHEMA = "generate2dsprite.scale_frames.v1"
-CLIPS_SCHEMA = "generate2dsprite.animation_clips.v1"
+CLIPS_SCHEMA = "generate2dsprite.animation_clips.v2"  # D11: ticks on the tick grid
+DEFAULT_TICKS = 6  # 100 ms at 60 Hz, the old default duration
 RECORD_NAME = "scale-frames.json"
 ANCHORS = ("stance", "feet", "bbox")
 ROOT_LOCKS = ("torso-x", "stance", "none")
@@ -111,10 +118,6 @@ def parse_locks(values: Sequence[str] | None) -> list[str]:
 
 # --------------------------------------------------------------------------- measurement
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
-
-
 def hip_x(mask: np.ndarray, ground: int, height: int) -> float | None:
     """Body root x from the hip band (ground - 0.55 H .. ground - 0.25 H of the neutral frame): per row,
     the centre of the widest run, then the median (thin blades, poles and scarf tips are never the
@@ -143,7 +146,7 @@ def measure(frame: np.ndarray, *, threshold: int, torso_colors: Sequence[Sequenc
         raise ScaleError("A frame has no subject pixels; check the key and --alpha-threshold.")
     ground = forge_core.ground_row(mask)
     height = ground - box[1]
-    band = max(2, _round_half_up(0.04 * height))
+    band = max(2, forge_core.round_half_up(0.04 * height))
     stance = forge_core.anchor_from_mask(mask, "stance", band_rows=band)
     feet = forge_core.anchor_from_mask(mask, "feet", band_rows=band)
     bbox_point = forge_core.anchor_from_mask(mask, "bbox")
@@ -224,7 +227,7 @@ def plan_shifts(measures: Sequence[dict], *, reference: int, scale: float, root_
         row_ground[rows[index]] = max(row_ground.get(rows[index], 0), item["ground"])
 
     def quantise(value: float) -> int:
-        return quantum * _round_half_up(value / quantum)
+        return quantum * forge_core.round_half_up(value / quantum)
 
     shifts = []
     for index, item in enumerate(measures):
@@ -321,7 +324,7 @@ def render_review(frames: Sequence[np.ndarray], anchor: Sequence[float], columns
 
 def load_profile(path: Path) -> dict:
     try:
-        profile = json.loads(path.read_text(encoding="utf-8"))
+        profile = forge_core.read_json(path)  # UTF-8 with or without a BOM (D28)
     except (OSError, ValueError) as error:
         raise ScaleError(f"Cannot read --profile {path}: {error}") from None
     if not isinstance(profile, dict) or profile.get("schema") != SCHEMA:
@@ -342,14 +345,25 @@ def _frame_names(sources: Sequence[dict]) -> list[str]:
     return names
 
 
-def _durations(text: str, count: int) -> int | list[int]:
+def _per_frame(text: str, count: int, flag: str) -> int | list[int]:
+    """One positive integer, or one per frame, for ``flag`` (``--ticks`` or ``--duration-ms``)."""
     try:
         values = [int(part) for part in text.split(",")]
     except ValueError:
-        raise ScaleError(f"--duration-ms takes one integer or one per frame; got {text!r}.") from None
+        raise ScaleError(f"{flag} takes one integer or one per frame; got {text!r}.") from None
     if any(value < 1 for value in values) or len(values) not in (1, count):
-        raise ScaleError(f"--duration-ms takes one positive integer or {count} of them; got {text!r}.")
+        raise ScaleError(f"{flag} takes one positive integer or {count} of them; got {text!r}.")
     return values[0] if len(values) == 1 else values
+
+
+def clip_timing(args: argparse.Namespace, count: int) -> dict:
+    """The emitted clip's timing (D11): ticks at tick_hz, or exact integer ms when --duration-ms is given."""
+    if args.tick_hz < 1:
+        raise ScaleError(f"--tick-hz must be a positive integer; got {args.tick_hz}.")
+    if args.duration_ms is not None:
+        return {"duration_ms": _per_frame(args.duration_ms, count, "--duration-ms")}
+    ticks = DEFAULT_TICKS if args.ticks is None else _per_frame(args.ticks, count, "--ticks")
+    return {"ticks": ticks, "tick_hz": args.tick_hz}
 
 
 def run(args: argparse.Namespace) -> dict:
@@ -362,7 +376,7 @@ def run(args: argparse.Namespace) -> dict:
     locks = parse_locks(args.lock)
     torso_colors = sheet_qc.parse_colors(args.torso_colors)
     torso_band = sheet_qc.parse_fraction_pair(args.torso_band, "--torso-band")
-    durations = _durations(args.duration_ms, count) if args.emit_clips else None
+    timing = clip_timing(args, count) if args.emit_clips else None
     if args.shift_quantum < 1:
         raise ScaleError("--shift-quantum must be a positive integer.")
     profile = load_profile(Path(args.profile)) if args.profile else None
@@ -441,7 +455,7 @@ def run(args: argparse.Namespace) -> dict:
     transitions = {"pairs": [[index, (index + 1) % count] for index in range(count - (0 if loop else 1))],
                    "before": _transitions(compare_before, loop), "after": _transitions(compare_after, loop),
                    "metric": "forge_core.transition_mae (premultiplied RGBA) on one shared crop"}
-    band = max(1, _round_half_up(reference["support_band_rows"] * scale))
+    band = max(1, forge_core.round_half_up(reference["support_band_rows"] * scale))
     slides = [turn_slide(frame, anchor_px[0], args.alpha_threshold, band) for frame in outputs]
     # The same measure before pixel sampling: where each frame's source stance lands against the root.
     design_slides = [round(2.0 * abs((item["points"]["stance"][0] - anchor_src[0]) * scale + dx), 3)
@@ -457,9 +471,9 @@ def run(args: argparse.Namespace) -> dict:
             forge_core.save_png(frame, path)
             item = measures[index]
             frame_records.append({
-                "source": sheet_qc.file_ref(Path(sources[index]["file"]), stage),
+                "source": forge_core.file_ref(Path(sources[index]["file"]), stage),
                 "cell": sources[index]["cell"],
-                "output": sheet_qc.file_ref(path, stage),
+                "output": forge_core.file_ref(path, stage),
                 "shift": shifts[index],
                 "output_bbox": list(forge_core.subject_bbox(frame[..., 3], 0) or []),
                 "turn_slide_px": design_slides[index],
@@ -501,20 +515,22 @@ def run(args: argparse.Namespace) -> dict:
             "frames": frame_records, "transitions": transitions,
             "seam": {"before": forge_core.seam_report(compare_before), "after": forge_core.seam_report(compare_after)}
             if loop and count > 1 else None,
-            "input": input_info, "profile": sheet_qc.file_ref(Path(args.profile), stage) if args.profile else None,
+            "input": input_info, "profile": forge_core.file_ref(Path(args.profile), stage) if args.profile else None,
             "qa": {"status": "pass",
                    "method": "one pinned resample per frame (forge_core.resample_rgba) on a work canvas holding every "
                              "frame, then one crop; the crop is checked to keep every visible pixel",
                    "notProven": ["That the locked feature (torso, stance, hip) is the right root for this action.",
                                  "Pose quality and smoothness: review scale-review.png and play the clip."],
-                   "checks": checks, "inputs": [], "outputs": [sheet_qc.file_ref(review, stage)], "tool": dict(TOOL)},
+                   "checks": checks, "inputs": [], "outputs": [forge_core.file_ref(review, stage)], "tool": dict(TOOL)},
             "tool": dict(TOOL),
         }
         record["qa"]["inputs"] = [ref for ref in {item["source"]["path"]: item["source"] for item in frame_records}.values()]
         if args.emit_clips:
+            clip = {"frames": list(range(count)), **timing, "loop_policy": "cycle" if loop else "oneshot"}
             clips = {"schema": CLIPS_SCHEMA, "frames": [f"frames/{name}.png" for name in names], "anchor_px": anchor_px,
-                     "clips": {args.clip_name: {"frames": list(range(count)), "duration_ms": durations,
-                                                "loop": bool(loop)}}}
+                     "clips": {args.clip_name: clip}}
+            if resampler == "nearest":  # integer nearest frames are pixel art: the runtime must sample them nearest
+                clips.update({"pixel_art": True, "sampling": "nearest"})
             forge_core.write_json(stage / "clips.json", clips)
             record["clips"] = "clips.json"
         forge_core.write_json(stage / RECORD_NAME, record)
@@ -559,7 +575,7 @@ def _common_crop(after: Sequence[np.ndarray], after_anchor: Sequence[int], befor
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = sheet_qc.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--sheet", help="raw sheet, sliced by component ownership (needs --rows/--cols)")
     source.add_argument("--frames", nargs="+", help="frame PNGs that share one canvas, in playback order")
@@ -606,22 +622,30 @@ def build_parser() -> argparse.ArgumentParser:
                         help="the action loops: count the last->first seam, clips loop (default on)")
     parser.add_argument("--emit-clips", action="store_true", help="also write clips.json for build_animation_clips.py")
     parser.add_argument("--clip-name", default="action", help="clip name in clips.json (default action)")
-    parser.add_argument("--duration-ms", default="100",
-                        help="frame duration for clips.json: one integer or one per frame (default 100)")
+    timing = parser.add_mutually_exclusive_group()
+    timing.add_argument("--ticks", default=None,
+                        help=f"frame duration for clips.json in ticks at --tick-hz: one integer or one per frame "
+                             f"(default {DEFAULT_TICKS}, 100 ms at 60 Hz)")
+    timing.add_argument("--duration-ms", default=None,
+                        help="exact frame duration for clips.json in integer ms instead of ticks: one integer or one "
+                             "per frame (uneven on a 60 Hz loop unless a multiple of 1000/60 ms)")
+    parser.add_argument("--tick-hz", type=int, default=60, help="tick rate of --ticks (default 60)")
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        if args.margin < 0:
-            raise ScaleError("--margin must be 0 or more.")
-        summary = run(args)
-    except Exception as error:  # every failure becomes one 'error:' line
-        return sheet_qc.fail(error)
+    if args.margin < 0:
+        raise ScaleError("--margin must be 0 or more.")
+    summary = run(args)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry (D26, D27): usage errors exit 2 (argparse); every other failure prints one
+    ``error: ...`` line and exits 1."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

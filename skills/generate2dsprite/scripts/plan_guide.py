@@ -18,7 +18,8 @@ frame, and writes into a new --output-dir:
 
 The self-check runs sheet_qc's leading-leg test on the guide's own skeleton and
 checks that every pose stays inside its safe box; a failure exits 1 and
-publishes nothing. The guide is a generation aid that has not been A/B tested
+publishes nothing. Usage errors exit 2 (argparse); every other error prints one
+"error: ..." line and exits 1. The guide is a generation aid that has not been A/B tested
 with an image model: use it when a sheet keeps crossing cells or repeating the
 leading leg, not as a default.
 
@@ -43,7 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
 import sheet_qc  # noqa: E402  (sibling: the leading-leg test used by the self-check)
 
-TOOL = {"name": "plan_guide.py", "version": "0.4.0"}
+TOOL = {"name": "plan_guide.py", "version": forge_core.FORGE_PACKAGE_VERSION}  # the package version (D29)
 SCHEMA = "generate2dsprite.sheet_plan.v1"
 PLAN_NAME = "sheet-plan.json"
 HOST_BUDGET_PX = 1536 * 1024  # observed host image area (3 of 3 calls within +-0.031%, report v2 3.3.1)
@@ -87,10 +88,6 @@ class PlanError(ValueError):
 
 # --------------------------------------------------------------------------- planning
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
-
-
 def parse_aspect(text: str) -> tuple[int, int]:
     """'3:2' -> (3, 2)."""
     try:
@@ -116,7 +113,7 @@ def parse_ratio(text: str) -> float:
 def predict_size(aspect: tuple[int, int], budget: int = HOST_BUDGET_PX) -> tuple[int, int]:
     """Host output size for a requested aspect: the aspect is kept and the area is about ``budget`` px."""
     ratio = aspect[0] / aspect[1]
-    return _round_half_up(math.sqrt(budget * ratio)), _round_half_up(math.sqrt(budget / ratio))
+    return forge_core.round_half_up(math.sqrt(budget * ratio)), forge_core.round_half_up(math.sqrt(budget / ratio))
 
 
 def candidate_layouts(frames: int, aspects: Sequence[str], *, envelope_aspect: float, safe: float,
@@ -305,7 +302,7 @@ def build_guide(plan: dict, *, cycle: str, facing: str, safe: float, gutter: flo
     cells = []
     for index, (x0, y0, x1, y1) in enumerate(boxes):
         cell_w, cell_h = x1 - x0, y1 - y0
-        band = max(2, _round_half_up(gutter * min(cell_w, cell_h)))
+        band = max(2, forge_core.round_half_up(gutter * min(cell_w, cell_h)))
         sx0, sy0 = x0 + safe * cell_w, y0 + safe * cell_h
         sx1, sy1 = x1 - safe * cell_w, y1 - safe * cell_h
         if band >= min(sx0 - x0, sy0 - y0):
@@ -494,7 +491,7 @@ def run(args: argparse.Namespace) -> dict:
         forge_core.save_png(guide["annotated"], stage / "guide-annotated.png")
         (stage / "guide.svg").write_bytes(guide["svg"].encode("ascii"))
         (stage / "prompt.txt").write_bytes(prompt.encode("ascii"))
-        outputs = [sheet_qc.file_ref(stage / name, stage)
+        outputs = [forge_core.file_ref(stage / name, stage)
                    for name in ("guide.png", "guide.svg", "guide-annotated.png", "prompt.txt")]
         cells = [{key: value for key, value in cell.items() if not key.startswith("_")} for cell in guide["cells"]]
         plan = {
@@ -536,7 +533,7 @@ def _aspect(text: str) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = sheet_qc.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--frames", type=int, required=True, help="number of poses in the sheet")
     parser.add_argument("--output-dir", required=True, help="new directory for the guide, prompt and plan")
     parser.add_argument("--cycle", choices=CYCLES, default="none",
@@ -558,15 +555,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = run(args)
-    except Exception as error:  # every failure becomes one 'error:' line
-        return sheet_qc.fail(error)
+    summary = run(args)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry (D26, D27): usage errors exit 2 (argparse); every other failure, a failed self-check
+    included, prints one ``error: ...`` line and exits 1 with nothing published."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":
