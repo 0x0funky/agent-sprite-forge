@@ -677,6 +677,17 @@ def test_media_documents_validate_against_vendored_schema(inputs, monkeypatch):
     _vendored_validator("prices_v1").validate(ledger_mod.load_prices())
 
 
+def test_price_table_schema_id_is_namespaced(tmp_path):
+    """prices.json says generate2dmedia.prices.v1 (A0's prices_v1); copies still saying prices_v1 load the same."""
+    shipped = json.loads(ledger_mod.PRICES_PATH.read_text(encoding="utf-8"))
+    assert shipped["schema"] == "generate2dmedia.prices.v1"
+    assert ledger_mod.load_prices() == shipped
+    legacy = tmp_path / "prices-legacy.json"
+    legacy.write_text(json.dumps({**shipped, "schema": "prices_v1"}), encoding="utf-8")
+    assert ledger_mod.load_prices(legacy) == {**shipped, "schema": "prices_v1"}
+    assert ledger_mod.prices_version(ledger_mod.load_prices(legacy)) == ledger_mod.prices_version(shipped)
+
+
 # --- A4-T7: batch -------------------------------------------------------------
 
 def write_jobs(tmp_path, count, provider="openai"):
@@ -719,6 +730,7 @@ def test_batch_stops_on_quota_and_never_retries(inputs, tmp_path, monkeypatch, c
     assert "stopped at j1: quota" in capsys.readouterr().err
     assert len(transport.calls) == 2  # j2 and j3 were never dispatched
     progress = json.loads((tmp_path / "jobs.progress.json").read_text(encoding="utf-8"))
+    assert progress["schema"] == "generate2dmedia.batch_progress.v1" == media.BATCH_PROGRESS_SCHEMA
     assert progress["stopped"] and progress["remaining"] == ["j2", "j3"] and not progress["complete"]
     assert [(r["id"], r["outcomeCode"]) for r in progress["results"]] == [("j0", "ok"), ("j1", "quota")]
     # A second run reuses j0, leaves the failed j1 for a human and only sends j2 and j3.
@@ -728,6 +740,43 @@ def test_batch_stops_on_quota_and_never_retries(inputs, tmp_path, monkeypatch, c
     assert len(sent) == 2 and all(b"number 1" not in body for body in sent)
     statuses = {r["id"]: r["status"] for r in json.loads((tmp_path / "jobs.progress.json").read_text(encoding="utf-8"))["results"]}
     assert statuses == {"j0": "reused", "j1": "left-for-human", "j2": "generated", "j3": "generated"}
+
+
+def test_batch_rerun_over_a_legacy_progress_file(inputs, tmp_path, monkeypatch, capsys):
+    """A progress file written before the id was namespaced (schema batch_progress_v1) does not
+    disturb a re-run: the batch resumes from the job folders and rewrites the file with the new id."""
+    monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
+    jobs = write_jobs(tmp_path, 2)
+    base = ["batch", str(jobs), "--project-dir", str(project(inputs)), "--execute"]
+    assert media.main(base, transport=Fake([b64_image(), b64_image()])) == 0
+    progress_path = tmp_path / "jobs.progress.json"
+    legacy = json.loads(progress_path.read_text(encoding="utf-8"))
+    progress_path.write_text(json.dumps({**legacy, "schema": "batch_progress_v1"}, indent=2), encoding="utf-8")
+    capsys.readouterr()
+    assert media.main(base, transport=Refuse()) == 0  # both jobs are reused; nothing is sent
+    summary = json.loads(capsys.readouterr().out)
+    progress = json.loads(progress_path.read_text(encoding="utf-8"))
+    assert summary["schema"] == progress["schema"] == "generate2dmedia.batch_progress.v1"
+    assert [(r["id"], r["status"]) for r in progress["results"]] == [("j0", "reused"), ("j1", "reused")]
+    assert progress["complete"] and not progress["stopped"]
+
+
+def test_batch_progress_validates_against_vendored_schema(inputs, tmp_path, monkeypatch):
+    """A stopped and a complete progress file against A0's batch_progress_v1 once it is vendored here."""
+    vendored = ROOT / "skills/generate2dmedia/references/schemas/media.schema.json"
+    defs = json.loads(vendored.read_text(encoding="utf-8")).get("$defs", {}) if vendored.is_file() else {}
+    if "batch_progress_v1" not in defs:
+        pytest.skip("A0-contracts media.schema.json with $defs/batch_progress_v1 is not merged into this branch yet")
+    monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
+    jobs = write_jobs(tmp_path, 3)
+    base = ["batch", str(jobs), "--project-dir", str(project(inputs)), "--execute"]
+    validator = _vendored_validator("batch_progress_v1")
+    assert media.main(base, transport=Fake([b64_image(), quota_error()])) == 1  # stopped at j1
+    validator.validate(json.loads((tmp_path / "jobs.progress.json").read_text(encoding="utf-8")))
+    assert media.main(base, transport=Fake([b64_image()])) == 1  # complete; j1 is left for a human
+    progress = json.loads((tmp_path / "jobs.progress.json").read_text(encoding="utf-8"))
+    assert progress["complete"]
+    validator.validate(progress)
 
 
 class ThreadSafeFake(Fake):

@@ -41,23 +41,6 @@ exits 1). Every entry point's `--help` works under `PYTHONIOENCODING=cp1252`.
 description: Generate or reference-edit game artwork through the OpenAI or xAI APIs, or animate an approved still through the xAI image-to-video API. Use only when the user explicitly asks for OpenAI/xAI API generation or has approved paid calls; dry-run first and show the consent list. Hand results to the sprite, video or map skill for game-ready processing.
 ```
 
-Consent checklist, ready to paste (replaces "No need to ask again if already authorized"):
-
-```markdown
-## Consent checklist (every paid call)
-
-1. Run the command without `--execute`. It needs no key, makes no network call and writes nothing.
-2. Show the user the plan's `consent` block: provider, model, number of calls and the estimate in USD.
-   If `estimateUsd` is null, say the price is unknown; never guess. Mention `apiHost` when a custom
-   base URL is used, because the API key goes there.
-3. Read `warnings`: an existing output folder, an identical earlier request, or a cap that would block.
-4. Add `--execute` only after the user approves exactly that provider, model, call count and estimate.
-   Pass the user's limits as `--budget-usd` / `--max-calls`. A host subscription is not API credit.
-5. On `submit_unknown`, check the provider's usage history before any new request, then settle the
-   reservation with `media_ledger.py settle`. Never resend an identical request without the user's
-   go-ahead (`--allow-duplicate`).
-```
-
 Routing rows for the same SKILL.md:
 
 | Need | Command |
@@ -71,6 +54,24 @@ Routing rows for the same SKILL.md:
 `skills/generate2dmedia/agents/openai.yaml`: `policy: allow_implicit_invocation: false` (plan Z-T2).
 `skills/generate2dsprite/SKILL.md:37` and `skills/video2dsprite/references/prompt-rules.md`: where they
 say the commands are dry-run until `--execute`, add "and show the user the consent list first".
+
+### Consent checklist (every paid call)
+
+For the same SKILL.md, ready to paste as a section headed `## Consent checklist (every paid call)`.
+It replaces "No need to ask again if already authorized":
+
+```markdown
+1. Run the command without `--execute`. It needs no key, makes no network call and writes nothing.
+2. Show the user the plan's `consent` block: provider, model, number of calls and the estimate in USD.
+   If `estimateUsd` is null, say the price is unknown; never guess. Mention `apiHost` when a custom
+   base URL is used, because the API key goes there.
+3. Read `warnings`: an existing output folder, an identical earlier request, or a cap that would block.
+4. Add `--execute` only after the user approves exactly that provider, model, call count and estimate.
+   Pass the user's limits as `--budget-usd` / `--max-calls`. A host subscription is not API credit.
+5. On `submit_unknown`, check the provider's usage history before any new request, then settle the
+   reservation with `media_ledger.py settle`. Never resend an identical request without the user's
+   go-ahead (`--allow-duplicate`).
+```
 
 ## 3. README tool-table rows
 
@@ -134,9 +135,25 @@ Fixed
 ## 5. Schema change requests
 
 My documents follow plan Appendix B. They need these properties in A0's `media.schema.json`; if A0's
-frozen `$defs` already allow them, nothing changes. `tests/test_generate2dmedia.py::
-test_media_documents_validate_against_vendored_schema` validates a done image job, an interrupted (still pending) video job,
-ledger lines and prices.json against the vendored schema; it skips until A0 is merged and must pass after.
+frozen `$defs` already allow them, nothing changes. Two tests in `tests/test_generate2dmedia.py` check the
+vendored schema. They skip until A0 is merged and must pass after:
+
+- `test_media_documents_validate_against_vendored_schema`: a done image job, an interrupted (still pending)
+  video job, ledger lines and prices.json.
+- `test_batch_progress_validates_against_vendored_schema`: a stopped and a complete batch progress file,
+  once the vendored schema has `$defs/batch_progress_v1`.
+
+Schema ids follow A0's namespace rule (`generate2dmedia.*`):
+
+- `references/prices.json`: `"schema": "generate2dmedia.prices.v1"` (was `prices_v1`). This is the const in
+  A0's `$defs/prices_v1`. `load_prices` does not check the id, so a copied table that still says
+  `prices_v1` loads unchanged.
+- Batch progress file (`<jobs stem>.progress.json`): `"schema": "generate2dmedia.batch_progress.v1"` (was
+  `batch_progress_v1`), constant `generate_media.BATCH_PROGRESS_SCHEMA`.
+  - Nothing reads a progress file back. A re-run resumes from each job folder's job.json and the ledger,
+    then rewrites the file with the new id.
+  - So files written with the old id stay harmless (`test_batch_rerun_over_a_legacy_progress_file`).
+- job.json keeps `schemaVersion` 1 or 2. Ledger lines carry no `schema` field; A0's is optional.
 
 `$defs/job_v2` (null while pending or unpriced; `artifact` absent until done):
 
@@ -179,8 +196,9 @@ unpriced reservation:
                 "actualUsd": {"type": ["number", "null"], "minimum": 0}}}
 ```
 
-`$defs/prices_v1`: optional top-level `schema`, `version` (used as `estimate.pricesVersion`), `currency`,
-`notes`; optional row qualifiers `resolution`, `quality`, `size` (strings):
+`$defs/prices_v1`: top-level `schema` is `generate2dmedia.prices.v1`, which A0 already requires. Also
+needed: optional `version` (used as `estimate.pricesVersion`), `currency` and `notes`, and optional row
+qualifiers `resolution`, `quality` and `size` (strings):
 
 ```json
 {"properties": {"version": {"type": "string"}, "currency": {"const": "USD"}, "notes": {"type": "string"},
@@ -188,10 +206,16 @@ unpriced reservation:
                                     "size": {"type": "string"}, "verifiedAt": {"type": "string", "format": "date"}}}}}}
 ```
 
-New optional contract (add to media.schema.json if wanted): `$defs/batch_progress_v1`, the batch progress
-file: `{schema: "batch_progress_v1", jobsFile, execution, workers, startedAt, updatedAt,
+New contract `$defs/batch_progress_v1`, the batch progress file:
+`{schema: "generate2dmedia.batch_progress.v1", jobsFile, execution, workers, startedAt, updatedAt,
 results[{id, status: generated|reused|left-for-human|failed, outcomeCode, jobDir, priorStatus?, artifact?,
 estimateUsd?, error?}], inFlight[], remaining[], stopped, stopReason, complete}`.
+
+- Any future reader of progress files must also accept the old id `"batch_progress_v1"`. No A4 code reads
+  them.
+- A0-contracts' uncommitted working tree already defines `batch_progress_v1` with this const. On
+  2026-10-05, a stopped and a complete progress file from this branch validated against that draft. The
+  check read the draft from outside this worktree.
 
 ## 6. Shared-helper promotion requests
 
@@ -222,7 +246,7 @@ for those routes. Quota calls count toward `max_calls` but not toward `FORGE_MAX
 ## 7. Cross-module links that Z must add
 
 - `skills/generate2dmedia/SKILL.md`: link `references/api-usage.md` (section "Consent before any paid
-  call"), `references/prices.json` and `scripts/media_ledger.py`; add the consent checklist above.
+  call"), `references/prices.json` and `scripts/media_ledger.py`; add the consent checklist (section 2).
 - `skills/generate2dmedia/agents/openai.yaml`: `allow_implicit_invocation: false`.
 - `.gitignore`: add `.forge/` (the ledger lives in user projects; this also protects the repo when a
   command runs at its root).
@@ -256,4 +280,5 @@ for those routes. Quota calls count toward `max_calls` but not toward `FORGE_MAX
 - Tests ran on Windows with Python 3.13 only. Sources parse with Python 3.10 grammar
   (`ast.parse(feature_version=(3, 10))`), but no 3.10 interpreter was run, and the POSIX `fcntl` lock
   branch of `media_ledger` has not been executed.
-- The vendored-schema test skips until A0's `media.schema.json` is merged (see section 5).
+- The vendored-schema tests skip until A0's `media.schema.json` is merged; the progress-file test also
+  needs its `batch_progress_v1` (see section 5).

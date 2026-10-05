@@ -1,5 +1,5 @@
 {
-  "schema": "prices_v1",
+  "schema": "generate2dmedia.prices.v1",
   "version": "2026-10-05",
   "currency": "USD",
   "notes": "List prices transcribed from provider-survey.md (provider pages checked 2026-10-05). Excludes tax, rejected or regenerated attempts and subscription quotas. A request whose provider, model, unit and qualifiers (resolution, quality) have no row is reported as unpriced; nothing is extrapolated. Re-verify before batches and update verifiedAt.",

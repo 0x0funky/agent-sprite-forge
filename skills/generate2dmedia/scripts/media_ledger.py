@@ -84,7 +84,10 @@ def _amount(value):
 
 
 def load_prices(path=None) -> dict:
-    """Read a prices_v1 table; every row needs provider, model, unit, usd, source, verifiedAt."""
+    """Read a prices_v1 table; every row needs provider, model, unit, usd, source, verifiedAt.
+
+    The table's "schema" id ("generate2dmedia.prices.v1", formerly "prices_v1") is not checked,
+    so copies with either id load."""
     path = PRICES_PATH if path is None else Path(path)
     try:
         data = json.loads(path.read_text(encoding="utf-8-sig"))

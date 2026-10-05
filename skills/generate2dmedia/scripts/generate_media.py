@@ -56,6 +56,10 @@ CONTINUE_CODES = frozenset({"ok", "prior", "invalid_request", "duplicate", "outp
 BATCH_LEVEL_KEYS = frozenset({"execute", "allow_duplicate", "budget_usd", "max_calls", "project_dir",
                               "prices", "allow_custom_base_url", "help"})
 JOB_PATH_KEYS = frozenset({"prompt_file", "reference", "last_frame", "out_dir"})
+# Id of the batch progress file (media.schema.json batch_progress_v1). Files from before the
+# namespacing say "batch_progress_v1"; nothing reads a progress file back (a re-run resumes from
+# each job folder and the ledger, then rewrites the file), so old files stay harmless.
+BATCH_PROGRESS_SCHEMA = "generate2dmedia.batch_progress.v1"
 
 
 class MediaError(Exception):
@@ -1094,7 +1098,7 @@ def run_batch(args, transport=None):
     factory = (lambda: transport) if transport is not None else Transport
     queue = list(entries)
     lock = threading.Lock()
-    state = {"schema": "batch_progress_v1", "jobsFile": str(jobs_path.resolve()), "execution": "execute",
+    state = {"schema": BATCH_PROGRESS_SCHEMA, "jobsFile": str(jobs_path.resolve()), "execution": "execute",
              "workers": args.workers, "startedAt": media_ledger.utc_timestamp(), "updatedAt": None,
              "results": [], "inFlight": [], "remaining": [e[0] for e in entries],
              "stopped": False, "stopReason": None, "complete": False}
