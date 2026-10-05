@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "why": "sorts are ground-line or raw-y",
+      "set": "/sort",
+      "value": "z-index",
+      "error": "'z-index' is not one of"
+    },
+    {
+      "why": "the compositing order lists every band",
+      "set": "/compositing_order",
+      "value": [],
+      "error": "is too short"
+    },
+    {
+      "why": "pasted placements are composedPlacements",
+      "set": "/pasted/0/group",
+      "value": "decals",
+      "error": "'decals' is not one of"
+    },
+    {
+      "why": "paths are relative to the report",
+      "set": "/base",
+      "value": "C:/maps/base.png",
+      "error": "does not match"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.compose_report.v1",
+      "error": "was expected"
+    }
+  ]
+}

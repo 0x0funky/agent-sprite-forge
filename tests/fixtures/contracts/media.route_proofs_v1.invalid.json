@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "a VERIFIED proof names its artifact",
+      "remove": "/proofs/0/artifactSha256",
+      "error": "'artifactSha256' is a required property"
+    },
+    {
+      "why": "routes are the local CLI routes",
+      "set": "/proofs/0/route",
+      "value": "rest",
+      "error": "'rest' is not one of"
+    },
+    {
+      "why": "recipes are <name>/<version>",
+      "set": "/proofs/0/recipe",
+      "value": "codex image",
+      "error": "does not match"
+    },
+    {
+      "why": "verifiedAt is RFC 3339",
+      "set": "/proofs/0/verifiedAt",
+      "value": "yesterday",
+      "error": "does not match"
+    }
+  ]
+}

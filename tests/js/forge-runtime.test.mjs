@@ -113,8 +113,13 @@ test('normalizeAnimation reads animation.json 3.0 timing, events, rational fps a
 });
 
 test('normalizeAnimation refuses packed geometry that would crop alpha in the wrong place', () => {
-  // The hand-written A0 example declares width 48 > halfWidth 24, which forge_av never writes.
-  assert.throws(() => R.normalizeAnimation(fixture('video.animation_v3.valid.json')), /packed alpha geometry/);
+  // The contract example uses forge_av's geometry (D21): width/height are the logical frame, at most the halves.
+  const example = fixture('video.animation_v3.valid.json');
+  const a = R.normalizeAnimation(example);
+  assert.deepEqual([a.packedAlpha.width, a.packedAlpha.halfWidth, a.packedAlpha.videoWidth], [24, 24, 48]);
+  // A manifest that gives the video width as width (48 > halfWidth 24) would crop alpha in the wrong place.
+  const physical = {...example, packedAlpha: {...example.packedAlpha, width: 48}};
+  assert.throws(() => R.normalizeAnimation(physical), /packed alpha geometry/);
   assert.throws(() => R.packedGeometry({layout: 'rgb-top-alpha-bottom', width: 2, height: 2}), TypeError);
   assert.throws(() => R.packedGeometry({layout: R.PACKED_LAYOUT, width: 403, height: 407, halfWidth: 404,
     halfHeight: 408}, 806, 408), /808x408/);

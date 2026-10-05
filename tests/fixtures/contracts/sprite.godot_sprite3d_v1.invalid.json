@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "frames are relative to the contract (S19)",
+      "set": "/frames/0",
+      "value": "D:/game/idle-0.png",
+      "error": "does not match"
+    },
+    {
+      "why": "the world height is positive",
+      "set": "/world_height",
+      "value": 0,
+      "error": "0 is less than or equal to the minimum of 0"
+    },
+    {
+      "why": "the contract names its frames",
+      "remove": "/frames",
+      "error": "'frames' is a required property"
+    },
+    {
+      "why": "billboard modes are fixed",
+      "set": "/billboard",
+      "value": "spherical",
+      "error": "'spherical' is not one of"
+    }
+  ]
+}

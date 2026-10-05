@@ -3,6 +3,12 @@
     {"why": "impact time is mandatory", "remove": "/effects/0/impactMs"},
     {"why": "no primitives", "set": "/effects/0/primitives", "value": []},
     {"why": "empty palette", "set": "/palette", "value": []},
-    {"why": "negative seed", "set": "/effects/0/seed", "value": -1}
+    {"why": "negative seed", "set": "/effects/0/seed", "value": -1},
+    {
+      "why": "preset primitives refuse unknown parameters",
+      "set": "/effects/0/primitives/0",
+      "value": {"type": "slash", "spin": 3},
+      "error": "Additional properties are not allowed"
+    }
   ]
 }

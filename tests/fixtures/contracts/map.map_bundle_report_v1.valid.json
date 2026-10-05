@@ -1,0 +1,110 @@
+{
+  "schema": "generate2dmap.map_bundle_report.v1",
+  "status": "pass",
+  "method": "JSON Schema map.schema.json#/$defs/map_bundle_v2 (vendored copy, built-in Draft 2020-12 evaluator), file existence and sha256 of every referenced file, and cross-field rules: unique ids, tile indices against tilesets, wang/blob topology, material colours, portal targets and arrivals, slots and approach points",
+  "notProven": [
+    "reachability, portal arrivals and collision geometry (run map_nav.py check)",
+    "that collision and footprints match the painted art",
+    "engine or editor import (Tiled GUI, Godot, LDtk not verified)"
+  ],
+  "checks": [
+    {
+      "id": "schema",
+      "status": "pass",
+      "value": {"errors": 0, "warnings": 0},
+      "threshold": {"errors": 0}
+    },
+    {
+      "id": "files",
+      "status": "pass",
+      "value": {"errors": 0, "warnings": 0},
+      "threshold": {"errors": 0}
+    },
+    {
+      "id": "sha256",
+      "status": "pass",
+      "value": {"errors": 0, "warnings": 0},
+      "threshold": {"errors": 0}
+    }
+  ],
+  "inputs": [
+    {
+      "path": "map/map-bundle.json",
+      "sha256": "97e20c9edc61c1241f50cdfec8c5b451529ebc4594dfd87e49f2955f660bef67",
+      "bytes": 5970
+    },
+    {
+      "path": "map/tiles/terrain.tileset.json",
+      "sha256": "99c6c150ce0bf3d29f598bfb563b7f68f218ba82cc08060187bdd9b596e87071",
+      "bytes": 5726
+    },
+    {
+      "path": "map/tiles/terrain.png",
+      "sha256": "bfcc09cbe13573c3363d343272bf29926f950aa50b005d091ca8f52a880532db",
+      "bytes": 667
+    },
+    {
+      "path": "map/tiles/path.tileset.json",
+      "sha256": "80b8f6895090b0415974ce45e583920aa3fd810780b25b201472fe84483205d2",
+      "bytes": 4873
+    },
+    {
+      "path": "map/tiles/path.png",
+      "sha256": "b8f78453de7b8e9f54924657005e121b3ad80ccf78db81a0f2fd9b2c0c464405",
+      "bytes": 599
+    },
+    {
+      "path": "map/art/backdrop.png",
+      "sha256": "2f10109f2846131dcf9b3b92e528124b118ea8eb94fcad22b7c636d23966dca2",
+      "bytes": 440
+    },
+    {
+      "path": "map/layers/ground.csv",
+      "sha256": "963e55df716aaa6e7470a42ca4f528ea13cbd3d89610c17a25bf1c5bde7b2ecb",
+      "bytes": 290
+    },
+    {
+      "path": "map/terrain-vertices.json",
+      "sha256": "4e40b3fd78e72d00b588aeb7385d1cdb31ded6a59f36cadfdc0671a0c7a1479a",
+      "bytes": 369
+    },
+    {
+      "path": "map/props/tree.png",
+      "sha256": "128928e0753a11e00a60b57ca09bc3ebdfa091398c2378f4fc1d689fc10a8e18",
+      "bytes": 1054
+    },
+    {
+      "path": "map/props/rock.png",
+      "sha256": "a9b6ffa87efbaaaab023194bb0fade8fedb2ed7ea6c19009e5cd57b85952542f",
+      "bytes": 360
+    },
+    {
+      "path": "map/props/bush.png",
+      "sha256": "1f68b8e59914d19c68eb93409f44de41a12d23f61a55dea02ad9d137dbcafa7d",
+      "bytes": 287
+    },
+    {
+      "path": "map/materials.png",
+      "sha256": "21d675e691a801cc1ff288164b6f670b1b2df861acc56478852280c5acbd64d2",
+      "bytes": 102
+    }
+  ],
+  "outputs": [],
+  "tool": {"name": "map_bundle.py", "version": "1.0.0"},
+  "bundle": {
+    "id": "meadow",
+    "version": 2,
+    "world": [192.0, 128.0],
+    "counts": {
+      "tilesets": 2,
+      "layers": 4,
+      "props": 3,
+      "objects": 5,
+      "portals": 2,
+      "spawns": 2,
+      "anchors": 1,
+      "interactions": 2
+    }
+  },
+  "problems": []
+}

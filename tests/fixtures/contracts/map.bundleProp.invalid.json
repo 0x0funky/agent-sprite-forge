@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "a prop names an image, or a pack and a label",
+      "document": {"label": "tree", "anchor_px": [10, 25]},
+      "error": "is not valid under any of the given schemas"
+    },
+    {
+      "why": "images are relative to the bundle",
+      "set": "/image",
+      "value": "/art/tree.png",
+      "error": "does not match"
+    },
+    {
+      "why": "footprint bases are prop_px or world_px (image_px is the legacy alias, per D7)",
+      "set": "/footprint/basis",
+      "value": "screen_px",
+      "error": "'screen_px' is not one of"
+    },
+    {
+      "why": "occlusion classes are low, tall or foreground",
+      "set": "/occlusion_class",
+      "value": "huge",
+      "error": "'huge' is not one of"
+    }
+  ]
+}

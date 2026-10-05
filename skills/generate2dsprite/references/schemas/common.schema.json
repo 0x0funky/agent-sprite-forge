@@ -45,7 +45,7 @@
       "enum": ["pass", "fail", "warn", "needs-visual-review"]
     },
     "qaCheck": {
-      "description": "One measured check. value and threshold are whatever the check measures (number, list, boolean or null).",
+      "description": "One measured check. value and threshold are whatever the check measures (number, list, boolean or null). An ungated measurement is a skipped check with its value and a null threshold. Checks stay open: tools add keys such as subject (the file a per-file check is about; pixel_reduce), files (the files it names; palette_tool build), failing (the files or frames over the gate), profile (the lint profile), detail (extra figures such as loop_seam's seam and adjacent_median) and note (autotile_build).",
       "type": "object",
       "required": ["id", "status"],
       "properties": {
@@ -56,7 +56,7 @@
       }
     },
     "qaEnvelope": {
-      "description": "Every QA JSON states its method, what it does not prove, and the sha256 of every input and output it judged. A pass envelope cannot contain a failed check. createdAt is optional so QA files can stay byte-deterministic.",
+      "description": "Every QA JSON states its method, what it does not prove, and the sha256 of every input and output it judged. A pass envelope cannot contain a failed check. createdAt is optional so QA files can stay byte-deterministic. Envelopes stay open: a tool adds its own top-level figures beside the envelope keys (for example palette_tool's palette, fit, totals, locked_inputs and luts, pixel_qa's frames and palette, autotile_build's metrics, parallax_build's seams, sweep and layers).",
       "type": "object",
       "required": ["status", "method", "notProven", "checks", "inputs", "outputs", "tool"],
       "properties": {
@@ -200,6 +200,41 @@
         "seam_over_median": {"type": "number", "minimum": 0},
         "seam_over_p95": {"type": "number", "minimum": 0},
         "method": {"type": "string", "minLength": 1}
+      }
+    },
+    "edgeSeam": {
+      "description": "forge_core.edge_seam_report of one join or wrap: the one seam metric of every tool that judges edges (per D9: platform-strip joins, terrain wraps and Wang joins, parallax repeat seams). The common seamReport of the premultiplied RGBA steps (0-255) across the join (seam) and of the interior steps near it (adjacent_*), plus seam_ratio, near_median and a verdict. seam_ratio is the larger of seam / adjacent_max and the worst few-row window of the join over the worst window of the interior steps near it: about 1 or less looks like the art, well above 1 is a seam; method states the windows. Verdicts (snake_case): continuous (the join steps like the art around it), seam (a visible jump), duplicate_edge (a join much flatter than its neighbourhood: a repeated edge, a one-pixel stutter that edge equality would pass), flat (no measurable steps near the join, so there is nothing to compare) and too_small (fewer than two columns or rows to compare; the numbers may then be absent). A statistic, never a seamlessness proof; pass/fail gates belong to the adopting tool.",
+      "type": "object",
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {"enum": ["continuous", "seam", "duplicate_edge", "flat", "too_small"]},
+        "seam_ratio": {"type": "number", "minimum": 0},
+        "near_median": {"type": "number", "minimum": 0}
+      },
+      "if": {"properties": {"verdict": {"const": "too_small"}}, "required": ["verdict"]},
+      "else": {"allOf": [{"$ref": "#/$defs/seamReport"}], "required": ["seam_ratio", "near_median"]}
+    },
+    "cropBoxes": {
+      "description": "forge-crop-boxes/v1 (DOC-18): the one form of measured crop boxes in sheet pixels for every tool. Each item is a half-open integer box [x0, y0, x1, y1) inside the sheet with an optional id. extract_prop_pack writes it as auto-boxes.json (with source, display_name and anchor_px in box pixels) and reads it with --boxes-file, where every item needs an id (the prop label) and may also carry footprint, solid, contact, occlusion_class and occupant_policy as in a prop pack item; assemble_frames --crop-boxes reads it with the id optional. Readers also accept the legacy forms: a bare list of boxes (assemble_frames) and {props: [{label, source_box}]} (extract_prop_pack).",
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "schema": {"const": "forge-crop-boxes/v1"},
+        "source": {"$ref": "#/$defs/fileRef"},
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["box"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "pattern": "\\S"},
+              "box": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 4, "maxItems": 4},
+              "display_name": {"type": "string", "minLength": 1},
+              "anchor_px": {"description": "The prop's anchor in box pixels.", "$ref": "#/$defs/point2"}
+            }
+          }
+        }
       }
     }
   }

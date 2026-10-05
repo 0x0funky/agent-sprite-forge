@@ -1,6 +1,12 @@
 {
   "cases": [
     {"why": "tiles layers need data", "remove": "/data"},
-    {"why": "unknown kind", "set": "/kind", "value": "sprites"}
+    {"why": "unknown kind", "set": "/kind", "value": "sprites"},
+    {
+      "why": "an image layer offset is [x, y]",
+      "set": "/offset",
+      "value": [1],
+      "error": "is too short"
+    }
   ]
 }

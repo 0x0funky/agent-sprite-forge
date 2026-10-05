@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "why": "modes are rows, edges or kit",
+      "set": "/mode",
+      "value": "grid",
+      "error": "'grid' is not one of"
+    },
+    {
+      "why": "socket statuses are fixed",
+      "set": "/sockets/0/status",
+      "value": "open",
+      "error": "'open' is not one of"
+    },
+    {
+      "why": "placements are [x, y, w, h] rects",
+      "set": "/placements/0/rect",
+      "value": [0, 0, 96],
+      "error": "is too short"
+    },
+    {
+      "why": "statuses are pass, warn or fail",
+      "set": "/status",
+      "value": "needs-visual-review",
+      "error": "is not one of"
+    }
+  ]
+}

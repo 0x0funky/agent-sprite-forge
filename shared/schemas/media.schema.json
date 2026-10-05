@@ -5,14 +5,14 @@
   "description": "Frozen contracts, version 1, for paid or quota-consuming media requests: the job record, the append-only spend ledger, the batch progress file, the readiness doctor and the price table. schemaVersion 1 jobs stay valid and resumable. Objects stay open (additionalProperties true), except a job's provider error block.",
   "$defs": {
     "job_v2": {
-      "description": "job.json from generate_media.py. v2 adds the receipt, the cost estimate and the duplicate-guard fingerprint, plus the route, the API base, the consent record, the ledger reservation, the client and provider request ids, the provider's error and usage, and partialArtifact (returned bytes kept in a .partial file when they could not be published). A job is unpriced when estimate.usd is null (no verified price row). artifact is absent until the job is done, and a done job always records it; status not_sent means the request provably never left the machine.",
+      "description": "job.json from generate_media.py (REST) and cli_media.py (local CLI routes). v2 adds the receipt, the cost estimate and the duplicate-guard fingerprint, plus the route, the API base, the consent record, the ledger reservation, the client and provider request ids, the provider's error and usage, and partialArtifact (returned bytes kept in a .partial file when they could not be published). A job is unpriced when estimate.usd is null (no verified price row). artifact is absent until the job is done, and a done job always records it; status not_sent means the request provably never left the machine. CLI-route jobs also record cliRun (the run, the CLI version and recipe, and where the CLI wrote its output, symbolically), artSource and, when the artifact was taken from the CLI's own output, adoption and adoptedAt; outputDir appears only in run records under .forge/cli-runs/. For CLI routes requestedModel is <cli>-<tool> (the CLIs choose their own model), options hold the tool (plus duration and resolution for video), error uses the closed error object with the error code and a scrubbed message, and receipt.outcomeCode carries the same code, ok or adopted.",
       "type": "object",
       "required": ["schemaVersion", "provider", "kind", "status"],
       "properties": {
         "schemaVersion": {"enum": [1, 2]},
         "provider": {"type": "string", "minLength": 1},
         "kind": {"type": "string", "minLength": 1},
-        "route": {"description": "How the request travels; generate_media.py writes rest.", "enum": ["rest", "codex-cli", "grok-cli", "grok-acp"]},
+        "route": {"description": "How the request travels: generate_media.py writes rest, cli_media.py the local CLI routes (users see grok-cli and grok-acp as one Grok (local CLI) route, per D22).", "enum": ["rest", "codex-cli", "grok-cli", "grok-acp"]},
         "apiBase": {"type": "string", "pattern": "^https://"},
         "endpoint": {"type": "string"},
         "requestedModel": {"type": "string", "minLength": 1},
@@ -27,14 +27,18 @@
         "clientRequestId": {"type": "string", "minLength": 1},
         "providerRequestId": {"type": "string", "minLength": 1},
         "consent": {
-          "description": "What the user consented to before sending: provider, model, paid calls, the estimate (null when unpriced) and the API host.",
+          "description": "What the user consented to before sending: provider, model, paid calls, the estimate (null when unpriced) and the API host; for a CLI route the route, whether it spends account quota, the account and a note.",
           "type": "object",
           "properties": {
             "provider": {"type": "string", "minLength": 1},
             "model": {"type": "string", "minLength": 1},
             "calls": {"type": "integer", "minimum": 0},
             "estimateUsd": {"type": ["number", "null"], "minimum": 0},
-            "apiHost": {"type": "string", "minLength": 1}
+            "apiHost": {"type": "string", "minLength": 1},
+            "route": {"enum": ["rest", "codex-cli", "grok-cli", "grok-acp"]},
+            "quota": {"type": "boolean"},
+            "account": {"type": "string"},
+            "note": {"type": "string"}
           }
         },
         "ledger": {
@@ -131,13 +135,40 @@
         },
         "fingerprint": {"$ref": "common.schema.json#/$defs/sha256"},
         "cliRun": {
+          "description": "The local CLI run: cwd is the run folder's name (never an absolute path), version and versionText the CLI's, recipe the versioned invocation recipe, home and sourceRel where the CLI wrote its output (relative to CODEX_HOME or GROK_HOME), verifiedBefore whether the route was VERIFIED when the run started.",
           "type": "object",
           "required": ["tool", "runId", "cwd", "startedAt"],
           "properties": {
             "tool": {"type": "string", "minLength": 1},
             "runId": {"type": "string", "minLength": 1},
             "cwd": {"type": "string", "minLength": 1},
-            "startedAt": {"$ref": "common.schema.json#/$defs/timestamp"}
+            "startedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+            "threadId": {"type": "string"},
+            "sessionId": {"type": "string"},
+            "version": {"type": ["string", "null"]},
+            "versionText": {"type": ["string", "null"]},
+            "recipe": {"type": "string", "pattern": "^[a-z0-9-]+/[0-9]+$"},
+            "home": {"enum": ["CODEX_HOME", "GROK_HOME"]},
+            "sourceRel": {"type": "string", "pattern": "^\\*/[0-9A-Za-z][0-9A-Za-z_-]{7,79}/(images|videos)/[0-9A-Za-z_.-]{1,120}$"},
+            "verifiedBefore": {"type": "boolean"}
+          }
+        },
+        "artSource": {"$ref": "common.schema.json#/$defs/artSource"},
+        "outputDir": {"$ref": "common.schema.json#/$defs/relPath"},
+        "adoptedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+        "adoption": {
+          "description": "How the artifact was taken from the CLI's own output: method native-run-folder (a cli_media run or resume --adopt), codex-thread-folder or codex-thread-rollout (adopt --codex-thread). source is symbolic (CODEX_HOME/... or GROK_HOME/sessions/*/...), never an absolute path.",
+          "type": "object",
+          "required": ["method", "source", "sourceSha256"],
+          "properties": {
+            "method": {"type": "string", "minLength": 1},
+            "source": {"type": "string", "pattern": "^(CODEX_HOME|GROK_HOME)/"},
+            "sourceSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "sourceMtime": {"type": ["string", "null"]},
+            "freshAfter": {"anyOf": [{"$ref": "common.schema.json#/$defs/timestamp"}, {"type": "null"}]},
+            "threadId": {"type": "string"},
+            "checks": {"type": "array", "items": {"type": "string"}},
+            "finalAnswerNamesFile": {"type": "boolean"}
           }
         }
       },
@@ -167,7 +198,7 @@
       }
     },
     "batch_progress_v1": {
-      "description": "<jobs stem>.progress.json written by generate_media.py batch --execute after every dispatch and result. results hold one entry per finished job (generated, reused, left-for-human or failed, with its outcomeCode); inFlight and remaining are job ids. stopped means an account-level, unknown or possibly charged outcome stopped dispatching (nothing is retried) and stopReason says which; complete means no job is left or in flight. jobsFile and jobDir are the paths the tool resolved.",
+      "description": "<jobs stem>.progress.json written by generate_media.py batch --execute and cli_media.py batch after every dispatch and result. results hold one entry per finished job (generated, reused, left-for-human or failed, with its outcomeCode); inFlight and remaining are job ids. stopped means an account-level, unknown or possibly charged outcome stopped dispatching (nothing is retried) and stopReason says which; complete means no job is left or in flight. jobsFile and results[].jobDir are relative to the progress file's folder (per D25, no absolute paths); files written before D25 hold the absolute paths the tool resolved, so the type stays a plain string. No tool reads a progress file back.",
       "type": "object",
       "required": ["schema", "jobsFile", "execution", "workers", "startedAt", "updatedAt", "results", "inFlight", "remaining", "stopped", "stopReason", "complete"],
       "properties": {
@@ -208,11 +239,18 @@
       ]
     },
     "doctor_v1": {
-      "description": "forge_doctor.py --json. Each check climbs the readiness ladder; FAIL and MISSING always carry a remedy. routes says which art routes are usable; proofs holds version-keyed verification records.",
+      "description": "forge_doctor.py --json. Each check climbs the readiness ladder; FAIL and MISSING always carry a remedy. routes says which art routes are usable: keys image, image_edit, video, clip and code_art, each {route, status (ready, consent, unverified, limited, unknown or none), detail, options?}, where route is host_image, host_image_edit, host_video, codex-cli, grok-cli, grok-acp, api, ffmpeg, png-frames, codeart2d or none; the order is local agent first (per D22: images use the host tool, then codex-cli, then grok-cli, then REST with consent; video uses grok-acp, then REST with consent), and local routes count only when VERIFIED. proofs holds the version-keyed verification records {level, version, recipe, verifiedAt, matchesInstalled} by <route>:<tool>. The report also has the tool, createdAt, the overall verdict, the declared host tools, the per-capability ladder of every CLI route in cli and elapsedMs; saved appears on stdout only.",
       "type": "object",
       "required": ["schema", "checks", "routes"],
       "properties": {
         "schema": {"const": "generate2dmedia.doctor.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "createdAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+        "overall": {"enum": ["OK", "WARN", "FAIL"]},
+        "host": {"type": "object"},
+        "cli": {"type": "object"},
+        "elapsedMs": {"type": "integer", "minimum": 0},
+        "saved": {"type": "string"},
         "checks": {
           "type": "array",
           "items": {
@@ -258,6 +296,36 @@
               "source": {"type": "string", "minLength": 1},
               "verifiedAt": {"type": "string", "format": "date", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"}
             }
+          }
+        }
+      }
+    },
+    "route_proofs_v1": {
+      "description": "<project>/.forge/route-proofs.json written by cli_media.py: version-keyed evidence that an opt-in CLI route works. A record is valid only for its route, native tool, CLI version and recipe; forge_doctor.py reads it for the TOOL_EXPOSED and VERIFIED ladder steps. A VERIFIED record names the artifact it produced; after a CLI update the route is verified again (per D23 the CLI version is part of the verification request's fingerprint).",
+      "type": "object",
+      "required": ["schema", "proofs"],
+      "properties": {
+        "schema": {"const": "generate2dmedia.route_proofs.v1"},
+        "proofs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["route", "tool", "version", "recipe", "level", "verifiedAt"],
+            "properties": {
+              "route": {"enum": ["codex-cli", "grok-cli", "grok-acp"]},
+              "tool": {"enum": ["image_gen", "image_edit", "image_to_video"]},
+              "version": {"type": "string", "minLength": 1},
+              "versionText": {"type": "string", "minLength": 1},
+              "recipe": {"type": "string", "pattern": "^[a-z0-9-]+/[0-9]+$"},
+              "level": {"enum": ["TOOL_EXPOSED", "VERIFIED"]},
+              "verifiedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+              "runId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+              "method": {"type": "string"},
+              "jobDir": {"$ref": "common.schema.json#/$defs/relPath"},
+              "artifactSha256": {"$ref": "common.schema.json#/$defs/sha256"}
+            },
+            "if": {"properties": {"level": {"const": "VERIFIED"}}, "required": ["level"]},
+            "then": {"required": ["artifactSha256"]}
           }
         }
       }

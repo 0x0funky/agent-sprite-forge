@@ -3,6 +3,12 @@
     {"why": "unknown matte", "set": "/matte/mode", "value": "chroma"},
     {"why": "clip padding is mandatory", "remove": "/clips/attack/padding"},
     {"why": "boolean expected", "set": "/matte/unmix", "value": "yes"},
-    {"why": "params is the KeyParams object", "set": "/matte/params", "value": "v13", "error": "$.matte.params:"}
+    {"why": "params is the KeyParams object", "set": "/matte/params", "value": "v13", "error": "$.matte.params:"},
+    {
+      "why": "erode is whole pixels (per D21)",
+      "set": "/matte/erode",
+      "value": 1.5,
+      "error": "1.5 is not of type 'integer'"
+    }
   ]
 }

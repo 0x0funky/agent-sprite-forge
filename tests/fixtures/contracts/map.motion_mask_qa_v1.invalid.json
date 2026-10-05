@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "a mask is published only with exact-zero protected cores",
+      "set": "/protectedMax",
+      "value": 3,
+      "error": "0 was expected"
+    },
+    {
+      "why": "motions are flow, flicker or sway",
+      "set": "/regions/0/motion",
+      "value": "drift",
+      "error": "'drift' is not one of"
+    },
+    {
+      "why": "coverage is a fraction",
+      "set": "/coverage",
+      "value": 1.5,
+      "error": "1.5 is greater than the maximum of 1"
+    },
+    {
+      "why": "protected regions list their core",
+      "remove": "/protected",
+      "error": "'protected' is a required property"
+    }
+  ]
+}

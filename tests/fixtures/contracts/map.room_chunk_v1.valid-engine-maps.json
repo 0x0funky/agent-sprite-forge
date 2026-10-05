@@ -1,0 +1,28 @@
+{
+  "schema": "generate2dmap.room_chunk.v1",
+  "cell": 16,
+  "chunks": [
+    {
+      "id": "hall",
+      "size": [96, 64],
+      "sockets": {"E": [{"offset": 16, "width": 32, "material": "floor"}]},
+      "grid": ["######", "#.....", "#.....", "######"]
+    },
+    {
+      "id": "corridor",
+      "size": [96, 64],
+      "grid": ["######", "......", "......", "######"],
+      "sockets": {
+        "W": [{"offset": 16, "width": 32, "material": "floor"}],
+        "E": [{"offset": 16, "width": 32, "material": "floor"}]
+      }
+    },
+    {
+      "id": "vault",
+      "size": [96, 64],
+      "sockets": {"W": [{"offset": 16, "width": 32, "material": "floor"}]},
+      "grid": ["######", ".....#", ".....#", "######"]
+    }
+  ],
+  "graph": [["hall", "corridor", "corridor", "vault"]]
+}

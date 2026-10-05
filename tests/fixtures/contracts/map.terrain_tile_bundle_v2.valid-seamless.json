@@ -1,0 +1,174 @@
+{
+  "schema": "generate2dmap.terrain_tile_bundle.v2",
+  "source": {
+    "path": "../src/atlas.png",
+    "sha256": "d66e52e51e8a33f848501ba3fad1eaeaee0c26329cf786df6890060449f64203",
+    "bytes": 4805,
+    "size": [64, 32],
+    "mode": "RGB",
+    "bit_depth": 8,
+    "conversion": "RGB -> RGBA"
+  },
+  "grid": {
+    "rows": 2,
+    "cols": 4,
+    "rounding": "exact",
+    "source_cell_size": [16, 16],
+    "output_tile_size": [16, 16]
+  },
+  "tile": {
+    "shape": "square",
+    "layer": "base",
+    "footprint": [[0.0, 0.0], [16.0, 0.0], [16.0, 16.0], [0.0, 16.0]]
+  },
+  "terrains": {
+    "grass": {
+      "display_name": "grass",
+      "row": 0,
+      "kind": "fill",
+      "variants": [
+        {
+          "path": "grass-1.png",
+          "source_cell": [0, 0],
+          "source_box": [0, 0, 16, 16],
+          "resized": false,
+          "mean_luminance": 0.428477,
+          "contrast": 0.03014,
+          "border": {"checked": true, "frame": false, "frames": [], "max_delta": 0.0},
+          "wrap": {
+            "x": {
+              "seam": 9.859375,
+              "adjacent_median": 10.023438,
+              "adjacent_p95": 12.101562,
+              "adjacent_max": 12.3125,
+              "seam_over_median": 0.983632,
+              "seam_over_p95": 0.814719,
+              "seam_ratio": 0.804511,
+              "near_median": 10.554688,
+              "verdict": "continuous",
+              "method": "premultiplied RGBA column steps (0-255); join vs interior steps within 8 columns per side, whole edge and worst 4-row window"
+            },
+            "y": {
+              "seam": 11.03125,
+              "adjacent_median": 10.75,
+              "adjacent_p95": 12.078125,
+              "adjacent_max": 12.078125,
+              "seam_over_median": 1.026163,
+              "seam_over_p95": 0.913325,
+              "seam_ratio": 0.913325,
+              "near_median": 9.71875,
+              "verdict": "continuous",
+              "method": "premultiplied RGBA column steps (0-255); join vs interior steps within 8 columns per side, whole edge and worst 4-row window"
+            }
+          },
+          "sha256": "42d97066d3e6ca455f33a18e0717056503faa57789aebbec6e07a658bf2eb6d8"
+        }
+      ],
+      "variant_difference_min": 0.04482,
+      "cross_variant_seams": {
+        "pairs": 24,
+        "max_seam_ratio": 1.132479,
+        "not_continuous": [],
+        "note": "diagnostic only: variants are verified to wrap with themselves, not with each other"
+      }
+    }
+  },
+  "processing": {
+    "background_mode": "opaque",
+    "background_mode_requested": "auto",
+    "cell_shape": "square",
+    "resampler": "lanczos",
+    "grid_rounding": "exact",
+    "edge_policy": "seamless",
+    "wrap_aware_resize": true
+  },
+  "qc": {
+    "min_contrast": 0.035,
+    "min_variant_difference": 0.025,
+    "max_border_delta": 0.1,
+    "min_shape_coverage": 0.97,
+    "max_shape_spill": 0.03,
+    "max_seam_ratio": 1.25,
+    "warnings": [
+      "grass-1 contrast 0.0301 is below 0.0350.",
+      "grass-2 contrast 0.0278 is below 0.0350.",
+      "grass-3 contrast 0.0309 is below 0.0350.",
+      "grass-4 contrast 0.0313 is below 0.0350.",
+      "water-1 contrast 0.0300 is below 0.0350.",
+      "water-2 contrast 0.0306 is below 0.0350.",
+      "water-3 contrast 0.0305 is below 0.0350.",
+      "water-4 contrast 0.0301 is below 0.0350."
+    ],
+    "passed": false,
+    "seamless_verified": false
+  },
+  "qa": {
+    "status": "fail",
+    "method": "Grid slices of the atlas, background handled per --background-mode, resized to the tile size (Lanczos or nearest; wrap-aware for the seamless policy). Luminance contrast and mean thumbnail differences; drawn frames along opposite edges; footprint coverage and spill for iso/hex base tiles; for the seamless policy, premultiplied wrap and Wang-join steps normalised by the art's own steps near each edge.",
+    "notProven": [
+      "visual quality, style match and readability at game zoom",
+      "that each variant reads as the named terrain",
+      "seamlessness: no exact seam proof exists for image tiles (seamless_verified stays false)",
+      "joins between different variants of a fill row (measured as diagnostics only)"
+    ],
+    "checks": [
+      {"id": "contrast", "status": "fail", "value": 0.027814, "threshold": 0.035},
+      {"id": "variant_difference", "status": "pass", "value": 0.04482, "threshold": 0.025},
+      {"id": "border_frame", "status": "pass", "value": 0, "threshold": 0.1},
+      {"id": "shape_coverage", "status": "skipped", "value": null, "threshold": 0.97},
+      {"id": "shape_spill", "status": "skipped", "value": null, "threshold": 0.03},
+      {"id": "wrap_seams", "status": "pass", "value": 1.018727, "threshold": 1.25},
+      {"id": "wang_seams", "status": "skipped", "value": null, "threshold": null}
+    ],
+    "inputs": [
+      {
+        "path": "../src/atlas.png",
+        "sha256": "d66e52e51e8a33f848501ba3fad1eaeaee0c26329cf786df6890060449f64203",
+        "bytes": 4805
+      }
+    ],
+    "outputs": [
+      {
+        "path": "grass-1.png",
+        "sha256": "42d97066d3e6ca455f33a18e0717056503faa57789aebbec6e07a658bf2eb6d8",
+        "bytes": 793
+      },
+      {
+        "path": "grass-2.png",
+        "sha256": "65f0e885539119baf321d98d413aeb4713a0c0405a2a94d7c9dcb5f9968ac022",
+        "bytes": 779
+      },
+      {
+        "path": "grass-3.png",
+        "sha256": "412ff53f135337dc828d8c15c48dc9195bc0a741b2fc8350f7e096901191b154",
+        "bytes": 783
+      },
+      {
+        "path": "grass-4.png",
+        "sha256": "36181d456bc052a62a1134df7a1eea9676844ae8abe9dfb2bcd82ea3e66df2f6",
+        "bytes": 789
+      },
+      {
+        "path": "water-1.png",
+        "sha256": "815a4958f763d01c55c7f7628b429d538af2cebc58f4157052c215cf570532c7",
+        "bytes": 786
+      },
+      {
+        "path": "water-2.png",
+        "sha256": "2f7066c4e5919da1781c8e5b7bc36da210b0fce9d79032d7b27f92cf58bc5298",
+        "bytes": 789
+      },
+      {
+        "path": "water-3.png",
+        "sha256": "4bf09cb0bc78368c056ce48791f764cd2798f1baae68a9673c8aec8256952b34",
+        "bytes": 780
+      },
+      {
+        "path": "water-4.png",
+        "sha256": "cea9d3f23ce737d5bb66ac272ea18017cbce896346fcf866cc94d57694c1507e",
+        "bytes": 787
+      }
+    ],
+    "tool": {"name": "extract_terrain_tiles.py", "version": "2.0"}
+  }
+}

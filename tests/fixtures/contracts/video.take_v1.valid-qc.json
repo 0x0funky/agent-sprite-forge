@@ -1,0 +1,107 @@
+{
+  "schema": "video2dsprite.take.v1",
+  "take": "hero-run-1",
+  "status": "rejected",
+  "reasons": [
+    "camera scale 1.052 in the end calm span (frames 54-63): push-in or pull-out; regenerate with 'locked camera, fixed scale'"
+  ],
+  "warnings": [
+    "the start calm span is not at the reference pose (it changes 0.51x as much as the busiest frames): the take starts moving at once; frame 0 is the only rest frame",
+    "the end calm span is not at the reference pose (it changes 0.69x as much as the busiest frames): the take does not return to the reference pose",
+    "the end calm span sits 13.11 source px from the reference: consider apply --lock feet"
+  ],
+  "metrics": {
+    "frames": 64,
+    "fps": 24.0,
+    "size": [320, 180],
+    "fitApplied": "uniform",
+    "calm": {"start": [0, 9], "end": [54, 63], "motionRatio": {"start": 0.509, "end": 0.6873}},
+    "cameraScale": {
+      "start": 1.019117620181091,
+      "end": 1.0518092837055695,
+      "landmarkFirst": 1.0,
+      "landmarkLast": 0.94063
+    },
+    "cameraDriftSourcePx": {"start": 1.5245283018867923, "end": 13.114488331642342},
+    "landmarks": {
+      "count": 3,
+      "patch": 36,
+      "search": 15,
+      "minNcc": 0.6,
+      "perFrame": [
+        {"frame": 0, "matched": 3, "medianNcc": 0.9808, "scale": 1.0},
+        {"frame": 8, "matched": 3, "medianNcc": 0.973, "scale": 1.0},
+        {"frame": 16, "matched": 3, "medianNcc": 0.9801, "scale": 1.0},
+        {"frame": 24, "matched": 3, "medianNcc": 0.9673, "scale": 1.0},
+        {"frame": 32, "matched": 3, "medianNcc": 0.9779, "scale": 1.0},
+        {"frame": 39, "matched": 3, "medianNcc": 0.8032, "scale": 0.93942},
+        {"frame": 47, "matched": 3, "medianNcc": 0.8107, "scale": 0.94063},
+        {"frame": 55, "matched": 3, "medianNcc": 0.8042, "scale": 0.93942},
+        {"frame": 63, "matched": 3, "medianNcc": 0.8064, "scale": 0.94063}
+      ]
+    },
+    "identity": {
+      "box": [137, 22, 176, 69],
+      "minCalm": 0.9925,
+      "minAll": 0.9925,
+      "perFrame": [
+        {"frame": 0, "ncc": 0.9985, "dx": 0, "dy": 0},
+        {"frame": 8, "ncc": 0.9985, "dx": 0, "dy": 0},
+        {"frame": 16, "ncc": 0.9983, "dx": 0, "dy": 0},
+        {"frame": 24, "ncc": 0.9983, "dx": 0, "dy": 0},
+        {"frame": 32, "ncc": 0.9982, "dx": 0, "dy": 0},
+        {"frame": 39, "ncc": 0.9926, "dx": 0, "dy": -1},
+        {"frame": 47, "ncc": 0.9927, "dx": 0, "dy": -1},
+        {"frame": 55, "ncc": 0.9928, "dx": 0, "dy": -1},
+        {"frame": 63, "ncc": 0.9925, "dx": 0, "dy": -1}
+      ]
+    },
+    "edge": {"bandPx": 12, "impureFrames": []},
+    "keyDrift": {"median": 2.8284270763397217, "max": 2.8284270763397217},
+    "changedShareFromFrame0": {"p90": 0.042222222222222223, "levels": 16}
+  },
+  "job": {
+    "path": "registration_job.json",
+    "sha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55"
+  },
+  "action": "run",
+  "source": {
+    "kind": "video",
+    "name": "hero-run-1.mp4",
+    "sha256": "f024a32f048edaea8e357a791cfaac1af0a6a24ae1f9bf283cb690c8f3242247",
+    "frames": 64,
+    "size": [320, 180],
+    "fps": 24.0
+  },
+  "qa": {
+    "status": "fail",
+    "method": "register_clip qc v1: frame 0 and the end calm span against the master as the job placed it; 36 px zero-mean NCC landmarks and head-region identity, +-15 px search; subject = RGB distance > 64 from the take's border key (alpha > 16 for keyed frames); scale = sqrt of the subject area ratio, drift = stance anchor shift",
+    "notProven": [
+      "mid-clip identity and anatomy (watch the take)",
+      "camera motion that returns to the reference before the end calm span",
+      "camera motion in takes that end in a new pose (victory, defeat, fx)"
+    ],
+    "checks": [
+      {"id": "edge-key-purity", "status": "pass", "value": [], "threshold": 0.0005},
+      {"id": "landmarks-first-frame", "status": "pass", "value": "3/3", "threshold": 0.5},
+      {"id": "camera-scale-start", "status": "pass", "value": 1.01912, "threshold": 0.03},
+      {"id": "camera-drift-start", "status": "pass", "value": 1.5245, "threshold": 2.0},
+      {"id": "camera-scale-end", "status": "fail", "value": 1.05181, "threshold": 0.03},
+      {"id": "identity-calm", "status": "pass", "value": 0.9925, "threshold": 0.5},
+      {"id": "calm-start", "status": "warn", "value": 0.509, "threshold": 0.5},
+      {"id": "calm-end", "status": "warn", "value": 0.6873, "threshold": 0.5}
+    ],
+    "inputs": [
+      {
+        "path": "registration_job.json",
+        "sha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55"
+      },
+      {
+        "path": "hero-run-1.mp4",
+        "sha256": "f024a32f048edaea8e357a791cfaac1af0a6a24ae1f9bf283cb690c8f3242247"
+      }
+    ],
+    "outputs": [],
+    "tool": {"name": "register_clip", "version": "1"}
+  }
+}

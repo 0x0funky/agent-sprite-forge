@@ -2,6 +2,12 @@
   "cases": [
     {"why": "an ellipse needs rx", "remove": "/rx"},
     {"why": "unknown shape", "set": "/shape", "value": "circle"},
-    {"why": "a rect needs h", "document": {"shape": "rect", "x": 0, "y": 0, "w": 10}}
+    {"why": "a rect needs h", "document": {"shape": "rect", "x": 0, "y": 0, "w": 10}},
+    {
+      "why": "a solid's material is named",
+      "set": "/material",
+      "value": "",
+      "error": "should be non-empty"
+    }
   ]
 }

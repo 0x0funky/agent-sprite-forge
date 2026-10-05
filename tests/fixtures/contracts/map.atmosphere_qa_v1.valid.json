@@ -1,0 +1,46 @@
+{
+  "schema": "generate2dmap.atmosphere_qa.v1",
+  "status": "pass",
+  "method": "extract_scene_lights atmosphere: atmosphere.v1 structure, value ranges (opacity 0..1, vignette 0..1, non-negative bloom and saturation), colours, blend modes and mote counts against budgets.",
+  "notProven": [
+    "Values are checked for range and budget only; how motes, mist, shafts and the grade look depends on the runtime's shaders. Judge them in the game at gameplay scale, on a phone as well.",
+    "Mote budgets are counts, not measured frame times."
+  ],
+  "checks": [
+    {"id": "mote layers are valid", "status": "pass", "value": null, "threshold": null},
+    {
+      "id": "mote budget",
+      "status": "pass",
+      "value": {"motes": 40, "mobileMotes": 40},
+      "threshold": {"maxMotes": 512, "maxMobileMotes": 160}
+    },
+    {
+      "id": "mist",
+      "status": "pass",
+      "value": {"opacity": 0.2},
+      "threshold": {"opacity": [0, 1], "warnAbove": 0.3}
+    },
+    {
+      "id": "light shafts",
+      "status": "skipped",
+      "value": null,
+      "threshold": {"opacity": [0, 1], "warnAbove": 0.25}
+    },
+    {
+      "id": "grade",
+      "status": "pass",
+      "value": {"bloom": 0.35, "saturation": 1.1, "vignette": 0.25},
+      "threshold": {"bloom": [0, 1], "saturation": [0.7, 1.4], "vignette": [0, 0.6]}
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../src/atmosphere.json",
+      "sha256": "55f75953f484c802a3907c51f9e64bf0e637927c50d41fa286c109437d29a051",
+      "bytes": 264
+    }
+  ],
+  "outputs": [],
+  "tool": {"name": "extract_scene_lights", "version": "1.0"},
+  "summary": {"moteLayers": 1, "motes": 40, "mobileMotes": 40, "shafts": 0, "mist": true}
+}

@@ -1,0 +1,81 @@
+{
+  "schema": "generate2dmap.conform.v1",
+  "tool": {"name": "conform_background", "version": "1.0"},
+  "mode": "cover",
+  "source": {
+    "path": "../src/plate.png",
+    "sha256": "e133b2e7bc2ab0ca0432ccace017869803ea9394d7a5040374bde07535320a3f",
+    "bytes": 667,
+    "size": [320, 200],
+    "source_mode": "RGB"
+  },
+  "output": {
+    "path": "background.png",
+    "sha256": "35e343fc47fe587b108623804411e5d90f723c5287a4f6e0d5b0adc664dcfa40",
+    "bytes": 315,
+    "size": [160, 90]
+  },
+  "transform": {
+    "scale": 0.5,
+    "src_rect": [0.0, 10.0, 320.0, 190.0],
+    "out_size": [160, 90],
+    "resampler": "lanczos",
+    "focus": [0.5, 0.5],
+    "map": "out = (src - src_rect[0:2]) * scale",
+    "inverse": "src = out / scale + src_rect[0:2]",
+    "zoom_vs_cover": 1.0,
+    "dropped_source_px": {"left": 0.0, "top": 10.0, "right": 0.0, "bottom": 10.0}
+  },
+  "subjects": [
+    {
+      "id": "tower",
+      "source_box": [100.0, 20.0, 180.0, 160.0],
+      "output_box": [50.0, 5.0, 90.0, 75.0]
+    }
+  ],
+  "warnings": [],
+  "qa": {
+    "status": "pass",
+    "method": "conform_background: transform arithmetic (ImageOps.fit crop for cover), subject boxes mapped through it and measured against the output and its cover crops.",
+    "notProven": [
+      "The ground row is the one given; the tool does not find the painted ground in the art.",
+      "Cropping keeps the art's own perspective; a zoomed ground-fit can lose content at the edges (see dropped_source_px).",
+      "Subject and crop checks measure boxes only; look at the output at gameplay scale."
+    ],
+    "checks": [
+      {
+        "id": "subjects in output",
+        "status": "pass",
+        "value": {
+          "subjects": {
+            "tower": {
+              "left": 50.0,
+              "top": 5.0,
+              "right": 70.0,
+              "bottom": 15.0,
+              "min": 5.0,
+              "visible_fraction": 1.0
+            }
+          },
+          "cut": []
+        },
+        "threshold": {"min_margin_px": 0.0}
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../src/plate.png",
+        "sha256": "e133b2e7bc2ab0ca0432ccace017869803ea9394d7a5040374bde07535320a3f",
+        "bytes": 667
+      }
+    ],
+    "outputs": [
+      {
+        "path": "background.png",
+        "sha256": "35e343fc47fe587b108623804411e5d90f723c5287a4f6e0d5b0adc664dcfa40",
+        "bytes": 315
+      }
+    ],
+    "tool": {"name": "conform_background", "version": "1.0"}
+  }
+}

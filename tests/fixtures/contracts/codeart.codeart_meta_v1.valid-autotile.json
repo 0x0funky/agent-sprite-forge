@@ -1,0 +1,252 @@
+{
+  "schema": "codeart2d.codeart_meta.v1",
+  "art_source": "code",
+  "placeholder": false,
+  "disclosure": "code-drawn, no image model",
+  "generator": "codeart2d/autotile_build",
+  "spec_sha256": "2e84e8fb179d9de472561253de9732316dec7deda5fe1ada788ec1fe0d12a108",
+  "renderer": {"name": "codeart2d/autotile_build", "version": "1.0.0"},
+  "palette": {
+    "colors": {
+      "water-0": "#1d3d73",
+      "water-1": "#2c62ab",
+      "water-2": "#4b98dc",
+      "water-3": "#a5dcf5",
+      "grass-0": "#23502f",
+      "grass-1": "#377a3b",
+      "grass-2": "#5aa344",
+      "grass-3": "#8cc657",
+      "water-shadow0-0": "#43291a",
+      "water-shadow0-1": "#6a4a2c",
+      "dirt-0": "#6a4a2c",
+      "dirt-1": "#9c733f",
+      "dirt-2": "#c79d62",
+      "dirt-3": "#e3c690",
+      "dirt-edge0-0": "#3d2618"
+    },
+    "variants": {}
+  },
+  "outputs": [
+    {
+      "path": "water-grass-wang16.png",
+      "sha256": "b229d61907e1da2c708e18418904df0ce4f0019bf5b20a043ef497619312bb4d",
+      "bytes": 2800
+    },
+    {
+      "path": "water-grass-wang16.tileset.json",
+      "sha256": "de89f1928ff33982478bd7e12dbbf77648851ea1acdfb29cd2dd3ca0fd0ccb1c",
+      "bytes": 31707
+    },
+    {
+      "path": "review-water-grass-wang16.png",
+      "sha256": "7cf275cd0355eee1b3c9a906da4fb063b0211b6287a403120184fafc2d519e0d",
+      "bytes": 24749
+    },
+    {
+      "path": "grass-dirt-blob47.png",
+      "sha256": "e61e929e34ad64ec1c134b15f4c29f29e35b3aef6cfc379c35a1a90cfe639c55",
+      "bytes": 5389
+    },
+    {
+      "path": "grass-dirt-blob47.tileset.json",
+      "sha256": "0d4659c3b9ebe29cb382f18a6c81081551d0c4fb4fcc9b2ce601355fc60f2fa2",
+      "bytes": 51893
+    },
+    {
+      "path": "review-grass-dirt-blob47.png",
+      "sha256": "d0528e3fe89df2e33d1eae115a88e178efe3efaa566d097748d5ef0604e991b8",
+      "bytes": 20504
+    },
+    {
+      "path": "preview-map.png",
+      "sha256": "bdb984740a427343adca80207299e19c9006245f2726d679a55ba4150ba9ae31",
+      "bytes": 8926
+    },
+    {
+      "path": "review.png",
+      "sha256": "7d66bb8186079e2c0bcc1fd97bfa27f59bb58e139440c5d1c5d50a90a56c8c48",
+      "bytes": 36247
+    },
+    {
+      "path": "autotile-qa.json",
+      "sha256": "c64aaef17cbb8aa9758233ae46d5483dddb8571f71dab4ed3f719cd51cf4b88c",
+      "bytes": 11575
+    }
+  ],
+  "qa": {
+    "status": "pass",
+    "method": "autotile_build: per set, an exhaustive seam proof and a seeded random-map proof (tiles assembled from the atlas against an independent global render, pixel for pixel), a detuned non-periodic control that the comparison must catch, a seam metric, a repetition index, and outer-ring, distinct-tile, alpha and palette censuses",
+    "notProven": [
+      "How the tiles look at game size: open review.png and the per-set review sheets.",
+      "The global render shares the corner-weight formula, band rules and texture code with the tile renderer; the proof shows that tiles assembled by key reproduce that map exactly, including look-ups across tile edges and noise at map coordinates, not that the art is pleasant.",
+      "Image textures are sampled per tile in both renders; whether they wrap is measured (texture_wrap and the seam metric), not proven.",
+      "Variants enter the exhaustive proof in rotations (every variant at every block position), not every combination of variants per block (flat sets do enumerate them); variants only change marks inside the outer ring, which no look-up reads.",
+      "Editor behaviour (Tiled terrain brushes, Godot or LDtk import) is not exercised here; wangid values follow Tiled's documented order but were not opened in the editor.",
+      "Collision rectangles approximate blocked pixels at the collision_cell resolution.",
+      "Blob and bevel cells two cells away from a tile were tested all empty and all full, not enumerated."
+    ],
+    "checks": [
+      {
+        "id": "water-grass-wang16/seam_proof",
+        "status": "pass",
+        "value": {"pixels_compared": 2097152, "mismatches": 0},
+        "threshold": 0,
+        "note": "Tiles assembled from the atlas by key, compared pixel for pixel (RGBA) with an independent global render: noise evaluated at map coordinates, every pixel classified from its own cell, band and face look-ups read at their true positions across tile edges. Cases: every 2x2 tile block (all 3x3 corner lattices) (512 configurations, 4 variant passes); a seeded random 30x20 map."
+      },
+      {
+        "id": "water-grass-wang16/random_map",
+        "status": "pass",
+        "value": {"map": "30x20", "mismatches": 0},
+        "threshold": 0
+      },
+      {
+        "id": "water-grass-wang16/nonperiodic_control",
+        "status": "pass",
+        "value": 14033,
+        "threshold": "> 0",
+        "note": "a copy whose noise is detuned by half a cycle per tile (so it no longer wraps) must differ from its own global render; it does"
+      },
+      {
+        "id": "water-grass-wang16/seam_metric_mask",
+        "status": "pass",
+        "value": 0.5369,
+        "threshold": 1.0,
+        "note": "material flips across seams over flips inside tiles"
+      },
+      {
+        "id": "water-grass-wang16/seam_metric_rgb",
+        "status": "pass",
+        "value": 0.3554,
+        "threshold": 1.0,
+        "note": "colour steps across seams over steps inside tiles"
+      },
+      {
+        "id": "water-grass-wang16/repetition_index",
+        "status": "pass",
+        "value": 0.2624,
+        "threshold": 0.35,
+        "note": "one-tile-shift luminance correlation of a 13x13 single-material area (larger of right and down shifts, worst material), mean of 8 arrangements with uniformly picked variants"
+      },
+      {
+        "id": "water-grass-wang16/outer_rings_identical",
+        "status": "pass",
+        "value": 0,
+        "threshold": 0,
+        "note": "keys whose variants differ on the 1 px outer ring"
+      },
+      {"id": "water-grass-wang16/distinct_tiles", "status": "pass", "value": 16, "threshold": 16},
+      {"id": "water-grass-wang16/partial_alpha", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "water-grass-wang16/off_palette", "status": "pass", "value": 0, "threshold": 0},
+      {
+        "id": "grass-dirt-blob47/seam_proof",
+        "status": "pass",
+        "value": {"pixels_compared": 8912896, "mismatches": 0},
+        "threshold": 0,
+        "note": "Tiles assembled from the atlas by key, compared pixel for pixel (RGBA) with an independent global render: noise evaluated at map coordinates, every pixel classified from its own cell, band and face look-ups read at their true positions across tile edges. Cases: every 3x3 neighbourhood (256 configurations, 4 variant passes, cells two away all empty and all full); every horizontal pair with its neighbourhood (1024 configurations, 4 variant passes, cells two away all empty and all full); every vertical pair with its neighbourhood (1024 configurations, 4 variant passes, cells two away all empty and all full); a seeded random 30x20 map."
+      },
+      {
+        "id": "grass-dirt-blob47/random_map",
+        "status": "pass",
+        "value": {"map": "30x20", "mismatches": 0},
+        "threshold": 0
+      },
+      {
+        "id": "grass-dirt-blob47/nonperiodic_control",
+        "status": "pass",
+        "value": 8534,
+        "threshold": "> 0",
+        "note": "a copy whose noise is detuned by half a cycle per tile (so it no longer wraps) must differ from its own global render; it does"
+      },
+      {
+        "id": "grass-dirt-blob47/seam_metric_mask",
+        "status": "pass",
+        "value": 0.3123,
+        "threshold": 1.0,
+        "note": "material flips across seams over flips inside tiles"
+      },
+      {
+        "id": "grass-dirt-blob47/seam_metric_rgb",
+        "status": "pass",
+        "value": 0.3144,
+        "threshold": 1.0,
+        "note": "colour steps across seams over steps inside tiles"
+      },
+      {
+        "id": "grass-dirt-blob47/repetition_index",
+        "status": "pass",
+        "value": 0.2575,
+        "threshold": 0.35,
+        "note": "one-tile-shift luminance correlation of a 13x13 single-material area (larger of right and down shifts, worst material), mean of 8 arrangements with uniformly picked variants"
+      },
+      {
+        "id": "grass-dirt-blob47/outer_rings_identical",
+        "status": "pass",
+        "value": 0,
+        "threshold": 0,
+        "note": "keys whose variants differ on the 1 px outer ring"
+      },
+      {"id": "grass-dirt-blob47/distinct_tiles", "status": "pass", "value": 47, "threshold": 47},
+      {"id": "grass-dirt-blob47/partial_alpha", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "grass-dirt-blob47/off_palette", "status": "pass", "value": 0, "threshold": 0}
+    ],
+    "inputs": [
+      {
+        "path": "water-grass.material.json",
+        "sha256": "2e84e8fb179d9de472561253de9732316dec7deda5fe1ada788ec1fe0d12a108",
+        "bytes": 1469
+      }
+    ],
+    "outputs": [
+      {
+        "path": "water-grass-wang16.png",
+        "sha256": "b229d61907e1da2c708e18418904df0ce4f0019bf5b20a043ef497619312bb4d",
+        "bytes": 2800
+      },
+      {
+        "path": "water-grass-wang16.tileset.json",
+        "sha256": "de89f1928ff33982478bd7e12dbbf77648851ea1acdfb29cd2dd3ca0fd0ccb1c",
+        "bytes": 31707
+      },
+      {
+        "path": "review-water-grass-wang16.png",
+        "sha256": "7cf275cd0355eee1b3c9a906da4fb063b0211b6287a403120184fafc2d519e0d",
+        "bytes": 24749
+      },
+      {
+        "path": "grass-dirt-blob47.png",
+        "sha256": "e61e929e34ad64ec1c134b15f4c29f29e35b3aef6cfc379c35a1a90cfe639c55",
+        "bytes": 5389
+      },
+      {
+        "path": "grass-dirt-blob47.tileset.json",
+        "sha256": "0d4659c3b9ebe29cb382f18a6c81081551d0c4fb4fcc9b2ce601355fc60f2fa2",
+        "bytes": 51893
+      },
+      {
+        "path": "review-grass-dirt-blob47.png",
+        "sha256": "d0528e3fe89df2e33d1eae115a88e178efe3efaa566d097748d5ef0604e991b8",
+        "bytes": 20504
+      },
+      {
+        "path": "preview-map.png",
+        "sha256": "bdb984740a427343adca80207299e19c9006245f2726d679a55ba4150ba9ae31",
+        "bytes": 8926
+      },
+      {
+        "path": "review.png",
+        "sha256": "7d66bb8186079e2c0bcc1fd97bfa27f59bb58e139440c5d1c5d50a90a56c8c48",
+        "bytes": 36247
+      }
+    ],
+    "tool": {"name": "codeart2d/autotile_build", "version": "1.0.0"}
+  },
+  "params": {
+    "tile_size": 16,
+    "variants": 4,
+    "seed": 7,
+    "kinds": ["wang_corner", "blob47"],
+    "collision_cell": 4,
+    "quantize_textures": false
+  },
+  "tilesets": ["water-grass-wang16.tileset.json", "grass-dirt-blob47.tileset.json"]
+}

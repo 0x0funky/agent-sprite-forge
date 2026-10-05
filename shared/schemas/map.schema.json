@@ -25,7 +25,7 @@
       "maxItems": 4
     },
     "footprint": {
-      "description": "Ground contact area of a prop in its own image pixels: width across, depth along the ground, offset [dx, dy] from anchor_px, rotate in degrees, basis naming the measuring space. Scaled once by the instance scale; never inflated again for actor size.",
+      "description": "Ground contact area of a prop, centred at anchor_px + offset: width across, depth along the ground, offset [dx, dy] from anchor_px, rotate in degrees (clockwise, y down). basis names the measuring space (per D7): prop_px (the default) is prop-image pixels, scaled once by the instance scale; world_px is world pixels and is never scaled; image_px is the legacy alias of prop_px that readers still accept (write prop_px). Never inflated again for actor size (plan Appendix C). suggested marks a footprint extract_prop_pack --suggest-footprint measured (method says how); review it before relying on it.",
       "type": "object",
       "required": ["shape"],
       "properties": {
@@ -34,13 +34,15 @@
         "depth": {"type": "number", "minimum": 0},
         "offset": {"$ref": "common.schema.json#/$defs/point2"},
         "rotate": {"type": "number"},
-        "basis": {"type": "string", "minLength": 1}
+        "basis": {"enum": ["prop_px", "world_px", "image_px"], "default": "prop_px"},
+        "suggested": {"type": "boolean"},
+        "method": {"type": "string", "minLength": 1}
       },
       "if": {"properties": {"shape": {"enum": ["ellipse", "rect"]}}, "required": ["shape"]},
       "then": {"required": ["width", "depth"]}
     },
     "propItem": {
-      "description": "One extracted prop. source_rect and cell_box are half-open boxes in sheet pixels; padding is what was actually applied; anchor_px is in the prop image.",
+      "description": "One extracted prop. source_rect and cell_box are half-open boxes in sheet pixels (source_box is the v1 alias of cell_box); padding is what was actually applied; anchor_px is in the prop image and anchor_source says where it came from (measured on the art, authored in a boxes file, a placeholder, or derived-v1 when read_manifest upgrades a v1 pack); trim_offset is the crop's offset in the cell; kept_area the subject pixels kept; world_size and world_anchor the integer size and anchor at --world-scale; edge_fringe_px the chroma fringe pixels left on the edge. size is the prop image size (layout_build). Producers may add index, grid, output_size, trim_applied, component_mode, component_count, min_component_area, crop_bbox, padded_crop_bbox, selected_component_area, selected_component_bbox and edge_touch.",
       "type": "object",
       "properties": {
         "label": {"type": "string", "minLength": 1},
@@ -58,11 +60,18 @@
         "occupant_policy": {"enum": ["y_sort", "rear_shift_and_fade", "static_front", "static_back"]},
         "dropped_components": {"type": "integer", "minimum": 0},
         "dropped_area": {"type": "integer", "minimum": 0},
-        "status": {"enum": ["accepted", "placeholder"]}
+        "status": {"enum": ["accepted", "placeholder"]},
+        "anchor_source": {"enum": ["measured", "authored", "placeholder", "derived-v1"]},
+        "trim_offset": {"$ref": "common.schema.json#/$defs/point2"},
+        "kept_area": {"type": "integer", "minimum": 0},
+        "world_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "world_anchor": {"$ref": "common.schema.json#/$defs/point2"},
+        "edge_fringe_px": {"type": "integer", "minimum": 0},
+        "size": {"$ref": "common.schema.json#/$defs/size2"}
       }
     },
     "prop_pack_v2": {
-      "description": "prop-pack.json from extract_prop_pack.py. v1 manifests (no schema key) stay readable; with schema generate2dmap.prop_pack.v2 every accepted item is fully registered.",
+      "description": "prop-pack.json from extract_prop_pack.py. v1 manifests (no schema key) stay readable; with schema generate2dmap.prop_pack.v2 every accepted item is fully registered. layout_mode says how the cells were found (a grid, explicit boxes or auto boxes) and qa is the extraction's QA envelope. Producers also record the tool, input, source mode, the grid and keying settings, the despill and hygiene reports, the geometry settings, the auto-box settings, edge-touching props and warnings.",
       "type": "object",
       "required": ["accepted", "rejected"],
       "properties": {
@@ -71,9 +80,15 @@
         "source_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
         "background_mode": {"type": "string", "minLength": 1},
         "accepted": {"type": "array", "items": {"$ref": "#/$defs/propItem"}},
-        "rejected": {"type": "array", "items": {"type": "object"}},
+        "rejected": {
+          "description": "Cells not kept: index, label (empty when skipped), display_name, grid, cell_box, source_box, status (empty or skipped-label) and, for an empty cell, component_count, dropped_components, dropped_area, edge_touch and min_component_area.",
+          "type": "array",
+          "items": {"type": "object"}
+        },
         "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
-        "placeholder": {"type": "boolean"}
+        "placeholder": {"type": "boolean"},
+        "layout_mode": {"enum": ["grid", "explicit_boxes", "auto_boxes"]},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
       },
       "if": {"required": ["schema"]},
       "then": {
@@ -85,7 +100,7 @@
       }
     },
     "placement": {
-      "description": "One placed sprite. anchor manifest takes anchor_px from the prop-pack manifest; px uses anchorPx in source pixels; the other names are the cfed170 box anchors. path is the v1 alias of image; v1 readers default a missing x or y to 0.",
+      "description": "One placed sprite. anchor manifest takes anchor_px from the prop-pack manifest; px uses anchorPx in source pixels; the other names are the cfed170 box anchors. path is the v1 alias of image; v1 readers default a missing x or y to 0. footprint and solid give the placement its own ground collision for the compose audit (the same footprint as a prop's).",
       "type": "object",
       "properties": {
         "id": {"type": "string", "minLength": 1},
@@ -101,7 +116,9 @@
         "sortY": {"type": "number"},
         "layer": {"type": "string", "minLength": 1},
         "resampler": {"enum": ["nearest", "lanczos"]},
-        "opacity": {"type": "number", "minimum": 0, "maximum": 1}
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+        "footprint": {"$ref": "#/$defs/footprint"},
+        "solid": {"type": "boolean"}
       },
       "anyOf": [{"required": ["image"]}, {"required": ["path"]}],
       "if": {"properties": {"anchor": {"const": "px"}}, "required": ["anchor"]},
@@ -140,12 +157,13 @@
       ]
     },
     "solid": {
-      "description": "A blocking shape in world pixels (tile pixels inside a tileset). rect: top-left x, y plus w, h. ellipse: centre cx, cy, radii rx, ry, optional rotate in degrees. polygon: points.",
+      "description": "A blocking shape in world pixels (tile pixels inside a tileset). rect: top-left x, y plus w, h. ellipse: centre cx, cy, radii rx, ry, optional rotate in degrees. polygon: points. Solids are closed sets (per D1): a point on the boundary is blocked (rect x <= px <= x + w and y <= py <= y + h; ellipse ((px - cx) / rx)^2 + ((py - cy) / ry)^2 <= 1; polygon interior or edge). material names the blocking terrain material a solid came from.",
       "type": "object",
       "required": ["shape"],
       "properties": {
         "shape": {"enum": ["rect", "ellipse", "polygon"]},
-        "id": {"type": "string", "minLength": 1}
+        "id": {"type": "string", "minLength": 1},
+        "material": {"type": "string", "minLength": 1}
       },
       "allOf": [
         {
@@ -169,7 +187,7 @@
       ]
     },
     "collision": {
-      "description": "Walkability per Appendix C: the actor footprint is an ellipse with rx = actorRadius and ry = actorRadius * ySquash (default 1.0; 0.58 on HD-2D plates). A point is valid inside a walk region (outside its holes), or inside the map when there are none, and outside every solid. rects are merged blocked rectangles [x, y, w, h].",
+      "description": "Walkability per Appendix C as made precise by D1-D3 (map_nav is the reference implementation): the actor footprint is an ellipse with rx = actorRadius and ry = actorRadius * ySquash (default 1.0; 0.58 on HD-2D plates). A point is valid inside a walk region (outside its holes), or inside the closed world box [0, W] x [0, H] when there are none, and outside every blocker. Blockers are closed sets (a boundary point is blocked) and form one set for every consumer (D2): solids, rects, the footprints of objects with solid not false, the collision shapes of placed tiles (tileset_v1 tiles[].collision) and the blocking material_map classes. rects are exact blocking rectangles [x, y, w, h] (D3); a writer may emit rects that approximate other solids only when its own reachability proof runs on the full blocking set. rectCell is the raster cell the rects are exact on.",
       "type": "object",
       "required": ["actorRadius"],
       "properties": {
@@ -187,11 +205,12 @@
           }
         },
         "solids": {"type": "array", "items": {"$ref": "#/$defs/solid"}},
-        "rects": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/rectXYWH"}}
+        "rects": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/rectXYWH"}},
+        "rectCell": {"type": "number", "exclusiveMinimum": 0}
       }
     },
     "portal": {
-      "description": "An exit trigger: exactly one of rect [x, y, w, h] or circle [cx, cy, r]. to is the destination (map id plus spawn or anchor). intent exits fire within radius when dot(intent, travelDirection) > 0.25; arrival spawns sit outside their own trigger, which stays latched until the actor leaves.",
+      "description": "An exit trigger: exactly one of rect [x, y, w, h] or circle [cx, cy, r]. intent exits fire within radius when dot(intent, travelDirection) > 0.25; arrival spawns sit outside their own trigger, which stays latched until the actor leaves. to is <map id> or <map id>:<spawn or anchor>; entranceByFrom maps a source map id to the spawn id (or [x, y]) where travellers coming back from that map arrive in this map. reciprocal asks a validator to require the matching exit in the destination map; edge names the map edge of the exit.",
       "type": "object",
       "required": ["id", "to"],
       "properties": {
@@ -209,14 +228,16 @@
         "radius": {"type": "number", "minimum": 0},
         "entranceByFrom": {"type": "object"},
         "latch": {"type": "boolean"},
-        "requiresMovement": {"type": "boolean"}
+        "requiresMovement": {"type": "boolean"},
+        "reciprocal": {"type": "boolean"},
+        "edge": {"enum": ["west", "east", "north", "south"]}
       },
       "oneOf": [{"required": ["rect"]}, {"required": ["circle"]}],
       "if": {"properties": {"activation": {"const": "intent"}}, "required": ["activation"]},
       "then": {"required": ["travelDirection", "radius"]}
     },
     "mapLayer": {
-      "description": "A render layer: tiles layers reference tile indices in data (a CSV/JSON path or an inline grid), image layers an image, objects layers the bundle objects.",
+      "description": "A render layer: tiles layers reference tile indices in data, image layers an image (placed at offset), objects layers the bundle objects. tiles layers hold tileset-local tile indices (0-based atlas positions, row-major: index i sits at atlas column i % columns, row i // columns; -1 or null is an empty cell) as rows, top first, of a CSV file, a JSON file (a list of rows, or {data: rows}) or an inline list of rows; one tileset per layer (optional when the bundle has exactly one); the grid is ceil(world / tile_size) cells and covers the world exactly.",
       "type": "object",
       "required": ["name", "kind"],
       "properties": {
@@ -225,7 +246,8 @@
         "data": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"type": "array"}]},
         "image": {"$ref": "common.schema.json#/$defs/relPath"},
         "tileset": {"type": "string", "minLength": 1},
-        "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+        "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "offset": {"$ref": "common.schema.json#/$defs/point2"}
       },
       "allOf": [
         {"if": {"properties": {"kind": {"const": "tiles"}}, "required": ["kind"]}, "then": {"required": ["data"]}},
@@ -233,7 +255,7 @@
       ]
     },
     "mapObject": {
-      "description": "A placed prop instance in world pixels: (x, y) is where the prop's anchor_px lands; sortY orders drawing; footprint comes from the prop and is scaled once by scale.",
+      "description": "A placed prop instance in world pixels: (x, y) is where anchor_px (the unmirrored image anchor) lands; sortY orders drawing; layer names its objects layer. Art lookup order for every reader (per D6): objects[].image, then the bundle's props[prop], then prop_packs by label, then occluder.source. flip_x mirrors the art around the anchor x, and the footprint with it (D6): a footprint taken from the prop is mirrored by the reader, while an object's own footprint is written as placed (layout_build writes it already mirrored). The object's footprint, when absent, is the prop's; either is scaled once by scale (basis world_px is not scaled) and blocks unless solid is false. kind and group name the scatter kind and group that placed it (layout_build).",
       "type": "object",
       "required": ["id", "prop", "x", "y", "anchor_px"],
       "properties": {
@@ -253,14 +275,29 @@
           "required": ["alphaThreshold", "source"],
           "properties": {
             "alphaThreshold": {"type": "integer", "minimum": 0, "maximum": 255},
-            "source": {"$ref": "common.schema.json#/$defs/relPath"}
+            "source": {"$ref": "common.schema.json#/$defs/relPath"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
           }
         },
-        "animatedParts": {"type": "array", "items": {"type": "object"}}
+        "animatedParts": {"type": "array", "items": {"type": "object"}},
+        "image": {"description": "The object's own art (relative to the bundle); first in the D6 lookup order, drawn with anchor_px at (x, y).", "$ref": "common.schema.json#/$defs/relPath"},
+        "image_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "flip_x": {"type": "boolean"},
+        "layer": {"type": "string", "minLength": 1},
+        "occupant_policy": {"enum": ["y_sort", "rear_shift_and_fade", "static_front", "static_back"]},
+        "kind": {"type": "string", "minLength": 1},
+        "group": {"type": "string", "minLength": 1}
       }
     },
+    "bundleProp": {
+      "description": "A prop of a map bundle's props registry (per D8 a superset of propItem, so a prop-pack item copied in validates): an image relative to the bundle with its anchor, footprint and occlusion, or a prop_pack_v2 item named by pack (relative to the bundle) plus label, whose paths are relative to that pack; fields given here override the pack item. sha256 is the image's.",
+      "type": "object",
+      "allOf": [{"$ref": "#/$defs/propItem"}],
+      "properties": {"pack": {"$ref": "common.schema.json#/$defs/relPath"}},
+      "anyOf": [{"required": ["image"]}, {"required": ["pack", "label"]}]
+    },
     "map_bundle_v2": {
-      "description": "A playable map: geometry, layers, objects, collision, portals, spawns, anchors and interactions, all from data. Paths are relative to the bundle file and may carry sha256. generate2dmap.map_bundle.v1 is still read (only its schema key is checked here). A v2 bundle with any tiles layer needs tile_size and tilesets.",
+      "description": "A playable map: geometry, layers, objects, collision, portals, spawns, anchors and interactions, all from data. Paths are relative to the bundle file and may carry sha256. generate2dmap.map_bundle.v1 (the roadmap 4.10 draft: inline tilesets {id, image, kind, tiles}, footprints {type, rx, ry} or {x, y, w, h}, no world, collision or props) is still read: map_bundle.py maps it onto these fields in memory. A v2 bundle with any tiles layer needs tile_size and tilesets. id is the map id that portal targets (map:spawn) and entranceByFrom use; by default it is the bundle file name without .json and a .map-bundle, -bundle or .bundle suffix, and a file named map-bundle.json takes its folder name. name is a display name. props is the bundle's props registry (bundleProp): it gives objects[].prop its image, anchor and footprint. Prop art is found in this order by every reader (per D6): objects[].image, props[label], prop_packs by label, then objects[].occluder.source. roads are centre lines in world px (NPC paths, debug overlays); provenance records how the bundle was generated.",
       "type": "object",
       "required": ["schema"],
       "properties": {
@@ -279,8 +316,9 @@
           "type": "object",
           "required": ["vertex_grid", "materials"],
           "properties": {
-            "vertex_grid": {"$ref": "common.schema.json#/$defs/relPath"},
-            "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+            "vertex_grid": {"description": "A vertex_grid_v1 file.", "$ref": "common.schema.json#/$defs/relPath"},
+            "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
           }
         },
         "tilesets": {
@@ -304,6 +342,7 @@
           "required": ["image", "materials"],
           "properties": {
             "image": {"$ref": "common.schema.json#/$defs/relPath"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
             "materials": {
               "type": "object",
               "additionalProperties": {
@@ -324,7 +363,8 @@
           "required": ["cell"],
           "properties": {
             "cell": {"type": "integer", "minimum": 1},
-            "grid": {"$ref": "common.schema.json#/$defs/relPath"}
+            "grid": {"description": "A nav_grid_v1 file.", "$ref": "common.schema.json#/$defs/relPath"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
           }
         },
         "portals": {"type": "array", "items": {"$ref": "#/$defs/portal"}},
@@ -378,9 +418,42 @@
         "stage": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"$ref": "#/$defs/stage_v1"}]},
         "atmosphere": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"$ref": "#/$defs/atmosphere_v1"}]},
         "lights": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"$ref": "#/$defs/lights_v1"}]},
-        "qa": {"type": "object"},
+        "qa": {
+          "description": "An open QA summary; layout_build writes {status, report, checks: {id: status}, reachability}.",
+          "type": "object"
+        },
         "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
-        "placeholder": {"type": "boolean"}
+        "placeholder": {"type": "boolean"},
+        "id": {"description": "The map id (no colon: portal targets are <map id>:<spawn>).", "type": "string", "minLength": 1, "pattern": "^[^:]+$"},
+        "name": {"type": "string", "minLength": 1},
+        "props": {"type": "object", "additionalProperties": {"$ref": "#/$defs/bundleProp"}},
+        "prop_packs": {
+          "description": "Prop-pack manifests whose accepted labels name objects[].prop (third in the D6 lookup order, after objects[].image and props).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["manifest"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "manifest": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+            }
+          }
+        },
+        "roads": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "polyline"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "material": {"type": "string", "minLength": 1},
+              "width": {"type": "number", "exclusiveMinimum": 0},
+              "polyline": {"type": "array", "minItems": 2, "items": {"$ref": "common.schema.json#/$defs/point2"}}
+            }
+          }
+        },
+        "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
       },
       "if": {"properties": {"schema": {"const": "generate2dmap.map_bundle.v2"}}, "required": ["schema"]},
       "then": {
@@ -390,7 +463,7 @@
       }
     },
     "tile": {
-      "description": "One tile. wang lists corner material indices as [top_left, top_right, bottom_left, bottom_right]; blob_mask sets bit i for neighbour i of N, NE, E, SE, S, SW, W, NW (diagonals count only when both adjacent edges are set). collision shapes are in tile pixels.",
+      "description": "One tile. wang lists corner material indices as [top_left, top_right, bottom_left, bottom_right]; blob_mask sets bit i for neighbour i of N, NE, E, SE, S, SW, W, NW (diagonals count only when both adjacent edges are set); wangid is the Tiled form. collision shapes are in tile pixels and, for tile-based maps, are the authoritative tile collision (per D5): consumers move them to each placed tile (D2).",
       "type": "object",
       "required": ["index"],
       "properties": {
@@ -399,11 +472,18 @@
         "blob_mask": {"type": "integer", "minimum": 0, "maximum": 255},
         "variant": {"type": "integer", "minimum": 0},
         "collision": {"type": "array", "items": {"$ref": "#/$defs/solid"}},
-        "properties": {"type": "object", "properties": {"walkable": {"type": "boolean"}}}
+        "properties": {"type": "object", "properties": {"walkable": {"type": "boolean"}}},
+        "wangid": {
+          "description": "Tiled wangid order top, top-right, right, bottom-right, bottom, bottom-left, left, top-left. Values are 1-based indices into the tileset's wangset.colors; 0 = position not used (corner sets use only corners, edge sets only edges, mixed sets all eight).",
+          "type": "array",
+          "minItems": 8,
+          "maxItems": 8,
+          "items": {"type": "integer", "minimum": 0}
+        }
       }
     },
     "tileset_v1": {
-      "description": "A tileset manifest. seamless_verified true requires a seam_proof with zero mismatches over a nonzero pixel count (for example a tiled map compared with the global render).",
+      "description": "A tileset manifest. seamless_verified true requires a seam_proof with zero mismatches over a nonzero pixel count (for example a tiled map compared with the global render). For blob47, blob_inside is the material that is the blob's inside (default: the last material). Code-generated tilesets (autotile_build) also record their id, tile count, variants per key, the plateau (px around each tile edge that depend only on that edge's two corners), the Tiled wangset, art_source, the generator, the spec's sha256 and their QA file. qa is a fileRef (per D5); a bare relPath is the form written before D5 and is still read, and a consumer that copies the manifest must rewrite qa relative to the copy or drop it.",
       "type": "object",
       "required": ["schema", "image", "tile_size", "columns", "kind", "materials", "tiles", "seamless_verified"],
       "properties": {
@@ -416,6 +496,34 @@
         "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
         "tiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/tile"}},
         "seamless_verified": {"type": "boolean"},
+        "blob_inside": {"type": "string", "minLength": 1},
+        "id": {"type": "string", "minLength": 1},
+        "tilecount": {"type": "integer", "minimum": 1},
+        "variants": {"type": "integer", "minimum": 1},
+        "plateau": {"type": "integer", "minimum": 0},
+        "wangset": {
+          "type": "object",
+          "required": ["type", "colors"],
+          "properties": {
+            "type": {"enum": ["corner", "edge", "mixed"]},
+            "colors": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["name", "color"],
+                "properties": {
+                  "name": {"type": "string", "minLength": 1},
+                  "color": {"$ref": "common.schema.json#/$defs/hexColor"}
+                }
+              }
+            }
+          }
+        },
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "generator": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "spec_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "qa": {"anyOf": [{"$ref": "common.schema.json#/$defs/fileRef"}, {"$ref": "common.schema.json#/$defs/relPath"}]},
         "seam_proof": {
           "type": "object",
           "required": ["method", "pixels_compared", "mismatches"],
@@ -443,7 +551,7 @@
       ]
     },
     "stage_v1": {
-      "description": "An HD-2D battle or scene plate: ground polygons, actor foot-root slots, protected regions and environment effects, all in UV of sourceSize. fit and reviewedAspectRange ([min, max] width/height) say how the plate may be projected.",
+      "description": "An HD-2D battle or scene plate: ground polygons, actor foot-root slots, protected regions and environment effects, all in UV of sourceSize. fit and reviewedAspectRange ([min, max] width/height) say how the plate may be projected; objectPosition (like CSS object-position, default [0.5, 0.5]) is where the projection window sits in the plate.",
       "type": "object",
       "required": ["schema", "sourceSize", "fit", "reviewedAspectRange", "groundPolygons", "slots"],
       "properties": {
@@ -452,6 +560,7 @@
         "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
         "fit": {"enum": ["cover", "contain"]},
         "reviewedAspectRange": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+        "objectPosition": {"$ref": "#/$defs/uvPoint"},
         "groundPolygons": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/uvPolygon"}},
         "slots": {
           "type": "object",
@@ -471,7 +580,11 @@
               "id": {"type": "string", "minLength": 1},
               "polygon": {"$ref": "#/$defs/uvPolygon"},
               "box": {"$ref": "#/$defs/uvBox"},
-              "appliesTo": {"type": "array", "items": {"type": "string", "minLength": 1}}
+              "appliesTo": {
+                "description": "Uses: walk (no feet or slots), motion (environment motion keeps out), edit (plate variants must not change it); a region without appliesTo applies to all three; other strings are ignored by the B15 tools.",
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              }
             },
             "oneOf": [{"required": ["polygon"]}, {"required": ["box"]}]
           }
@@ -504,7 +617,7 @@
       }
     },
     "motionRegion": {
-      "description": "A region allowed to move, in source pixels: polygon uses points, rect a half-open box, luma_band a [low, high] luma band, landmark points or a box. feather is in pixels outside the region; strength scales the motion (0..1).",
+      "description": "A region allowed to move, in source pixels: polygon uses points, rect a half-open box, luma_band a [low, high] luma band, landmark points or a box. feather is in pixels outside the region; strength scales the motion (0..1). motion is the kind of movement (default flow); a pingpong loop is refused unless every region is sway.",
       "type": "object",
       "required": ["id", "kind", "feather", "strength"],
       "properties": {
@@ -515,7 +628,8 @@
         "band": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 2, "maxItems": 2},
         "margin": {"type": "number", "minimum": 0},
         "feather": {"type": "number", "minimum": 0},
-        "strength": {"type": "number", "minimum": 0, "maximum": 1}
+        "strength": {"type": "number", "minimum": 0, "maximum": 1},
+        "motion": {"enum": ["flow", "flicker", "sway"]}
       },
       "allOf": [
         {"if": {"properties": {"kind": {"const": "polygon"}}, "required": ["kind"]}, "then": {"required": ["points"]}},
@@ -525,7 +639,7 @@
       ]
     },
     "motion_plan_v1": {
-      "description": "Masked environment motion on a static plate (build_motion_mask.py, scene_motion.py). protected regions get an exact-zero core. forward-overlap loops never reverse water; range is a half-open [a, b) of source frames.",
+      "description": "Masked environment motion on a static plate (build_motion_mask.py, scene_motion.py). protected regions get an exact-zero core with a feather-wide transition outside it (default 8 px). forward-overlap loops never reverse water; range is a half-open [a, b) of source frames. registration places the clip on the plate (plate = clip x scale + offset): an explicit scale and offset, which come together, win over fit. encode.crf allows the VP9 range; the scene tools encode H.264 Main and accept 1-51.",
       "type": "object",
       "required": ["schema", "sourceSize", "regions", "loop"],
       "properties": {
@@ -541,10 +655,23 @@
               "id": {"type": "string", "minLength": 1},
               "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
               "box": {"$ref": "common.schema.json#/$defs/box"},
-              "margin": {"type": "number", "minimum": 0}
+              "margin": {"type": "number", "minimum": 0},
+              "feather": {"type": "number", "minimum": 0}
             },
             "oneOf": [{"required": ["polygon"]}, {"required": ["box"]}]
           }
+        },
+        "registration": {
+          "type": "object",
+          "properties": {
+            "fit": {"enum": ["contain", "cover"]},
+            "scale": {"type": "number", "exclusiveMinimum": 0},
+            "offset": {"$ref": "common.schema.json#/$defs/point2"}
+          },
+          "allOf": [
+            {"if": {"required": ["scale"]}, "then": {"required": ["offset"]}},
+            {"if": {"required": ["offset"]}, "then": {"required": ["scale"]}}
+          ]
         },
         "loop": {
           "type": "object",
@@ -585,7 +712,7 @@
       }
     },
     "lights_v1": {
-      "description": "Point lights at UV positions plus the light-cookie image they were baked into.",
+      "description": "Point lights at UV positions plus the light-cookie image they were baked into (extract_scene_lights.py). radius is a fraction of the plate width (radiusUnit plate-width). flicker is an amplitude, or {hz, depth, phase}; extract_scene_lights.py cookie refuses a flicker object without hz.",
       "type": "object",
       "required": ["schema", "lights", "cookie"],
       "properties": {
@@ -600,15 +727,36 @@
               "v": {"type": "number", "minimum": 0, "maximum": 1},
               "color": {"$ref": "common.schema.json#/$defs/color"},
               "radius": {"type": "number", "exclusiveMinimum": 0},
-              "flicker": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "object"}]}
+              "id": {"type": "string", "minLength": 1},
+              "strength": {"type": "number", "minimum": 0, "maximum": 1},
+              "flicker": {
+                "anyOf": [
+                  {"type": "number", "minimum": 0},
+                  {
+                    "type": "object",
+                    "properties": {
+                      "hz": {"type": "number", "exclusiveMinimum": 0},
+                      "depth": {"type": "number", "minimum": 0, "maximum": 1},
+                      "phase": {"type": "number"}
+                    }
+                  }
+                ]
+              }
             }
           }
         },
-        "cookie": {"$ref": "common.schema.json#/$defs/relPath"}
+        "cookie": {"$ref": "common.schema.json#/$defs/relPath"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "plate": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "radiusUnit": {"enum": ["plate-width"]},
+        "ambient": {"$ref": "common.schema.json#/$defs/color"},
+        "cookieSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "cookieSha256": {"$ref": "common.schema.json#/$defs/sha256"}
       }
     },
     "layout_v1": {
-      "description": "Side-scroll level grammar for validate_layout.py: segments are [x0, x1, kind] in world pixels; physics limits judge gaps, slopes and steps; viewports are [w, h] sizes or aspect strings such as 19.5:9.",
+      "description": "Side-scroll level grammar for validate_layout.py: segments are [x0, x1, kind] in world pixels (validate_layout needs whole-pixel bounds); kinds maps extra segment kinds to ground, gap or hazard; physics limits judge gaps, slopes and steps (a gap is measured between the edge-column centres, so the widest crossable gap is jumpDistance - 1); viewports are [w, h] sizes or aspect strings such as 19.5:9. The ground is a surface polyline or a flat groundY, never both. Props with kind deck, platform, plank or bridge are one-way standable surfaces {x0, x1, y, thickness} (or x and w); exits must be reachable from the first spawn (default: the level end) and arenas must be at least the view width plus camera travel (default: the level).",
       "type": "object",
       "required": ["schema", "segments", "physics"],
       "properties": {
@@ -623,8 +771,32 @@
             "maxItems": 3
           }
         },
-        "props": {"type": "array", "items": {"type": "object"}},
-        "spawns": {"type": "array", "items": {"type": "object"}},
+        "props": {
+          "type": "array",
+          "items": {
+            "description": "A prop: (x, y) is the middle of its base and w its width; floating opts out of the support check. Kinds deck, platform, plank and bridge are one-way standable surfaces {x0, x1, y, thickness} (or x and w).",
+            "type": "object",
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {"type": "string"},
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "w": {"type": "number", "minimum": 0},
+              "x0": {"type": "number"},
+              "x1": {"type": "number"},
+              "thickness": {"type": "number", "minimum": 0},
+              "floating": {"type": "boolean"}
+            }
+          }
+        },
+        "spawns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["x", "y"],
+            "properties": {"id": {"type": "string", "minLength": 1}, "x": {"type": "number"}, "y": {"type": "number"}}
+          }
+        },
         "physics": {
           "type": "object",
           "required": ["jumpHeight", "jumpDistance", "maxSlopeDeg", "stepUp"],
@@ -633,21 +805,82 @@
             "jumpDistance": {"type": "number", "exclusiveMinimum": 0},
             "maxSlopeDeg": {"type": "number", "minimum": 0, "maximum": 90},
             "stepUp": {"type": "number", "minimum": 0},
-            "colliderSubstep": {"type": "number", "exclusiveMinimum": 0}
+            "colliderSubstep": {"type": "number", "exclusiveMinimum": 0},
+            "minDeckThickness": {"type": "number", "minimum": 0},
+            "groundTolerance": {"type": "number", "minimum": 0}
           }
         },
         "viewports": {
           "type": "array",
           "items": {"anyOf": [{"$ref": "common.schema.json#/$defs/size2"}, {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?:[0-9]+(\\.[0-9]+)?$"}]}
+        },
+        "surface": {
+          "description": "Ground surface polyline [[x, y], ...] in world pixels (y down); x never decreases and a repeated x is a vertical step. Give surface or groundY.",
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "common.schema.json#/$defs/point2"}
+        },
+        "groundY": {"description": "Flat ground height when there is no surface.", "type": "number"},
+        "kinds": {
+          "description": "Extra segment kinds and the class each one maps to.",
+          "type": "object",
+          "additionalProperties": {"enum": ["ground", "gap", "hazard"]}
+        },
+        "exits": {
+          "description": "Places that must be reachable from the first spawn (default: the level end).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["x"],
+            "properties": {"id": {"type": "string", "minLength": 1}, "x": {"type": "number"}, "y": {"type": "number"}}
+          }
+        },
+        "arenas": {
+          "description": "Ranges that must be at least the view width plus camera travel (default: the level).",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["x0", "x1"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "x0": {"type": "number"},
+              "x1": {"type": "number"},
+              "travel": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "camera": {
+          "type": "object",
+          "properties": {
+            "viewHeight": {"type": "number", "exclusiveMinimum": 0},
+            "travel": {"type": "number", "minimum": 0}
+          }
         }
-      }
+      },
+      "not": {"required": ["surface", "groundY"]}
     },
     "room_chunk_v1": {
-      "description": "Room chunks with edge sockets on N, E, S and W (offset and width along that edge, in pixels) and the stitching graph.",
+      "description": "Room chunks with edge sockets on N, E, S and W (offset and width along that edge, in pixels) and the stitching graph (validate_chunks.py). A chunk's grid gives its walkability, one character per cell px square ('.' walkable, '#' blocked). The graph is either layout rows of chunk ids (null for an empty cell; a repeated id is one instance per cell) or edges (b sits on a's side, shifted offset px along it). start names the start chunk or instance (such as corridor@0,1), optionally with a point in its pixels.",
       "type": "object",
       "required": ["schema", "chunks", "graph"],
       "properties": {
         "schema": {"const": "generate2dmap.room_chunk.v1"},
+        "cell": {"description": "Pixels per grid character (chunks may override).", "type": "integer", "minimum": 1},
+        "start": {
+          "description": "Start chunk (or chunk instance such as corridor@0,1), optionally with a point in its pixels.",
+          "anyOf": [
+            {"type": "string", "minLength": 1},
+            {
+              "type": "object",
+              "required": ["chunk"],
+              "properties": {
+                "chunk": {"type": "string", "minLength": 1},
+                "x": {"type": "number"},
+                "y": {"type": "number"}
+              }
+            }
+          ]
+        },
         "chunks": {
           "type": "array",
           "minItems": 1,
@@ -672,15 +905,40 @@
                     }
                   }
                 }
-              }
+              },
+              "grid": {
+                "description": "Walkability rows, top first: '.' walkable, '#' blocked; size = grid size x cell.",
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "string", "pattern": "^[.#]+$"}
+              },
+              "cell": {"type": "integer", "minimum": 1}
             }
           }
         },
-        "graph": {"type": "array", "items": {"type": ["object", "array"]}}
+        "graph": {
+          "type": "array",
+          "items": {
+            "description": "Either layout rows of chunk ids (null for an empty cell; a repeated id is one instance per cell) or edges: b sits on a's side, shifted offset px along it.",
+            "anyOf": [
+              {"type": "array", "items": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}},
+              {
+                "type": "object",
+                "required": ["from", "to", "side"],
+                "properties": {
+                  "from": {"type": "string", "minLength": 1},
+                  "to": {"type": "string", "minLength": 1},
+                  "side": {"enum": ["N", "E", "S", "W"]},
+                  "offset": {"type": "number"}
+                }
+              }
+            ]
+          }
+        }
       }
     },
     "parallaxLayer": {
-      "description": "One parallax layer as validate_parallax.py reads it. One uniform scale only: width, height, display_size, scale_xy and repeat sizes come from the image and are refused.",
+      "description": "One parallax layer as validate_parallax.py reads it. One uniform scale only: width, height, display_size, scale_xy and repeat sizes come from the image and are refused. parallax_build also records the layer's generator kind (sky, ridge, clouds, foreground or image) and the image's sha256.",
       "type": "object",
       "required": ["id", "role", "image", "alpha"],
       "properties": {
@@ -694,7 +952,9 @@
         "scroll_factor": {"$ref": "common.schema.json#/$defs/point2"},
         "repeat": {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2},
         "require_canvas_coverage": {"type": "boolean"},
-        "allow_empty": {"type": "boolean"}
+        "allow_empty": {"type": "boolean"},
+        "kind": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
       },
       "not": {
         "anyOf": [
@@ -704,7 +964,7 @@
       }
     },
     "parallax_plan": {
-      "description": "Input plan for validate_parallax.py. camera ranges are [min, max]; camera.pivot (top-left, center or an [x, y] point in viewport pixels) is the zoom origin.",
+      "description": "Input plan for validate_parallax.py. camera ranges are [min, max]; camera.pivot (top-left, center or an [x, y] point in viewport pixels) is the zoom origin. pixel_art and sampling ask for whole-pixel placement; aspects (such as 19.5:9, 4/3 or 1.6) are swept with aspect_policy (expand keeps the plan viewport and grows the other side; fixed-height and fixed-width keep one side).",
       "type": "object",
       "required": ["viewport", "layers"],
       "properties": {
@@ -719,7 +979,1656 @@
             "pivot": {"anyOf": [{"enum": ["top-left", "center"]}, {"$ref": "common.schema.json#/$defs/point2"}]}
           }
         },
-        "layers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/parallaxLayer"}}
+        "layers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/parallaxLayer"}},
+        "pixel_art": {"type": "boolean"},
+        "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
+        "aspects": {"type": "array", "items": {"type": "string", "pattern": "^[0-9]*\\.?[0-9]+([:/][0-9]*\\.?[0-9]+)?$"}},
+        "aspect_policy": {"enum": ["expand", "fixed-height", "fixed-width"]}
+      }
+    },
+    "nav_grid_v1": {
+      "description": "nav-grid.json from map_nav.py (plan Appendix C, D1-D4): node (col, row) sits at ((col + 0.5) * cell, (row + 0.5) * cell) with cell = max(1, round(actorRadius / 2)). moves has one character per node: '#' for a blocked node, else a hex digit of its open moves (E=1, S=2 (+y), W=4, N=8). reachable marks the nodes reached from the spawns and arrivals. blockedRects are disjoint [x, y, w, h] rectangles in world px whose union is exactly the blocked nodes.",
+      "type": "object",
+      "required": ["schema", "map", "world", "actor", "cell", "cols", "rows", "moves", "reachable", "blockedRects"],
+      "properties": {
+        "schema": {"const": "generate2dmap.nav_grid.v1"},
+        "map": {"type": "string", "minLength": 1},
+        "bundle": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "world": {
+          "type": "object",
+          "required": ["width", "height"],
+          "properties": {
+            "width": {"type": "number", "exclusiveMinimum": 0},
+            "height": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "actor": {
+          "type": "object",
+          "required": ["radius", "ySquash", "samples"],
+          "properties": {
+            "radius": {"type": "number", "minimum": 0},
+            "ySquash": {"type": "number", "exclusiveMinimum": 0},
+            "samples": {
+              "type": "array",
+              "minItems": 9,
+              "maxItems": 9,
+              "items": {"$ref": "common.schema.json#/$defs/point2"}
+            }
+          }
+        },
+        "cell": {"type": "integer", "minimum": 1},
+        "cols": {"type": "integer", "minimum": 1},
+        "rows": {"type": "integer", "minimum": 1},
+        "moves": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[0-9a-f#]+$"}},
+        "reachable": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[01]+$"}},
+        "blockedRects": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/rectXYWH"}}
+      }
+    },
+    "map_bundle_report_v1": {
+      "description": "map_bundle.py validate report: a QA envelope plus the bundle facts and every problem ({severity, path, message, code: schema|file|sha256|rule}).",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "problems"],
+      "properties": {"schema": {"const": "generate2dmap.map_bundle_report.v1"}, "problems": {"type": "array"}}
+    },
+    "nav_report_v1": {
+      "description": "map_nav.py check report: a QA envelope plus the map, cell, starts, targets, links, thin gaps, unreachable pockets and the bundle's own nav block.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "targets"],
+      "properties": {"schema": {"const": "generate2dmap.nav_report.v1"}, "targets": {"type": "array"}}
+    },
+    "tiled_export_v1": {
+      "description": "export_tiled.py export report: a QA envelope plus the Tiled tilesets and layers written.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "tiled"],
+      "properties": {"schema": {"const": "generate2dmap.tiled_export.v1"}, "tiled": {"type": "object"}}
+    },
+    "vertex_grid_v1": {
+      "description": "Terrain materials on the (W+1) x (H+1) vertex grid of a tile map (map_bundle_v2 terrain.vertex_grid). data[row][column] indexes materials; tile (x, y) has corners [data[y][x], data[y][x+1], data[y+1][x], data[y+1][x+1]] = [top_left, top_right, bottom_left, bottom_right], the tileset_v1 wang order. Each vertex owns the tile-sized square centred on it.",
+      "type": "object",
+      "required": ["schema", "size", "materials", "data"],
+      "properties": {
+        "schema": {"const": "generate2dmap.vertex_grid.v1"},
+        "size": {"$ref": "common.schema.json#/$defs/size2"},
+        "tile_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/size2"}]},
+        "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "base": {"type": "string", "minLength": 1},
+        "data": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"type": "array", "minItems": 2, "items": {"type": "integer", "minimum": 0}}
+        }
+      }
+    },
+    "engine_export_v1": {
+      "description": "export_godot.py and export_ldtk.py report: the engine files written from one map bundle, the copied assets, what the engine files do not carry (notExported: every blocking class or field the engine format cannot represent is listed, per D2) and the parse-back QA. Paths are relative to the report's folder, except assets[].source, which is relative to the bundle's folder.",
+      "type": "object",
+      "required": ["schema", "tool", "engine", "bundle", "files", "assets", "notExported", "warnings", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dmap.engine_export.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "engine": {
+          "type": "object",
+          "required": ["name", "target", "verified"],
+          "properties": {
+            "name": {"enum": ["godot", "ldtk"]},
+            "target": {"type": "string", "minLength": 1},
+            "format": {"type": ["integer", "string"]},
+            "verified": {"type": "string", "minLength": 1}
+          }
+        },
+        "bundle": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "files": {
+          "type": "object",
+          "additionalProperties": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"type": "null"}]}
+        },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "id", "path", "sha256"],
+            "properties": {
+              "role": {"enum": ["tileset", "layer", "prop"]},
+              "id": {"type": "string", "minLength": 1},
+              "path": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "source": {"description": "Relative to the bundle's folder.", "$ref": "common.schema.json#/$defs/relPath"}
+            }
+          }
+        },
+        "tilesets": {"type": "array", "items": {"type": "object"}},
+        "layers": {"type": "array", "items": {"type": "object"}},
+        "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "level": {"type": "object"},
+        "notExported": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "chunk_validation_v1": {
+      "description": "validate_chunks.py report: placements, socket pairing per shared edge, chunk-graph and walkability-grid reachability, and the QA envelope.",
+      "type": "object",
+      "required": ["schema", "tool", "status", "mode", "placements", "sockets", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dmap.chunk_validation.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "status": {"enum": ["pass", "warn", "fail"]},
+        "mode": {"enum": ["rows", "edges", "kit"]},
+        "start": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["chunk"],
+              "properties": {
+                "chunk": {"type": "string", "minLength": 1},
+                "point": {"anyOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/point2"}]}
+              }
+            }
+          ]
+        },
+        "unused": {"type": "array", "items": {"type": "string"}},
+        "unplaced": {"type": "array", "items": {"type": "string"}},
+        "placements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "rect"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "rect": {"$ref": "common.schema.json#/$defs/rectXYWH"}
+            }
+          }
+        },
+        "contacts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["a", "side", "b", "start", "end"],
+            "properties": {
+              "a": {"type": "string"},
+              "b": {"type": "string"},
+              "side": {"enum": ["E", "S"]},
+              "b_side": {"enum": ["W", "N"]},
+              "start": {"type": "number"},
+              "end": {"type": "number"}
+            }
+          }
+        },
+        "sockets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["chunk", "side", "index", "offset", "width", "status"],
+            "properties": {
+              "chunk": {"type": "string"},
+              "side": {"enum": ["N", "E", "S", "W"]},
+              "index": {"type": "integer", "minimum": 0},
+              "offset": {"type": "number"},
+              "width": {"type": "number"},
+              "material": {"type": ["string", "null"]},
+              "status": {"enum": ["paired", "mismatch", "straddle", "dangling", "unplaced"]},
+              "world_span": {
+                "anyOf": [
+                  {"type": "null"},
+                  {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+                ]
+              },
+              "partner": {"anyOf": [{"type": "null"}, {"type": "object"}]}
+            }
+          }
+        },
+        "reachability": {"anyOf": [{"type": "null"}, {"type": "object"}]},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "layout_validation_v1": {
+      "description": "validate_layout.py report: standable spans, ledges and steep faces, gaps with their jump numbers, prop support, arena widths, reachability, and the QA envelope.",
+      "type": "object",
+      "required": ["schema", "tool", "status", "extent", "physics", "spans", "gaps", "props", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dmap.layout_validation.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "status": {"enum": ["pass", "warn", "fail"]},
+        "extent": {
+          "type": "object",
+          "required": ["x0", "x1"],
+          "properties": {"x0": {"type": "integer"}, "x1": {"type": "integer"}}
+        },
+        "physics": {
+          "type": "object",
+          "required": ["jumpHeight", "jumpDistance", "maxSlopeDeg", "stepUp", "minDeckThickness", "groundTolerance"]
+        },
+        "spans": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "x0", "x1", "reachable"],
+            "properties": {
+              "id": {"type": "string"},
+              "kind": {"enum": ["ground", "deck"]},
+              "x0": {"type": "integer"},
+              "x1": {"type": "integer"},
+              "top_min": {"type": "number"},
+              "top_max": {"type": "number"},
+              "reachable": {"type": "boolean"}
+            }
+          }
+        },
+        "pieces": {
+          "type": "array",
+          "items": {"type": "object", "required": ["kind"], "properties": {"kind": {"enum": ["ledge", "steep"]}}}
+        },
+        "gaps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["x0", "x1", "width", "kind", "crossable"],
+            "properties": {
+              "kind": {"enum": ["gap", "hazard"]},
+              "crossable": {"type": ["boolean", "null"]},
+              "direct": {
+                "anyOf": [{"type": "null"}, {"type": "object", "required": ["distance", "rise", "reach", "feasible"]}]
+              }
+            }
+          }
+        },
+        "props": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "x", "y", "status"],
+            "properties": {"status": {"enum": ["supported", "floating", "sunk", "allowed"]}}
+          }
+        },
+        "arenas": {"type": "array", "items": {"type": "object", "required": ["arena", "viewport", "needed", "status"]}},
+        "reachability": {"type": "object"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "platform_strip_v2": {
+      "description": "platform-strip.json from extract_platform_strip.py: exact rectangular crops of a left cap, one or more interchangeable middle variants and a right cap, published with their sha256. Collision is declared metadata: collision_rect_px is [x, y, width, height] in piece pixels, collision_span_px a half-open column range. surface records the art's top per collision column against the declared surface. Every join is measured with common edgeSeam (forge_core.edge_seam_report, per D9). v1 manifests (schema generate2dmap.platform_strip.v1) stored absolute source paths and had no qa block. Producers also record the keyer settings, the coordinate contract text, qc thresholds and notes, and the fork's full_edge and contact_band metrics per join.",
+      "type": "object",
+      "required": [
+        "schema",
+        "source",
+        "spec",
+        "processing",
+        "surface_y_px",
+        "collision_depth_px",
+        "pieces",
+        "joins",
+        "preview",
+        "qc",
+        "qa"
+      ],
+      "properties": {
+        "schema": {"const": "generate2dmap.platform_strip.v2"},
+        "source": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["size", "mode"],
+          "properties": {
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "mode": {"type": "string", "minLength": 1},
+            "bit_depth": {"type": "integer", "minimum": 1},
+            "conversion": {"type": "string"}
+          }
+        },
+        "spec": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["content"],
+          "properties": {"content": {"type": "object"}}
+        },
+        "processing": {
+          "type": "object",
+          "required": ["background_mode", "geometry", "resized"],
+          "properties": {
+            "background_mode": {"enum": ["chroma_key", "native_alpha", "opaque"]},
+            "despill_radius": {"type": "integer", "minimum": 0, "maximum": 3},
+            "geometry": {"const": "explicit_native_rectangles"},
+            "resized": {"const": false},
+            "trimmed": {"const": false},
+            "aligned": {"const": false}
+          }
+        },
+        "surface_y_px": {"type": "integer", "minimum": 0},
+        "collision_depth_px": {"type": "integer", "minimum": 1},
+        "pieces": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "required": [
+              "id",
+              "role",
+              "source_box",
+              "size",
+              "collision_span_px",
+              "path",
+              "sha256",
+              "anchor_px",
+              "collision_rect_px",
+              "coverage",
+              "surface"
+            ],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"},
+              "role": {"enum": ["left_cap", "middle", "right_cap"]},
+              "source_box": {"$ref": "common.schema.json#/$defs/box"},
+              "size": {"$ref": "common.schema.json#/$defs/size2"},
+              "collision_span_px": {
+                "type": "array",
+                "items": {"type": "integer", "minimum": 0},
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "path": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+              "collision_rect_px": {"$ref": "common.schema.json#/$defs/rectXYWH"},
+              "surface_y_source_px": {"type": "integer", "minimum": 0},
+              "coverage": {
+                "type": "object",
+                "required": [
+                  "solid_fraction_by_column",
+                  "minimum_column_fraction",
+                  "insufficient_columns",
+                  "missing_surface_columns",
+                  "non_solid_band_pixels"
+                ],
+                "properties": {
+                  "solid_fraction_by_column": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}},
+                  "minimum_column_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+                  "insufficient_columns": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                  "missing_surface_columns": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                  "non_solid_band_pixels": {"type": "integer", "minimum": 0}
+                }
+              },
+              "surface": {
+                "type": "object",
+                "required": [
+                  "declared_y_px",
+                  "measured",
+                  "max_rise_px",
+                  "columns_above_tolerance",
+                  "decoration_band_px"
+                ],
+                "properties": {
+                  "declared_y_px": {"type": "integer", "minimum": 0},
+                  "measured": {"type": "boolean"},
+                  "measured_y_px_by_column": {
+                    "type": ["array", "null"],
+                    "items": {"type": ["integer", "null"], "minimum": 0}
+                  },
+                  "max_rise_px": {"type": "integer", "minimum": 0},
+                  "columns_above_tolerance": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                  "decoration_band_px": {"type": "integer", "minimum": 0},
+                  "decoration_px": {"type": "integer", "minimum": 0}
+                }
+              }
+            }
+          }
+        },
+        "joins": {
+          "type": "array",
+          "minItems": 3,
+          "items": {
+            "type": "object",
+            "required": ["join", "left", "right", "full_edge", "contact_band", "seam"],
+            "properties": {
+              "join": {"enum": ["left_cap->middle", "middle->middle", "middle->right_cap"]},
+              "left": {"type": "string"},
+              "right": {"type": "string"},
+              "full_edge": {"type": "object"},
+              "contact_band": {"type": "object"},
+              "seam": {"$ref": "common.schema.json#/$defs/edgeSeam"}
+            }
+          }
+        },
+        "preview": {
+          "type": "object",
+          "required": ["path", "size", "sha256", "placements"],
+          "properties": {
+            "path": {"$ref": "common.schema.json#/$defs/relPath"},
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "placements": {"type": "array", "minItems": 5}
+          }
+        },
+        "qc": {
+          "type": "object",
+          "required": ["passed", "structural_passed", "issues", "warnings"],
+          "properties": {
+            "passed": {"type": "boolean"},
+            "structural_passed": {"type": "boolean"},
+            "issues": {"type": "array", "items": {"type": "string"}},
+            "warnings": {"type": "array", "items": {"type": "string"}},
+            "max_seam_ratio": {"type": ["number", "null"], "exclusiveMinimum": 0}
+          }
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "terrain_tile_bundle_v2": {
+      "description": "terrain-bundle.json from extract_terrain_tiles.py. Each atlas row is one terrain: a fill or a Wang corner transition row (variants carry wang [TL, TR, BL, BR] material indices into materials). Tiles are square, rect, iso-diamond or hex, base or overlay; tile.footprint is the polygon in tile pixels. runtime and material numbers appear only when given, or with --emit-runtime-defaults (listed in runtime_defaults_applied); v1 bundles (generate2dmap.terrain_tile_bundle.v1) always wrote them. seamless_verified stays false: image tiles have no exact seam proof; the seamless policy records wrap and Wang seams with common edgeSeam (per D9). Producers also record the keyer settings, the requested background mode and cell shape, qc thresholds, the Wang coverage and seam reports and the cross-variant seams per terrain, and crop_box, shape_fill and border.max_delta per variant.",
+      "type": "object",
+      "required": ["schema", "source", "grid", "tile", "terrains", "processing", "qc", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dmap.terrain_tile_bundle.v2"},
+        "source": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["size", "mode"],
+          "properties": {
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "mode": {"type": "string", "minLength": 1},
+            "bit_depth": {"type": "integer", "minimum": 1},
+            "conversion": {"type": "string"}
+          }
+        },
+        "prompt": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "grid": {
+          "type": "object",
+          "required": ["rows", "cols", "rounding", "source_cell_size", "output_tile_size"],
+          "properties": {
+            "rows": {"type": "integer", "minimum": 1},
+            "cols": {"type": "integer", "minimum": 1},
+            "rounding": {"enum": ["exact", "nearest"]},
+            "source_cell_size": {"$ref": "common.schema.json#/$defs/size2"},
+            "source_cell_size_max": {"$ref": "common.schema.json#/$defs/size2"},
+            "output_tile_size": {"$ref": "common.schema.json#/$defs/size2"}
+          }
+        },
+        "tile": {
+          "type": "object",
+          "required": ["shape", "layer", "footprint"],
+          "properties": {
+            "shape": {"enum": ["square", "rect", "iso-diamond", "hex-pointy", "hex-flat"]},
+            "layer": {"enum": ["base", "overlay"]},
+            "footprint": {"$ref": "common.schema.json#/$defs/polygon"}
+          }
+        },
+        "terrains": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["display_name", "row", "kind", "variants", "variant_difference_min"],
+            "properties": {
+              "display_name": {"type": "string", "minLength": 1},
+              "row": {"type": "integer", "minimum": 0},
+              "kind": {"enum": ["fill", "wang_corner"]},
+              "materials": {"type": "array", "minItems": 2, "maxItems": 9, "items": {"type": "string", "minLength": 1}},
+              "variant_difference_min": {"type": "number", "minimum": 0, "maximum": 1},
+              "material": {
+                "type": "object",
+                "properties": {
+                  "roughness": {"type": "number", "minimum": 0, "maximum": 1},
+                  "emission_energy": {"type": "number", "minimum": 0}
+                }
+              },
+              "wang_coverage": {"type": "object", "required": ["masks", "of", "complete"]},
+              "wang_seams": {"type": "object", "required": ["legal_joins", "failed"]},
+              "cross_variant_seams": {"type": "object"},
+              "variants": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["path", "sha256", "source_cell", "source_box", "resized", "mean_luminance", "contrast"],
+                  "properties": {
+                    "path": {"$ref": "common.schema.json#/$defs/relPath"},
+                    "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+                    "source_cell": {
+                      "type": "array",
+                      "items": {"type": "integer", "minimum": 0},
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "source_box": {"$ref": "common.schema.json#/$defs/box"},
+                    "crop_box": {"$ref": "common.schema.json#/$defs/box"},
+                    "resized": {"type": "boolean"},
+                    "mean_luminance": {"type": "number", "minimum": 0, "maximum": 1},
+                    "contrast": {"type": "number", "minimum": 0, "maximum": 1},
+                    "visible_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+                    "wang": {
+                      "type": "array",
+                      "items": {"type": "integer", "minimum": 0, "maximum": 8},
+                      "minItems": 4,
+                      "maxItems": 4
+                    },
+                    "variant": {"type": "integer", "minimum": 0},
+                    "border": {"type": "object", "required": ["checked", "frame", "frames"]},
+                    "shape": {"type": "object", "required": ["footprint_px", "coverage", "spill_px", "spill_fraction"]},
+                    "shape_fill": {"type": "object"},
+                    "wrap": {
+                      "type": "object",
+                      "required": ["x", "y"],
+                      "properties": {
+                        "x": {"$ref": "common.schema.json#/$defs/edgeSeam"},
+                        "y": {"$ref": "common.schema.json#/$defs/edgeSeam"}
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "if": {"properties": {"kind": {"const": "wang_corner"}}, "required": ["kind"]},
+            "then": {"required": ["materials"], "properties": {"variants": {"items": {"required": ["wang"]}}}}
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "properties": {
+            "engine_target": {"type": "string", "minLength": 1},
+            "world_size": {"type": "number", "exclusiveMinimum": 0},
+            "surface_y": {"type": "number"},
+            "edge_policy": {"enum": ["isolated", "seamless"]}
+          }
+        },
+        "runtime_defaults_applied": {"type": "array", "items": {"type": "string"}},
+        "processing": {
+          "type": "object",
+          "required": ["background_mode", "resampler", "edge_policy", "grid_rounding"],
+          "properties": {
+            "background_mode": {"enum": ["opaque", "native_alpha", "chroma_key", "shape_fill"]},
+            "resampler": {"enum": ["nearest", "lanczos"]},
+            "edge_policy": {"enum": ["isolated", "seamless"]},
+            "grid_rounding": {"enum": ["exact", "nearest"]},
+            "wrap_aware_resize": {"type": "boolean"}
+          }
+        },
+        "qc": {
+          "type": "object",
+          "required": ["warnings", "passed", "seamless_verified"],
+          "properties": {
+            "warnings": {"type": "array", "items": {"type": "string"}},
+            "passed": {"type": "boolean"},
+            "seamless_verified": {"const": false}
+          }
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "stageLayout": {
+      "description": "One solved battle layout of validate_stage.py: the plate projected onto a reference viewport (fit, scale, offset), the reserved UI panels and each actor's slot, chosen foot (viewport pixels and plate UV), box [x0, y0, x1, y1) in viewport pixels, scale-ladder factor (null when unplaced) and the foot-y draw order.",
+      "type": "object",
+      "required": ["aspect", "ratio", "formation", "render", "viewport", "scale", "actors", "drawOrder"],
+      "properties": {
+        "aspect": {"type": "string", "minLength": 1},
+        "ratio": {"type": "number", "exclusiveMinimum": 0},
+        "formation": {"enum": ["party-vs-enemies", "party-vs-boss"]},
+        "render": {"$ref": "common.schema.json#/$defs/relPath"},
+        "viewport": {"$ref": "common.schema.json#/$defs/size2"},
+        "fit": {"enum": ["cover", "contain"]},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "offset": {"$ref": "common.schema.json#/$defs/point2"},
+        "visibleUv": {"$ref": "#/$defs/uvBox"},
+        "ui": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "box"],
+            "properties": {"id": {"type": "string", "minLength": 1}, "box": {"$ref": "common.schema.json#/$defs/box"}}
+          }
+        },
+        "actors": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "role", "slot", "foot", "footUv", "box", "sizePx", "scale", "placed", "grounded"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "role": {"enum": ["hero", "enemy", "boss"]},
+              "slot": {"$ref": "#/$defs/uvPoint"},
+              "desired": {"$ref": "common.schema.json#/$defs/point2"},
+              "foot": {"$ref": "common.schema.json#/$defs/point2"},
+              "footUv": {"$ref": "common.schema.json#/$defs/point2"},
+              "box": {"$ref": "common.schema.json#/$defs/box"},
+              "sizePx": {"type": "number", "exclusiveMinimum": 0},
+              "scale": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1},
+              "placed": {"type": "boolean"},
+              "grounded": {"type": "boolean"},
+              "movedPx": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "drawOrder": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "overlaps": {
+          "type": "array",
+          "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}
+        },
+        "errors": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "stage_qa_v1": {
+      "description": "validate_stage.py report (stage-qa.json): a QA envelope over a stage.v1 file plus the stage summary, the solver settings and every solved layout.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema", "stage", "settings", "layouts"],
+      "properties": {
+        "schema": {"const": "generate2dmap.stage_qa.v1"},
+        "stage": {
+          "type": "object",
+          "required": ["sourceSize", "fit", "reviewedAspectRange"],
+          "properties": {
+            "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
+            "fit": {"enum": ["cover", "contain"]},
+            "reviewedAspectRange": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            "objectPosition": {"$ref": "#/$defs/uvPoint"},
+            "slots": {"type": "integer", "minimum": 0}
+          }
+        },
+        "settings": {"type": "object"},
+        "layouts": {"type": "array", "items": {"$ref": "#/$defs/stageLayout"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "scene_guide_v1": {
+      "description": "scene_layout_guide.py metadata (guide.json): the files written, the plan restated in whole percent of the canvas (x from the left, y from the top), the forbidden-in-walk list, bakedContent and a QA envelope of the plan's own consistency.",
+      "type": "object",
+      "required": [
+        "schema",
+        "stage",
+        "canvas",
+        "guide",
+        "promptBlock",
+        "percent",
+        "forbiddenInWalk",
+        "bakedContent",
+        "qa"
+      ],
+      "properties": {
+        "schema": {"const": "generate2dmap.scene_guide.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "stage": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "canvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "guide": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "promptBlock": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "percent": {
+          "type": "object",
+          "required": ["ground", "slots"],
+          "properties": {
+            "ground": {
+              "type": "object",
+              "required": ["box", "polygons"],
+              "properties": {
+                "box": {
+                  "type": "array",
+                  "items": {"type": "integer", "minimum": 0, "maximum": 100},
+                  "minItems": 4,
+                  "maxItems": 4
+                },
+                "polygons": {
+                  "type": "array",
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "items": {"type": "integer", "minimum": 0, "maximum": 100},
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "minItems": 3
+                  }
+                }
+              }
+            },
+            "band": {
+              "anyOf": [
+                {"type": "null"},
+                {
+                  "type": "object",
+                  "required": ["y"],
+                  "properties": {
+                    "y": {
+                      "type": "array",
+                      "items": {"type": "integer", "minimum": 0, "maximum": 100},
+                      "minItems": 2,
+                      "maxItems": 2
+                    },
+                    "x": {
+                      "anyOf": [
+                        {"type": "null"},
+                        {
+                          "type": "array",
+                          "items": {"type": "integer", "minimum": 0, "maximum": 100},
+                          "minItems": 2,
+                          "maxItems": 2
+                        }
+                      ]
+                    }
+                  }
+                }
+              ]
+            },
+            "alwaysVisible": {
+              "type": "array",
+              "items": {"type": "integer", "minimum": 0, "maximum": 100},
+              "minItems": 4,
+              "maxItems": 4
+            },
+            "slots": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "role", "x", "y"],
+                "properties": {
+                  "id": {"type": "string", "minLength": 1},
+                  "role": {"enum": ["hero", "enemy", "boss"]},
+                  "x": {"type": "integer", "minimum": 0, "maximum": 100},
+                  "y": {"type": "integer", "minimum": 0, "maximum": 100}
+                }
+              }
+            },
+            "approach": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["x", "y"],
+                "properties": {
+                  "x": {"type": "integer", "minimum": 0, "maximum": 100},
+                  "y": {"type": "integer", "minimum": 0, "maximum": 100}
+                }
+              }
+            },
+            "landmarks": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "box"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "box": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0, "maximum": 100},
+                    "minItems": 4,
+                    "maxItems": 4
+                  }
+                }
+              }
+            },
+            "surfaces": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "kind", "box"],
+                "properties": {
+                  "id": {"type": "string"},
+                  "kind": {"enum": ["ripple", "shimmer", "sway", "glow"]},
+                  "box": {
+                    "type": "array",
+                    "items": {"type": "integer", "minimum": 0, "maximum": 100},
+                    "minItems": 4,
+                    "maxItems": 4
+                  }
+                }
+              }
+            }
+          }
+        },
+        "forbiddenInWalk": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "bakedContent": {"type": "object"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "lights_qa_v1": {
+      "description": "extract_scene_lights.py report (lights-qa.json): a QA envelope over the plate or the edited lights file, with the detector settings and statistics and each light's measured blob; rejected candidates say why.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema"],
+      "properties": {
+        "schema": {"const": "generate2dmap.lights_qa.v1"},
+        "detector": {"type": "object"},
+        "lights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "u", "v"],
+            "properties": {
+              "id": {"type": "string"},
+              "u": {"type": "number", "minimum": 0, "maximum": 1},
+              "v": {"type": "number", "minimum": 0, "maximum": 1},
+              "strength": {"type": "number", "minimum": 0, "maximum": 1},
+              "corePx": {"type": "integer", "minimum": 0},
+              "box": {"$ref": "common.schema.json#/$defs/box"},
+              "touchesEdge": {"type": "boolean"}
+            }
+          }
+        },
+        "rejected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["u", "v", "reason"],
+            "properties": {
+              "u": {"type": "number"},
+              "v": {"type": "number"},
+              "strength": {"type": "number"},
+              "reason": {"enum": ["glow hue", "on ground or water"]}
+            }
+          }
+        }
+      }
+    },
+    "atmosphere_qa_v1": {
+      "description": "extract_scene_lights.py atmosphere report (atmosphere-qa.json): a QA envelope over an atmosphere.v1 file with its mote, shaft and mist summary.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema", "summary"],
+      "properties": {
+        "schema": {"const": "generate2dmap.atmosphere_qa.v1"},
+        "summary": {
+          "type": "object",
+          "required": ["moteLayers", "motes", "mobileMotes", "shafts", "mist"],
+          "properties": {
+            "moteLayers": {"type": "integer", "minimum": 0},
+            "motes": {"type": "integer", "minimum": 0},
+            "mobileMotes": {"type": "integer", "minimum": 0},
+            "shafts": {"type": "integer", "minimum": 0},
+            "mist": {"type": "boolean"}
+          }
+        }
+      }
+    },
+    "edit_locality_v1": {
+      "description": "edit_locality_check.py report (locality-qa.json): a QA envelope comparing a plate variant with its master through a recorded transform (out = (src - src_rect[0:2]) * scale); per protected region, outside the edit boxes and overall: changed pixels and fraction, mean absolute difference, p99 and the largest change components.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema", "transform", "comparison", "regions"],
+      "properties": {
+        "schema": {"const": "generate2dmap.edit_locality.v1"},
+        "transform": {
+          "type": "object",
+          "required": ["kind", "scale", "src_rect", "out_size"],
+          "properties": {
+            "kind": {"enum": ["identity", "conform", "cover", "stretch"]},
+            "scale": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+            "src_rect": {"$ref": "common.schema.json#/$defs/box"},
+            "out_size": {"$ref": "common.schema.json#/$defs/size2"},
+            "map": {"type": "string"}
+          }
+        },
+        "comparison": {
+          "type": "object",
+          "required": ["space", "size", "blur", "pixelThreshold", "exact"],
+          "properties": {
+            "space": {"enum": ["before", "after"]},
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "blur": {"type": "integer", "minimum": 0},
+            "pixelThreshold": {"type": "number", "minimum": 0},
+            "exact": {"type": "boolean"}
+          }
+        },
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "origin", "kind", "uv", "status"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "origin": {"enum": ["stage", "cli"]},
+              "kind": {"enum": ["polygon", "box"]},
+              "uv": {"anyOf": [{"$ref": "#/$defs/uvBox"}, {"$ref": "#/$defs/uvPolygon"}]},
+              "status": {"enum": ["pass", "fail", "skipped"]}
+            }
+          }
+        },
+        "editBoxes": {"type": "array", "items": {"$ref": "#/$defs/uvBox"}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "motion_mask_qa_v1": {
+      "description": "build_motion_mask.py mask-qa.json: a QA envelope plus the figures of the published mask. A mask is published only when its protected cores are exactly 0. envelope (when a clip was given) measures the clip's moving pixels against the mask. Producers also record envelope.range, minArea, lumaRangeMax and transform (fit, scale, offset, clipSize, plateSize, footprint, map), settings (protectFeather, lumaMinArea, luma, warnMeanOpacity) and the clip input's kind, frames, size and fps.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": [
+        "schema",
+        "plateSize",
+        "protectedMax",
+        "coverage",
+        "coverageOver50",
+        "meanOpacity",
+        "regions",
+        "protected"
+      ],
+      "properties": {
+        "schema": {"const": "generate2dmap.motion_mask_qa.v1"},
+        "plateSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "protectedMax": {"const": 0},
+        "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "coverageOver50": {"type": "number", "minimum": 0, "maximum": 1},
+        "meanOpacity": {"type": "number", "minimum": 0, "maximum": 1},
+        "regions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "motion", "supportPx", "visiblePx", "meanOpacity"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["polygon", "rect", "luma_band", "landmark"]},
+              "motion": {"enum": ["flow", "flicker", "sway"]},
+              "supportPx": {"type": "integer", "minimum": 0},
+              "visiblePx": {"type": "integer", "minimum": 0},
+              "meanOpacity": {"type": "number", "minimum": 0, "maximum": 1}
+            }
+          }
+        },
+        "protected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "corePx", "max"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "corePx": {"type": "integer", "minimum": 0},
+              "max": {"const": 0}
+            }
+          }
+        },
+        "envelope": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": [
+                "movingPx",
+                "admittedPx",
+                "containedPx",
+                "uncoveredPx",
+                "excludedProtectedPx",
+                "excludedOutsidePx",
+                "reach",
+                "threshold",
+                "frames",
+                "transform"
+              ],
+              "properties": {
+                "movingPx": {"type": "integer", "minimum": 0},
+                "admittedPx": {"type": "integer", "minimum": 0},
+                "containedPx": {"type": "integer", "minimum": 0},
+                "reducedByProtectionPx": {"type": "integer", "minimum": 0},
+                "excludedProtectedPx": {"type": "integer", "minimum": 0},
+                "excludedOutsidePx": {"type": "integer", "minimum": 0},
+                "frames": {"type": "integer", "minimum": 0},
+                "uncoveredPx": {"const": 0},
+                "reach": {"type": "number", "minimum": 0},
+                "threshold": {"type": "number", "minimum": 0}
+              }
+            }
+          ]
+        },
+        "settings": {"type": "object"}
+      }
+    },
+    "scene_motion_v1": {
+      "description": "scene-motion.json from scene_motion.py build: the record of a masked environment loop on a plate: the plan, plate, clip and mask inputs, the clip's registration on the plate, the loop (each output frame as one or two [source frame, weight] pairs), the composite and its exact-zero outside-mask check, the H.264 loop and every encode attempt, and the QA envelope with its metrics and thresholds. registration may also carry clipSize, plateSize, map and shiftEstimates [{frame, status, shift, maeAtZero, maeAtBest, pixels or reason}]; loop.blend, composite.formula, video.bytes and video.profile appear too, and metrics is the loop-qa.json metrics object.",
+      "type": "object",
+      "required": [
+        "schema",
+        "plan",
+        "plate",
+        "clip",
+        "registration",
+        "loop",
+        "composite",
+        "video",
+        "poster",
+        "mask",
+        "encodeAttempts",
+        "qa"
+      ],
+      "properties": {
+        "schema": {"const": "generate2dmap.scene_motion.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "plan": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "properties": {"document": {"$ref": "#/$defs/motion_plan_v1"}}
+        },
+        "plate": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["size"],
+          "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"}}
+        },
+        "clip": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["kind", "frames", "size", "fps"],
+          "properties": {
+            "kind": {"enum": ["video", "frames"]},
+            "frames": {"type": "integer", "minimum": 1},
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "fps": {"$ref": "common.schema.json#/$defs/fpsValue"}
+          }
+        },
+        "maskSource": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "registration": {
+          "type": "object",
+          "required": ["fit", "scale", "offset", "footprint"],
+          "properties": {
+            "fit": {"enum": ["contain", "cover", "explicit"]},
+            "scale": {"type": "number", "exclusiveMinimum": 0},
+            "offset": {"$ref": "common.schema.json#/$defs/point2"},
+            "footprint": {"$ref": "common.schema.json#/$defs/box"},
+            "edgeFadePx": {"type": "number", "minimum": 0},
+            "coverageMin": {"type": "number", "minimum": 0, "maximum": 1},
+            "shiftEstimates": {"type": "array"}
+          }
+        },
+        "loop": {
+          "type": "object",
+          "required": ["policy", "overlap", "range", "frameCount", "fps", "reversedSteps", "frames"],
+          "properties": {
+            "policy": {"enum": ["forward-overlap", "pingpong"]},
+            "overlap": {"type": "integer", "minimum": 0},
+            "range": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+            "frameCount": {"type": "integer", "minimum": 2},
+            "fps": {"$ref": "common.schema.json#/$defs/fpsValue"},
+            "durationMs": {"type": "number", "exclusiveMinimum": 0},
+            "reversedSteps": {"type": "integer", "minimum": 0},
+            "frames": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 2,
+                "items": {
+                  "type": "array",
+                  "prefixItems": [{"type": "integer", "minimum": 0}, {"type": "number", "minimum": 0, "maximum": 1}],
+                  "minItems": 2,
+                  "maxItems": 2
+                }
+              }
+            }
+          }
+        },
+        "composite": {
+          "type": "object",
+          "required": ["outsideMaskMaxDelta", "sourceSeam"],
+          "properties": {
+            "outsideMaskMaxDelta": {"const": 0},
+            "sourceSeam": {"$ref": "common.schema.json#/$defs/seamReport"}
+          }
+        },
+        "video": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["codec", "encodedSize", "crop", "crf", "keyint", "closedGop", "keyframes", "fps"],
+          "properties": {
+            "codec": {"const": "h264"},
+            "encodedSize": {"$ref": "common.schema.json#/$defs/size2"},
+            "crop": {"$ref": "common.schema.json#/$defs/box"},
+            "padding": {"$ref": "common.schema.json#/$defs/padding4"},
+            "crf": {"type": "integer", "minimum": 1, "maximum": 51},
+            "keyint": {"type": "integer", "minimum": 1},
+            "closedGop": {"const": true},
+            "keyframes": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "wrapQp": {"type": ["integer", "null"], "minimum": 1, "maximum": 51},
+            "wrapFrames": {"type": "integer", "minimum": 0},
+            "fps": {"$ref": "common.schema.json#/$defs/fpsValue"},
+            "decodedPixelsPerSecond": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "poster": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "mask": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "encodeAttempts": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["crf", "wrapQp", "bytes", "sha256", "decodedSeamOverP95", "status"],
+            "properties": {"status": {"enum": ["pass", "fail"]}, "sha256": {"$ref": "common.schema.json#/$defs/sha256"}}
+          }
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
+        "metrics": {"type": "object"},
+        "thresholds": {"type": "object"}
+      }
+    },
+    "scene_loop_qa_v1": {
+      "description": "loop-qa.json from scene_motion.py qa: a QA envelope of a decoded scene loop with its metrics (frames, keyframes, the decoded seam inside the mask, mean opacity, motion energy, the leak ring and per-region figures; also gop, video, rgbSteps, protectedDrift and poster) and thresholds.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema", "metrics", "thresholds"],
+      "properties": {
+        "schema": {"const": "generate2dmap.scene_loop_qa.v1"},
+        "metrics": {
+          "type": "object",
+          "required": ["frames", "keyframes", "decodedSeam", "meanOpacity", "motionEnergy", "leakRing", "regions"],
+          "properties": {"decodedSeam": {"$ref": "common.schema.json#/$defs/seamReport"}}
+        },
+        "thresholds": {"type": "object"}
+      }
+    },
+    "composedPlacement": {
+      "description": "One placement as compose_layered_preview.py drew it: the canvas rectangle, the effective anchor in source pixels (and where it came from) and where it landed in the world and on the canvas, the sortY and how it was chosen, the visible bounds and the footprint the audit used.",
+      "type": "object",
+      "required": [
+        "id",
+        "group",
+        "kind",
+        "layer",
+        "band",
+        "draw_index",
+        "image",
+        "left",
+        "top",
+        "w",
+        "h",
+        "source_size",
+        "anchorPx",
+        "anchor_source",
+        "anchor_world",
+        "anchor_world_error",
+        "sortY",
+        "sort_source",
+        "clipped"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "group": {"enum": ["props", "objects", "actors", "foreground"]},
+        "kind": {"enum": ["prop", "object", "actor", "foreground"]},
+        "layer": {"type": "string", "minLength": 1},
+        "band": {"enum": ["background", "world", "foreground"]},
+        "draw_index": {"type": "integer", "minimum": 0},
+        "image": {"$ref": "common.schema.json#/$defs/relPath"},
+        "image_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "left": {"type": "integer"},
+        "top": {"type": "integer"},
+        "w": {"type": "integer", "minimum": 1},
+        "h": {"type": "integer", "minimum": 1},
+        "source_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchorPx": {"$ref": "common.schema.json#/$defs/point2"},
+        "anchor_source": {
+          "type": "string",
+          "pattern": "^(manifest|px|box:(top-left|center|bottom-left|center-bottom))$"
+        },
+        "anchor_world": {"$ref": "common.schema.json#/$defs/point2"},
+        "anchor_canvas": {"$ref": "common.schema.json#/$defs/point2"},
+        "anchor_world_error": {"$ref": "common.schema.json#/$defs/point2"},
+        "resampler": {"enum": ["nearest", "lanczos"]},
+        "clipped": {"type": "boolean"},
+        "visible_bounds": {"anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}]},
+        "sortY": {"type": "number"},
+        "sort_source": {"enum": ["explicit", "ground-line", "raw-y"]},
+        "footprint": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["shape", "cx", "cy", "rx", "ry", "solid"],
+              "properties": {
+                "shape": {"enum": ["ellipse", "rect"]},
+                "cx": {"type": "number"},
+                "cy": {"type": "number"},
+                "rx": {"type": "number", "minimum": 0},
+                "ry": {"type": "number", "minimum": 0},
+                "rotate": {"type": "number"},
+                "source": {"enum": ["manifest", "placement"]},
+                "solid": {"type": "boolean"}
+              }
+            }
+          ]
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "compose_report_v2": {
+      "description": "compose_layered_preview.py --report: the inputs, the sort and anchor policies, the explicit compositing order and every placement in draw order. Paths are relative to the report file. The --audit-out file is a common qaEnvelope with schema generate2dmap.compose_audit.v1, placements, overlaps and walk_area.",
+      "type": "object",
+      "required": [
+        "schema",
+        "base",
+        "placements",
+        "output",
+        "canvas_size",
+        "sort",
+        "anchor_policy",
+        "compositing_order",
+        "pasted"
+      ],
+      "properties": {
+        "schema": {"const": "generate2dmap.compose_report.v2"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "base": {"$ref": "common.schema.json#/$defs/relPath"},
+        "base_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "placements": {"$ref": "common.schema.json#/$defs/relPath"},
+        "placements_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "output": {"$ref": "common.schema.json#/$defs/relPath"},
+        "output_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "canvas_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "resampler": {"enum": ["nearest", "lanczos"]},
+        "sort": {"enum": ["ground-line", "raw-y"]},
+        "anchor_policy": {"enum": ["manifest", "px"]},
+        "compositing_order": {
+          "type": "array",
+          "minItems": 4,
+          "items": {
+            "type": "object",
+            "required": ["band", "draws"],
+            "properties": {
+              "band": {"type": "string"},
+              "draws": {"type": "string"},
+              "sorted_by": {"type": "array", "items": {"type": "string"}}
+            }
+          }
+        },
+        "prop_packs": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
+        "pasted": {"type": "array", "items": {"$ref": "#/$defs/composedPlacement"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "audit_status": {"$ref": "common.schema.json#/$defs/qaStatus"},
+        "plate_pan": {
+          "type": "object",
+          "required": ["file", "viewport", "zoom", "frames"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "viewport": {"$ref": "common.schema.json#/$defs/size2"},
+            "zoom": {"type": "number", "minimum": 1},
+            "gap_px": {"type": "integer", "minimum": 0},
+            "frames": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["u", "v", "window"],
+                "properties": {"window": {"$ref": "common.schema.json#/$defs/box"}}
+              }
+            }
+          }
+        }
+      }
+    },
+    "parallaxSeam": {
+      "description": "Wrap-seam diagnostics of one repeat axis (validate_parallax.py): the v1 edge-equality numbers (alpha_mae, visible_rgb_mae, jointly_visible_pixels, premultiplied_rgb_mae) plus the seam measured over the columns (x) or rows (y) with its verdict. Per D9 there is one seam metric: the seam fields and the snake_case verdict are common edgeSeam (forge_core.edge_seam_report), and the forge_core.seam_report p95 numbers may be kept as extra fields; reports written before validate_parallax adopted edge_seam_report carry the seam_report numbers without seam_ratio and near_median. Never a seamlessness proof: seamless_verified is always false.",
+      "type": "object",
+      "required": ["axis", "alpha_mae", "premultiplied_rgb_mae", "seamless_verified"],
+      "properties": {
+        "axis": {"enum": ["x", "y"]},
+        "alpha_mae": {"type": "number", "minimum": 0},
+        "visible_rgb_mae": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "null"}]},
+        "jointly_visible_pixels": {"type": "integer", "minimum": 0},
+        "premultiplied_rgb_mae": {"type": "number", "minimum": 0},
+        "seamless_verified": {"const": false},
+        "verdict": {"$ref": "common.schema.json#/$defs/edgeSeam/properties/verdict"},
+        "frames": {"type": "integer", "minimum": 2},
+        "seam": {"type": "number", "minimum": 0},
+        "adjacent_median": {"type": "number", "minimum": 0},
+        "adjacent_p95": {"type": "number", "minimum": 0},
+        "adjacent_max": {"type": "number", "minimum": 0},
+        "seam_over_median": {"type": "number", "minimum": 0},
+        "seam_over_p95": {"type": "number", "minimum": 0},
+        "seam_ratio": {"type": "number", "minimum": 0},
+        "near_median": {"type": "number", "minimum": 0},
+        "method": {"type": "string", "minLength": 1}
+      },
+      "if": {
+        "properties": {"verdict": {"enum": ["continuous", "seam", "duplicate_edge", "flat"]}},
+        "required": ["verdict"]
+      },
+      "then": {"allOf": [{"$ref": "common.schema.json#/$defs/seamReport"}]}
+    },
+    "parallaxExtreme": {
+      "description": "One camera and zoom extreme of a parallax layer: where the layer's canvas lands on screen, whether it covers the viewport on each axis, the gaps (left, top, right, bottom) and the screen box of its visible pixels.",
+      "type": "object",
+      "required": ["camera", "zoom", "screen_canvas_rect", "canvas_coverage_axes", "canvas_covers_viewport"],
+      "properties": {
+        "camera": {"$ref": "common.schema.json#/$defs/point2"},
+        "zoom": {"type": "number", "exclusiveMinimum": 0},
+        "screen_canvas_rect": {"$ref": "common.schema.json#/$defs/box"},
+        "canvas_coverage_axes": {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2},
+        "canvas_covers_viewport": {"type": "boolean"},
+        "canvas_visible": {"type": "boolean"},
+        "gaps_px": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 4, "maxItems": 4},
+        "nonzero_alpha_bbox_screen": {"anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}]}
+      }
+    },
+    "parallaxLayerReport": {
+      "description": "One layer of a parallax validation: its size, uniform scale and repeat, the coverage rule and result at every camera/zoom extreme, the repeat seams and the pixel-grid check, with its verdict and issues.",
+      "type": "object",
+      "required": [
+        "id",
+        "role",
+        "image",
+        "source_size",
+        "scale",
+        "display_size",
+        "repeat",
+        "alpha",
+        "require_canvas_coverage",
+        "canvas_coverage_passed",
+        "extrema",
+        "repeat_seams",
+        "passed",
+        "issues"
+      ],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "image": {"type": "string", "minLength": 1},
+        "source_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "source_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "display_size": {
+          "type": "array",
+          "items": {"type": "number", "exclusiveMinimum": 0},
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "repeat": {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2},
+        "require_canvas_coverage": {"type": "boolean"},
+        "coverage_rule": {"type": "string"},
+        "canvas_coverage_passed": {"type": "boolean"},
+        "opaque_viewport_coverage_verified": {"type": "boolean"},
+        "extrema": {"type": "array", "items": {"$ref": "#/$defs/parallaxExtreme"}},
+        "repeat_seams": {"type": "array", "items": {"$ref": "#/$defs/parallaxSeam"}},
+        "pixel_grid": {"type": "object", "required": ["integer_pixels", "rest_position_integral", "subpixel_scroll"]},
+        "passed": {"type": "boolean"},
+        "issues": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "parallax_validation_v2": {
+      "description": "validate_parallax.py result (stdout and --report): the verdict, issues and warnings, the resolved pivot and coverage policy, per-layer coverage at every camera/zoom extreme, seam diagnostics, the pixel grid and the aspect sweep. A malformed plan gives only schema, passed false and issues. v1 reports stay valid.",
+      "type": "object",
+      "required": ["schema", "passed", "issues"],
+      "properties": {
+        "schema": {"enum": ["generate2dmap.parallax_validation.v1", "generate2dmap.parallax_validation.v2"]},
+        "passed": {"type": "boolean"},
+        "issues": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "viewport": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+        "camera": {
+          "type": "object",
+          "properties": {
+            "x": {"$ref": "common.schema.json#/$defs/point2"},
+            "y": {"$ref": "common.schema.json#/$defs/point2"},
+            "zoom": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2}
+          }
+        },
+        "pivot": {
+          "type": "object",
+          "required": ["mode", "point"],
+          "properties": {
+            "mode": {"enum": ["top-left", "center", "point"]},
+            "point": {"$ref": "common.schema.json#/$defs/point2"}
+          }
+        },
+        "coverage_policy": {"enum": ["auto", "sky-only", "all"]},
+        "camera_extrema_checked": {"type": "integer", "minimum": 1},
+        "layers": {"type": "array", "items": {"$ref": "#/$defs/parallaxLayerReport"}},
+        "aspect_sweep": {
+          "type": "object",
+          "required": ["policy", "aspects"],
+          "properties": {
+            "policy": {"enum": ["expand", "fixed-height", "fixed-width"]},
+            "aspects": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["aspect", "ratio", "viewport", "required", "passed", "failing_layers"],
+                "properties": {
+                  "aspect": {"type": "string"},
+                  "ratio": {"type": "number", "exclusiveMinimum": 0},
+                  "viewport": {
+                    "type": "array",
+                    "items": {"type": "number", "exclusiveMinimum": 0},
+                    "minItems": 2,
+                    "maxItems": 2
+                  },
+                  "camera_shift": {"$ref": "common.schema.json#/$defs/point2"},
+                  "required": {"type": "boolean"},
+                  "passed": {"type": "boolean"},
+                  "failing_layers": {"type": "array"}
+                }
+              }
+            }
+          }
+        },
+        "pixel_grid": {
+          "type": "object",
+          "required": ["enforced"],
+          "properties": {"enforced": {"type": "boolean"}, "source": {"type": ["string", "null"]}}
+        },
+        "transform": {"type": "string"},
+        "limits": {"type": "array", "items": {"type": "string"}},
+        "report": {"type": ["string", "null"]}
+      },
+      "if": {"properties": {"passed": {"const": true}}, "required": ["passed"]},
+      "then": {"properties": {"issues": {"maxItems": 0}}}
+    },
+    "conform_v1": {
+      "description": "conform.json from conform_background.py conform: how a background was cropped and uniformly scaled to the output, so points map both ways: out = (src - src_rect[0:2]) * scale. ground-fit also records the ground line it kept. The validate-crops report (crops-qa.json) is a common qaEnvelope with schema generate2dmap.crops_qa.v1, plate_size, subjects and one check per crop.",
+      "type": "object",
+      "required": ["schema", "mode", "source", "output", "transform", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dmap.conform.v1"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "mode": {"enum": ["cover", "ground-fit"]},
+        "source": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"}, "source_mode": {"type": "string"}}
+        },
+        "output": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"}}
+        },
+        "transform": {
+          "type": "object",
+          "required": ["scale", "src_rect", "out_size", "resampler", "map"],
+          "properties": {
+            "scale": {"type": "number", "exclusiveMinimum": 0},
+            "src_rect": {"$ref": "common.schema.json#/$defs/box"},
+            "out_size": {"$ref": "common.schema.json#/$defs/size2"},
+            "resampler": {"enum": ["lanczos", "bicubic", "box", "nearest"]},
+            "focus": {
+              "type": "array",
+              "items": {"type": "number", "minimum": 0, "maximum": 1},
+              "minItems": 2,
+              "maxItems": 2
+            },
+            "map": {"type": "string"},
+            "inverse": {"type": "string"},
+            "zoom_vs_cover": {"type": "number", "exclusiveMinimum": 0},
+            "dropped_source_px": {"type": "object"},
+            "ground": {
+              "type": "object",
+              "required": ["source_y", "output_y"],
+              "properties": {"source_y": {"type": "number"}, "output_y": {"type": "number"}}
+            }
+          }
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "source_box", "output_box"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "source_box": {"$ref": "common.schema.json#/$defs/box"},
+              "output_box": {"$ref": "common.schema.json#/$defs/box"}
+            }
+          }
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      },
+      "if": {"properties": {"mode": {"const": "ground-fit"}}, "required": ["mode"]},
+      "then": {"properties": {"transform": {"required": ["ground"]}}}
+    },
+    "routeCheck": {
+      "description": "map-runtime.mjs traverseRoutes(): every exit, interaction, approach point and slot walked from the first spawn that reaches it, with the per-tick walker, plus the arrival checks of every portal.",
+      "type": "object",
+      "required": ["ok", "speed", "budget", "tickHz", "cell", "spawns", "results", "portals"],
+      "properties": {
+        "ok": {"type": "boolean"},
+        "speed": {"type": "number", "exclusiveMinimum": 0},
+        "budget": {"type": "number", "exclusiveMinimum": 0},
+        "tickHz": {"type": "integer", "minimum": 1},
+        "cell": {"type": "integer", "minimum": 1},
+        "spawns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "valid", "reachableCells"],
+            "properties": {
+              "id": {"type": "string"},
+              "valid": {"type": "boolean"},
+              "reachableCells": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "results": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["target", "kind", "from", "ok", "reachable", "reason"],
+            "properties": {
+              "target": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["exit", "interaction", "approach", "slot"]},
+              "from": {"type": ["string", "null"]},
+              "ok": {"type": "boolean"},
+              "reachable": {"type": "boolean"},
+              "reason": {"type": ["string", "null"]},
+              "ticks": {"type": "integer", "minimum": 0},
+              "distance": {"type": "number", "minimum": 0},
+              "maxStep": {"type": "number", "minimum": 0},
+              "zeroMotionTicks": {"type": "integer", "minimum": 0},
+              "blocked": {"type": "boolean"},
+              "fired": {"type": "boolean"},
+              "inwardFired": {"type": "boolean"},
+              "firedEnRoute": {"type": "array", "items": {"type": "string"}},
+              "end": {"anyOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/point2"}]}
+            }
+          }
+        },
+        "portals": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "activation", "arrivals"],
+            "properties": {
+              "id": {"type": "string"},
+              "activation": {"enum": ["crossing", "intent"]},
+              "to": {"type": "string"},
+              "arrivals": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["from", "spawn", "found"],
+                  "properties": {
+                    "from": {"type": "string"},
+                    "spawn": {"type": "string"},
+                    "found": {"type": "boolean"},
+                    "insideTrigger": {"type": ["boolean", "null"]},
+                    "inZone": {"type": ["boolean", "null"]},
+                    "latchedOnArrival": {"type": ["boolean", "null"]}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "scene_snapshot_v1": {
+      "description": "window.__scene.snapshot() of a build_scene_preview page, scene-snapshot.json from --verify, or map-runtime.mjs runtimeSnapshot(): world, actor, events and the route check when it ran.",
+      "type": "object",
+      "required": ["schema", "runtime", "world", "actor"],
+      "properties": {
+        "schema": {"const": "generate2dmap.scene_snapshot.v1"},
+        "runtime": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "world": {
+          "type": "object",
+          "required": ["width", "height", "actorRadius", "ySquash", "cell", "tickHz"],
+          "properties": {
+            "width": {"type": "number", "exclusiveMinimum": 0},
+            "height": {"type": "number", "exclusiveMinimum": 0},
+            "actorRadius": {"type": "number", "minimum": 0},
+            "ySquash": {"type": "number", "exclusiveMinimum": 0},
+            "cell": {"type": "integer", "minimum": 1},
+            "tickHz": {"type": "integer", "minimum": 1}
+          }
+        },
+        "actor": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["x", "y", "valid", "latched"],
+              "properties": {
+                "x": {"type": "number"},
+                "y": {"type": "number"},
+                "valid": {"type": "boolean"},
+                "facing": {"$ref": "common.schema.json#/$defs/point2"},
+                "latched": {"type": "array", "items": {"type": "string"}},
+                "travelled": {"type": "number", "minimum": 0},
+                "pathLength": {"type": "integer", "minimum": 0}
+              }
+            }
+          ]
+        },
+        "ready": {"type": "boolean"},
+        "error": {"type": ["string", "null"]},
+        "tick": {"type": "integer", "minimum": 0},
+        "source": {
+          "type": "object",
+          "properties": {
+            "file": {"type": "string"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "schema": {"type": "string"}
+          }
+        },
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tick", "type"],
+            "properties": {
+              "tick": {"type": "integer", "minimum": 0},
+              "type": {"enum": ["arrive", "exit", "reach", "interact", "teleport", "routes"]}
+            }
+          }
+        },
+        "exitsFired": {"type": "array", "items": {"type": "string"}},
+        "interactionsReached": {"type": "array", "items": {"type": "string"}},
+        "drawOrder": {"type": "array", "items": {"type": "string"}},
+        "routes": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/routeCheck"}]}
+      }
+    },
+    "scene_preview_qa_v1": {
+      "description": "preview-qa.json of build_scene_preview.py: a QA envelope plus what the page contains and the --verify result. A published report whose status is fail makes the tool exit 1 (per D26).",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "preview", "warnings", "verify"],
+      "properties": {
+        "schema": {"const": "generate2dmap.scene_preview_qa.v1"},
+        "preview": {
+          "type": "object",
+          "required": ["file", "bytes", "sha256", "runtime", "world", "start", "drawOrder", "layers"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "bytes": {"type": "integer", "minimum": 1},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "runtime": {
+              "type": "object",
+              "required": ["version", "sha256"],
+              "properties": {"sha256": {"$ref": "common.schema.json#/$defs/sha256"}}
+            },
+            "world": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+            "drawOrder": {"type": "array", "items": {"type": "string"}},
+            "layers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "source"],
+                "properties": {"source": {"enum": ["image", "tiles", "objects"]}}
+              }
+            }
+          }
+        },
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "verify": {
+          "type": "object",
+          "required": ["status"],
+          "properties": {"status": {"enum": ["not-requested", "SKIPPED", "pass", "fail"]}}
+        }
       }
     }
   }

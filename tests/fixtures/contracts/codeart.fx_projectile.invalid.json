@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "at most 16 orbiters",
+      "set": "/orbiters",
+      "value": 20,
+      "error": "20 is greater than the maximum of 16"
+    },
+    {
+      "why": "presets refuse unknown parameters",
+      "set": "/speed",
+      "value": 9,
+      "error": "Additional properties are not allowed"
+    },
+    {
+      "why": "colours name palette entries",
+      "set": "/colors",
+      "value": [],
+      "error": "should be non-empty"
+    }
+  ]
+}

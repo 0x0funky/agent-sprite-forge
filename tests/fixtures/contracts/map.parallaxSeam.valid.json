@@ -1,0 +1,17 @@
+{
+  "axis": "x",
+  "alpha_mae": 7.96875,
+  "visible_rgb_mae": null,
+  "jointly_visible_pixels": 0,
+  "premultiplied_rgb_mae": 2.2916666666666665,
+  "seamless_verified": false,
+  "seam": 3.7109375,
+  "adjacent_median": 3.7109375,
+  "adjacent_p95": 3.7109375,
+  "adjacent_max": 7.421875,
+  "seam_over_median": 1.0,
+  "seam_over_p95": 1.0,
+  "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first",
+  "frames": 96,
+  "verdict": "continuous"
+}

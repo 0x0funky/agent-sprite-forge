@@ -7,7 +7,6 @@ then cropped, stretched, scaled, bobbed or zoomed the way providers and generato
 """
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
@@ -15,8 +14,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import (REPO_ROOT, assert_cli_help, assert_valid_contract, load_script, require_ffmpeg,
-                             run_cli, script_path)
+from forge_testutils import (assert_cli_help, assert_valid_contract, load_script, require_ffmpeg, run_cli,
+                             script_path)
 
 SKILL = "video2dsprite"
 PREP = load_script(SKILL, "prepare_i2v_input")
@@ -29,220 +28,12 @@ FLASH = (60, 200, 40)
 
 
 # --------------------------------------------------------------------------- schema requests (handoff section 5)
-
-_COMMON = "common.schema.json#/$defs/"
-
-
-def _ref(name: str) -> dict:
-    return {"$ref": _COMMON + name}
-
-
-_PAIR_POSITIVE = {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2}
-_NULL_OR_PAIR = {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "number"}, "minItems": 2,
-                                                "maxItems": 2}]}
-
-REQUESTED_DEFS = {
-    "registration_v1": {
-        "description": "registration.json written by register_clip.py apply (registration by construction). One "
-                       "transform maps every frame of the provider video onto the source canvas: output = video * "
-                       "transform.inverse.scale + transform.inverse.offset + the frame's whole-pixel lock shift. "
-                       "sourceSize/sourceAnchor are the padded canvas (animation.json sourceSize/sourceAnchor); "
-                       "baseSize/baseAnchor the master canvas.",
-        "type": "object",
-        "required": ["schema", "mode", "jobSha256", "clip", "action", "profile", "master", "anchorMode", "keyColor",
-                     "referenceCanvas", "referenceScale", "referenceOffset", "baseSize", "baseAnchor", "padding",
-                     "sourceSize", "sourceAnchor", "video", "transform", "lock", "frames", "qa"],
-        "properties": {
-            "schema": {"const": "video2dsprite.registration.v1"},
-            "mode": {"const": "construction"},
-            "tool": _ref("toolInfo"),
-            "jobSha256": _ref("sha256"),
-            "job": _ref("fileRef"),
-            "clip": {"type": "string", "minLength": 1},
-            "action": {"type": "string", "minLength": 1},
-            "profile": {"enum": ["actor", "fx"]},
-            "master": {"allOf": [_ref("fileRef")], "required": ["size", "anchor"],
-                       "properties": {"size": _ref("size2"), "anchor": _ref("point2"), "viewBox": _ref("box")}},
-            "anchorMode": {"type": "string", "minLength": 1},
-            "keyColor": _ref("keyColor"),
-            "referenceCanvas": _ref("size2"),
-            "referenceScale": {"type": "number", "exclusiveMinimum": 0},
-            "referenceOffset": _ref("point2"),
-            "baseSize": _ref("size2"),
-            "baseAnchor": _ref("point2"),
-            "padding": _ref("padding4"),
-            "sourceSize": _ref("size2"),
-            "sourceAnchor": _ref("point2"),
-            "displayScale": {"type": "number", "exclusiveMinimum": 0},
-            "masterGeometry": {"type": "object"},
-            "video": {"type": "object", "required": ["size", "frameCount", "range"],
-                      "properties": {"size": _ref("size2"), "frameCount": {"type": "integer", "minimum": 1},
-                                     "range": {"type": "array", "items": {"type": "integer", "minimum": 0},
-                                               "minItems": 2, "maxItems": 2},
-                                     "frameDirectory": _ref("relPath")}},
-            "transform": {"type": "object",
-                          "required": ["fit", "fitApplied", "videoScale", "videoOffset", "inverse", "resampler"],
-                          "properties": {"fit": {"enum": ["auto", "stretch", "cover", "contain"]},
-                                         "fitApplied": {"enum": ["uniform", "stretch", "cover", "contain"]},
-                                         "videoScale": _PAIR_POSITIVE, "videoOffset": _ref("point2"),
-                                         "anchorVideo": _ref("point2"), "anchorOutput": _ref("point2"),
-                                         "inverse": {"type": "object", "required": ["scale", "offset"],
-                                                     "properties": {"scale": _PAIR_POSITIVE,
-                                                                    "offset": _ref("point2")}},
-                                         "resampler": {"enum": ["box", "lanczos", "nearest"]}}},
-            "lock": {"type": "object", "required": ["modes"],
-                     "properties": {"modes": {"type": "array", "items": {"enum": ["feet", "x", "hip"]},
-                                              "uniqueItems": True},
-                                    "maxShift": {"type": ["integer", "null"], "minimum": 0},
-                                    "groundMinRun": {"type": "integer", "minimum": 1},
-                                    "targets": {"type": "object"}}},
-            "rest": {"anyOf": [{"type": "null"},
-                               {"type": "object", "required": ["frames", "nativeFootBottom", "anchorError"],
-                                "properties": {"frames": {"type": "array", "minItems": 1,
-                                                          "items": {"type": "integer", "minimum": 0}},
-                                               "nativeFootBottom": {"type": "number"},
-                                               "anchorError": _ref("point2"),
-                                               "heightRatio": {"type": "number", "minimum": 0},
-                                               "areaRatio": {"type": "number", "minimum": 0}}}]},
-            "nativeFootBottomRange": _NULL_OR_PAIR,
-            "frames": {"type": "array", "minItems": 1,
-                       "items": {"type": "object", "required": ["file", "sha256", "sourceIndex", "shift"],
-                                 "properties": {"file": _ref("relPath"), "sha256": _ref("sha256"),
-                                                "sourceIndex": {"type": "integer", "minimum": 0},
-                                                "sourceFile": {"type": "string", "minLength": 1},
-                                                "sourceSha256": _ref("sha256"),
-                                                "shift": {"type": "array", "items": {"type": "integer"},
-                                                          "minItems": 2, "maxItems": 2},
-                                                "nativeFootBottom": {"type": ["number", "null"]}}}},
-            "fx": {"type": "object",
-                   "properties": {"edgeFadePx": {"type": "number", "minimum": 0}, "fadeRect": _ref("box"),
-                                  "fadeInFrames": {"type": "integer", "minimum": 0},
-                                  "dissolveTailFrames": {"type": "integer", "minimum": 0}}},
-            "review": {"type": "object", "properties": {"path": _ref("relPath"),
-                                                        "frames": {"type": "array",
-                                                                   "items": {"type": "integer", "minimum": 0}}}},
-            "characterProfile": {"allOf": [_ref("fileRef")]},
-            "qa": _ref("qaEnvelope"),
-        },
-    },
-    "palette_repair_v1": {
-        "description": "palette-repair.json from register_clip.py palette-repair: a QA envelope plus the rule, regions, "
-                       "palette and per-frame changes. Alpha never changes.",
-        "type": "object",
-        "allOf": [_ref("qaEnvelope")],
-        "required": ["schema", "rule", "regions", "palette", "frames", "totalChangedPx", "alphaUnchanged"],
-        "properties": {
-            "schema": {"const": "video2dsprite.palette_repair.v1"},
-            "rule": {"type": "object", "required": ["hueRange", "minSaturation", "minValue", "minAlpha"]},
-            "regions": {"type": "array", "minItems": 1, "items": _ref("box")},
-            "paletteSource": {"allOf": [_ref("fileRef")]},
-            "palette": {"type": "array", "minItems": 1, "items": _ref("hexColor")},
-            "frames": {"type": "array", "items": {"type": "object",
-                                                  "required": ["file", "changedPx", "beforeSha256", "afterSha256"],
-                                                  "properties": {"file": _ref("relPath"),
-                                                                 "changedPx": {"type": "integer", "minimum": 0},
-                                                                 "beforeSha256": _ref("sha256"),
-                                                                 "afterSha256": _ref("sha256")}}},
-            "totalChangedPx": {"type": "integer", "minimum": 0},
-            "alphaUnchanged": {"const": True},
-        },
-    },
-}
-
-REQUESTED_PROPERTIES = {
-    "registration_job_v1": {
-        "tool": _ref("toolInfo"),
-        "actionKind": {"enum": ["loop", "oneshot", "hold", "fx"]},
-        "returnsToRest": {"type": "boolean"},
-        "sourceSize": _ref("size2"),
-        "sourceAnchor": _ref("point2"),
-        "anchorMode": {"type": "string", "minLength": 1},
-        "referenceRoot": _ref("point2"),
-        "pixelArt": {"type": "boolean"},
-        "placementResampler": {"enum": ["nearest", "lanczos"]},
-        "keyChoice": {"type": "object"},
-        "workRegionClipped": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 4,
-                              "maxItems": 4},
-        "margin": {"type": "number", "minimum": 0},
-        "durationS": {"type": "number", "exclusiveMinimum": 0},
-        "calmSpanS": {"type": "number", "minimum": 0},
-        "timeline": {"type": "array", "items": {"type": "object", "required": ["startS", "endS", "text"],
-                                                "properties": {"startS": {"type": "number", "minimum": 0},
-                                                               "endS": {"type": "number", "exclusiveMinimum": 0},
-                                                               "text": {"type": "string", "minLength": 1}}}},
-        "input": {"allOf": [_ref("fileRef")], "properties": {"size": _ref("size2")}},
-        "reviewGuide": {"allOf": [_ref("fileRef")]},
-        "lint": {"type": "array", "items": {"type": "object", "required": ["rule", "message"]}},
-        "warnings": {"type": "array", "items": {"type": "string"}},
-    },
-    "registration_job_v1/master": {
-        "viewBox": _ref("box"),
-        "sourceName": {"type": "string", "minLength": 1},
-    },
-    "character_profile_v1": {
-        "nativeFootBottomRange": _NULL_OR_PAIR,
-        "tool": _ref("toolInfo"),
-    },
-    "character_profile_v1/registration": {
-        "masterSha256": _ref("sha256"),
-        "referenceCanvas": _ref("size2"),
-        "fit": {"enum": ["auto", "stretch", "cover", "contain"]},
-        "resampler": {"enum": ["box", "lanczos", "nearest"]},
-        "groundMinRun": {"type": "integer", "minimum": 1},
-        "restFootBottom": {"type": ["number", "null"]},
-    },
-    "character_profile_v1/clip": {
-        "registration": _ref("fileRef"),
-        "jobSha256": _ref("sha256"),
-        "nativeFootBottom": {"type": ["number", "null"]},
-    },
-    "take_v1": {
-        "job": _ref("fileRef"),
-        "action": {"type": "string", "minLength": 1},
-        "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "source": {"type": "object", "required": ["kind", "name", "frames", "size"],
-                   "properties": {"kind": {"enum": ["frames", "video"]}, "frames": {"type": "integer", "minimum": 1},
-                                  "size": _ref("size2"), "sha256": _ref("sha256"),
-                                  "fps": {"type": "number", "exclusiveMinimum": 0}}},
-        "qa": _ref("qaEnvelope"),
-    },
-}
-
-
-def _video_schema_with_requests() -> dict:
-    folder = REPO_ROOT / "skills" / SKILL / "references" / "schemas"
-    video = copy.deepcopy(json.loads((folder / "video.schema.json").read_text(encoding="utf-8")))
-    defs = video["$defs"]
-    defs.update(copy.deepcopy(REQUESTED_DEFS))
-    targets = {"registration_job_v1": defs["registration_job_v1"]["properties"],
-               "registration_job_v1/master": defs["registration_job_v1"]["properties"]["master"]["properties"],
-               "character_profile_v1": defs["character_profile_v1"]["properties"],
-               "character_profile_v1/registration": defs["character_profile_v1"]["properties"]["registration"][
-                   "properties"],
-               "character_profile_v1/clip": defs["character_profile_v1"]["properties"]["clips"][
-                   "additionalProperties"]["properties"],
-               "take_v1": defs["take_v1"]["properties"]}
-    for name, properties in REQUESTED_PROPERTIES.items():
-        clash = set(properties) & set(targets[name])
-        assert not clash, f"requested properties already exist in {name}: {clash}"
-        targets[name].update(copy.deepcopy(properties))
-    return video
-
+# Integrated into shared/schemas/video.schema.json (registration_v1, palette_repair_v1 and the optional fields of
+# registration_job_v1, character_profile_v1 and take_v1), as the handoff asked: validate against the vendored copy.
 
 def assert_requested(instance: dict, name: str) -> None:
-    """Validate against the vendored video schema with the section 5 requests applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = REPO_ROOT / "skills" / SKILL / "references" / "schemas"
-    common = json.loads((folder / "common.schema.json").read_text(encoding="utf-8"))
-    video = _video_schema_with_requests()
-    registry = Registry().with_resources([(common["$id"], DRAFT202012.create_resource(common)),
-                                          (video["$id"], DRAFT202012.create_resource(video))])
-    validator = Draft202012Validator({"$ref": f"{video['$id']}#/$defs/{name}"}, registry=registry)
-    errors = [f"{error.json_path}: {error.message}" for error in validator.iter_errors(instance)]
-    assert not errors, f"violates requested video/{name}:\n  " + "\n  ".join(errors)
+    """Validate against the vendored video schema, which holds the section 5 requests."""
+    assert_valid_contract(instance, "video", name, skill=SKILL)
 
 
 # --------------------------------------------------------------------------- synthetic art and takes

@@ -1,0 +1,261 @@
+{
+  "schema": "generate2dmedia.doctor.v1",
+  "tool": {"name": "forge_doctor", "version": "1.0"},
+  "createdAt": "2026-10-05T10:51:31.982Z",
+  "overall": "WARN",
+  "host": {"declared": true, "tools": [], "unrecognised": []},
+  "checks": [
+    {"id": "python.version", "status": "OK", "detail": "Python 3.13.2 at ~/bin/python.exe"},
+    {
+      "id": "python.path",
+      "status": "WARN",
+      "detail": "other python.exe on PATH: ~/bin/python.exe; ~/bin/python.exe; ~/bin/python.exe",
+      "remedy": "PowerShell, cmd and Git Bash may resolve different interpreters; run Forge with the one shown in python.version"
+    },
+    {"id": "deps.numpy", "status": "OK", "detail": "2.5.3"},
+    {"id": "deps.Pillow", "status": "OK", "detail": "12.3.0"},
+    {"id": "deps.scipy", "status": "OK", "detail": "1.18.1"},
+    {"id": "deps.resvg-py", "status": "OK", "detail": "0.5.0"},
+    {"id": "encoding.stdout", "status": "OK", "detail": "stdout=utf-8"},
+    {
+      "id": "encoding.files",
+      "status": "WARN",
+      "detail": "open() and read_text() without encoding= use cp950",
+      "remedy": "pass encoding='utf-8' in your own scripts, or set PYTHONUTF8=1"
+    },
+    {
+      "id": "skills.present",
+      "status": "WARN",
+      "detail": "~/bin/skills: missing codeart2d",
+      "remedy": "install all five skills from one checkout (tools/install_skills.py --apply)"
+    },
+    {"id": "skills.vendored", "status": "OK", "detail": "vendored shared files agree across skills"},
+    {
+      "id": "skills.canonical",
+      "status": "WARN",
+      "detail": "2 vendored copies are out of date: skills/generate2dsprite/references/schemas/sprite.schema.json, skills/codeart2d/references/schemas/sprite.schema.json",
+      "remedy": "python tools/vendor_sync.py --write"
+    },
+    {"id": "ffmpeg", "status": "UNKNOWN", "detail": "found on PATH; version not read (--no-exec)"},
+    {"id": "media.host-tools", "status": "OK", "detail": "declared: none"},
+    {
+      "id": "media.api.openai",
+      "status": "MISSING",
+      "detail": "OPENAI_API_KEY is not set",
+      "remedy": "only if the user wants the paid openai API route: set OPENAI_API_KEY in the environment"
+    },
+    {
+      "id": "media.api.xai",
+      "status": "MISSING",
+      "detail": "XAI_API_KEY is not set",
+      "remedy": "only if the user wants the paid xai API route: set XAI_API_KEY in the environment"
+    },
+    {
+      "id": "cli.codex",
+      "status": "OK",
+      "detail": "codex 0.155.1 (package.json) at ~/bin/codex.exe (behind the launcher ~/bin/codex.cmd)"
+    },
+    {"id": "cli.grok", "status": "OK", "detail": "version not read at ~/bin/grok.exe"},
+    {
+      "id": "route.codex-cli:image_gen",
+      "status": "UNKNOWN",
+      "detail": "PRESENT: no proof for this version",
+      "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route codex-cli --execute"
+    },
+    {
+      "id": "route.grok-cli:image_gen",
+      "status": "UNKNOWN",
+      "detail": "PRESENT: no proof for this version",
+      "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route grok-cli --execute"
+    },
+    {
+      "id": "route.grok-cli:image_edit",
+      "status": "UNKNOWN",
+      "detail": "PRESENT: no proof for this version",
+      "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route grok-cli --execute; or run any cli_media.py edit, which records the proof"
+    },
+    {
+      "id": "route.grok-acp:image_to_video",
+      "status": "UNKNOWN",
+      "detail": "PRESENT: no proof for this version",
+      "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route grok-acp --execute"
+    }
+  ],
+  "cli": {
+    "codex-cli:image_gen": {
+      "route": "codex-cli",
+      "tool": "image_gen",
+      "recipe": "codex-exec-imagegen/1",
+      "level": "PRESENT",
+      "blocked": false,
+      "version": "0.155.1",
+      "versionText": "codex 0.155.1 (package.json)",
+      "steps": [
+        {
+          "step": "PRESENT",
+          "status": "OK",
+          "detail": "codex 0.155.1 (package.json) (native binary behind the npm launcher: ~/bin/codex.exe)"
+        },
+        {
+          "step": "AUTH_MODE",
+          "status": "UNKNOWN",
+          "detail": "sign-in mode not checked (--probe-auth reads it)"
+        },
+        {"step": "TOOL_EXPOSED", "status": "UNKNOWN", "detail": "image_gen not seen yet"},
+        {
+          "step": "VERIFIED",
+          "status": "UNKNOWN",
+          "detail": "no proof for this version",
+          "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route codex-cli --execute"
+        }
+      ]
+    },
+    "grok-cli:image_gen": {
+      "route": "grok-cli",
+      "tool": "image_gen",
+      "recipe": "grok-headless-image/1",
+      "level": "PRESENT",
+      "blocked": false,
+      "version": null,
+      "versionText": null,
+      "steps": [
+        {
+          "step": "PRESENT",
+          "status": "OK",
+          "detail": "version not read (Grok install folder: ~/bin/grok.exe)"
+        },
+        {
+          "step": "AUTH_MODE",
+          "status": "UNKNOWN",
+          "detail": "sign-in mode not checked; Grok has no read-only status command"
+        },
+        {"step": "TOOL_EXPOSED", "status": "UNKNOWN", "detail": "image_gen not seen yet"},
+        {
+          "step": "VERIFIED",
+          "status": "UNKNOWN",
+          "detail": "no proof for this version",
+          "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route grok-cli --execute"
+        }
+      ]
+    },
+    "grok-cli:image_edit": {
+      "route": "grok-cli",
+      "tool": "image_edit",
+      "recipe": "grok-headless-image/1",
+      "level": "PRESENT",
+      "blocked": false,
+      "version": null,
+      "versionText": null,
+      "steps": [
+        {
+          "step": "PRESENT",
+          "status": "OK",
+          "detail": "version not read (Grok install folder: ~/bin/grok.exe)"
+        },
+        {
+          "step": "AUTH_MODE",
+          "status": "UNKNOWN",
+          "detail": "sign-in mode not checked; Grok has no read-only status command"
+        },
+        {"step": "TOOL_EXPOSED", "status": "UNKNOWN", "detail": "image_edit not seen yet"},
+        {
+          "step": "VERIFIED",
+          "status": "UNKNOWN",
+          "detail": "no proof for this version",
+          "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route grok-cli --execute; or run any cli_media.py edit, which records the proof"
+        }
+      ]
+    },
+    "grok-acp:image_to_video": {
+      "route": "grok-acp",
+      "tool": "image_to_video",
+      "recipe": "grok-acp-video/1",
+      "level": "PRESENT",
+      "blocked": false,
+      "version": null,
+      "versionText": null,
+      "steps": [
+        {
+          "step": "PRESENT",
+          "status": "OK",
+          "detail": "version not read (Grok install folder: ~/bin/grok.exe)"
+        },
+        {
+          "step": "AUTH_MODE",
+          "status": "UNKNOWN",
+          "detail": "sign-in mode not checked; Grok has no read-only status command"
+        },
+        {"step": "TOOL_EXPOSED", "status": "UNKNOWN", "detail": "image_to_video not seen yet"},
+        {
+          "step": "VERIFIED",
+          "status": "UNKNOWN",
+          "detail": "no proof for this version",
+          "remedy": "verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route grok-acp --execute"
+        }
+      ]
+    }
+  },
+  "routes": {
+    "image": {
+      "route": "none",
+      "status": "none",
+      "detail": "no image generation route: write the prompt and asset contract, report the missing capability, or use codeart2d inside its size envelope",
+      "options": [
+        {
+          "route": "codex-cli",
+          "status": "unverified",
+          "detail": "opt-in CLI route at PRESENT; verify it before relying on it",
+          "consent": "quota",
+          "level": "PRESENT"
+        },
+        {
+          "route": "grok-cli",
+          "status": "unverified",
+          "detail": "opt-in CLI route at PRESENT; verify it before relying on it",
+          "consent": "quota",
+          "level": "PRESENT"
+        }
+      ]
+    },
+    "image_edit": {
+      "route": "none",
+      "status": "none",
+      "detail": "no reference-edit route: describe the edit and report the missing capability",
+      "options": [
+        {
+          "route": "grok-cli",
+          "status": "unverified",
+          "detail": "opt-in CLI route at PRESENT; verify it before relying on it",
+          "consent": "quota",
+          "level": "PRESENT"
+        }
+      ]
+    },
+    "video": {
+      "route": "none",
+      "status": "none",
+      "detail": "no video generation route: write a motion brief (an installed CLI is not a connected tool); supplied clips can still be processed",
+      "options": [
+        {
+          "route": "grok-acp",
+          "status": "unverified",
+          "detail": "opt-in CLI route at PRESENT; verify it before relying on it",
+          "consent": "quota",
+          "level": "PRESENT"
+        }
+      ]
+    },
+    "clip": {
+      "route": "ffmpeg",
+      "status": "unknown",
+      "detail": "ffmpeg found; its version was not read"
+    },
+    "code_art": {
+      "route": "codeart2d",
+      "status": "ready",
+      "detail": "codeart2d PixelSpec and SVG (resvg-py)"
+    }
+  },
+  "proofs": {},
+  "elapsedMs": 125
+}

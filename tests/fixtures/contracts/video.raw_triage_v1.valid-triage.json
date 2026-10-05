@@ -1,0 +1,71 @@
+{
+  "schema": "video2dsprite.raw_triage.v1",
+  "size": [320, 180],
+  "fps": "24/1",
+  "frames": 64,
+  "audioStreams": 0,
+  "borderTouchFrames": [],
+  "codec": "h264",
+  "pixFmt": "yuv420p",
+  "duration": 2.666667,
+  "hasAlpha": false,
+  "nativeAlphaFrames": 0,
+  "attachedPics": 0,
+  "audio": [],
+  "nbFramesContainer": 64,
+  "border": {"ringPx": 1, "minPx": 4, "touches": []},
+  "rule": "If the raw clip crops a limb, weapon or prop inside the action you need, regenerate it; padding cannot restore missing pixels.",
+  "status": "needs-visual-review",
+  "method": "ffprobe stream listing (forge_av.probe), then every decoded frame (forge_av.iter_rgba): subject pixels on the outer 1 px ring are alpha >= 16 on transparent frames, else farther than 48 RGB from the frame's border-ring key estimate (forge_matte.estimate_key) and leaning less than half as far to the key's channels; a frame touches when 4 or more ring pixels are subject. Key drift compares the per-frame estimates with the declared key.",
+  "notProven": [
+    "A clean border does not prove the subject is complete, on-model or that its motion is usable.",
+    "Border touches are judged by colour on the outer ring; key-coloured props or haze at the border can hide or fake a touch.",
+    "Audio and cover art are only reported; extract and process drop them."
+  ],
+  "checks": [
+    {"id": "border_touch_frames", "status": "pass", "value": [], "threshold": []},
+    {"id": "audio_streams", "status": "pass", "value": 0, "threshold": 0},
+    {
+      "id": "frame_count",
+      "status": "pass",
+      "value": {"decoded": 64, "container": 64},
+      "threshold": "decoded == container"
+    },
+    {
+      "id": "key_drift",
+      "status": "pass",
+      "value": {"distance": 2.83, "spread": 0.0, "invalidFrames": 0},
+      "threshold": {"spread": 24.0, "invalidFrames": 0}
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../../takes/hero-run-1.mp4",
+      "sha256": "f024a32f048edaea8e357a791cfaac1af0a6a24ae1f9bf283cb690c8f3242247",
+      "bytes": 62662
+    }
+  ],
+  "outputs": [
+    {
+      "path": "triage-sheet.png",
+      "sha256": "663dbf5b10960fa9bea0291dda206c8e6abe019379ba64b2261d512e21c30e6e",
+      "bytes": 65134
+    }
+  ],
+  "tool": {"name": "video2dsprite.py triage", "version": "0.4.0"},
+  "keyDrift": {
+    "declared": "magenta",
+    "declaredRgb": [255, 0, 255],
+    "estimated": [253, 0, 253],
+    "distance": 2.83,
+    "spread": 0.0,
+    "framesEstimated": 64,
+    "invalidFrames": [],
+    "detected": {
+      "frames": [0],
+      "ring_share": {"magenta": 1.0, "green": 0.0, "blue": 0.0},
+      "found": true
+    }
+  },
+  "overview": {"file": "triage-sheet.png", "frames": [0, 6, 11, 17, 23, 29, 34, 40, 46, 52, 57, 63]}
+}

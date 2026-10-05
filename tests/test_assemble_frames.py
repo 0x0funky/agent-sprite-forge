@@ -4,13 +4,12 @@ AssembleFramesTests is the fork's suite, ported unchanged except that publicatio
 through forge_core.staged_output, so the competing-publish test patches
 forge_core.publish_directory_no_replace. The other classes cover lossless input expansion,
 chroma keying, the unified crop-box schema, the cross-cell spill check, ownership slicing,
-the loop tools, the CLI conventions and the full_frames_v2 contract (proposed in
-handoff/B02-frames-and-clips.md section 5 and applied in memory here until integration).
+the loop tools, the CLI conventions and the full_frames_v2 contract (requested in
+handoff/B02-frames-and-clips.md section 5, now in shared/schemas and validated against the vendored copy).
 """
 from __future__ import annotations
 
 import argparse
-import copy
 import json
 from pathlib import Path
 import struct
@@ -22,15 +21,15 @@ import zlib
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (REPO_ROOT, SKILLS_DIR, assert_cli_help, load_script, make_magenta_sheet, real_fixture,
-                             run_cli, script_path)
+from forge_testutils import (REPO_ROOT, SKILLS_DIR, assert_cli_help, contract_validator, load_script,
+                             make_magenta_sheet, real_fixture, run_cli, script_path)
 
 MODULE = load_script("generate2dsprite", "assemble_frames")
 SCRIPT = script_path("generate2dsprite", "assemble_frames")
 
-# Schema additions proposed in handoff/B02-frames-and-clips.md section 5 (common.schema.json
-# $defs.cropBoxes and sprite.schema.json $defs.full_frames_v2). Validation uses the vendored
-# definition once integration has added it, and these proposals until then.
+# Schema additions requested in handoff/B02-frames-and-clips.md section 5 (common.schema.json
+# $defs.cropBoxes and sprite.schema.json $defs.full_frames_v2), kept as the record the handoff test
+# compares. Integration merged cropBoxes with B10's request (id optional) and validation uses the vendored schemas.
 _SHA = {"$ref": "common.schema.json#/$defs/sha256"}
 _SIZE = {"$ref": "common.schema.json#/$defs/size2"}
 _REL = {"$ref": "common.schema.json#/$defs/relPath"}
@@ -142,21 +141,8 @@ PROPOSED_SPRITE_DEFS = {
 
 
 def proposed_validator(domain: str, name: str):
-    """Draft 2020-12 validator over the vendored generate2dsprite schemas plus the B02 proposals."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / "generate2dsprite" / "references" / "schemas"
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in folder.glob("*.schema.json")}
-    for definition, value in PROPOSED_COMMON_DEFS.items():
-        schemas["common"]["$defs"].setdefault(definition, copy.deepcopy(value))
-    for definition, value in PROPOSED_SPRITE_DEFS.items():
-        schemas["sprite"]["$defs"].setdefault(definition, copy.deepcopy(value))
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema))
-                                         for schema in schemas.values())
-    return Draft202012Validator({"$ref": f"{schemas[domain]['$id']}#/$defs/{name}"}, registry=registry)
+    """Draft 2020-12 validator for the vendored generate2dsprite <domain>/<name> (the proposals are integrated)."""
+    return contract_validator(domain, name, skill="generate2dsprite")
 
 
 def assert_contract(test: unittest.TestCase, document: object, domain: str, name: str) -> None:

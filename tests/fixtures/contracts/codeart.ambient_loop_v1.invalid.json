@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "ambient loops cycle",
+      "set": "/loop/policy",
+      "value": "pingpong",
+      "error": "'cycle' was expected"
+    },
+    {
+      "why": "motion is code-drawn",
+      "set": "/motion_source",
+      "value": "video",
+      "error": "'code' was expected"
+    },
+    {
+      "why": "frames are hashed files",
+      "set": "/frames/0",
+      "value": "frames/frame-000.png",
+      "error": "is not of type 'object'"
+    },
+    {
+      "why": "the art source is recorded",
+      "remove": "/art_source",
+      "error": "'art_source' is a required property"
+    }
+  ]
+}

@@ -17,7 +17,8 @@ import pytest
 import yaml
 from PIL import Image
 
-from forge_testutils import SKILLS_DIR, assert_cli_help, load_script, run_cli, script_path
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_validator, load_script,
+                             run_cli, script_path)
 
 SKILL = "generate2dsprite"
 SCRIPT = script_path(SKILL, "plan_guide")
@@ -27,172 +28,16 @@ REFERENCES = SKILLS_DIR / SKILL / "references"
 DOCS = [REFERENCES / "prompt-rules.md", REFERENCES / "action-recipes.md"]
 
 # --------------------------------------------------------------------------- schema requests (handoff section 5)
-
-POSITIVE_PAIR = {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2}
-CELL_RC = {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2}
-SHEET_PLAN_V1 = {
-    "description": "plan_guide.py output (opt-in generation aid, not A/B tested with an image model): the host size "
-                   "predicted for an aspect-only request, the chosen grid and the candidates, the guide's cells "
-                   "(safe box, ground line, root) and gait phases, and the guide's self-check as a QA envelope.",
-    "type": "object",
-    "required": ["schema", "predicted_size", "aspect", "layout", "qa"],
-    "properties": {
-        "schema": {"const": "generate2dsprite.sheet_plan.v1"},
-        "request": {"type": "object"},
-        "predicted_size": {"$ref": "common.schema.json#/$defs/size2"},
-        "aspect": {"type": "string", "pattern": "^[1-9][0-9]*:[1-9][0-9]*$"},
-        "layout": {
-            "type": "object",
-            "required": ["rows", "cols", "cell", "safe_box", "envelope_px"],
-            "properties": {
-                "rows": {"type": "integer", "minimum": 1},
-                "cols": {"type": "integer", "minimum": 1},
-                "empty_cells": {"type": "integer", "minimum": 0},
-                "cell": POSITIVE_PAIR, "safe_box": POSITIVE_PAIR, "envelope_px": POSITIVE_PAIR,
-                "divides_exactly": {"type": "boolean"},
-            },
-        },
-        "candidates": {"type": "array", "items": {"type": "object", "required": ["aspect", "rows", "cols"]}},
-        "cells": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["cell", "box", "safe_box", "ground_y", "root_x"],
-                "properties": {
-                    "cell": CELL_RC,
-                    "box": {"$ref": "common.schema.json#/$defs/box"},
-                    "safe_box": {"$ref": "common.schema.json#/$defs/box"},
-                    "gutter_px": {"type": "integer", "minimum": 1},
-                    "ground_y": {"type": "number"}, "root_x": {"type": "number"},
-                    "used": {"type": "boolean"}, "phase": {"type": "string"},
-                    "pose_bounds": {"$ref": "common.schema.json#/$defs/box"},
-                    "inside_safe_box": {"type": "boolean"},
-                    "toe_ahead": {"enum": ["near", "far"]},
-                },
-            },
-        },
-        "phases": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "required": ["index", "name", "half", "near", "far", "contact_leg", "ground"],
-                "properties": {
-                    "index": {"type": "integer", "minimum": 0}, "name": {"type": "string", "minLength": 1},
-                    "half": {"enum": [0, 1]},
-                    "near": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                    "far": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                    "lift": {"type": "number"}, "contact_leg": {"enum": ["near", "far"]},
-                    "ground": {"type": "object", "required": ["near", "far"],
-                               "properties": {"near": {"type": "boolean"}, "far": {"type": "boolean"}}},
-                },
-            },
-        },
-        "prompt": {"$ref": "common.schema.json#/$defs/relPath"},
-        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-    },
-}
-# Optional properties the B03 producers write (objects are open; these document them).
-SHEET_QC_V1_PROPERTIES = {
-    "image": {"type": "object", "description": "spill: input facts (sha256, size, source mode, bit depth, "
-                                               "conversion) and the key used for an opaque chroma sheet"},
-    "input": {"type": "object", "description": "frames: input facts and the ownership slicing record"},
-    "params": {"type": "object"},
-    "crossing_components": {"type": "array", "items": {
-        "type": "object", "required": ["label", "area", "bbox", "owner_cell", "pixels_over_line", "overhang_px"],
-        "properties": {"bbox": {"$ref": "common.schema.json#/$defs/box"}, "owner_cell": CELL_RC,
-                       "pixels_over_line": {"type": "integer", "minimum": 0},
-                       "overhang_px": {"type": "integer", "minimum": 0},
-                       "pixels_per_cell": {"type": "object", "additionalProperties": {"type": "integer"}}}}},
-    "visible_crossing_components": {"type": "array", "items": {"type": "object"}},
-    "boundary_band": {"type": "array", "items": {
-        "type": "object", "required": ["axis", "at", "solid_px"],
-        "properties": {"axis": {"enum": ["x", "y"]}, "at": {"type": "integer"},
-                       "solid_px": {"type": "integer", "minimum": 0}}}},
-    "specks": {"type": "object", "properties": {"floor_px": {"type": "integer", "minimum": 0},
-                                                "detached_px": {"type": "integer", "minimum": 0},
-                                                "detached_components": {"type": "integer", "minimum": 0}}},
-    "identity": {"type": "object"},
-    "near_duplicates": {"type": "object"},
-    "half_cycle": {"type": ["object", "null"]},
-    "alternation": {"type": "object", "properties": {
-        "verdict": {"type": "string"}, "near_leading": {"type": "integer", "minimum": 0},
-        "far_leading": {"type": "integer", "minimum": 0}, "unclear": {"type": "integer", "minimum": 0}}},
-    "torso": {"type": "object"},
-    "row_baselines": {"type": "object", "additionalProperties": {"type": "integer"}},
-    "seam_ranking": {"type": "array", "items": {
-        "type": "object", "required": ["from", "to", "mae", "over_median"],
-        "properties": {"from": {"type": "integer", "minimum": 0}, "to": {"type": "integer", "minimum": 0},
-                       "mae": {"type": "number", "minimum": 0}, "over_median": {"type": "number", "minimum": 0}}}},
-    "seam": {"anyOf": [{"$ref": "common.schema.json#/$defs/seamReport"}, {"type": "null"}]},
-    "cells": {"type": "array", "items": {"type": "object", "properties": {
-        "cell": {"anyOf": [CELL_RC, {"type": "null"}]}, "index": {"type": "integer", "minimum": 0},
-        "frame": {"type": "integer", "minimum": 0}, "box": {"$ref": "common.schema.json#/$defs/box"},
-        "pixels_over_line": {"type": "integer", "minimum": 0}, "overhang_px": {"type": "integer", "minimum": 0},
-        "lead": {"type": "object", "properties": {"lead": {"enum": ["near", "far", "unclear"]}}}}}},
-}
-SCALE_FRAMES_V1_PROPERTIES = {
-    "scale_from": {"type": "string", "description": "neutral, union, profile, or the fixed scale as a fraction"},
-    "target_body_px": {"type": ["number", "null"]},
-    "base_canvas": {"anyOf": [{"$ref": "common.schema.json#/$defs/size2"}, {"type": "null"}]},
-    "base_anchor_px": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
-    "needed_padding": {"anyOf": [{"$ref": "common.schema.json#/$defs/padding4"}, {"type": "null"}]},
-    "margin": {"type": ["integer", "null"], "minimum": 0},
-    "anchor_mode": {"enum": ["stance", "feet", "bbox"]},
-    "source_anchor": {"$ref": "common.schema.json#/$defs/point2"},
-    "reference_frame": {"type": "integer", "minimum": 0},
-    "lock": {"type": "array", "items": {"enum": ["feet", "x", "hip"]}},
-    "row_baseline": {"type": "boolean"},
-    "shift_quantum": {"type": "integer", "minimum": 1},
-    "alpha_threshold": {"type": "integer", "minimum": 0, "maximum": 254},
-    "frames_per_row": {"type": "integer", "minimum": 1},
-    "torso": {"type": "object"},
-    "transitions": {"type": "object", "required": ["pairs", "before", "after"]},
-    "seam": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["before", "after"], "properties": {
-        "before": {"$ref": "common.schema.json#/$defs/seamReport"},
-        "after": {"$ref": "common.schema.json#/$defs/seamReport"}}}]},
-    "input": {"type": "object"},
-    "profile": {"anyOf": [{"$ref": "common.schema.json#/$defs/fileRef"}, {"type": "null"}]},
-    "clips": {"$ref": "common.schema.json#/$defs/relPath"},
-    "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-    "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-}
-SCALE_FRAMES_V1_FRAME_PROPERTIES = {
-    "cell": {"anyOf": [CELL_RC, {"type": "null"}]},
-    "output_bbox": {"$ref": "common.schema.json#/$defs/box"},
-    "turn_slide_px": {"type": "number", "minimum": 0},
-    "turn_slide_output_px": {"type": ["number", "null"], "minimum": 0},
-    "measure": {"type": "object"},
-}
-
+# Integrated into shared/schemas/sprite.schema.json (sheet_plan_v1, and the typed sheet_qc_v1 and scale_frames_v1
+# fields, including the typed sheet_qc_v1 cells); validated against the vendored copy.
 
 def requested_validator(name: str):
-    """Validator for sprite/<name> with this module's schema requests applied in memory (a no-op once the
-    integration pass has merged them into shared/schemas)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    common = json.loads((folder / "common.schema.json").read_text(encoding="utf-8"))
-    sprite = json.loads((folder / "sprite.schema.json").read_text(encoding="utf-8"))
-    defs = sprite["$defs"]
-    defs.setdefault("sheet_plan_v1", copy.deepcopy(SHEET_PLAN_V1))
-    for key, value in SHEET_QC_V1_PROPERTIES.items():
-        defs["sheet_qc_v1"]["properties"].setdefault(key, copy.deepcopy(value))
-    for key, value in SCALE_FRAMES_V1_PROPERTIES.items():
-        defs["scale_frames_v1"]["properties"].setdefault(key, copy.deepcopy(value))
-    frame = defs["scale_frames_v1"]["properties"]["frames"]["items"]["properties"]
-    for key, value in SCALE_FRAMES_V1_FRAME_PROPERTIES.items():
-        frame.setdefault(key, copy.deepcopy(value))
-    registry = Registry().with_resources([(common["$id"], DRAFT202012.create_resource(common)),
-                                          (sprite["$id"], DRAFT202012.create_resource(sprite))])
-    return Draft202012Validator({"$ref": f"{sprite['$id']}#/$defs/{name}"}, registry=registry)
+    """Validator for the vendored sprite/<name>, which holds this module's schema requests."""
+    return contract_validator("sprite", name, skill=SKILL)
 
 
 def assert_requested_contract(document: dict, name: str) -> None:
-    errors = [f"{error.json_path}: {error.message}" for error in requested_validator(name).iter_errors(document)]
-    assert not errors, "\n".join(errors)
+    assert_valid_contract(document, "sprite", name, skill=SKILL)
 
 
 # --------------------------------------------------------------------------- helpers
@@ -321,8 +166,12 @@ def test_requested_schema_additions_accept_every_b03_producer(tmp_path):
     spill = run_cli([script_path(SKILL, "sheet_qc"), "spill", "--input", sheet, "--rows", "2", "--cols", "2", "--output-dir",
                      tmp_path / "spill"])
     assert spill.returncode == 0, spill.stderr
-    assert_requested_contract(json.loads((tmp_path / "spill" / "sheet-qc.json").read_text(encoding="utf-8")),
-                              "sheet_qc_v1")
+    spill_report = json.loads((tmp_path / "spill" / "sheet-qc.json").read_text(encoding="utf-8"))
+    assert_requested_contract(spill_report, "sheet_qc_v1")
+    if spill_report.get("cells"):  # the typed cells replacement of section 5.2 is the integrated rule
+        broken = copy.deepcopy(spill_report)
+        broken["cells"][0]["cell"] = "0,0"
+        assert any("cells" in error.json_path for error in requested_validator("sheet_qc_v1").iter_errors(broken))
     frames = run_cli([script_path(SKILL, "sheet_qc"), "frames", "--sheet", sheet, "--rows", "2", "--cols", "2", "--cycle", "walk",
                       "--output-dir", tmp_path / "frames"])
     assert frames.returncode == 0, frames.stderr

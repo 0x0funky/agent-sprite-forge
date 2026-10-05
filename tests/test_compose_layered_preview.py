@@ -14,7 +14,7 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
+from forge_testutils import (assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli,
                              script_path)
 
 
@@ -22,100 +22,11 @@ COMPOSE = load_script("generate2dmap", "compose_layered_preview")
 SCRIPT = script_path("generate2dmap", "compose_layered_preview")
 SKILL = "generate2dmap"
 
-# The $defs this module asks A0/integration to add to map.schema.json (handoff section 5). Tests validate
-# against the vendored schema with these applied in memory; setdefault keeps an integrated version.
-_POINT = {"$ref": "common.schema.json#/$defs/point2"}
-REQUESTED_MAP_DEFS = {
-    "composedPlacement": {
-        "description": "One placement as compose_layered_preview.py drew it: canvas rectangle, effective anchor "
-                       "in source pixels and where it landed, sortY and how it was chosen.",
-        "type": "object",
-        "required": ["id", "group", "kind", "layer", "band", "draw_index", "image", "left", "top", "w", "h",
-                     "source_size", "anchorPx", "anchor_source", "anchor_world", "anchor_world_error", "sortY",
-                     "sort_source", "clipped"],
-        "properties": {
-            "id": {"type": "string", "minLength": 1},
-            "group": {"enum": ["props", "objects", "actors", "foreground"]},
-            "kind": {"enum": ["prop", "object", "actor", "foreground"]},
-            "layer": {"type": "string", "minLength": 1},
-            "band": {"enum": ["background", "world", "foreground"]},
-            "draw_index": {"type": "integer", "minimum": 0},
-            "image": {"$ref": "common.schema.json#/$defs/relPath"},
-            "image_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            "left": {"type": "integer"}, "top": {"type": "integer"},
-            "w": {"type": "integer", "minimum": 1}, "h": {"type": "integer", "minimum": 1},
-            "source_size": {"$ref": "common.schema.json#/$defs/size2"},
-            "anchorPx": _POINT,
-            "anchor_source": {"pattern": "^(manifest|px|box:(top-left|center|bottom-left|center-bottom))$"},
-            "anchor_world": _POINT, "anchor_canvas": _POINT, "anchor_world_error": _POINT,
-            "resampler": {"enum": ["nearest", "lanczos"]},
-            "clipped": {"type": "boolean"},
-            "visible_bounds": {"anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}]},
-            "sortY": {"type": "number"},
-            "sort_source": {"enum": ["explicit", "ground-line", "raw-y"]},
-            "footprint": {"anyOf": [{"type": "null"}, {
-                "type": "object", "required": ["shape", "cx", "cy", "rx", "ry", "solid"],
-                "properties": {"shape": {"enum": ["ellipse", "rect"]}, "cx": {"type": "number"},
-                               "cy": {"type": "number"}, "rx": {"type": "number", "minimum": 0},
-                               "ry": {"type": "number", "minimum": 0}, "rotate": {"type": "number"},
-                               "source": {"enum": ["manifest", "placement"]}, "solid": {"type": "boolean"}}}]},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-        },
-    },
-    "compose_report_v2": {
-        "description": "compose_layered_preview.py --report: inputs, policies, the explicit compositing order and "
-                       "every placement in draw order. Paths are relative to the report file.",
-        "type": "object",
-        "required": ["schema", "base", "placements", "output", "canvas_size", "sort", "anchor_policy",
-                     "compositing_order", "pasted"],
-        "properties": {
-            "schema": {"const": "generate2dmap.compose_report.v2"},
-            "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "base": {"$ref": "common.schema.json#/$defs/relPath"},
-            "base_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            "placements": {"$ref": "common.schema.json#/$defs/relPath"},
-            "placements_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            "output": {"$ref": "common.schema.json#/$defs/relPath"},
-            "output_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            "canvas_size": {"$ref": "common.schema.json#/$defs/size2"},
-            "scale": {"type": "number", "exclusiveMinimum": 0},
-            "resampler": {"enum": ["nearest", "lanczos"]},
-            "sort": {"enum": ["ground-line", "raw-y"]},
-            "anchor_policy": {"enum": ["manifest", "px"]},
-            "compositing_order": {"type": "array", "minItems": 4, "items": {
-                "type": "object", "required": ["band", "draws"],
-                "properties": {"band": {"type": "string"}, "draws": {"type": "string"},
-                               "sorted_by": {"type": "array", "items": {"type": "string"}}}}},
-            "prop_packs": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
-            "pasted": {"type": "array", "items": {"$ref": "#/$defs/composedPlacement"}},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-            "audit_status": {"$ref": "common.schema.json#/$defs/qaStatus"},
-            "plate_pan": {"type": "object", "required": ["file", "viewport", "zoom", "frames"], "properties": {
-                "file": {"$ref": "common.schema.json#/$defs/relPath"},
-                "viewport": {"$ref": "common.schema.json#/$defs/size2"},
-                "zoom": {"type": "number", "minimum": 1}, "gap_px": {"type": "integer", "minimum": 0},
-                "frames": {"type": "array", "items": {
-                    "type": "object", "required": ["u", "v", "window"],
-                    "properties": {"window": {"$ref": "common.schema.json#/$defs/box"}}}}}},
-        },
-    },
-}
-
-
+# handoff/B12-map-compose-parallax.md section 5 is integrated into shared/schemas/map.schema.json; the tests
+# validate against the vendored generate2dmap copy.
 def requested_contract_errors(document, name="compose_report_v2"):
-    """Errors against the vendored generate2dmap schemas plus REQUESTED_MAP_DEFS (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def sha256(path):

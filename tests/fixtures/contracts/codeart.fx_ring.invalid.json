@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "the radius is [start, end]",
+      "set": "/radius",
+      "value": 3,
+      "error": "3 is not of type 'array'"
+    },
+    {
+      "why": "presets refuse unknown parameters",
+      "set": "/thickness",
+      "value": 2,
+      "error": "Additional properties are not allowed"
+    },
+    {
+      "why": "the type names the preset",
+      "set": "/type",
+      "value": "circle",
+      "error": "'ring' was expected"
+    }
+  ]
+}

@@ -2,6 +2,12 @@
   "cases": [
     {"why": "anchor px needs anchorPx", "remove": "/anchorPx"},
     {"why": "image or path is mandatory", "remove": "/image"},
-    {"why": "unknown anchor", "set": "/anchor", "value": "bottom-right"}
+    {"why": "unknown anchor", "set": "/anchor", "value": "bottom-right"},
+    {
+      "why": "a placement footprint is a footprint",
+      "set": "/footprint",
+      "value": {"shape": "circle"},
+      "error": "'circle' is not one of"
+    }
   ]
 }

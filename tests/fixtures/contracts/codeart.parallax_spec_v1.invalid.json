@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {
+      "why": "layer kinds are fixed",
+      "set": "/layers/0/kind",
+      "value": "fog",
+      "error": "'fog' is not one of"
+    },
+    {
+      "why": "an image layer brings its image, role and scroll",
+      "document": {
+        "schema": "codeart2d.parallax_spec.v1",
+        "viewport": [480, 270],
+        "layers": [{"id": "photo", "kind": "image"}]
+      },
+      "error": "'image' is a required property"
+    },
+    {
+      "why": "layer ids are file-safe",
+      "set": "/layers/0/id",
+      "value": "sky layer",
+      "error": "does not match"
+    },
+    {"why": "the viewport is a size", "set": "/viewport", "value": [480], "error": "is too short"}
+  ]
+}

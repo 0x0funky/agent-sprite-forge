@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "why": "light positions are UV",
+      "set": "/lights/0/u",
+      "value": 1.5,
+      "error": "1.5 is greater than the maximum of 1"
+    },
+    {
+      "why": "rejection reasons are fixed",
+      "document": {
+        "schema": "generate2dmap.lights_qa.v1",
+        "status": "pass",
+        "method": "m",
+        "notProven": [],
+        "checks": [],
+        "inputs": [],
+        "outputs": [],
+        "tool": {"name": "t", "version": "1"},
+        "rejected": [{"u": 0.5, "v": 0.5, "reason": "too dim"}]
+      },
+      "error": "'too dim' is not one of"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.lights_qa.v2",
+      "error": "was expected"
+    }
+  ]
+}

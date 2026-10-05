@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "why": "bound to the manifest by sha256",
+      "remove": "/manifestSha256",
+      "error": "'manifestSha256' is a required property"
+    },
+    {"why": "a pass cannot hold a failed check", "set": "/checks/0/status", "value": "fail"},
+    {
+      "why": "transports are reported",
+      "remove": "/transports",
+      "error": "'transports' is a required property"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "video2dsprite.verify.v2",
+      "error": "was expected"
+    }
+  ]
+}

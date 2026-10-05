@@ -1,0 +1,162 @@
+{
+  "schema": "generate2dmap.nav_report.v1",
+  "status": "warn",
+  "method": "plan Appendix C validity (centre + 8 footprint samples against walk regions, solids, object footprints scaled once, tile collision and material classes) on a grid of cell max(1, round(r/2)) px; 4-neighbour moves open when segmentClear holds between node centres (samples every cell/2, plus the exact thin-gap centre path and one_way direction); BFS from every spawn and portal arrival to every interaction, exit, anchor slot and approach point",
+  "notProven": [
+    "that the collision data matches the painted art",
+    "positions closer than one grid cell to a blocker (the grid samples cell centres)",
+    "runtime movement code: map-runtime.mjs parity is tested during integration",
+    "links to maps not passed with --link"
+  ],
+  "checks": [
+    {
+      "id": "starts_valid",
+      "status": "pass",
+      "value": {"starts": 2, "blocked": []},
+      "threshold": {"blocked": 0}
+    },
+    {
+      "id": "targets_reachable",
+      "status": "pass",
+      "value": {"reachable": 7, "total": 7, "unreachable": []},
+      "threshold": {"unreachable": 0}
+    },
+    {
+      "id": "portals_inside_world",
+      "status": "pass",
+      "value": {"outside": []},
+      "threshold": {"outside": 0}
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../map/map-bundle.json",
+      "sha256": "97e20c9edc61c1241f50cdfec8c5b451529ebc4594dfd87e49f2955f660bef67",
+      "bytes": 5970
+    },
+    {
+      "path": "../map/tiles/terrain.tileset.json",
+      "sha256": "99c6c150ce0bf3d29f598bfb563b7f68f218ba82cc08060187bdd9b596e87071",
+      "bytes": 5726
+    },
+    {
+      "path": "../map/tiles/terrain.png",
+      "sha256": "bfcc09cbe13573c3363d343272bf29926f950aa50b005d091ca8f52a880532db",
+      "bytes": 667
+    },
+    {
+      "path": "../map/tiles/path.tileset.json",
+      "sha256": "80b8f6895090b0415974ce45e583920aa3fd810780b25b201472fe84483205d2",
+      "bytes": 4873
+    },
+    {
+      "path": "../map/tiles/path.png",
+      "sha256": "b8f78453de7b8e9f54924657005e121b3ad80ccf78db81a0f2fd9b2c0c464405",
+      "bytes": 599
+    },
+    {
+      "path": "../map/art/backdrop.png",
+      "sha256": "2f10109f2846131dcf9b3b92e528124b118ea8eb94fcad22b7c636d23966dca2",
+      "bytes": 440
+    },
+    {
+      "path": "../map/layers/ground.csv",
+      "sha256": "963e55df716aaa6e7470a42ca4f528ea13cbd3d89610c17a25bf1c5bde7b2ecb",
+      "bytes": 290
+    },
+    {
+      "path": "../map/terrain-vertices.json",
+      "sha256": "4e40b3fd78e72d00b588aeb7385d1cdb31ded6a59f36cadfdc0671a0c7a1479a",
+      "bytes": 369
+    },
+    {
+      "path": "../map/props/tree.png",
+      "sha256": "128928e0753a11e00a60b57ca09bc3ebdfa091398c2378f4fc1d689fc10a8e18",
+      "bytes": 1054
+    },
+    {
+      "path": "../map/props/rock.png",
+      "sha256": "a9b6ffa87efbaaaab023194bb0fade8fedb2ed7ea6c19009e5cd57b85952542f",
+      "bytes": 360
+    },
+    {
+      "path": "../map/props/bush.png",
+      "sha256": "1f68b8e59914d19c68eb93409f44de41a12d23f61a55dea02ad9d137dbcafa7d",
+      "bytes": 287
+    },
+    {
+      "path": "../map/materials.png",
+      "sha256": "21d675e691a801cc1ff288164b6f670b1b2df861acc56478852280c5acbd64d2",
+      "bytes": 102
+    }
+  ],
+  "outputs": [
+    {
+      "path": "nav-grid.json",
+      "sha256": "a8630fb97d348b3f12fb6d5b8545eb0a3b12db359a9a1cbc540ab4f9c1ed40e4",
+      "bytes": 16464
+    },
+    {
+      "path": "nav-debug.png",
+      "sha256": "287862ae3af0e42c9c172034c7fcf51b212792374af927223cb3889f9590fbdc",
+      "bytes": 8444
+    }
+  ],
+  "tool": {"name": "map_nav.py", "version": "1.0.0"},
+  "map": "meadow",
+  "cell": 2,
+  "starts": [
+    {
+      "kind": "spawn",
+      "id": "start",
+      "point": [24.0, 70.0],
+      "reachable": true,
+      "steps": 0,
+      "node": [23.0, 69.0],
+      "reason": null
+    },
+    {
+      "kind": "spawn",
+      "id": "arrive-east",
+      "point": [170.0, 64.0],
+      "reachable": true,
+      "steps": 0,
+      "node": [169.0, 63.0],
+      "reason": null
+    }
+  ],
+  "targets": [
+    {
+      "kind": "interaction",
+      "id": "well",
+      "point": [96.0, 26.0],
+      "reachable": true,
+      "steps": 39,
+      "node": [111.0, 39.0],
+      "reason": null
+    },
+    {
+      "kind": "interaction",
+      "id": "sign",
+      "point": [64.0, 100.0],
+      "reachable": true,
+      "steps": 23,
+      "node": [57.0, 93.0],
+      "reason": null
+    },
+    {
+      "kind": "slot",
+      "id": "well/slots[0]",
+      "point": [86.0, 44.0],
+      "reachable": true,
+      "steps": 36,
+      "node": [83.0, 49.0],
+      "reason": null
+    }
+  ],
+  "links": [],
+  "thinGaps": [],
+  "unreachablePockets": [{"cells": 3, "at": [5.0, 5.0]}],
+  "bundleNav": {"cell": 2, "grid": "nav-grid.json"},
+  "problems": []
+}

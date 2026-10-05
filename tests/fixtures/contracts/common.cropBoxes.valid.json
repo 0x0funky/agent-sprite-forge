@@ -1,0 +1,13 @@
+{
+  "schema": "forge-crop-boxes/v1",
+  "source": {
+    "path": "../src/props.png",
+    "sha256": "b64e20fd1c8bf84417b79f16d13542f271d9cc0c6fee3528d122ab3aebe8ed2a"
+  },
+  "items": [
+    {"id": "prop-1", "box": [12, 2, 53, 69]},
+    {"id": "prop-2", "box": [72, 22, 121, 67]},
+    {"id": "prop-3", "box": [142, 2, 192, 67]},
+    {"id": "prop-4", "box": [14, 72, 51, 127]}
+  ]
+}

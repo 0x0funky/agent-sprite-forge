@@ -1,0 +1,206 @@
+{
+  "schema": "codeart2d.codeart_meta.v1",
+  "art_source": "code",
+  "placeholder": false,
+  "disclosure": "code-drawn, no image model",
+  "generator": "codeart2d/rig_animate.py",
+  "spec_sha256": "ed68148236479cb3392940eacd38f9927c2a2198b94cceb7f6492e2d1addf4de",
+  "renderer": {
+    "backend": "resvg_py",
+    "name": "resvg-py",
+    "version": "0.5.0",
+    "engine": "resvg 0.48.1",
+    "zoom": 1,
+    "size": [64, 64],
+    "route": "pixel",
+    "coverage_ss": 8,
+    "coverage": 0.5,
+    "finish": "codeart_core.pixel_finish route D"
+  },
+  "palette": {
+    "colors": {
+      "ink": "#1a1c2c",
+      "tunic-sh": "#29366f",
+      "pants-sh": "#333c57",
+      "tunic": "#3b5dc9",
+      "boot-sh": "#3d2618",
+      "pants": "#4a5a85",
+      "boot": "#5a3a2a",
+      "hair": "#6b3d2e",
+      "belt": "#73464c",
+      "skin-sh": "#c8845e",
+      "skin": "#f0b98c"
+    },
+    "variants": {}
+  },
+  "outputs": [
+    {
+      "path": "frames/walk-00.png",
+      "sha256": "605ffffaf7123e0ff99237e0e7a08d449e1b8418066016a5bb622ccfb305a65f",
+      "bytes": 675
+    },
+    {
+      "path": "frames/walk-01.png",
+      "sha256": "def8a8c54c00ea0e05c185723365abfda6e7050dd696d7b921c00b24916b4031",
+      "bytes": 647
+    },
+    {
+      "path": "frames/walk-02.png",
+      "sha256": "4e1551ebff4d909ec03aeaa04aecb033a9b9f5ec1361702b14057ab89b387ef9",
+      "bytes": 612
+    },
+    {
+      "path": "frames/walk-03.png",
+      "sha256": "6c491ad1465aa7f1859e1edbfaa6a21033416a9f31dba6bfdd3e7a39b506ea7f",
+      "bytes": 644
+    },
+    {
+      "path": "frames/walk-04.png",
+      "sha256": "b1ab3384605ac122f06fd2271b3458e0a64473d9ca0cad58ed7d8878967d180f",
+      "bytes": 680
+    },
+    {
+      "path": "frames/walk-05.png",
+      "sha256": "f9c340e19b888e1c626f6fb5277ecd79a8a7c3fb83ddd1664dafe4f5424d3e0c",
+      "bytes": 635
+    },
+    {
+      "path": "frames/walk-06.png",
+      "sha256": "0afeed1570db21c58e2d62819463dbb4f9015b1a58a22ed49d66580c75e69a8a",
+      "bytes": 630
+    },
+    {
+      "path": "frames/walk-07.png",
+      "sha256": "1a16dfb76c8b06a3a1c33cd642016c5ae4c9f661893ac45aa41797516e2c7c4e",
+      "bytes": 680
+    },
+    {
+      "path": "frames/idle-00.png",
+      "sha256": "74a9b463a7a2022e9d3d5550f641a160fa1434dc51d76f7aa68532160a37f502",
+      "bytes": 550
+    },
+    {
+      "path": "frames/idle-01.png",
+      "sha256": "48706f517eda6bc80c2751d89cd2e3916f0261c84af4c3cac5083ea70fde6b4e",
+      "bytes": 579
+    },
+    {
+      "path": "frames/idle-02.png",
+      "sha256": "a48c2f211995901b6907cea2b0f728895c8b405ff1135947051417074e553a1b",
+      "bytes": 586
+    },
+    {
+      "path": "clips.json",
+      "sha256": "fe4e713bd7ec7441d7ded2b9605b09633b2ffaf5c8d6490d161a0100ebfc3fb5",
+      "bytes": 1918
+    }
+  ],
+  "qa": {
+    "status": "pass",
+    "method": "rig_animate: FK and two-bone IK sampled per clip; pixel route: codeart_core.qa_pixels on every published frame against the route palette (partial alpha, exact palette, outline gaps, L-corners per codeart_core.QA_PIXEL_GATES); forge_core.seam_report (premultiplied MAE, seam over median adjacent step) on each loop of 3+ frames; planted-foot drift measured on the rig geometry (ankle x + stride * t, ankle y) per run of planted frames; IK clamps; lowest alpha row of grounded frames against the ground line; transparent margin; optional build_animation_clips run",
+    "notProven": [
+      "Appeal, silhouette, anatomy and readability at game scale: look at review/*.png.",
+      "Timing, weight and acting in motion: the checks measure geometry, not feel.",
+      "Planted-foot drift is measured on rig geometry; rendered pixels may still differ by coverage rounding or anti-aliasing when the per-frame travel is not a whole number of pixels."
+    ],
+    "checks": [
+      {"id": "partial_alpha", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "off_palette", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "outline_gaps", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "l_corners", "status": "pass", "value": 8, "threshold": 10},
+      {"id": "seam:walk", "status": "pass", "value": 0.9958, "threshold": [0.8, 1.25]},
+      {"id": "seam:idle", "status": "pass", "value": 0.9571, "threshold": [0.8, 1.25]},
+      {"id": "ik_foot_drift", "status": "pass", "value": 0.0, "threshold": 0.0},
+      {"id": "ik_clamp", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "ground_row", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "margins", "status": "pass", "value": 0, "threshold": 1},
+      {"id": "build_clips", "status": "pass", "value": 0, "threshold": 0}
+    ],
+    "inputs": [
+      {
+        "path": "hero.rig.svg",
+        "sha256": "3ef883e4a58e5a2704539ca2d6f3e198a91b2f5e5e5ba20d47177bc15528eed8",
+        "bytes": 3358
+      },
+      {
+        "path": "hero.anim.json",
+        "sha256": "ed68148236479cb3392940eacd38f9927c2a2198b94cceb7f6492e2d1addf4de",
+        "bytes": 2259
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/walk-00.png",
+        "sha256": "605ffffaf7123e0ff99237e0e7a08d449e1b8418066016a5bb622ccfb305a65f",
+        "bytes": 675
+      },
+      {
+        "path": "frames/walk-01.png",
+        "sha256": "def8a8c54c00ea0e05c185723365abfda6e7050dd696d7b921c00b24916b4031",
+        "bytes": 647
+      },
+      {
+        "path": "frames/walk-02.png",
+        "sha256": "4e1551ebff4d909ec03aeaa04aecb033a9b9f5ec1361702b14057ab89b387ef9",
+        "bytes": 612
+      },
+      {
+        "path": "frames/walk-03.png",
+        "sha256": "6c491ad1465aa7f1859e1edbfaa6a21033416a9f31dba6bfdd3e7a39b506ea7f",
+        "bytes": 644
+      },
+      {
+        "path": "frames/walk-04.png",
+        "sha256": "b1ab3384605ac122f06fd2271b3458e0a64473d9ca0cad58ed7d8878967d180f",
+        "bytes": 680
+      },
+      {
+        "path": "frames/walk-05.png",
+        "sha256": "f9c340e19b888e1c626f6fb5277ecd79a8a7c3fb83ddd1664dafe4f5424d3e0c",
+        "bytes": 635
+      },
+      {
+        "path": "frames/walk-06.png",
+        "sha256": "0afeed1570db21c58e2d62819463dbb4f9015b1a58a22ed49d66580c75e69a8a",
+        "bytes": 630
+      },
+      {
+        "path": "frames/walk-07.png",
+        "sha256": "1a16dfb76c8b06a3a1c33cd642016c5ae4c9f661893ac45aa41797516e2c7c4e",
+        "bytes": 680
+      },
+      {
+        "path": "frames/idle-00.png",
+        "sha256": "74a9b463a7a2022e9d3d5550f641a160fa1434dc51d76f7aa68532160a37f502",
+        "bytes": 550
+      },
+      {
+        "path": "frames/idle-01.png",
+        "sha256": "48706f517eda6bc80c2751d89cd2e3916f0261c84af4c3cac5083ea70fde6b4e",
+        "bytes": 579
+      },
+      {
+        "path": "frames/idle-02.png",
+        "sha256": "a48c2f211995901b6907cea2b0f728895c8b405ff1135947051417074e553a1b",
+        "bytes": 586
+      },
+      {
+        "path": "clips.json",
+        "sha256": "fe4e713bd7ec7441d7ded2b9605b09633b2ffaf5c8d6490d161a0100ebfc3fb5",
+        "bytes": 1918
+      }
+    ],
+    "tool": {"name": "codeart2d/rig_animate.py", "version": "1"}
+  },
+  "route": "pixel",
+  "rig": {
+    "path": "hero.rig.svg",
+    "sha256": "3ef883e4a58e5a2704539ca2d6f3e198a91b2f5e5e5ba20d47177bc15528eed8",
+    "bytes": 3358
+  },
+  "anim": {
+    "path": "hero.anim.json",
+    "sha256": "ed68148236479cb3392940eacd38f9927c2a2198b94cceb7f6492e2d1addf4de",
+    "bytes": 2259
+  }
+}

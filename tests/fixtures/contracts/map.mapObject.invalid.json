@@ -1,6 +1,18 @@
 {
   "cases": [
     {"why": "anchor is mandatory", "remove": "/anchor_px"},
-    {"why": "threshold above 255", "set": "/occluder/alphaThreshold", "value": 300}
+    {"why": "threshold above 255", "set": "/occluder/alphaThreshold", "value": 300},
+    {
+      "why": "an object's image is a relative path",
+      "set": "/image",
+      "value": "C:/art/tree.png",
+      "error": "does not match"
+    },
+    {
+      "why": "flip_x is a boolean",
+      "set": "/flip_x",
+      "value": "yes",
+      "error": "'yes' is not of type 'boolean'"
+    }
   ]
 }

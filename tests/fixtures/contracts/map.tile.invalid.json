@@ -2,6 +2,12 @@
   "cases": [
     {"why": "four corners", "set": "/wang", "value": [0, 1, 0]},
     {"why": "8 neighbour bits", "set": "/blob_mask", "value": 256},
-    {"why": "index is mandatory", "remove": "/index"}
+    {"why": "index is mandatory", "remove": "/index"},
+    {
+      "why": "Tiled wangids have eight entries",
+      "set": "/wangid",
+      "value": [1, 2],
+      "error": "is too short"
+    }
   ]
 }

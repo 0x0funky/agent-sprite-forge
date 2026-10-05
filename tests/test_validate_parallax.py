@@ -11,8 +11,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
-                             script_path)
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script,
+                             run_cli, script_path)
 
 
 PARALLAX = load_script("generate2dmap", "validate_parallax")
@@ -21,109 +21,11 @@ MODULE = PARALLAX
 FORGE_CORE = load_script("generate2dmap", "forge_core")
 SKILL = "generate2dmap"
 
-# The $defs this module asks integration to add to map.schema.json (handoff section 5), applied in memory.
-_POINT = {"$ref": "common.schema.json#/$defs/point2"}
-_PAIR = {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2}
-_BOOL_PAIR = {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2}
-_STRINGS = {"type": "array", "items": {"type": "string"}}
-_RATIO = {"type": "number", "minimum": 0}
-REQUESTED_MAP_DEFS = {
-    "parallaxSeam": {
-        "description": "Wrap-seam diagnostics of one repeat axis: v1 edge-equality numbers plus forge_core.seam_report "
-                       "over the columns (x) or rows (y) and a verdict. Never a seamlessness proof.",
-        "type": "object", "required": ["axis", "alpha_mae", "premultiplied_rgb_mae", "seamless_verified"],
-        "properties": {
-            "axis": {"enum": ["x", "y"]}, "alpha_mae": _RATIO,
-            "visible_rgb_mae": {"anyOf": [_RATIO, {"type": "null"}]},
-            "jointly_visible_pixels": {"type": "integer", "minimum": 0}, "premultiplied_rgb_mae": _RATIO,
-            "seamless_verified": {"const": False},
-            "verdict": {"enum": ["continuous", "seam", "duplicate-edge", "flat", "too-small"]},
-            "frames": {"type": "integer", "minimum": 2}, "seam": _RATIO, "adjacent_median": _RATIO,
-            "adjacent_p95": _RATIO, "adjacent_max": _RATIO, "seam_over_median": _RATIO, "seam_over_p95": _RATIO,
-            "method": {"type": "string", "minLength": 1}}},
-    "parallaxExtreme": {
-        "type": "object",
-        "required": ["camera", "zoom", "screen_canvas_rect", "canvas_coverage_axes", "canvas_covers_viewport"],
-        "properties": {
-            "camera": _POINT, "zoom": {"type": "number", "exclusiveMinimum": 0},
-            "screen_canvas_rect": {"$ref": "common.schema.json#/$defs/box"},
-            "canvas_coverage_axes": _BOOL_PAIR, "canvas_covers_viewport": {"type": "boolean"},
-            "canvas_visible": {"type": "boolean"},
-            "gaps_px": {"type": "array", "items": _RATIO, "minItems": 4, "maxItems": 4},
-            "nonzero_alpha_bbox_screen": {"anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}]}}},
-    "parallaxLayerReport": {
-        "type": "object",
-        "required": ["id", "role", "image", "source_size", "scale", "display_size", "repeat", "alpha",
-                     "require_canvas_coverage", "canvas_coverage_passed", "extrema", "repeat_seams", "passed",
-                     "issues"],
-        "properties": {
-            "id": {"type": "string", "minLength": 1}, "role": {"type": "string", "minLength": 1},
-            "image": {"type": "string", "minLength": 1},
-            "source_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            "source_size": {"$ref": "common.schema.json#/$defs/size2"},
-            "scale": {"type": "number", "exclusiveMinimum": 0}, "display_size": _PAIR, "repeat": _BOOL_PAIR,
-            "require_canvas_coverage": {"type": "boolean"}, "coverage_rule": {"type": "string"},
-            "canvas_coverage_passed": {"type": "boolean"}, "opaque_viewport_coverage_verified": {"type": "boolean"},
-            "extrema": {"type": "array", "items": {"$ref": "#/$defs/parallaxExtreme"}},
-            "repeat_seams": {"type": "array", "items": {"$ref": "#/$defs/parallaxSeam"}},
-            "pixel_grid": {"type": "object",
-                           "required": ["integer_pixels", "rest_position_integral", "subpixel_scroll"]},
-            "passed": {"type": "boolean"}, "issues": _STRINGS}},
-    "parallax_validation_v2": {
-        "description": "validate_parallax.py result (stdout and --report): verdict, issues and warnings, the "
-                       "resolved pivot and coverage policy, per-layer coverage at every camera/zoom extreme, seam "
-                       "diagnostics, the pixel grid and the aspect sweep. A malformed plan gives only schema, "
-                       "passed false and issues.",
-        "type": "object", "required": ["schema", "passed", "issues"],
-        "properties": {
-            "schema": {"enum": ["generate2dmap.parallax_validation.v1", "generate2dmap.parallax_validation.v2"]},
-            "passed": {"type": "boolean"}, "issues": _STRINGS, "warnings": _STRINGS, "viewport": _PAIR,
-            "camera": {"type": "object", "properties": {"x": _POINT, "y": _POINT, "zoom": _PAIR}},
-            "pivot": {"type": "object", "required": ["mode", "point"],
-                      "properties": {"mode": {"enum": ["top-left", "center", "point"]}, "point": _POINT}},
-            "coverage_policy": {"enum": ["auto", "sky-only", "all"]},
-            "camera_extrema_checked": {"type": "integer", "minimum": 1},
-            "layers": {"type": "array", "items": {"$ref": "#/$defs/parallaxLayerReport"}},
-            "aspect_sweep": {"type": "object", "required": ["policy", "aspects"], "properties": {
-                "policy": {"enum": ["expand", "fixed-height", "fixed-width"]},
-                "aspects": {"type": "array", "items": {
-                    "type": "object", "required": ["aspect", "ratio", "viewport", "required", "passed",
-                                                   "failing_layers"],
-                    "properties": {"aspect": {"type": "string"}, "ratio": {"type": "number", "exclusiveMinimum": 0},
-                                   "viewport": _PAIR, "camera_shift": _POINT, "required": {"type": "boolean"},
-                                   "passed": {"type": "boolean"}, "failing_layers": {"type": "array"}}}}}},
-            "pixel_grid": {"type": "object", "required": ["enforced"],
-                           "properties": {"enforced": {"type": "boolean"},
-                                          "source": {"type": ["string", "null"]}}},
-            "transform": {"type": "string"}, "limits": _STRINGS, "report": {"type": ["string", "null"]}},
-        "if": {"properties": {"passed": {"const": True}}, "required": ["passed"]},
-        "then": {"properties": {"issues": {"maxItems": 0}}}},
-}
-# Optional plan fields this module reads, requested for map.schema.json $defs/parallax_plan/properties.
-REQUESTED_PLAN_PROPERTIES = {
-    "pixel_art": {"type": "boolean"},
-    "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
-    "aspects": {"type": "array", "items": {"type": "string", "pattern": r"^[0-9]*\.?[0-9]+([:/][0-9]*\.?[0-9]+)?$"}},
-    "aspect_policy": {"enum": ["expand", "fixed-height", "fixed-width"]},
-}
-
-
+# handoff/B12-map-compose-parallax.md section 5 is integrated into shared/schemas/map.schema.json; the tests
+# validate against the vendored generate2dmap copy.
 def requested_contract_errors(document, name="parallax_validation_v2"):
-    """Errors against the vendored generate2dmap schemas plus this module's requests (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    for key, fragment in REQUESTED_PLAN_PROPERTIES.items():
-        map_schema["$defs"]["parallax_plan"]["properties"].setdefault(key, fragment)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def parallax_cli(*arguments, cwd=None):

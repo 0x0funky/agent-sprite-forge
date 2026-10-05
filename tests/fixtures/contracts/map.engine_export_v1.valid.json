@@ -1,0 +1,115 @@
+{
+  "schema": "generate2dmap.engine_export.v1",
+  "tool": {"name": "export_ldtk", "version": "1.0"},
+  "engine": {
+    "name": "ldtk",
+    "target": "1.5.3",
+    "format": "json",
+    "verified": "parse-level (required-field snapshot and read-back by this tool); LDtk editor not run"
+  },
+  "bundle": {
+    "path": "../map/map-bundle.json",
+    "sha256": "ae6bdc16879e492218217423789b4838a26829befe93fa6f330fd3d8570a74bc",
+    "bytes": 2121
+  },
+  "files": {"project": "town.ldtk", "props_atlas": "assets/props-atlas.png"},
+  "assets": [
+    {
+      "role": "tileset",
+      "id": "terrain",
+      "path": "assets/tilesets/terrain.png",
+      "sha256": "5c950f5de44daf95f063906e8a9b4ed93eb62267edf92970019fce7d5a8b6e4e",
+      "source": "tiles/terrain.png"
+    },
+    {
+      "role": "layer",
+      "id": "base",
+      "path": "assets/layers/base.png",
+      "sha256": "3f705853574b836085ff4886e0b09f5a64f0d83f9c9d0181df7265b0970415b0",
+      "source": "base.png"
+    }
+  ],
+  "tilesets": [
+    {
+      "id": "Terrain",
+      "uid": 1,
+      "relPath": "assets/tilesets/terrain.png",
+      "tile": 16,
+      "custom_tiles": 16
+    },
+    {"id": "Props", "uid": 2, "relPath": "assets/props-atlas.png", "tile": 16, "custom_tiles": 0}
+  ],
+  "layers": [
+    {"identifier": "Markers", "type": "Entities", "tiles": 0, "entities": 6},
+    {"identifier": "Objects", "type": "Entities", "tiles": 0, "entities": 3},
+    {"identifier": "Ground", "type": "Tiles", "tiles": 59, "entities": 0}
+  ],
+  "level": {"identifier": "Town", "size": [160, 96], "background": "assets/layers/base.png"},
+  "notExported": [
+    "material_map: not exported (stays in the map bundle)",
+    "collision: walk regions and solids stay in the map bundle (per-tile collision is in tileset customData)"
+  ],
+  "warnings": [],
+  "qa": {
+    "status": "pass",
+    "method": "export_ldtk: built the project, wrote it, re-read the JSON, checked it against the LDtk 1.5.3 required-field snapshot, uid/iid/identifier rules, decoded every grid tile and compared entity positions and sizes with the bundle.",
+    "notProven": [
+      "Parse-level only: the project is checked against this tool's snapshot of the LDtk 1.5.3 JSON required fields and read back by this tool; the LDtk editor was not run.",
+      "Terrain is exported as placed tiles, not as IntGrid plus auto-layer rules; re-painting terrain in LDtk needs rules made there.",
+      "Collision shapes, walk regions, the material map and the nav grid stay in the map bundle; per-tile collision rides in tileset customData only."
+    ],
+    "checks": [
+      {
+        "id": "ldtk_required_fields",
+        "status": "pass",
+        "value": [],
+        "threshold": {"ldtk_json": "1.5.3", "types": 12}
+      },
+      {"id": "ldtk_ids", "status": "pass", "value": [], "threshold": null},
+      {"id": "tiles_roundtrip", "status": "pass", "value": [], "threshold": null},
+      {
+        "id": "entity_positions",
+        "status": "pass",
+        "value": [],
+        "threshold": {"max_rounding_px": 0.5, "measured_px": 0.0}
+      },
+      {"id": "assets_identical", "status": "pass", "value": [], "threshold": null},
+      {
+        "id": "objects_in_world",
+        "status": "pass",
+        "value": [],
+        "threshold": {"world": [160.0, 96.0]}
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../map/map-bundle.json",
+        "sha256": "ae6bdc16879e492218217423789b4838a26829befe93fa6f330fd3d8570a74bc",
+        "bytes": 2121
+      }
+    ],
+    "outputs": [
+      {
+        "path": "town.ldtk",
+        "sha256": "9ee84ea5fc405aa2975bcd0c39bd198a428dd8938c7b567c4d7b529aba2bafa3",
+        "bytes": 103844
+      },
+      {
+        "path": "assets/props-atlas.png",
+        "sha256": "259c6dcaaf0b0e33e34048833232dea251b96adcc93c073128cf04a6d4069bd2",
+        "bytes": 189
+      },
+      {
+        "path": "assets/tilesets/terrain.png",
+        "sha256": "5c950f5de44daf95f063906e8a9b4ed93eb62267edf92970019fce7d5a8b6e4e",
+        "bytes": 372
+      },
+      {
+        "path": "assets/layers/base.png",
+        "sha256": "3f705853574b836085ff4886e0b09f5a64f0d83f9c9d0181df7265b0970415b0",
+        "bytes": 331
+      }
+    ],
+    "tool": {"name": "export_ldtk", "version": "1.0"}
+  }
+}

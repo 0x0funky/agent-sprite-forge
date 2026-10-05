@@ -1,0 +1,10 @@
+{
+  "camera": [0.0, 0.0],
+  "zoom": 1.0,
+  "screen_canvas_rect": [0.0, 0.0, 64.0, 32.0],
+  "canvas_coverage_axes": [true, true],
+  "canvas_covers_viewport": true,
+  "canvas_visible": true,
+  "gaps_px": [0.0, 0.0, 0.0, 0.0],
+  "nonzero_alpha_bbox_screen": [0.0, 0.0, 64.0, 32.0]
+}

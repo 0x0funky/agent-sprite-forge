@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "why": "effect kinds are fixed",
+      "set": "/effects/0/kind",
+      "value": "fire",
+      "error": "'fire' is not one of"
+    },
+    {"why": "units are uv or px", "set": "/units", "value": "cm", "error": "'cm' is not one of"},
+    {
+      "why": "a protected region is a polygon or a box",
+      "set": "/protected/0",
+      "value": {"id": "boat", "box": [0.4, 0.7, 0.6, 0.8], "polygon": [[0, 0], [1, 0], [1, 1]]},
+      "error": "is valid under each of"
+    },
+    {
+      "why": "a loop has at least 2 frames",
+      "set": "/frames",
+      "value": 1,
+      "error": "1 is less than the minimum of 2"
+    }
+  ]
+}

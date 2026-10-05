@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "why": "engines are godot or ldtk",
+      "set": "/engine/name",
+      "value": "unity",
+      "error": "'unity' is not one of"
+    },
+    {
+      "why": "what the engine files do not carry is listed (per D2)",
+      "remove": "/notExported",
+      "error": "'notExported' is a required property"
+    },
+    {
+      "why": "asset roles are tileset, layer or prop",
+      "set": "/assets/0/role",
+      "value": "audio",
+      "error": "'audio' is not one of"
+    },
+    {
+      "why": "asset paths are relative",
+      "set": "/assets/0/path",
+      "value": "C:/game/terrain.png",
+      "error": "does not match"
+    },
+    {
+      "why": "the bundle is bound by sha256",
+      "remove": "/bundle/sha256",
+      "error": "'sha256' is a required property"
+    }
+  ]
+}

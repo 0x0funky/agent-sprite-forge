@@ -2,6 +2,12 @@
   "cases": [
     {"why": "zero scale", "set": "/scale", "value": 0},
     {"why": "shift is mandatory", "remove": "/frames/0/shift"},
-    {"why": "unknown resampler", "set": "/resampler", "value": "bicubic"}
+    {"why": "unknown resampler", "set": "/resampler", "value": "bicubic"},
+    {
+      "why": "anchor modes are stance, feet or bbox",
+      "set": "/anchor_mode",
+      "value": "toe",
+      "error": "'toe' is not one of"
+    }
   ]
 }

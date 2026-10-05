@@ -3,6 +3,18 @@
     {"why": "verified tiles have zero mismatches", "set": "/seam_proof/mismatches", "value": 3},
     {"why": "verified tiles need a proof", "remove": "/seam_proof"},
     {"why": "wang tiles list corners", "remove": "/tiles/0/wang"},
-    {"why": "unknown kind", "set": "/kind", "value": "wang16"}
+    {"why": "unknown kind", "set": "/kind", "value": "wang16"},
+    {
+      "why": "Tiled wangids have eight entries",
+      "set": "/tiles/0/wangid",
+      "value": [1, 1, 1, 1],
+      "error": "is too short"
+    },
+    {
+      "why": "qa is a fileRef (per D5) or the legacy relPath",
+      "set": "/qa",
+      "value": "C:/out/autotile-qa.json",
+      "error": "is not valid under any"
+    }
   ]
 }

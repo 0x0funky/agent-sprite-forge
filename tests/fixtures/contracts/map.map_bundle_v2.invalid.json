@@ -9,6 +9,18 @@
       "why": "unknown material class",
       "set": "/material_map/materials/water/class",
       "value": "deep_water"
+    },
+    {
+      "why": "a map id has no colon (portal targets are map:spawn)",
+      "set": "/id",
+      "value": "forest:1",
+      "error": "does not match"
+    },
+    {
+      "why": "registry props name an image or a pack and label",
+      "set": "/props",
+      "value": {"tree": {"label": "tree"}},
+      "error": "is not valid under any"
     }
   ]
 }

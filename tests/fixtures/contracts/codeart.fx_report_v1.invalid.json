@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "why": "routes are pixel or vector",
+      "set": "/route",
+      "value": "raster",
+      "error": "'raster' is not one of"
+    },
+    {
+      "why": "effects record their hit frame (or null)",
+      "set": "/effects/slash/hit_frame",
+      "value": -1,
+      "error": "is not valid under any"
+    },
+    {
+      "why": "events are clip events",
+      "set": "/effects/slash/events",
+      "value": [{"name": "hit"}],
+      "error": "'at' is a required property"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "codeart2d.fx_report.v2",
+      "error": "was expected"
+    }
+  ]
+}

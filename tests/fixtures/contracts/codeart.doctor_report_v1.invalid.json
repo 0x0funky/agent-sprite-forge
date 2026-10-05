@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "why": "the primary backend is a known backend or null",
+      "set": "/primary",
+      "value": "inkscape",
+      "error": "is not valid under any"
+    },
+    {
+      "why": "the doctor names its cases",
+      "remove": "/cases",
+      "error": "'cases' is a required property"
+    },
+    {
+      "why": "it is a QA envelope",
+      "remove": "/notProven",
+      "error": "'notProven' is a required property"
+    },
+    {"why": "a pass cannot hold a failed check", "set": "/checks/0/status", "value": "fail"}
+  ]
+}

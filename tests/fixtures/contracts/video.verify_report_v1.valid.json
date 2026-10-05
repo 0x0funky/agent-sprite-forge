@@ -1,0 +1,110 @@
+{
+  "schema": "video2dsprite.verify.v1",
+  "status": "pass",
+  "method": "engine_export verify: full ffmpeg decode of every encoded file (WebM alpha through libvpx-vp9, packed halves recombined from the red channel) compared frame by frame with the lossless PNG atlas; ffprobe codec, dimensions, packets, decode timestamps, duration, faststart and VP9 alpha tag",
+  "notProven": [
+    "Playback in a browser, Safari, a WebGL compositor or on an iPhone: only offline ffmpeg decoding was checked.",
+    "Perceptual quality, identity and motion correctness of the art itself.",
+    "Decoder throughput, memory and power on target devices.",
+    "Thresholds come from one shipped game's iOS transport (Dusk) and synthetic clips."
+  ],
+  "checks": [
+    {"id": "files_match_manifest", "status": "pass", "value": [], "threshold": []},
+    {"id": "webm.codec", "status": "pass", "value": "vp9", "threshold": "vp9"},
+    {"id": "webm.dimensions", "value": [256, 256], "threshold": [256, 256], "status": "pass"},
+    {"id": "webm.packets", "status": "pass", "value": 16, "threshold": 16}
+  ],
+  "inputs": [
+    {
+      "path": "animation.json",
+      "sha256": "2700c8363f8b098702cefe1554ee080646ed5b4c1bda7b065aff604a66e5b849",
+      "bytes": 15962
+    },
+    {
+      "path": "run-poster.png",
+      "sha256": "cb0d5045e47e9be48564d660feeb6a95dd742478b77b8d5d9086301037670fdd",
+      "bytes": 13753
+    },
+    {
+      "path": "run-atlas-00.png",
+      "sha256": "f3b61605b86f035d0d23c12a0d05dffadaff396bab603cb5edca211fef7b792f",
+      "bytes": 271333
+    }
+  ],
+  "outputs": [
+    {
+      "path": "run.webm",
+      "sha256": "ac21fc7f730e82caa78836802bb8f67bd42072c5601fa6aeb2deaef66f65e7e6",
+      "bytes": 30290
+    },
+    {
+      "path": "run-packed.mp4",
+      "sha256": "53193270e4d8c60e78da2e2f16fc22cf368baba9baecff708fbd4239325a0079",
+      "bytes": 33143
+    },
+    {
+      "path": "run-packed-actor.mp4",
+      "sha256": "53193270e4d8c60e78da2e2f16fc22cf368baba9baecff708fbd4239325a0079",
+      "bytes": 33143
+    }
+  ],
+  "tool": {"name": "engine_export.py", "version": "3.0.0"},
+  "manifestSha256": "2700c8363f8b098702cefe1554ee080646ed5b4c1bda7b065aff604a66e5b849",
+  "transports": {
+    "webm": {
+      "file": "run.webm",
+      "frames": 16,
+      "alphaMAE": 0.230316,
+      "alphaMAEMean": 0.170247,
+      "alphaP99": 6.0,
+      "alphaMax": 33,
+      "transparentMedianMax": 0.0,
+      "opaqueMedianMin": 255.0,
+      "rgbMAE": 2.849214,
+      "edgeRgbMAE": 4.810356,
+      "sourceAlphaMotionMax": 8.365814,
+      "decodedAlphaMotionMax": 8.340012,
+      "seam": {"decodedSeamOverP95": 0.707463, "referenceSeamOverP95": 0.710686}
+    },
+    "packedAlpha": {
+      "file": "run-packed.mp4",
+      "frames": 16,
+      "alphaMAE": 0.325333,
+      "alphaMAEMean": 0.26508,
+      "alphaP99": 8.0,
+      "alphaMax": 46,
+      "transparentMedianMax": 0.0,
+      "opaqueMedianMin": 255.0,
+      "rgbMAE": 2.711641,
+      "edgeRgbMAE": 4.396117,
+      "sourceAlphaMotionMax": 8.365814,
+      "decodedAlphaMotionMax": 8.329605,
+      "seam": {"decodedSeamOverP95": 0.707299, "referenceSeamOverP95": 0.710686}
+    },
+    "tier:actor": {
+      "file": "run-packed-actor.mp4",
+      "frames": 16,
+      "alphaMAE": 0.325333,
+      "alphaMAEMean": 0.26508,
+      "alphaP99": 8.0,
+      "alphaMax": 46,
+      "transparentMedianMax": 0.0,
+      "opaqueMedianMin": 255.0,
+      "rgbMAE": 2.711641,
+      "edgeRgbMAE": 4.396117,
+      "sourceAlphaMotionMax": 8.365814,
+      "decodedAlphaMotionMax": 8.329605,
+      "seam": {"decodedSeamOverP95": 0.707299, "referenceSeamOverP95": 0.710686}
+    }
+  },
+  "thresholds": {
+    "alphaMAE": 3.5,
+    "transparentMedian": 1.0,
+    "opaqueMedian": 253.0,
+    "rgbMAE": 12.0,
+    "durationToleranceMs": 2.0,
+    "seamTolerance": 1.1,
+    "sourceAlphaMotion": 0.1,
+    "decodedAlphaMotion": 0.05
+  }
+}

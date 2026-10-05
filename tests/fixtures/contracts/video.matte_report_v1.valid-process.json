@@ -1,0 +1,151 @@
+{
+  "schema": "video2dsprite.matte_report.v1",
+  "mode": "soft",
+  "key": [253, 0, 253],
+  "key_request": "auto",
+  "key_declared": "magenta",
+  "key_mode": "auto",
+  "despill_mode": "auto",
+  "despill_applied": "all",
+  "opaque_key_px": 0,
+  "outer_ring_spill_fraction": 0.0,
+  "semitransparent_fraction": 0.1336182336182336,
+  "enclosed_key_pockets": 0,
+  "pockets": "remove",
+  "pockets_removed": 0,
+  "key_hued_px": 0,
+  "key_estimate": {
+    "declared": "magenta",
+    "declared_rgb": [255, 0, 255],
+    "key": [253.0, 0.0, 253.0],
+    "source": "border_median",
+    "valid": true,
+    "ring_share": 1.0,
+    "coverage": 0.932535,
+    "distance_from_declared": 2.83,
+    "spread": 0.0,
+    "frames_estimated": 64,
+    "invalid_frames": [],
+    "detected": {
+      "frames": [0, 16, 32, 47, 63],
+      "ring_share": {"magenta": 5.0, "green": 0.0, "blue": 0.0}
+    }
+  },
+  "local_background": 0,
+  "erode": 0,
+  "unmix": true,
+  "temporal": {
+    "mode": "alpha",
+    "requested": "auto",
+    "band": [0.4, 0.6],
+    "max_step": 0.25,
+    "loop": false,
+    "active": true,
+    "flips_before": 0.6349,
+    "flips_after": 0.3968
+  },
+  "frames_total": 64,
+  "passthrough_frames": [],
+  "warnings": [],
+  "flips_per_frame_pair": 0.3968,
+  "interior_despill": {
+    "rule": "reference still and clip median key-material share <= 0.5%",
+    "reference_share": 0.0,
+    "clip_sample_frames": [0, 4, 8, 13, 17, 21, 25, 29, 34, 38, 42, 46, 50, 55, 59, 63],
+    "clip_median_share": 0.0,
+    "clip_max_share": 0.0,
+    "interior_despill": true,
+    "sampled_from": "keyed frames"
+  },
+  "params": {
+    "w_chroma": 0.2,
+    "t_bg": 18.0,
+    "t_fg": 40.0,
+    "keylike": 0.5,
+    "r_a": 3,
+    "r_c": 6,
+    "radius": 4,
+    "tau": 6.0,
+    "kappa": 0.6,
+    "temp": 0.4,
+    "a_lo": 0.04,
+    "a_hi": 0.96,
+    "unmix_from": 0.0,
+    "excess_slack": 3.0,
+    "ref_r": 10,
+    "speck_steps": 3,
+    "monotone": true,
+    "interior_despill": true,
+    "snap": "ramp",
+    "refine": "none",
+    "gf_r": 2,
+    "gf_eps": 0.004
+  },
+  "frames": [
+    {
+      "index": 0,
+      "key": [253, 0, 253],
+      "passthrough": false,
+      "opaque_key_px": 0,
+      "outer_ring_spill_fraction": 0.0,
+      "semitransparent_fraction": 0.12469806763285024,
+      "enclosed_key_pockets": 0,
+      "key_hued_px": 0,
+      "visible_px": 3312,
+      "pockets_removed": 0,
+      "protected_px": 0
+    },
+    {
+      "index": 1,
+      "key": [253, 0, 253],
+      "passthrough": false,
+      "opaque_key_px": 0,
+      "outer_ring_spill_fraction": 0.0,
+      "semitransparent_fraction": 0.12975936643314043,
+      "enclosed_key_pockets": 0,
+      "key_hued_px": 0,
+      "visible_px": 3283,
+      "pockets_removed": 0,
+      "protected_px": 0
+    }
+  ],
+  "status": "needs-visual-review",
+  "method": "forge_matte.matte_qa on every frame against that frame's key: opaque key px (alpha >= 128 within RGB 48 of the key), enclosed key-coloured regions of >= 16 px and key-hued px are counted after the matte, pockets, erosion and hysteresis but before any despill pass (which could hide residue as an opaque grey blob); the outer visible ring's share with key dominance > 20 and the semi-transparent share are measured on the published frame. Flips are pixels whose alpha changes by more than 0.25 while the raw colour changes by at most 20 (forge_matte.flip_count). Counts are sums over frames, fractions the worst frame.",
+  "notProven": [
+    "Matte QA counts key residue only; edge quality, colour fidelity and identity need a visual review over light and dark backgrounds.",
+    "The soft matte and these thresholds were tuned and verified on one clip (report v2 section 7); other keys, outline-free art and codecs are covered by synthetic tests only.",
+    "Light colours within the video matte's reach of the key (for example #b43cc8 against magenta) are keyed out unless protected; clean residue numbers do not show they were kept.",
+    "Alpha hysteresis lags in-band alpha changes by up to one frame."
+  ],
+  "checks": [
+    {"id": "opaque_key_px", "status": "pass", "value": 0, "threshold": 0},
+    {"id": "enclosed_key_pockets", "status": "pass", "value": 0, "threshold": 0},
+    {"id": "outer_ring_spill_fraction", "status": "pass", "value": 0.0, "threshold": 0.01},
+    {"id": "flips_per_frame_pair", "status": "pass", "value": 0.3968, "threshold": 5.7}
+  ],
+  "inputs": [
+    {
+      "path": "../frames-raw/frame_000000.png",
+      "sha256": "4540529ccfc9357a3902561cf5758e8f867e89cc28a8507ce8412b6f4a7324a0",
+      "bytes": 5104
+    },
+    {
+      "path": "../frames-raw/frame_000001.png",
+      "sha256": "3e9653517b3a5a25d62a4b4a34a358019ae466f06729321fd29decfab087c718",
+      "bytes": 5862
+    }
+  ],
+  "outputs": [
+    {
+      "path": "clean_0000.png",
+      "sha256": "b3a49771ceed4df278f2e2d97d591caf8500bdf3ccb554f02ad3e79f1e0fcfad",
+      "bytes": 4841
+    },
+    {
+      "path": "clean_0001.png",
+      "sha256": "5b4495236a909717aa3a5925d887eb1b6f19c1f561488dd8773056bd79f03b4b",
+      "bytes": 5100
+    }
+  ],
+  "tool": {"name": "video2dsprite.py process", "version": "0.4.0"}
+}

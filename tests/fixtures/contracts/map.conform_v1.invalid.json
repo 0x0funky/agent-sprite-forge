@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "why": "modes are cover or ground-fit",
+      "set": "/mode",
+      "value": "stretch",
+      "error": "'stretch' is not one of"
+    },
+    {
+      "why": "ground-fit records the ground line",
+      "set": "/mode",
+      "value": "ground-fit",
+      "error": "'ground' is a required property"
+    },
+    {
+      "why": "the source rectangle is a box",
+      "set": "/transform/src_rect",
+      "value": [0, 0, 320],
+      "error": "is too short"
+    },
+    {
+      "why": "the scale is uniform and positive",
+      "set": "/transform/scale",
+      "value": 0,
+      "error": "less than or equal to the minimum of 0"
+    },
+    {
+      "why": "the output is bound by sha256",
+      "remove": "/output/sha256",
+      "error": "'sha256' is a required property"
+    }
+  ]
+}

@@ -1,0 +1,184 @@
+{
+  "schema": "generate2dsprite.scale_frames.v1",
+  "scale": 0.5,
+  "scale_from": "1/2",
+  "target_body_px": null,
+  "resampler": "box",
+  "canvas": [15, 40],
+  "anchor_px": [3, 39],
+  "padding": [0, 0, 0, 0],
+  "base_canvas": null,
+  "base_anchor_px": null,
+  "needed_padding": null,
+  "margin": 1,
+  "anchor_mode": "stance",
+  "source_anchor": [24.0, 92.0],
+  "reference_frame": 0,
+  "root_lock": "none",
+  "lock": [],
+  "row_baseline": false,
+  "shift_quantum": 1,
+  "alpha_threshold": 16,
+  "frames_per_row": 4,
+  "torso": {"colors": [], "band": [0.4, 0.6], "method": "trunk"},
+  "frames": [
+    {
+      "source": {
+        "path": "../art/run-sheet.png",
+        "sha256": "b6efb451d72e823ffac237bd9df87eba9cb8db341f3324c87f379edf08d22953",
+        "bytes": 427
+      },
+      "cell": [0, 0],
+      "output": {
+        "path": "frames/frame-00.png",
+        "sha256": "ec54612efae378d729cdecb6c2f63be71deec47d5e4c958fbecbfd5c8431dd66",
+        "bytes": 163
+      },
+      "shift": [0, 0],
+      "output_bbox": [1, 1, 11, 39],
+      "turn_slide_px": 0.0,
+      "turn_slide_output_px": 0.0,
+      "measure": {
+        "bbox": [20, 16, 40, 92],
+        "ground": 92,
+        "body_height": 76,
+        "stance_x": 24.0,
+        "torso_x": 30.0,
+        "centroid_x": 29.71,
+        "hip_x": 30.0
+      }
+    },
+    {
+      "source": {
+        "path": "../art/run-sheet.png",
+        "sha256": "b6efb451d72e823ffac237bd9df87eba9cb8db341f3324c87f379edf08d22953",
+        "bytes": 427
+      },
+      "cell": [0, 1],
+      "output": {
+        "path": "frames/frame-01.png",
+        "sha256": "fa9d56208d5825e2e08cd84e9204364af4b3771b353c03114659caa11c42de22",
+        "bytes": 159
+      },
+      "shift": [0, 0],
+      "output_bbox": [2, 1, 12, 39],
+      "turn_slide_px": 8.0,
+      "turn_slide_output_px": 8.0,
+      "measure": {
+        "bbox": [22, 16, 42, 92],
+        "ground": 92,
+        "body_height": 76,
+        "stance_x": 32.0,
+        "torso_x": 32.0,
+        "centroid_x": 32.0,
+        "hip_x": 32.0
+      }
+    }
+  ],
+  "transitions": {
+    "pairs": [[0, 1], [1, 2], [2, 3], [3, 0]],
+    "before": [26.609, 23.573, 26.609, 67.682],
+    "after": [26.609, 23.573, 26.609, 67.682],
+    "metric": "forge_core.transition_mae (premultiplied RGBA) on one shared crop"
+  },
+  "seam": {
+    "before": {
+      "frames": 4,
+      "seam": 67.68218623481782,
+      "adjacent_median": 26.60931174089069,
+      "adjacent_p95": 26.60931174089069,
+      "adjacent_max": 26.60931174089069,
+      "seam_over_median": 2.5435526816279954,
+      "seam_over_p95": 2.5435526816279954,
+      "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+    },
+    "after": {
+      "frames": 4,
+      "seam": 67.68218623481782,
+      "adjacent_median": 26.60931174089069,
+      "adjacent_p95": 26.60931174089069,
+      "adjacent_max": 26.60931174089069,
+      "seam_over_median": 2.5435526816279954,
+      "seam_over_p95": 2.5435526816279954,
+      "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+    }
+  },
+  "input": {
+    "sheet": {
+      "sha256": "b6efb451d72e823ffac237bd9df87eba9cb8db341f3324c87f379edf08d22953",
+      "size": [256, 96],
+      "source_mode": "RGBA",
+      "bit_depth": 8,
+      "conversion": "none",
+      "keyed": null
+    },
+    "slicing": {
+      "method": "ownership: solid components to the cell holding most of their pixels, soft pixels to the owner they reach through soft pixels; nominal cell origin plus one shared padding",
+      "threshold": 127,
+      "min_area": 64,
+      "attach_radius": 6,
+      "cells_used": 4,
+      "unused_cells_px": 0,
+      "padding": [0, 0, 0, 0],
+      "canvas": [64, 96],
+      "frame_origins_in_sheet": [[0, 0], [64, 0], [128, 0], [192, 0]],
+      "dropped_px": 0,
+      "dropped_max_alpha": 0
+    }
+  },
+  "profile": null,
+  "qa": {
+    "status": "pass",
+    "method": "one pinned resample per frame (forge_core.resample_rgba) on a work canvas holding every frame, then one crop; the crop is checked to keep every visible pixel",
+    "notProven": [
+      "That the locked feature (torso, stance, hip) is the right root for this action.",
+      "Pose quality and smoothness: review scale-review.png and play the clip."
+    ],
+    "checks": [
+      {
+        "id": "no_clipping",
+        "status": "pass",
+        "value": 0,
+        "threshold": 0,
+        "note": "every visible source pixel is on the canvas"
+      },
+      {"id": "integer_nearest", "status": "skipped", "value": null, "threshold": "N or 1/N"},
+      {
+        "id": "registration",
+        "status": "pass",
+        "value": {
+          "horizontal": null,
+          "vertical": null,
+          "row_grounds": {"0": 92},
+          "feature_values": null
+        },
+        "threshold": null,
+        "note": "per-frame whole-pixel shifts against the reference frame"
+      },
+      {
+        "id": "turn_slide",
+        "status": "pass",
+        "value": {"design": 12.0, "output": 12.0},
+        "threshold": null,
+        "note": "2 x |stance x - anchor x| in output px, before (design) and after pixel sampling (output); 0 means a mirrored turn keeps the feet in place"
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../art/run-sheet.png",
+        "sha256": "b6efb451d72e823ffac237bd9df87eba9cb8db341f3324c87f379edf08d22953",
+        "bytes": 427
+      }
+    ],
+    "outputs": [
+      {
+        "path": "scale-review.png",
+        "sha256": "1a1c6c06f02cac1ecbe40d4c72d902d36951ca8d2c24388fabd8d64b084fb7a8",
+        "bytes": 820
+      }
+    ],
+    "tool": {"name": "scale_frames.py", "version": "0.4.0"}
+  },
+  "tool": {"name": "scale_frames.py", "version": "0.4.0"},
+  "clips": "clips.json"
+}

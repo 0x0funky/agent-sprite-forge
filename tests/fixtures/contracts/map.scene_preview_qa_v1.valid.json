@@ -1,0 +1,130 @@
+{
+  "schema": "generate2dmap.scene_preview_qa.v1",
+  "status": "warn",
+  "method": "build_scene_preview: bundle files resolved relative to the bundle and checked against their sha256 when given; tiles layers pre-rendered from tileset manifests; art embedded as data URIs; map-runtime.mjs inlined verbatim; the page scanned for anything that loads from outside it; size gate; optional headless-Chromium run (--verify).",
+  "notProven": [
+    "Collision parity with map_nav.py: this build runs no collision code; integration tests the JS and Python queries against each other.",
+    "Without --verify, or when it prints SKIPPED, the page was assembled and scanned but never run in a browser.",
+    "The actor is a debug marker sized from collision.actorRadius, not character art; animation, lights, atmosphere, stage data, camera bounds and occluder masks are not drawn.",
+    "Draw order is whole-object Y-sort by (sortY, x, id); per-pixel occlusion, fades and cut-aways are not simulated.",
+    "Route checks walk the Appendix C grid with the runtime walker at --speed; an engine controller (acceleration, physics colliders, other speeds) may behave differently.",
+    "Validity is sampled (Appendix C): a solid thinner than half a nav cell can be crossed. Tile collision shapes and tileset walkable flags are not read; walls must be in collision or material_map.",
+    "Only headless Chromium is exercised (with --verify); other browsers, devices and touch input are not tested."
+  ],
+  "checks": [
+    {"id": "html-size", "status": "pass", "value": 84827, "threshold": 16000000},
+    {"id": "external-references", "status": "pass", "value": [], "threshold": []},
+    {"id": "ascii-only", "status": "pass", "value": true, "threshold": true},
+    {"id": "single-inline-script", "status": "pass", "value": true, "threshold": true},
+    {"id": "runtime-inlined", "status": "pass", "value": "map-runtime.mjs", "threshold": null},
+    {
+      "id": "object-art",
+      "status": "warn",
+      "value": ["rock-1", "bush-1", "bush-2", "tree-1"],
+      "threshold": []
+    },
+    {"id": "build-warnings", "status": "warn", "value": 4, "threshold": 0}
+  ],
+  "inputs": [
+    {
+      "path": "../map/map-bundle.json",
+      "sha256": "97e20c9edc61c1241f50cdfec8c5b451529ebc4594dfd87e49f2955f660bef67",
+      "bytes": 5970
+    },
+    {
+      "path": "../map/props/tree.png",
+      "sha256": "128928e0753a11e00a60b57ca09bc3ebdfa091398c2378f4fc1d689fc10a8e18",
+      "bytes": 1054
+    },
+    {
+      "path": "../map/tiles/terrain.tileset.json",
+      "sha256": "99c6c150ce0bf3d29f598bfb563b7f68f218ba82cc08060187bdd9b596e87071",
+      "bytes": 5726
+    },
+    {
+      "path": "../map/tiles/terrain.png",
+      "sha256": "bfcc09cbe13573c3363d343272bf29926f950aa50b005d091ca8f52a880532db",
+      "bytes": 667
+    },
+    {
+      "path": "../map/tiles/path.tileset.json",
+      "sha256": "80b8f6895090b0415974ce45e583920aa3fd810780b25b201472fe84483205d2",
+      "bytes": 4873
+    },
+    {
+      "path": "../map/tiles/path.png",
+      "sha256": "b8f78453de7b8e9f54924657005e121b3ad80ccf78db81a0f2fd9b2c0c464405",
+      "bytes": 599
+    },
+    {
+      "path": "../map/art/backdrop.png",
+      "sha256": "2f10109f2846131dcf9b3b92e528124b118ea8eb94fcad22b7c636d23966dca2",
+      "bytes": 440
+    },
+    {
+      "path": "../map/layers/ground.csv",
+      "sha256": "963e55df716aaa6e7470a42ca4f528ea13cbd3d89610c17a25bf1c5bde7b2ecb",
+      "bytes": 290
+    },
+    {
+      "path": "../map/materials.png",
+      "sha256": "21d675e691a801cc1ff288164b6f670b1b2df861acc56478852280c5acbd64d2",
+      "bytes": 102
+    }
+  ],
+  "outputs": [
+    {
+      "path": "preview.html",
+      "sha256": "d0d5c2f62f615a034ed54555e589e455fa777410d9b00e4295e15047ae5b03ab",
+      "bytes": 84827
+    }
+  ],
+  "tool": {"name": "build_scene_preview", "version": "1.0"},
+  "preview": {
+    "file": "preview.html",
+    "bytes": 84827,
+    "sha256": "d0d5c2f62f615a034ed54555e589e455fa777410d9b00e4295e15047ae5b03ab",
+    "runtime": {
+      "file": "map-runtime.mjs",
+      "version": "1.0.0",
+      "sha256": "6185cb177cda5552135d91c209074e2d354728f2b95041215daf0541a9031de0"
+    },
+    "world": [192, 128],
+    "zoom": 4,
+    "speed": 60.0,
+    "actorHeight": 18.0,
+    "actorRadius": 4,
+    "ySquash": 1.0,
+    "start": "start",
+    "layers": [
+      {"name": "backdrop", "source": "image", "size": [192, 128]},
+      {"name": "ground", "source": "tiles", "size": [192, 128]},
+      {"name": "decoration", "source": "tiles", "size": [192, 128]},
+      {"name": "props", "source": "objects"}
+    ],
+    "drawOrder": ["tree-2", "rock-1", "bush-1", "bush-2", "tree-1"],
+    "objectArt": {
+      "object.image": 0,
+      "prop-pack": 0,
+      "occluder.source": 1,
+      "missing": ["rock-1", "bush-1", "bush-2", "tree-1"]
+    },
+    "counts": {"objects": 5, "portals": 2, "spawns": 2, "interactions": 2, "anchors": 1},
+    "images": {"count": 4, "bytes": 3248},
+    "materialMap": {
+      "size": [12, 8],
+      "cell": [16.0, 16.0],
+      "blockedCells": 2,
+      "pixelsPerMaterial": {"meadow": 93, "lava": 2, "pool": 1},
+      "unclassified": 0
+    },
+    "hashes": {"checked": 7, "unchecked": 1}
+  },
+  "warnings": [
+    "objects[0] (tree-1): no art (object image, prop pack label or occluder source); drawn as a magenta post.",
+    "objects[2] (rock-1): no art (object image, prop pack label or occluder source); drawn as a magenta post.",
+    "objects[3] (bush-1): no art (object image, prop pack label or occluder source); drawn as a magenta post.",
+    "objects[4] (bush-2): no art (object image, prop pack label or occluder source); drawn as a magenta post."
+  ],
+  "verify": {"status": "not-requested"}
+}

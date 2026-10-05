@@ -2,6 +2,12 @@
   "cases": [
     {"why": "v2 items carry anchor_px", "remove": "/accepted/0/anchor_px"},
     {"why": "rejected is mandatory", "remove": "/rejected"},
-    {"why": "Windows path", "set": "/accepted/0/image", "value": "C:\\props\\tree.png"}
+    {"why": "Windows path", "set": "/accepted/0/image", "value": "C:\\props\\tree.png"},
+    {
+      "why": "layout modes are grid, explicit_boxes or auto_boxes",
+      "set": "/layout_mode",
+      "value": "magic",
+      "error": "'magic' is not one of"
+    }
   ]
 }

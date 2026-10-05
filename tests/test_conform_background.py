@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
+from forge_testutils import (assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli,
                              script_path)
 
 
@@ -19,59 +19,11 @@ CONFORM = load_script("generate2dmap", "conform_background")
 SCRIPT = script_path("generate2dmap", "conform_background")
 SKILL = "generate2dmap"
 
-# The $def this module asks integration to add to map.schema.json (handoff section 5), applied in memory.
-_BOX = {"$ref": "common.schema.json#/$defs/box"}
-_SIZE = {"$ref": "common.schema.json#/$defs/size2"}
-REQUESTED_MAP_DEFS = {
-    "conform_v1": {
-        "description": "conform_background.py conform: how a background was cropped and uniformly scaled to the "
-                       "output, so points map both ways: out = (src - src_rect[0:2]) * scale.",
-        "type": "object", "required": ["schema", "mode", "source", "output", "transform", "qa"],
-        "properties": {
-            "schema": {"const": "generate2dmap.conform.v1"},
-            "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "mode": {"enum": ["cover", "ground-fit"]},
-            "source": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
-                       "properties": {"size": _SIZE, "source_mode": {"type": "string"}}},
-            "output": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}], "properties": {"size": _SIZE}},
-            "transform": {"type": "object", "required": ["scale", "src_rect", "out_size", "resampler", "map"],
-                          "properties": {
-                              "scale": {"type": "number", "exclusiveMinimum": 0}, "src_rect": _BOX, "out_size": _SIZE,
-                              "resampler": {"enum": ["lanczos", "bicubic", "box", "nearest"]},
-                              "focus": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1},
-                                        "minItems": 2, "maxItems": 2},
-                              "map": {"type": "string"}, "inverse": {"type": "string"},
-                              "zoom_vs_cover": {"type": "number", "exclusiveMinimum": 0},
-                              "dropped_source_px": {"type": "object"},
-                              "ground": {"type": "object", "required": ["source_y", "output_y"],
-                                         "properties": {"source_y": {"type": "number"},
-                                                        "output_y": {"type": "number"}}}}},
-            "subjects": {"type": "array", "items": {"type": "object", "required": ["id", "source_box", "output_box"],
-                                                    "properties": {"id": {"type": "string", "minLength": 1},
-                                                                   "source_box": _BOX, "output_box": _BOX}}},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-            "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-        },
-        "if": {"properties": {"mode": {"const": "ground-fit"}}, "required": ["mode"]},
-        "then": {"properties": {"transform": {"required": ["ground"]}}},
-    },
-}
-
-
+# handoff/B12-map-compose-parallax.md section 5 is integrated into shared/schemas/map.schema.json; the tests
+# validate against the vendored generate2dmap copy.
 def requested_contract_errors(document, name="conform_v1"):
-    """Errors against the vendored generate2dmap schemas plus REQUESTED_MAP_DEFS (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def conform_cli(*arguments):

@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "why": "material indices are whole and not negative",
+      "set": "/data/0/0",
+      "value": -1,
+      "error": "-1 is less than the minimum of 0"
+    },
+    {
+      "why": "a grid has at least 2 x 2 vertices",
+      "set": "/data",
+      "value": [[0, 0]],
+      "error": "is too short"
+    },
+    {"why": "materials are named", "set": "/materials", "value": [], "error": "should be non-empty"},
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.vertex_grid.v2",
+      "error": "was expected"
+    }
+  ]
+}

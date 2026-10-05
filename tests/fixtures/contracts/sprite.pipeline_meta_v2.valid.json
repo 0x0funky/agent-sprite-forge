@@ -23,7 +23,7 @@
     "pad_offset": [0, 0]
   },
   "hygiene": {"mode": "both", "floor": 4, "floor_px": 12, "detached_px": 3, "detached_components": 1},
-  "profile_applied": {"name": "fox", "version": 2, "overrides": []},
+  "profile_applied": {"name": "fox", "version": 2, "applied": {"cell_size": 64, "fit_scale": 0.85}, "overrides": []},
   "provenance": {
     "input_sha256": "566fc07c42bea8ac81ecd163dd130f336114bd30c8a63c8f4b8ec9562f125671",
     "source_mode": "RGBA",

@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "at most 256 motes",
+      "set": "/count",
+      "value": 1000,
+      "error": "1000 is greater than the maximum of 256"
+    },
+    {
+      "why": "the radius is [start, end]",
+      "set": "/radius",
+      "value": 2,
+      "error": "2 is not of type 'array'"
+    },
+    {
+      "why": "presets refuse unknown parameters",
+      "set": "/wind",
+      "value": 1,
+      "error": "Additional properties are not allowed"
+    }
+  ]
+}

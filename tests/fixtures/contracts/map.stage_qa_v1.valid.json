@@ -1,0 +1,190 @@
+{
+  "schema": "generate2dmap.stage_qa.v1",
+  "status": "fail",
+  "method": "validate_stage: stage.v1 structure and cross-field rules; even-odd point-in-polygon tests of each slot and approach point plus 8 footprint-ellipse samples against ground polygons, walk-protected regions and ripple polygons; pixel-centre rasters for effect overlaps; a greedy grid-search layout solver per aspect (cover/contain projection, UI panels, scale ladder, foot-y draw order).",
+  "notProven": [
+    "Geometry is checked against the stage's own polygons; the tool does not see whether the painted plate really has dry, open ground there. Look at stage-overlay.png and the layout renders.",
+    "Actor boxes are rectangles of the given height, aspect and foot anchor, not real silhouettes; the UI panels are the chosen profile, not the game's own HUD unless --ui gives it.",
+    "Layouts are solved at reference viewports (720 px high, 390 px wide in portrait) with the stage's fit and objectPosition; other projections, safe-area insets and depth-dependent actor scale are not modelled.",
+    "A solved layout is one valid answer from a greedy search; the game's own layout code must still place actors on ground (run it, or compare with the solved feet)."
+  ],
+  "checks": [
+    {"id": "ground polygons are simple", "status": "pass", "value": null, "threshold": null}
+  ],
+  "inputs": [
+    {
+      "path": "../src/stage.json",
+      "sha256": "59d6054c366cd0e25f9d55b5fa89f673c302f84767f4e4be9f33a41d773d3daa",
+      "bytes": 759
+    },
+    {
+      "path": "../src/battle.png",
+      "sha256": "373aefae2516919ae4614b68b02052dfa02dcd78feb42aae52444f777bfd6747",
+      "bytes": 692
+    }
+  ],
+  "outputs": [
+    {
+      "path": "stage-overlay.png",
+      "sha256": "96b56f314828335817cc6f0076829999595d750f6eaa71d2b62bdba57927605d",
+      "bytes": 21384
+    },
+    {
+      "path": "layout-4x3.png",
+      "sha256": "5be8e06e8a90f7a50d88c636c6a33fa0787d7b3f4d75a41462418153e5d31264",
+      "bytes": 32827
+    },
+    {
+      "path": "layout-4x3-boss.png",
+      "sha256": "e174ed67f81a14aca3f5027851bc349e2c77bda2e940a4f96796c76f1141a8da",
+      "bytes": 31248
+    },
+    {
+      "path": "layout-16x9.png",
+      "sha256": "3eebd454c44c0f51bed352aed81b19a22195cb471d2e6e7148327f4805591fd2",
+      "bytes": 35651
+    },
+    {
+      "path": "layout-16x9-boss.png",
+      "sha256": "5b85bdca962ea52512f0e8c906384f2e7bbec856028b49fb2f0e555370157ed0",
+      "bytes": 34572
+    },
+    {
+      "path": "layout-21x9.png",
+      "sha256": "09f18d1e0bcd579d4b09668f4bcfcbe5f4da5ddeaea2dcef1dacb9362e6e2817",
+      "bytes": 39755
+    },
+    {
+      "path": "layout-21x9-boss.png",
+      "sha256": "fdd61551bd546ebf3188083b75078ea050a2fb7473ec4fdcabe5876e4558eba8",
+      "bytes": 36437
+    },
+    {
+      "path": "layout-9x19.5.png",
+      "sha256": "b4329c2e0ae69d611f1dfceea7cd18faeccf13ff7b56ea0eb6c12b8fe52af8c3",
+      "bytes": 23408
+    },
+    {
+      "path": "layout-9x19.5-boss.png",
+      "sha256": "8593a6f43b4045dd66995a767252d99ed2db355d3184a0aa710bd947272aac95",
+      "bytes": 18800
+    }
+  ],
+  "tool": {"name": "validate_stage", "version": "1.0"},
+  "stage": {
+    "sourceSize": [334, 188],
+    "fit": "cover",
+    "reviewedAspectRange": [1.3333, 2.3333],
+    "objectPosition": [0.5, 0.5],
+    "slots": 6
+  },
+  "settings": {
+    "footRadius": 0.01,
+    "ySquash": 0.58,
+    "minScale": 0.5,
+    "actors": {
+      "hero": {"height": 0.2, "aspect": 1.0, "anchor": [0.5, 0.96]},
+      "enemy": {"height": 0.18, "aspect": 1.0, "anchor": [0.5, 0.96]},
+      "boss": {"height": 0.4, "aspect": 1.0, "anchor": [0.5, 0.96]}
+    },
+    "ui": "battle",
+    "minActorPx": 38
+  },
+  "layouts": [
+    {
+      "aspect": "4:3",
+      "ratio": 1.333,
+      "formation": "party-vs-enemies",
+      "render": "layout-4x3.png",
+      "viewport": [960, 720],
+      "fit": "cover",
+      "scale": 3.83,
+      "offset": [-159.574, 0.0],
+      "visibleUv": [0.125, 0.0, 0.875, 1.0],
+      "ui": [
+        {"id": "top", "box": [19.2, 25.2, 748.8, 115.2]},
+        {"id": "party", "box": [768.0, 25.2, 940.8, 244.8]},
+        {"id": "command", "box": [768.0, 324.0, 940.8, 612.0]},
+        {"id": "detail", "box": [768.0, 619.2, 940.8, 698.4]},
+        {"id": "targets", "box": [19.2, 612.0, 384.0, 698.4]},
+        {"id": "log", "box": [19.2, 576.0, 364.8, 604.8]}
+      ],
+      "actors": [
+        {
+          "id": "H1",
+          "role": "hero",
+          "slot": [0.69, 0.8],
+          "desired": [730.366, 576.0],
+          "foot": [684.278, 576.0],
+          "footUv": [0.66, 0.8],
+          "box": [612.278, 437.76, 756.278, 581.76],
+          "sizePx": 144.0,
+          "scale": 1.0,
+          "placed": true,
+          "grounded": true,
+          "movedPx": 46.088
+        },
+        {
+          "id": "H2",
+          "role": "hero",
+          "slot": [0.78, 0.88],
+          "desired": [845.489, 633.6],
+          "foot": [684.278, 633.6],
+          "footUv": [0.66, 0.88],
+          "box": [612.278, 495.36, 756.278, 639.36],
+          "sizePx": 144.0,
+          "scale": 1.0,
+          "placed": true,
+          "grounded": true,
+          "movedPx": 161.211
+        },
+        {
+          "id": "E1",
+          "role": "enemy",
+          "slot": [0.25, 0.78],
+          "desired": [167.54, 561.6],
+          "foot": [167.54, 561.6],
+          "footUv": [0.256, 0.78],
+          "box": [103.04, 437.76, 232.04, 566.76],
+          "sizePx": 129.0,
+          "scale": 1.0,
+          "placed": true,
+          "grounded": true,
+          "movedPx": 0.0
+        },
+        {
+          "id": "E2",
+          "role": "enemy",
+          "slot": [0.18, 0.86],
+          "desired": [78.0, 619.2],
+          "foot": [78.0, 558.277],
+          "footUv": [0.186, 0.775],
+          "box": [13.5, 434.437, 142.5, 563.437],
+          "sizePx": 129.0,
+          "scale": 1.0,
+          "placed": true,
+          "grounded": true,
+          "movedPx": 60.923
+        },
+        {
+          "id": "E3",
+          "role": "enemy",
+          "slot": [0.32, 0.9],
+          "desired": [257.081, 648.0],
+          "foot": [312.089, 558.277],
+          "footUv": [0.369, 0.775],
+          "box": [247.589, 434.437, 376.589, 563.437],
+          "sizePx": 129.0,
+          "scale": 1.0,
+          "placed": true,
+          "grounded": true,
+          "movedPx": 105.243
+        }
+      ],
+      "drawOrder": ["E2", "E3", "E1", "H1", "H2"],
+      "overlaps": [["H1", "H2"], ["E1", "E2"]],
+      "errors": []
+    }
+  ],
+  "warnings": []
+}

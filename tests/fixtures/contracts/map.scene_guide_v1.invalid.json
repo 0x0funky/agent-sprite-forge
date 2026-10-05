@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "percentages are whole numbers up to 100",
+      "set": "/percent/ground/box/2",
+      "value": 120,
+      "error": "120 is greater than the maximum of 100"
+    },
+    {
+      "why": "slot roles are hero, enemy or boss",
+      "set": "/percent/slots/0/role",
+      "value": "npc",
+      "error": "'npc' is not one of"
+    },
+    {
+      "why": "the guide image is bound by sha256",
+      "remove": "/guide/sha256",
+      "error": "'sha256' is a required property"
+    },
+    {
+      "why": "the plan's own check is a QA envelope",
+      "set": "/qa",
+      "value": {"status": "pass"},
+      "error": "'method' is a required property"
+    }
+  ]
+}

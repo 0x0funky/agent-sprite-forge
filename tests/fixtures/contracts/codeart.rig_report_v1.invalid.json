@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "routes are pixel or vector",
+      "set": "/route",
+      "value": "raster",
+      "error": "'raster' is not one of"
+    },
+    {
+      "why": "clips record their entry frame",
+      "remove": "/clips/walk/entry_frame",
+      "error": "'entry_frame' is a required property"
+    },
+    {
+      "why": "frame files are relative",
+      "set": "/clips/walk/frames/0/file",
+      "value": "C:/out/walk-00.png",
+      "error": "does not match"
+    },
+    {
+      "why": "qa is the envelope of codeart-meta.json",
+      "set": "/qa",
+      "value": {"status": "pass"},
+      "error": "'method' is a required property"
+    }
+  ]
+}
