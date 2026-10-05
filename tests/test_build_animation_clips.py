@@ -21,8 +21,8 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (FIXTURES_DIR, SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script,
-                             run_cli, script_path)
+from forge_testutils import (FIXTURES_DIR, REPO_ROOT, SKILLS_DIR, assert_cli_help, assert_valid_contract,
+                             load_script, run_cli, script_path)
 
 MODULE = load_script("generate2dsprite", "build_animation_clips")
 SCRIPT = script_path("generate2dsprite", "build_animation_clips")
@@ -527,6 +527,16 @@ class V1CompatibilityTests(_Bundle):
         self.assertNotIn("pixel_art", result)
         self.assertEqual(self.lint_codes(result), ["v2_field_ignored", "v2_field_ignored"])
 
+    @unittest.skipUnless((REPO_ROOT / "handoff" / "B02-frames-and-clips.md").is_file(),
+                         "handoff/ is removed once integration applies the requests")
+    def test_handoff_requests_match_the_validated_proposal(self) -> None:
+        text = (REPO_ROOT / "handoff" / "B02-frames-and-clips.md").read_text(encoding="utf-8")
+        section = text.split("## 5. Schema change requests", 1)[1].split("## 6.", 1)[0]
+        blocks = [json.loads(block.split("```", 1)[0]) for block in section.split("```json\n")[1:]]
+        self.assertEqual(blocks[2:], [fragment for _, fragment in CLIPS_SCHEMA_PATCH])  # requests C to G, in order
+        for pointer, _ in CLIPS_SCHEMA_PATCH:
+            self.assertIn(f"`{pointer}`", section)
+
     def test_contract_fixtures_still_validate_with_the_proposal(self) -> None:
         folder = FIXTURES_DIR / "contracts"
         for name, definition in (("sprite.animation_clips_v2.valid.json", "animation_clips_v2"),
@@ -944,6 +954,35 @@ class PreviewEncoderTests(_Bundle):
             with self.assertRaisesRegex(ValueError, "WebP changed alpha/visible RGB"):
                 self.build(self.opaque_block_contract())
         self.assert_unpublished()
+
+
+class DocumentationTests(_Bundle):
+    """The manifests shown in references/frames-and-clips.md stay valid and build without warnings."""
+
+    def documented_manifests(self) -> list[dict]:
+        text = (SKILLS_DIR / "generate2dsprite" / "references" / "frames-and-clips.md").read_text(encoding="utf-8")
+        blocks = [block for block in text.split("```json\n")[1:]]
+        return [json.loads(block.split("```", 1)[0]) for block in blocks if '"anchor_px"' in block]
+
+    def test_documented_manifests_validate_and_build_clean(self) -> None:
+        manifests = self.documented_manifests()
+        self.assertEqual([manifest["schema"] for manifest in manifests],
+                         ["generate2dsprite.animation_clips.v1", V2])
+        for manifest in manifests:
+            with self.subTest(schema=manifest["schema"]):
+                assert_valid_contract(manifest, "sprite", "clips_input", skill="generate2dsprite")
+                folder = self.root / manifest["schema"]
+                anchor_x, anchor_y = manifest["anchor_px"]
+                canvas = (int(2 * anchor_x), int(anchor_y) + 10)  # the root sits on the canvas's centre line
+                for index, entry in enumerate(manifest["frames"]):
+                    path = folder / (entry if isinstance(entry, str) else entry["file"])
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    walker(index % 4, canvas, offset=index % 3).save(path)
+                manifest_path = folder / "clips.json"
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                result = MODULE.build(manifest_path, folder / "out")
+                self.assertEqual(result["diagnostics"]["lint"], [])
+                assert_clips_contract(self, result)
 
 
 class CliTests(_Bundle):

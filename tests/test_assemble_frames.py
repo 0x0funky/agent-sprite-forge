@@ -22,7 +22,7 @@ import zlib
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, load_script, make_magenta_sheet, real_fixture,
+from forge_testutils import (REPO_ROOT, SKILLS_DIR, assert_cli_help, load_script, make_magenta_sheet, real_fixture,
                              run_cli, script_path)
 
 MODULE = load_script("generate2dsprite", "assemble_frames")
@@ -162,6 +162,39 @@ def proposed_validator(domain: str, name: str):
 def assert_contract(test: unittest.TestCase, document: object, domain: str, name: str) -> None:
     errors = [f"{error.json_path}: {error.message}" for error in proposed_validator(domain, name).iter_errors(document)]
     test.assertEqual(errors, [], f"{domain}/{name} violations")
+
+
+HANDOFF = REPO_ROOT / "handoff" / "B02-frames-and-clips.md"
+
+
+def handoff_schema_blocks() -> list[object]:
+    """The JSON fragments of the handoff's section 5, in order (A to G)."""
+    section = HANDOFF.read_text(encoding="utf-8").split("## 5. Schema change requests", 1)[1].split("## 6.", 1)[0]
+    return [json.loads(block.split("```", 1)[0]) for block in section.split("```json\n")[1:]]
+
+
+class SchemaProposalTests(unittest.TestCase):
+    @unittest.skipUnless(HANDOFF.is_file(), "handoff/ is removed once integration applies the requests")
+    def test_handoff_requests_match_the_validated_proposal(self) -> None:
+        blocks = handoff_schema_blocks()
+        self.assertEqual(blocks[:2], [PROPOSED_COMMON_DEFS, PROPOSED_SPRITE_DEFS])
+
+    def test_cfed170_full_frames_v1_document_stays_valid(self) -> None:
+        legacy = {
+            "schema": "generate2dsprite.full_frames.v1", "output_directory": "C:/work/output", "frame_size": [7, 5],
+            "source_frame_count": 1, "sequence": [0], "duration_ms": 250, "total_duration_ms": 250, "loop": 0,
+            "sources": [{"path": "C:/work/one.png", "file_sha256": "0" * 64, "bytes": 90, "size": [7, 5], "mode": "RGB"}],
+            "frames": [{"index": 0, "file": "frames/frame-00.png", "source_index": 0, "size": [7, 5], "mode": "RGB",
+                        "file_sha256": "1" * 64, "rgba_pixel_sha256": "2" * 64}],
+            "atlas": {"file": "atlas.png", "size": [7, 5], "rows": 1, "cols": 1, "file_sha256": "3" * 64,
+                      "rgba_pixels_exact": True},
+            "webp": {"file": "animation.webp", "total_duration_ms": 250, "timeline_verified": True, "loop": 0},
+            "transitions": [{"from_sequence_position": 0, "to_sequence_position": 0, "from_frame": 0, "to_frame": 0,
+                             "wrap": True}],
+            "static_regions": {}, "provenance": {"user_manifest": None, "user_assertions_verified": False},
+            "validation": {"visual_approval": False}, "processing": {"resized": False},
+        }
+        assert_contract(self, legacy, "sprite", "full_frames_v2")
 
 
 class AssembleFramesTests(unittest.TestCase):
@@ -500,6 +533,14 @@ class ChromaAndCropBoxTests(_Workspace):
         self.assertEqual((checks["chroma_key_backdrop"]["status"], checks["chroma_key_backdrop"]["value"]), ("warn", 1))
         self.assertEqual(int(self.read_frame(0)[..., 3].min()), 255)  # nothing near the key: nothing keyed
         self.assertEqual(result["qa"]["status"], "warn")
+
+    def test_documented_crop_box_example_is_valid(self) -> None:
+        text = (SKILLS_DIR / "generate2dsprite" / "references" / "frames-and-clips.md").read_text(encoding="utf-8")
+        blocks = [block.split("```", 1)[0] for block in text.split("```json\n")[1:]]
+        example = json.loads(next(block for block in blocks if '"items"' in block))
+        assert_contract(self, example, "common", "cropBoxes")
+        boxes, form = MODULE.parse_crop_boxes(example, (768, 512))
+        self.assertEqual((form, [item_id for item_id, _ in boxes]), ("items", ["walk-0", "walk-1"]))
 
     def test_legacy_crop_box_aliases_give_the_same_frames(self) -> None:
         sheet = self.png("sheet.png", make_magenta_sheet(1, 2, 32))
