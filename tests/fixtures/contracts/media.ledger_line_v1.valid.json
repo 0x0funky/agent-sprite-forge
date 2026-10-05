@@ -1,0 +1,15 @@
+{
+  "schema": "generate2dmedia.ledger_line.v1",
+  "ts": "2026-10-05T04:15:40Z",
+  "jobDir": "jobs/potion-01",
+  "fingerprint": "44863b03e9909b7100e05b02526909a346fd7455183f6619e0fe6198c89981e0",
+  "provider": "openai",
+  "model": "gpt-image-1",
+  "kind": "image",
+  "route": "rest",
+  "reservedUsd": 0.04,
+  "actualUsd": null,
+  "status": "reserved",
+  "quotaCall": false,
+  "reservationId": "r-0001"
+}

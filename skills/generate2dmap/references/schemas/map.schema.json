@@ -1,0 +1,726 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/map.schema.json",
+  "title": "generate2dmap contracts",
+  "description": "Frozen contracts, version 1, for prop packs, placements, playable map bundles, tilesets, HD-2D stages, masked motion, lights, atmosphere, side-scroll layouts, room chunks and parallax plans. World coordinates are map or plate pixels with y pointing down; stage, light and slot coordinates are UV in [0, 1]. Collision semantics follow plan Appendix C. v1 prop packs, placements, parallax plans and map_bundle.v1 stay readable. Objects stay open (additionalProperties true).",
+  "$defs": {
+    "uvPoint": {
+      "description": "A [u, v] position as fractions of the source image width and height.",
+      "type": "array",
+      "items": {"type": "number", "minimum": 0, "maximum": 1},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "uvPolygon": {
+      "description": "A closed polygon of at least three UV vertices.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/uvPoint"},
+      "minItems": 3
+    },
+    "uvBox": {
+      "description": "A half-open UV box [u0, v0, u1, v1).",
+      "type": "array",
+      "items": {"type": "number", "minimum": 0, "maximum": 1},
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "footprint": {
+      "description": "Ground contact area of a prop in its own image pixels: width across, depth along the ground, offset [dx, dy] from anchor_px, rotate in degrees, basis naming the measuring space. Scaled once by the instance scale; never inflated again for actor size.",
+      "type": "object",
+      "required": ["shape"],
+      "properties": {
+        "shape": {"enum": ["ellipse", "rect", "none"]},
+        "width": {"type": "number", "minimum": 0},
+        "depth": {"type": "number", "minimum": 0},
+        "offset": {"$ref": "common.schema.json#/$defs/point2"},
+        "rotate": {"type": "number"},
+        "basis": {"type": "string", "minLength": 1}
+      },
+      "if": {"properties": {"shape": {"enum": ["ellipse", "rect"]}}, "required": ["shape"]},
+      "then": {"required": ["width", "depth"]}
+    },
+    "propItem": {
+      "description": "One extracted prop. source_rect and cell_box are half-open boxes in sheet pixels; padding is what was actually applied; anchor_px is in the prop image.",
+      "type": "object",
+      "properties": {
+        "label": {"type": "string", "minLength": 1},
+        "display_name": {"type": "string", "minLength": 1},
+        "image": {"$ref": "common.schema.json#/$defs/relPath"},
+        "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "source_rect": {"$ref": "common.schema.json#/$defs/box"},
+        "cell_box": {"$ref": "common.schema.json#/$defs/box"},
+        "padding": {"$ref": "common.schema.json#/$defs/padding4"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "footprint": {"$ref": "#/$defs/footprint"},
+        "solid": {"type": "boolean"},
+        "contact": true,
+        "occlusion_class": {"enum": ["low", "tall", "foreground"]},
+        "occupant_policy": {"enum": ["y_sort", "rear_shift_and_fade", "static_front", "static_back"]},
+        "dropped_components": {"type": "integer", "minimum": 0},
+        "dropped_area": {"type": "integer", "minimum": 0},
+        "status": {"enum": ["accepted", "placeholder"]}
+      }
+    },
+    "prop_pack_v2": {
+      "description": "prop-pack.json from extract_prop_pack.py. v1 manifests (no schema key) stay readable; with schema generate2dmap.prop_pack.v2 every accepted item is fully registered.",
+      "type": "object",
+      "required": ["accepted", "rejected"],
+      "properties": {
+        "schema": {"const": "generate2dmap.prop_pack.v2"},
+        "source_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "source_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "background_mode": {"type": "string", "minLength": 1},
+        "accepted": {"type": "array", "items": {"$ref": "#/$defs/propItem"}},
+        "rejected": {"type": "array", "items": {"type": "object"}},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"}
+      },
+      "if": {"required": ["schema"]},
+      "then": {
+        "properties": {
+          "accepted": {
+            "items": {"required": ["label", "display_name", "image", "sha256", "source_rect", "cell_box", "padding", "anchor_px", "dropped_components", "dropped_area", "status"]}
+          }
+        }
+      }
+    },
+    "placement": {
+      "description": "One placed sprite. anchor manifest takes anchor_px from the prop-pack manifest; px uses anchorPx in source pixels; the other names are the cfed170 box anchors. path is the v1 alias of image; v1 readers default a missing x or y to 0.",
+      "type": "object",
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "image": {"$ref": "common.schema.json#/$defs/relPath"},
+        "path": {"$ref": "common.schema.json#/$defs/relPath"},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "w": {"type": "number", "exclusiveMinimum": 0},
+        "h": {"type": "number", "exclusiveMinimum": 0},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "anchor": {"enum": ["manifest", "px", "top-left", "center", "bottom-left", "center-bottom"]},
+        "anchorPx": {"$ref": "common.schema.json#/$defs/point2"},
+        "sortY": {"type": "number"},
+        "layer": {"type": "string", "minLength": 1},
+        "resampler": {"enum": ["nearest", "lanczos"]},
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "anyOf": [{"required": ["image"]}, {"required": ["path"]}],
+      "if": {"properties": {"anchor": {"const": "px"}}, "required": ["anchor"]},
+      "then": {"required": ["anchorPx"]}
+    },
+    "placementV2": {
+      "description": "A v2 placement: id, image, position, anchor (manifest or px) and render layer are explicit.",
+      "allOf": [{"$ref": "#/$defs/placement"}],
+      "required": ["id", "image", "x", "y", "anchor", "layer"],
+      "properties": {"anchor": {"enum": ["manifest", "px"]}}
+    },
+    "placements_v2": {
+      "description": "Placements for compose_layered_preview.py, grouped into props, objects, actors and foreground (drawn last). v1 input (no schema key, or a bare list) stays readable.",
+      "anyOf": [
+        {"type": "array", "items": {"$ref": "#/$defs/placement"}},
+        {
+          "type": "object",
+          "properties": {
+            "schema": {"const": "generate2dmap.placements.v2"},
+            "props": {"type": "array", "items": {"$ref": "#/$defs/placement"}},
+            "objects": {"type": "array", "items": {"$ref": "#/$defs/placement"}},
+            "actors": {"type": "array", "items": {"$ref": "#/$defs/placement"}},
+            "foreground": {"type": "array", "items": {"$ref": "#/$defs/placement"}}
+          },
+          "anyOf": [{"required": ["props"]}, {"required": ["objects"]}, {"required": ["actors"]}, {"required": ["foreground"]}],
+          "if": {"required": ["schema"]},
+          "then": {
+            "properties": {
+              "props": {"items": {"$ref": "#/$defs/placementV2"}},
+              "objects": {"items": {"$ref": "#/$defs/placementV2"}},
+              "actors": {"items": {"$ref": "#/$defs/placementV2"}},
+              "foreground": {"items": {"$ref": "#/$defs/placementV2"}}
+            }
+          }
+        }
+      ]
+    },
+    "solid": {
+      "description": "A blocking shape in world pixels (tile pixels inside a tileset). rect: top-left x, y plus w, h. ellipse: centre cx, cy, radii rx, ry, optional rotate in degrees. polygon: points.",
+      "type": "object",
+      "required": ["shape"],
+      "properties": {
+        "shape": {"enum": ["rect", "ellipse", "polygon"]},
+        "id": {"type": "string", "minLength": 1}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"shape": {"const": "rect"}}, "required": ["shape"]},
+          "then": {
+            "required": ["x", "y", "w", "h"],
+            "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number", "minimum": 0}, "h": {"type": "number", "minimum": 0}}
+          }
+        },
+        {
+          "if": {"properties": {"shape": {"const": "ellipse"}}, "required": ["shape"]},
+          "then": {
+            "required": ["cx", "cy", "rx", "ry"],
+            "properties": {"cx": {"type": "number"}, "cy": {"type": "number"}, "rx": {"type": "number", "minimum": 0}, "ry": {"type": "number", "minimum": 0}, "rotate": {"type": "number"}}
+          }
+        },
+        {
+          "if": {"properties": {"shape": {"const": "polygon"}}, "required": ["shape"]},
+          "then": {"required": ["points"], "properties": {"points": {"$ref": "common.schema.json#/$defs/polygon"}}}
+        }
+      ]
+    },
+    "collision": {
+      "description": "Walkability per Appendix C: the actor footprint is an ellipse with rx = actorRadius and ry = actorRadius * ySquash (default 1.0; 0.58 on HD-2D plates). A point is valid inside a walk region (outside its holes), or inside the map when there are none, and outside every solid. rects are merged blocked rectangles [x, y, w, h].",
+      "type": "object",
+      "required": ["actorRadius"],
+      "properties": {
+        "actorRadius": {"type": "number", "minimum": 0},
+        "ySquash": {"type": "number", "exclusiveMinimum": 0, "default": 1.0},
+        "walkRegions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["polygon"],
+            "properties": {
+              "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
+              "holes": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/polygon"}}
+            }
+          }
+        },
+        "solids": {"type": "array", "items": {"$ref": "#/$defs/solid"}},
+        "rects": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/rectXYWH"}}
+      }
+    },
+    "portal": {
+      "description": "An exit trigger: exactly one of rect [x, y, w, h] or circle [cx, cy, r]. to is the destination (map id plus spawn or anchor). intent exits fire within radius when dot(intent, travelDirection) > 0.25; arrival spawns sit outside their own trigger, which stays latched until the actor leaves.",
+      "type": "object",
+      "required": ["id", "to"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "rect": {"$ref": "common.schema.json#/$defs/rectXYWH"},
+        "circle": {
+          "type": "array",
+          "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number", "minimum": 0}],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "to": {"type": "string", "minLength": 1},
+        "activation": {"enum": ["crossing", "intent"]},
+        "travelDirection": {"$ref": "common.schema.json#/$defs/point2"},
+        "radius": {"type": "number", "minimum": 0},
+        "entranceByFrom": {"type": "object"},
+        "latch": {"type": "boolean"},
+        "requiresMovement": {"type": "boolean"}
+      },
+      "oneOf": [{"required": ["rect"]}, {"required": ["circle"]}],
+      "if": {"properties": {"activation": {"const": "intent"}}, "required": ["activation"]},
+      "then": {"required": ["travelDirection", "radius"]}
+    },
+    "mapLayer": {
+      "description": "A render layer: tiles layers reference tile indices in data (a CSV/JSON path or an inline grid), image layers an image, objects layers the bundle objects.",
+      "type": "object",
+      "required": ["name", "kind"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["tiles", "image", "objects"]},
+        "data": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"type": "array"}]},
+        "image": {"$ref": "common.schema.json#/$defs/relPath"},
+        "tileset": {"type": "string", "minLength": 1},
+        "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "tiles"}}, "required": ["kind"]}, "then": {"required": ["data"]}},
+        {"if": {"properties": {"kind": {"const": "image"}}, "required": ["kind"]}, "then": {"required": ["image"]}}
+      ]
+    },
+    "mapObject": {
+      "description": "A placed prop instance in world pixels: (x, y) is where the prop's anchor_px lands; sortY orders drawing; footprint comes from the prop and is scaled once by scale.",
+      "type": "object",
+      "required": ["id", "prop", "x", "y", "anchor_px"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "prop": {"type": "string", "minLength": 1},
+        "x": {"type": "number"},
+        "y": {"type": "number"},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "footprint": {"$ref": "#/$defs/footprint"},
+        "solid": {"type": "boolean"},
+        "contact": true,
+        "sortY": {"type": "number"},
+        "occlusion": {"type": "string", "minLength": 1},
+        "occluder": {
+          "type": "object",
+          "required": ["alphaThreshold", "source"],
+          "properties": {
+            "alphaThreshold": {"type": "integer", "minimum": 0, "maximum": 255},
+            "source": {"$ref": "common.schema.json#/$defs/relPath"}
+          }
+        },
+        "animatedParts": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "map_bundle_v2": {
+      "description": "A playable map: geometry, layers, objects, collision, portals, spawns, anchors and interactions, all from data. Paths are relative to the bundle file and may carry sha256. generate2dmap.map_bundle.v1 is still read (only its schema key is checked here). A v2 bundle with any tiles layer needs tile_size and tilesets.",
+      "type": "object",
+      "required": ["schema"],
+      "properties": {
+        "schema": {"enum": ["generate2dmap.map_bundle.v1", "generate2dmap.map_bundle.v2"]},
+        "tile_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/size2"}]},
+        "world": {
+          "type": "object",
+          "required": ["width", "height", "unit"],
+          "properties": {
+            "width": {"type": "number", "exclusiveMinimum": 0},
+            "height": {"type": "number", "exclusiveMinimum": 0},
+            "unit": {"const": "px"}
+          }
+        },
+        "terrain": {
+          "type": "object",
+          "required": ["vertex_grid", "materials"],
+          "properties": {
+            "vertex_grid": {"$ref": "common.schema.json#/$defs/relPath"},
+            "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+          }
+        },
+        "tilesets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "manifest"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "manifest": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+            }
+          }
+        },
+        "layers": {"type": "array", "items": {"$ref": "#/$defs/mapLayer"}},
+        "objects": {"type": "array", "items": {"$ref": "#/$defs/mapObject"}},
+        "collision": {"$ref": "#/$defs/collision"},
+        "material_map": {
+          "description": "Per-pixel material classes (Appendix C): solid blocks, one_way blocks from above only, liquid and hazard block walking unless walkable is true, decor never blocks.",
+          "type": "object",
+          "required": ["image", "materials"],
+          "properties": {
+            "image": {"$ref": "common.schema.json#/$defs/relPath"},
+            "materials": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "required": ["class"],
+                "properties": {
+                  "class": {"enum": ["solid", "one_way", "liquid", "hazard", "decor"]},
+                  "color": {"$ref": "common.schema.json#/$defs/color"},
+                  "index": {"type": "integer", "minimum": 0},
+                  "walkable": {"type": "boolean"}
+                }
+              }
+            }
+          }
+        },
+        "nav": {
+          "type": "object",
+          "required": ["cell"],
+          "properties": {
+            "cell": {"type": "integer", "minimum": 1},
+            "grid": {"$ref": "common.schema.json#/$defs/relPath"}
+          }
+        },
+        "portals": {"type": "array", "items": {"$ref": "#/$defs/portal"}},
+        "spawns": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "x", "y"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "facing": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "number"}]}
+            }
+          }
+        },
+        "anchors": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["point"],
+            "properties": {
+              "point": {"$ref": "common.schema.json#/$defs/point2"},
+              "facing": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "number"}]},
+              "slots": {"type": "array"},
+              "approach": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "array", "items": {"$ref": "common.schema.json#/$defs/point2"}}]}
+            }
+          }
+        },
+        "interactions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "x", "y"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "reach": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "camera": {
+          "type": "object",
+          "properties": {
+            "tiltDeg": {"type": "number"},
+            "pixelToWorld": {"type": "number", "exclusiveMinimum": 0},
+            "bounds": {"$ref": "common.schema.json#/$defs/rectXYWH"}
+          }
+        },
+        "stage": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"$ref": "#/$defs/stage_v1"}]},
+        "atmosphere": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"$ref": "#/$defs/atmosphere_v1"}]},
+        "lights": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"$ref": "#/$defs/lights_v1"}]},
+        "qa": {"type": "object"},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"}
+      },
+      "if": {"properties": {"schema": {"const": "generate2dmap.map_bundle.v2"}}, "required": ["schema"]},
+      "then": {
+        "required": ["world", "layers", "collision"],
+        "if": {"properties": {"layers": {"contains": {"properties": {"kind": {"const": "tiles"}}, "required": ["kind"]}}}, "required": ["layers"]},
+        "then": {"required": ["tile_size", "tilesets"]}
+      }
+    },
+    "tile": {
+      "description": "One tile. wang lists corner material indices as [top_left, top_right, bottom_left, bottom_right]; blob_mask sets bit i for neighbour i of N, NE, E, SE, S, SW, W, NW (diagonals count only when both adjacent edges are set). collision shapes are in tile pixels.",
+      "type": "object",
+      "required": ["index"],
+      "properties": {
+        "index": {"type": "integer", "minimum": 0},
+        "wang": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 4, "maxItems": 4},
+        "blob_mask": {"type": "integer", "minimum": 0, "maximum": 255},
+        "variant": {"type": "integer", "minimum": 0},
+        "collision": {"type": "array", "items": {"$ref": "#/$defs/solid"}},
+        "properties": {"type": "object", "properties": {"walkable": {"type": "boolean"}}}
+      }
+    },
+    "tileset_v1": {
+      "description": "A tileset manifest. seamless_verified true requires a seam_proof with zero mismatches over a nonzero pixel count (for example a tiled map compared with the global render).",
+      "type": "object",
+      "required": ["schema", "image", "tile_size", "columns", "kind", "materials", "tiles", "seamless_verified"],
+      "properties": {
+        "schema": {"const": "generate2dmap.tileset.v1"},
+        "image": {"$ref": "common.schema.json#/$defs/relPath"},
+        "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "tile_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/size2"}]},
+        "columns": {"type": "integer", "minimum": 1},
+        "kind": {"enum": ["wang_corner", "blob47", "flat", "bevel"]},
+        "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "tiles": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/tile"}},
+        "seamless_verified": {"type": "boolean"},
+        "seam_proof": {
+          "type": "object",
+          "required": ["method", "pixels_compared", "mismatches"],
+          "properties": {
+            "method": {"type": "string", "minLength": 1},
+            "pixels_compared": {"type": "integer", "minimum": 0},
+            "mismatches": {"type": "integer", "minimum": 0}
+          }
+        },
+        "repetition_index": {"type": "number", "minimum": 0}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"seamless_verified": {"const": true}}, "required": ["seamless_verified"]},
+          "then": {"required": ["seam_proof"], "properties": {"seam_proof": {"properties": {"mismatches": {"const": 0}, "pixels_compared": {"minimum": 1}}}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "wang_corner"}}, "required": ["kind"]},
+          "then": {"properties": {"tiles": {"items": {"required": ["wang"]}}}}
+        },
+        {
+          "if": {"properties": {"kind": {"const": "blob47"}}, "required": ["kind"]},
+          "then": {"properties": {"tiles": {"items": {"required": ["blob_mask"]}}}}
+        }
+      ]
+    },
+    "stage_v1": {
+      "description": "An HD-2D battle or scene plate: ground polygons, actor foot-root slots, protected regions and environment effects, all in UV of sourceSize. fit and reviewedAspectRange ([min, max] width/height) say how the plate may be projected.",
+      "type": "object",
+      "required": ["schema", "sourceSize", "fit", "reviewedAspectRange", "groundPolygons", "slots"],
+      "properties": {
+        "schema": {"const": "generate2dmap.stage.v1"},
+        "plate": {"$ref": "common.schema.json#/$defs/relPath"},
+        "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "fit": {"enum": ["cover", "contain"]},
+        "reviewedAspectRange": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+        "groundPolygons": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/uvPolygon"}},
+        "slots": {
+          "type": "object",
+          "required": ["hero", "enemy"],
+          "properties": {
+            "hero": {"type": "array", "items": {"$ref": "#/$defs/uvPoint"}},
+            "enemy": {"type": "array", "items": {"$ref": "#/$defs/uvPoint"}},
+            "boss": {"$ref": "#/$defs/uvPoint"}
+          }
+        },
+        "protectedRegions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "polygon": {"$ref": "#/$defs/uvPolygon"},
+              "box": {"$ref": "#/$defs/uvBox"},
+              "appliesTo": {"type": "array", "items": {"type": "string", "minLength": 1}}
+            },
+            "oneOf": [{"required": ["polygon"]}, {"required": ["box"]}]
+          }
+        },
+        "effects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "polygon"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["ripple", "shimmer", "sway", "glow"]},
+              "polygon": {"$ref": "#/$defs/uvPolygon"},
+              "period": {"type": "number", "exclusiveMinimum": 0},
+              "amplitude": {"type": "number", "minimum": 0},
+              "wavelength": {"type": "number", "exclusiveMinimum": 0},
+              "axis": {"enum": ["x", "y"]}
+            }
+          }
+        },
+        "playableBand": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 2, "maxItems": 2},
+        "approachPoints": {"type": "array", "items": {"$ref": "#/$defs/uvPoint"}},
+        "bakedContent": {
+          "type": "object",
+          "properties": {
+            "actors": {"anyOf": [{"type": "boolean"}, {"type": "array"}]},
+            "collectibles": {"anyOf": [{"type": "boolean"}, {"type": "array"}]}
+          }
+        }
+      }
+    },
+    "motionRegion": {
+      "description": "A region allowed to move, in source pixels: polygon uses points, rect a half-open box, luma_band a [low, high] luma band, landmark points or a box. feather is in pixels outside the region; strength scales the motion (0..1).",
+      "type": "object",
+      "required": ["id", "kind", "feather", "strength"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "kind": {"enum": ["polygon", "rect", "luma_band", "landmark"]},
+        "points": {"$ref": "common.schema.json#/$defs/polygon"},
+        "box": {"$ref": "common.schema.json#/$defs/box"},
+        "band": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 2, "maxItems": 2},
+        "margin": {"type": "number", "minimum": 0},
+        "feather": {"type": "number", "minimum": 0},
+        "strength": {"type": "number", "minimum": 0, "maximum": 1}
+      },
+      "allOf": [
+        {"if": {"properties": {"kind": {"const": "polygon"}}, "required": ["kind"]}, "then": {"required": ["points"]}},
+        {"if": {"properties": {"kind": {"const": "rect"}}, "required": ["kind"]}, "then": {"required": ["box"]}},
+        {"if": {"properties": {"kind": {"const": "luma_band"}}, "required": ["kind"]}, "then": {"required": ["band"]}},
+        {"if": {"properties": {"kind": {"const": "landmark"}}, "required": ["kind"]}, "then": {"anyOf": [{"required": ["points"]}, {"required": ["box"]}]}}
+      ]
+    },
+    "motion_plan_v1": {
+      "description": "Masked environment motion on a static plate (build_motion_mask.py, scene_motion.py). protected regions get an exact-zero core. forward-overlap loops never reverse water; range is a half-open [a, b) of source frames.",
+      "type": "object",
+      "required": ["schema", "sourceSize", "regions", "loop"],
+      "properties": {
+        "schema": {"const": "generate2dmap.motion_plan.v1"},
+        "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "regions": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/motionRegion"}},
+        "protected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
+              "box": {"$ref": "common.schema.json#/$defs/box"},
+              "margin": {"type": "number", "minimum": 0}
+            },
+            "oneOf": [{"required": ["polygon"]}, {"required": ["box"]}]
+          }
+        },
+        "loop": {
+          "type": "object",
+          "required": ["policy"],
+          "properties": {
+            "policy": {"enum": ["forward-overlap", "pingpong"]},
+            "overlap": {"type": "integer", "minimum": 0},
+            "range": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2}
+          }
+        },
+        "encode": {
+          "type": "object",
+          "properties": {
+            "crf": {"type": "integer", "minimum": 0, "maximum": 63},
+            "keyint": {"type": "integer", "minimum": 1}
+          }
+        }
+      }
+    },
+    "atmosphere_v1": {
+      "description": "Presentation layers over a plate: floating motes, optional mist, light shafts and a colour grade.",
+      "type": "object",
+      "required": ["schema", "motes", "shafts", "grade"],
+      "properties": {
+        "schema": {"const": "generate2dmap.atmosphere.v1"},
+        "motes": {"type": "array", "items": {"type": "object"}},
+        "mist": {"type": ["object", "null"]},
+        "shafts": {"type": "array", "items": {"type": "object"}},
+        "grade": {
+          "type": "object",
+          "properties": {
+            "bloom": {"type": "number", "minimum": 0},
+            "saturation": {"type": "number", "minimum": 0},
+            "splitTone": {"type": ["object", "null"]},
+            "vignette": {"type": "number", "minimum": 0}
+          }
+        }
+      }
+    },
+    "lights_v1": {
+      "description": "Point lights at UV positions plus the light-cookie image they were baked into.",
+      "type": "object",
+      "required": ["schema", "lights", "cookie"],
+      "properties": {
+        "schema": {"const": "generate2dmap.lights.v1"},
+        "lights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["u", "v", "color", "radius"],
+            "properties": {
+              "u": {"type": "number", "minimum": 0, "maximum": 1},
+              "v": {"type": "number", "minimum": 0, "maximum": 1},
+              "color": {"$ref": "common.schema.json#/$defs/color"},
+              "radius": {"type": "number", "exclusiveMinimum": 0},
+              "flicker": {"anyOf": [{"type": "number", "minimum": 0}, {"type": "object"}]}
+            }
+          }
+        },
+        "cookie": {"$ref": "common.schema.json#/$defs/relPath"}
+      }
+    },
+    "layout_v1": {
+      "description": "Side-scroll level grammar for validate_layout.py: segments are [x0, x1, kind] in world pixels; physics limits judge gaps, slopes and steps; viewports are [w, h] sizes or aspect strings such as 19.5:9.",
+      "type": "object",
+      "required": ["schema", "segments", "physics"],
+      "properties": {
+        "schema": {"const": "generate2dmap.layout.v1"},
+        "segments": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "string", "minLength": 1}],
+            "minItems": 3,
+            "maxItems": 3
+          }
+        },
+        "props": {"type": "array", "items": {"type": "object"}},
+        "spawns": {"type": "array", "items": {"type": "object"}},
+        "physics": {
+          "type": "object",
+          "required": ["jumpHeight", "jumpDistance", "maxSlopeDeg", "stepUp"],
+          "properties": {
+            "jumpHeight": {"type": "number", "exclusiveMinimum": 0},
+            "jumpDistance": {"type": "number", "exclusiveMinimum": 0},
+            "maxSlopeDeg": {"type": "number", "minimum": 0, "maximum": 90},
+            "stepUp": {"type": "number", "minimum": 0},
+            "colliderSubstep": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "viewports": {
+          "type": "array",
+          "items": {"anyOf": [{"$ref": "common.schema.json#/$defs/size2"}, {"type": "string", "pattern": "^[0-9]+(\\.[0-9]+)?:[0-9]+(\\.[0-9]+)?$"}]}
+        }
+      }
+    },
+    "room_chunk_v1": {
+      "description": "Room chunks with edge sockets on N, E, S and W (offset and width along that edge, in pixels) and the stitching graph.",
+      "type": "object",
+      "required": ["schema", "chunks", "graph"],
+      "properties": {
+        "schema": {"const": "generate2dmap.room_chunk.v1"},
+        "chunks": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "size", "sockets"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "size": {"$ref": "common.schema.json#/$defs/size2"},
+              "sockets": {
+                "type": "object",
+                "propertyNames": {"enum": ["N", "E", "S", "W"]},
+                "additionalProperties": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": ["offset", "width"],
+                    "properties": {
+                      "offset": {"type": "number", "minimum": 0},
+                      "width": {"type": "number", "exclusiveMinimum": 0},
+                      "material": {"type": "string", "minLength": 1}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "graph": {"type": "array", "items": {"type": ["object", "array"]}}
+      }
+    },
+    "parallaxLayer": {
+      "description": "One parallax layer as validate_parallax.py reads it. One uniform scale only: width, height, display_size, scale_xy and repeat sizes come from the image and are refused.",
+      "type": "object",
+      "required": ["id", "role", "image", "alpha"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "role": {"type": "string", "minLength": 1},
+        "image": {"type": "string", "minLength": 1},
+        "alpha": {"enum": ["opaque", "transparent"]},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "offset": {"$ref": "common.schema.json#/$defs/point2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "scroll_factor": {"$ref": "common.schema.json#/$defs/point2"},
+        "repeat": {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2},
+        "require_canvas_coverage": {"type": "boolean"},
+        "allow_empty": {"type": "boolean"}
+      },
+      "not": {
+        "anyOf": [
+          {"required": ["width"]}, {"required": ["height"]}, {"required": ["display_size"]},
+          {"required": ["scale_xy"]}, {"required": ["repeat_width"]}, {"required": ["repeat_height"]}
+        ]
+      }
+    },
+    "parallax_plan": {
+      "description": "Input plan for validate_parallax.py. camera ranges are [min, max]; camera.pivot (top-left, center or an [x, y] point in viewport pixels) is the zoom origin.",
+      "type": "object",
+      "required": ["viewport", "layers"],
+      "properties": {
+        "schema": {"const": "generate2dmap.parallax_plan.v1"},
+        "viewport": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+        "camera": {
+          "type": "object",
+          "properties": {
+            "x": {"$ref": "common.schema.json#/$defs/point2"},
+            "y": {"$ref": "common.schema.json#/$defs/point2"},
+            "zoom": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+            "pivot": {"anyOf": [{"enum": ["top-left", "center"]}, {"$ref": "common.schema.json#/$defs/point2"}]}
+          }
+        },
+        "layers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/parallaxLayer"}}
+      }
+    }
+  }
+}

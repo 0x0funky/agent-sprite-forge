@@ -1,0 +1,8 @@
+{
+  "schema": "generate2dmap.layout.v1",
+  "segments": [[0, 640, "ground"], [640, 704, "gap"], [704, 1280, "ground"]],
+  "props": [{"id": "crate", "x": 300, "y": 400}],
+  "spawns": [{"id": "start", "x": 32, "y": 400}],
+  "physics": {"jumpHeight": 72, "jumpDistance": 120, "maxSlopeDeg": 35, "stepUp": 8, "colliderSubstep": 4},
+  "viewports": [[1920, 1080], "19.5:9"]
+}

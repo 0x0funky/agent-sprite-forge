@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "no clips", "set": "/clips", "value": {}},
+    {"why": "Windows path", "set": "/rig", "value": "C:\\rigs\\hero.rig.svg"},
+    {"why": "unknown easing", "set": "/clips/walk/ease", "value": "bounce"}
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "provider": "openai",
+  "kind": "image",
+  "endpoint": "https://api.openai.com/v1/images/generations",
+  "requestedModel": "gpt-image-1",
+  "options": {
+    "model": "gpt-image-1",
+    "n": 1,
+    "output_format": "png",
+    "size": "1024x1024",
+    "background": "transparent"
+  },
+  "promptSha256": "f245594453b4a28250aa1a7a2ea7995b14105a51b9605ed241d0420837116295",
+  "references": [],
+  "lastFrame": null,
+  "keyEnv": "OPENAI_API_KEY",
+  "paidRequests": 1,
+  "automaticPostRetries": 0,
+  "outDir": "jobs/potion-01",
+  "execution": "execute",
+  "status": "done",
+  "artifact": {
+    "path": "generated.png",
+    "bytes": 1048576,
+    "sha256": "0dd695321ec44e129b648bc62bc35ee0bcf391cdb125502299309d2316e3addd",
+    "size": [1024, 1024],
+    "format": "PNG",
+    "hasAlphaChannel": true
+  },
+  "returnedModel": "gpt-image-1"
+}

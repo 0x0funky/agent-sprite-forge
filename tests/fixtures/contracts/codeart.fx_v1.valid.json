@@ -1,0 +1,18 @@
+{
+  "schema": "codeart2d.fx.v1",
+  "effects": [
+    {
+      "id": "slash",
+      "durationMs": 340,
+      "impactMs": 90,
+      "seed": 7,
+      "primitives": [
+        {"type": "arc", "cx": 24, "cy": 30, "r": 17, "sweep": [-150, 30]},
+        {"type": "particles", "count": 6, "spread": 40}
+      ],
+      "ramps": {"core": ["#ffffff", "#ffcd75", "#ef7d57"]}
+    }
+  ],
+  "palette": ["#ffffff", "#ffcd75", "#ef7d57", "#b13e53"],
+  "routes": ["pixel", "runtime"]
+}

@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "typo", "document": "hitt"},
+    {"why": "empty custom name", "document": "custom:"},
+    {"why": "whitespace", "document": "custom: x"}
+  ]
+}

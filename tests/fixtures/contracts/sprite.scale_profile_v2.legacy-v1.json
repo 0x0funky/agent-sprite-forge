@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "name": "slime",
+  "processing": {
+    "cell_size": 48,
+    "fit_scale": 0.85,
+    "trim_border": 4,
+    "edge_clean_depth": 3,
+    "align": "center",
+    "shared_scale": false,
+    "scale_strategy": "fit",
+    "component_mode": "all",
+    "component_padding": 0,
+    "min_component_area": 1,
+    "edge_touch_margin": 0,
+    "background_mode": "chroma_key",
+    "resampler": "lanczos",
+    "despill_radius": 0
+  },
+  "output_origin": [24.0, 24.0],
+  "reference": {
+    "target": "creature",
+    "mode": "idle",
+    "rows": 2,
+    "cols": 2,
+    "body_scale_mean": 0.5976143046671968,
+    "body_scale_cv": 0.0,
+    "anchor_y_mean": 0.5
+  },
+  "qc": {"max_body_scale_drift": 0.1}
+}

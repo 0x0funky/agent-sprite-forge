@@ -1,0 +1,13 @@
+{
+  "schema": "video2dsprite.review_verdict.v1",
+  "status": "accept_with_mask",
+  "issues": [{"frame": 12, "box": [210, 40, 260, 96], "desc": "key-coloured glow on the sword tip"}],
+  "evidence": [
+    "review/frame-012-x4.png",
+    {
+      "path": "review/contact.png",
+      "sha256": "3693e19c22a5da74c799496df1e93387779bdb1ce9e63fea3b1e83df3db78fa4"
+    }
+  ],
+  "reviewedSha256": "bc4a71180870f7945155fbb02f4b0a2e3faa2a62d6d31b7039013055ed19869a"
+}

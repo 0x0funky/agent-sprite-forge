@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "v2 anchors are manifest or px", "set": "/anchor", "value": "center-bottom"},
+    {"why": "v2 needs an id", "remove": "/id"},
+    {"why": "v2 needs a layer", "remove": "/layer"}
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "schema": "generate2dmap.atmosphere.v1",
+  "motes": [{"count": 40, "color": "#ffe9a8", "speed": 6}],
+  "mist": {"opacity": 0.2},
+  "shafts": [],
+  "grade": {
+    "bloom": 0.35,
+    "saturation": 1.1,
+    "splitTone": {"shadows": "#1d2b53", "highlights": "#ffcd75"},
+    "vignette": 0.25
+  }
+}

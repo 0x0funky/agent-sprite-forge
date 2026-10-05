@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "verified tiles have zero mismatches", "set": "/seam_proof/mismatches", "value": 3},
+    {"why": "verified tiles need a proof", "remove": "/seam_proof"},
+    {"why": "wang tiles list corners", "remove": "/tiles/0/wang"},
+    {"why": "unknown kind", "set": "/kind", "value": "wang16"}
+  ]
+}

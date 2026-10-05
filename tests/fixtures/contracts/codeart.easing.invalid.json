@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "unknown easing", "document": "bounce"},
+    {"why": "two control values", "document": "cubic-bezier(0.1, 0.2)"},
+    {"why": "negative stiffness", "document": "spring(-1, 2)"}
+  ]
+}

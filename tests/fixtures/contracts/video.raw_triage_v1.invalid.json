@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "audio presence is mandatory", "remove": "/audioStreams"},
+    {"why": "QA states what it does not prove", "remove": "/notProven"},
+    {"why": "no frames", "set": "/frames", "value": 0}
+  ]
+}

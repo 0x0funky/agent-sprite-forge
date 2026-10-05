@@ -1,0 +1,68 @@
+{
+  "schema": "generate2dsprite.animation_clips.v2",
+  "source_manifest": {
+    "path": "clips.json",
+    "file_sha256": "48b9444df6413523e89c8ce9ee59d37bd0a445be47d9026f7af69f0382bad2d8"
+  },
+  "frame_size": [64, 64],
+  "anchor_px": [32, 60],
+  "anchor_semantics": "shared canvas/root origin, often a ground reference; not per-frame visible bottom",
+  "frames": [
+    {
+      "index": 0,
+      "name": "walk-0",
+      "file": "frames/frame-00.png",
+      "rgba_pixel_sha256": "659266e2ca1154f77a7fa27e72f655b8bb014dff6e2245ff8a48e4004d311067",
+      "holds": [],
+      "near_duplicates": []
+    },
+    {
+      "index": 1,
+      "name": "walk-1",
+      "file": "frames/frame-01.png",
+      "rgba_pixel_sha256": "db936da2512ed6861e1841cff0596aac5e724e6fee390f1da8acaf65fe9e0741",
+      "holds": [],
+      "near_duplicates": []
+    },
+    {
+      "index": 2,
+      "name": "walk-2",
+      "file": "frames/frame-02.png",
+      "rgba_pixel_sha256": "9d9e734ac65dce394fb0c5f46cbfe2a107414d868bc627e335e7997bd74496be",
+      "holds": [],
+      "near_duplicates": []
+    },
+    {
+      "index": 3,
+      "name": "walk-3",
+      "file": "frames/frame-03.png",
+      "rgba_pixel_sha256": "b933b850e573a5cd79e7e99852e07944757cb83f18cec50ef7156920d5b7bcc5",
+      "holds": [],
+      "near_duplicates": []
+    }
+  ],
+  "clips": {
+    "walk": {
+      "frames": [0, 1, 2, 3],
+      "duration_ms": [100, 100, 100, 100],
+      "loop": true,
+      "total_duration_ms": 400,
+      "nominal_fps": 10.0,
+      "average_fps": 10.0,
+      "loop_policy": "cycle",
+      "events_ms": [{"name": "step_l", "at_ms": 0, "at": 0}, {"name": "step_r", "at_ms": 200, "at": 2}],
+      "tick_grid": {"hz": 60, "max_drift_ms": 0.0},
+      "preview": {"file": "clips/clip-00.webp", "timeline_verified": true},
+      "transitions": [],
+      "last_to_first": {"applies_to_playback": true}
+    }
+  },
+  "states": {"moving": "walk"},
+  "diagnostics": {"visible_pixel_duplicate_groups": [], "visual_approval": false},
+  "contact_sheet": {
+    "file": "contact-sheet.png",
+    "file_sha256": "093e7d5fdbaacfa92448861b11075b3fba532a07d945b49a44919252f5e830ad"
+  },
+  "processing": {"source_pngs_byte_identical": true, "resized": false},
+  "art_source": "code"
+}

@@ -1,0 +1,11 @@
+{
+  "cases": [
+    {"why": "verifiedAt is a date", "set": "/rows/0/verifiedAt", "value": "yesterday"},
+    {"why": "source is mandatory", "remove": "/rows/0/source"},
+    {"why": "no rows", "set": "/rows", "value": []},
+    {"why": "the document id is generate2dmedia.prices.v1", "set": "/schema", "value": "prices_v1", "error": "$.schema:"},
+    {"why": "prices are in USD", "set": "/currency", "value": "EUR", "error": "$.currency:"},
+    {"why": "verifiedAt is a calendar date, not a date-time", "set": "/rows/0/verifiedAt", "value": "2026-10-05T04:15:40Z", "error": "$.rows[0].verifiedAt:"},
+    {"why": "qualifiers are strings", "set": "/rows/0/resolution", "value": 720, "error": "$.rows[0].resolution:"}
+  ]
+}

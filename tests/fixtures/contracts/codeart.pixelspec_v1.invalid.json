@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"why": "unknown id", "set": "/schema", "value": "codeart.pixelspec.v2"},
+    {"why": "layers are mandatory", "remove": "/layers", "error": "'layers' is a required property"},
+    {"why": "a solid outline needs a colour", "set": "/outline", "value": {"mode": "solid"}},
+    {"why": "'.' is reserved", "set": "/palette/.", "value": "#ffffff"},
+    {"why": "empty clip", "set": "/clips/idle/frames", "value": []},
+    {"why": "the canvas is mandatory", "remove": "/canvas", "error": "'canvas' is a required property"},
+    {"why": "a selout outline needs its map", "set": "/outline", "value": {"mode": "selout", "color": "k"}, "error": "'map' is a required property"},
+    {"why": "a selout outline needs a colour for unmapped fills", "set": "/outline", "value": {"mode": "selout", "map": {"l": "d"}}, "error": "'color' is a required property"},
+    {"why": "a pose object holds rows or segments", "set": "/poses/rest", "value": {"pixels": ["k"]}, "error": "$.poses.rest:"},
+    {"why": "z is a number", "set": "/layers/0/z", "value": "back", "error": "$.layers[0].z:"}
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "wang sets need two materials", "set": "/sets/0/materials", "value": ["water"]},
+    {"why": "unknown kind", "set": "/sets/0/kind", "value": "hex"},
+    {"why": "seed is mandatory", "remove": "/seed"},
+    {"why": "empty ramp", "set": "/materials/water/ramp", "value": []}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "schema": "generate2dmap.map_bundle.v1",
+  "tile_size": [16, 16],
+  "layers": [{"name": "ground", "kind": "tiles", "data": "layers/ground.csv"}]
+}

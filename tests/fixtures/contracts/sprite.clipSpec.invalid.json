@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "no duration_ms or ticks", "remove": "/ticks"},
+    {"why": "no loop or loop_policy", "remove": "/loop_policy"},
+    {"why": "no frames", "set": "/frames", "value": []},
+    {"why": "unknown role", "set": "/role", "value": "boss"},
+    {"why": "zero ticks", "set": "/ticks", "value": 0}
+  ]
+}

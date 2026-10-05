@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "no sources", "set": "/sources", "value": []},
+    {"why": "palette is hash-bound", "remove": "/palette/sha256"}
+  ]
+}

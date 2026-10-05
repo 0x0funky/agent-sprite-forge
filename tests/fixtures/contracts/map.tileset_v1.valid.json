@@ -1,0 +1,28 @@
+{
+  "schema": "generate2dmap.tileset.v1",
+  "image": "water-grass-wang16.png",
+  "sha256": "7c82602500857aa6ed0cf38c4c3e4ec645bdcaa82c00b9155eb08be100c778a9",
+  "tile_size": 16,
+  "columns": 4,
+  "kind": "wang_corner",
+  "materials": ["water", "grass"],
+  "tiles": [
+    {
+      "index": 0,
+      "wang": [0, 0, 0, 0],
+      "variant": 0,
+      "properties": {"walkable": false},
+      "collision": [{"shape": "rect", "x": 0, "y": 0, "w": 16, "h": 16}]
+    },
+    {"index": 1, "wang": [0, 0, 0, 1], "variant": 0, "properties": {"walkable": false}},
+    {"index": 2, "wang": [0, 0, 1, 0], "variant": 0, "properties": {"walkable": false}},
+    {"index": 3, "wang": [0, 0, 1, 1], "variant": 0, "properties": {"walkable": false}}
+  ],
+  "seamless_verified": true,
+  "seam_proof": {
+    "method": "30x20 random tile map compared with the global field render",
+    "pixels_compared": 153600,
+    "mismatches": 0
+  },
+  "repetition_index": 0.634
+}

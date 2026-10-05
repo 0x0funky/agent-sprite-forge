@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "time is mandatory", "remove": "/atMs"},
+    {"why": "fractional ms", "set": "/atMs", "value": 12.5}
+  ]
+}

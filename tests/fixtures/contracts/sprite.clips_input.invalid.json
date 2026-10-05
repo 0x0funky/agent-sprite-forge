@@ -1,0 +1,15 @@
+{
+  "cases": [
+    {"why": "unknown version", "set": "/schema", "value": "generate2dsprite.animation_clips.v3"},
+    {"why": "anchor is mandatory", "remove": "/anchor_px"},
+    {"why": "no clips", "set": "/clips", "value": {}},
+    {"why": "Windows path", "set": "/frames/0", "value": "C:\\frames\\walk-0.png"},
+    {
+      "why": "v1 clips need duration_ms and loop",
+      "set": "/schema",
+      "value": "generate2dsprite.animation_clips.v1"
+    },
+    {"why": "unknown art source", "set": "/art_source", "value": "ai"},
+    {"why": "per-frame anchor", "set": "/frames/4/anchorPx", "value": [3, 4]}
+  ]
+}

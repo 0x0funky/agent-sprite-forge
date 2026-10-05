@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "unknown matte", "set": "/matte/mode", "value": "chroma"},
+    {"why": "clip padding is mandatory", "remove": "/clips/attack/padding"},
+    {"why": "boolean expected", "set": "/matte/unmix", "value": "yes"},
+    {"why": "params is the KeyParams object", "set": "/matte/params", "value": "v13", "error": "$.matte.params:"}
+  ]
+}

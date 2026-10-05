@@ -1,0 +1,91 @@
+{
+  "schema": "generate2dmap.map_bundle.v2",
+  "tile_size": [16, 16],
+  "world": {"width": 640, "height": 480, "unit": "px"},
+  "terrain": {"vertex_grid": "terrain-vertices.json", "materials": ["water", "grass", "path"]},
+  "tilesets": [
+    {
+      "id": "water-grass",
+      "manifest": "tiles/water-grass.tileset.json",
+      "sha256": "3f092390cbb39d7f27e02e6feda55b21196c1f61b6ca9bf94476af5073e61f82"
+    }
+  ],
+  "layers": [
+    {"name": "ground", "kind": "tiles", "data": "layers/ground.csv", "tileset": "water-grass"},
+    {"name": "props", "kind": "objects"}
+  ],
+  "objects": [
+    {
+      "id": "tree-12",
+      "prop": "tree",
+      "x": 312,
+      "y": 341,
+      "scale": 1,
+      "anchor_px": [16, 39],
+      "footprint": {"shape": "ellipse", "width": 10, "depth": 6},
+      "solid": true,
+      "contact": "ground",
+      "sortY": 341,
+      "occlusion": "canopy",
+      "occluder": {"alphaThreshold": 16, "source": "props/tree/prop.png"},
+      "animatedParts": []
+    }
+  ],
+  "collision": {
+    "actorRadius": 6,
+    "ySquash": 1.0,
+    "walkRegions": [
+      {
+        "polygon": [[0, 0], [640, 0], [640, 480], [0, 480]],
+        "holes": [[[300, 200], [340, 200], [340, 240], [300, 240]]]
+      }
+    ],
+    "solids": [
+      {"shape": "rect", "x": 100, "y": 100, "w": 32, "h": 16},
+      {"shape": "ellipse", "cx": 420, "cy": 510, "rx": 16, "ry": 9},
+      {"shape": "polygon", "points": [[200, 300], [240, 300], [220, 330]]}
+    ],
+    "rects": [[0, 0, 640, 16]]
+  },
+  "material_map": {
+    "image": "materials.png",
+    "materials": {
+      "water": {"class": "liquid", "color": "#3b5dc9", "walkable": false},
+      "rock": {"class": "solid", "color": [96, 96, 96]},
+      "flowers": {"class": "decor", "index": 4}
+    }
+  },
+  "nav": {"cell": 3, "grid": "nav-grid.json"},
+  "portals": [
+    {
+      "id": "exit-east",
+      "rect": [624, 192, 16, 48],
+      "to": "route-1:spawn-west",
+      "activation": "intent",
+      "travelDirection": [1, 0],
+      "radius": 12,
+      "entranceByFrom": {"route-1": "spawn-east"},
+      "latch": true,
+      "requiresMovement": true
+    }
+  ],
+  "spawns": [{"id": "spawn-west", "x": 24, "y": 216, "facing": "east"}],
+  "anchors": {
+    "well": {
+      "point": [320, 240],
+      "facing": "south",
+      "slots": [[310, 260], [330, 260]],
+      "approach": [320, 270]
+    }
+  },
+  "interactions": [{"id": "well", "x": 320, "y": 240, "reach": 20}],
+  "camera": {"tiltDeg": 0, "pixelToWorld": 1, "bounds": [0, 0, 640, 480]},
+  "atmosphere": "atmosphere.json",
+  "lights": {
+    "schema": "generate2dmap.lights.v1",
+    "lights": [{"u": 0.42, "v": 0.31, "color": "#ffcd75", "radius": 0.06, "flicker": {"hz": 3, "depth": 0.2}}],
+    "cookie": "light-cookie.png"
+  },
+  "qa": {"reachability": "pass"},
+  "art_source": "code"
+}

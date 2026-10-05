@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "actor radius is mandatory", "remove": "/actorRadius"},
+    {"why": "zero squash", "set": "/ySquash", "value": 0},
+    {"why": "negative width", "set": "/rects/0", "value": [0, 0, -5, 16]}
+  ]
+}

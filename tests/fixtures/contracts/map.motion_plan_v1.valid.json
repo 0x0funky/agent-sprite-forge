@@ -1,0 +1,24 @@
+{
+  "schema": "generate2dmap.motion_plan.v1",
+  "sourceSize": [1672, 940],
+  "regions": [
+    {
+      "id": "waterfall-and-splash",
+      "kind": "polygon",
+      "points": [[778, 383], [837, 384], [870, 421], [786, 418]],
+      "feather": 3,
+      "strength": 1
+    },
+    {
+      "id": "lantern-glow",
+      "kind": "luma_band",
+      "band": [180, 255],
+      "box": [1200, 300, 1300, 420],
+      "feather": 6,
+      "strength": 0.5
+    }
+  ],
+  "protected": [{"id": "pool-center-rock", "polygon": [[800, 400], [830, 400], [830, 420]], "margin": 2}],
+  "loop": {"policy": "forward-overlap", "overlap": 16, "range": [0, 137]},
+  "encode": {"crf": 18, "keyint": 121}
+}

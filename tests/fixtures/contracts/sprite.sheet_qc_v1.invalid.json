@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "QA states its method", "remove": "/method"},
+    {"why": "unknown check", "set": "/check", "value": "colors"},
+    {"why": "grid is mandatory", "remove": "/grid"},
+    {"why": "a pass cannot hold a failed check", "set": "/status", "value": "pass"}
+  ]
+}

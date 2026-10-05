@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "target clip is mandatory", "remove": "/to"},
+    {"why": "unknown mode", "set": "/mode", "value": "fade"}
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "schema": "generate2dsprite.animation_clips.v1",
+  "frames": ["proc/idle-1.png", "proc/idle-2.png", "proc/idle-3.png", "proc/idle-4.png"],
+  "anchor_px": [24, 44],
+  "clips": {
+    "idle": {"frames": [0, 1, 2, 3], "duration_ms": [120, 120, 140, 160], "loop": true},
+    "pose": {"frames": [2], "duration_ms": 300, "loop": false}
+  },
+  "states": {"idle": "idle"}
+}

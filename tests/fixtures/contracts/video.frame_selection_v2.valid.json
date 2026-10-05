@@ -1,0 +1,21 @@
+{
+  "schema": "forge-frame-selection/v2",
+  "sourceDirectory": "frames-clean",
+  "sourceHashes": [
+    "e1283a0d3bbe31f65b91eba8cb1b8f89a479a2762714d7b02c14804a81d3a939",
+    "f29735811393cf33ea86f6af6d55078fdcaf292da170c24164f01517e3dd7a19",
+    "05729ac051abfcbd5aa39b2bfaebdb26f30e0ab9786bcf87ee16e42a875594ab",
+    "a3e524f7b4989387770673d21c521e8524b26e4a5b74591c8057a8ced651a9a4"
+  ],
+  "start": 81,
+  "endExclusive": 85,
+  "sourceIndices": [81, 82, 83, 84],
+  "durations_ms": [83, 83, 84, 83],
+  "fps": "12/1",
+  "loopPolicy": "cycle",
+  "events": [{"name": "step_l", "atMs": 0, "frame": 0}, {"name": "step_r", "atMs": 166, "frame": 2}],
+  "cadenceMs": 333,
+  "strideWorldUnits": 1.65,
+  "status": "selected-needs-visual-review",
+  "method": "gait_loop select: harmonic least-squares period with a half-period guard"
+}

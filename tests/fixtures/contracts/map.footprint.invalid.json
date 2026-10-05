@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "an ellipse needs width and depth", "remove": "/width"},
+    {"why": "unknown shape", "set": "/shape", "value": "circle"}
+  ]
+}

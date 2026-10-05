@@ -1,0 +1,33 @@
+{
+  "schema": "generate2dsprite.scale_frames.v1",
+  "scale": 0.125,
+  "resampler": "box",
+  "canvas": [48, 64],
+  "anchor_px": [25, 58],
+  "padding": [0, 4, 0, 0],
+  "root_lock": "stance",
+  "frames": [
+    {
+      "source": {
+        "path": "native/frame-0.png",
+        "sha256": "56c9e2383388c910387ee94bc5ba7c3e9d23c26433b890837ef40797de5eec4f"
+      },
+      "output": {
+        "path": "game/frame-0.png",
+        "sha256": "11932915eb5644c5db99695ec2ae1d7cdcda0390ec1f90bf86ee68e1574c6477"
+      },
+      "shift": [0, 0]
+    },
+    {
+      "source": {
+        "path": "native/frame-1.png",
+        "sha256": "924332e85de2251a4d94c745b698afcc184d6a6be47b0bde63dd35dbe8d14be0"
+      },
+      "output": {
+        "path": "game/frame-1.png",
+        "sha256": "6bc7d385f920b2211430ff2c62c2fc5b47cec438a2d40458c14d6a917c9061b8"
+      },
+      "shift": [0, -1]
+    }
+  ]
+}

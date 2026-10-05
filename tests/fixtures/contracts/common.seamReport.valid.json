@@ -1,0 +1,10 @@
+{
+  "frames": 6,
+  "seam": 18.355612,
+  "adjacent_median": 3.700664,
+  "adjacent_p95": 3.700664,
+  "adjacent_max": 3.700664,
+  "seam_over_median": 4.960086,
+  "seam_over_p95": 4.960086,
+  "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+}

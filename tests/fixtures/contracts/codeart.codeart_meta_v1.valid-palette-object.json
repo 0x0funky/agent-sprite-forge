@@ -1,0 +1,54 @@
+{
+  "schema": "codeart2d.codeart_meta.v1",
+  "art_source": "code",
+  "placeholder": false,
+  "disclosure": "code-drawn, no image model",
+  "generator": "render_pixelspec.py",
+  "spec_sha256": "44169a7231f8d75de590472b7252937c36ebcc9155a0b9223aab88f96a895525",
+  "renderer": {"name": "codeart_core.render_pixelspec", "version": "1"},
+  "palette": {
+    "colors": {"k": "#1a1c2c", "d": "#257179", "g": "#38b764", "l": "#a7f070", "H": "#f4f4f4"},
+    "variants": {
+      "green": {},
+      "blue": {"d": "#29366f", "g": "#3b5dc9", "l": "#41a6f6", "H": "#f4f4f4"},
+      "red": {"d": "#5d275d", "g": "#b13e53", "l": "#ef7d57", "H": "#ffcd75"}
+    }
+  },
+  "outputs": [
+    {
+      "path": "frames/green/rest.png",
+      "sha256": "057900b6790b0b0f7be0a9413d65354b0e3882516e2537d215f6006ec25c4ff7",
+      "bytes": 262
+    }
+  ],
+  "qa": {
+    "status": "pass",
+    "method": "codeart_core.qa_pixels: census of the rendered 8-bit RGBA pixels (partial alpha, exact palette lookup, 4-neighbour outline gaps and L-corners), each against its gate in codeart_core.QA_PIXEL_GATES",
+    "notProven": [
+      "Readability, silhouette and appeal at game scale; check them on the review sheet.",
+      "Palette conformance: qa_pixels was given no palette."
+    ],
+    "checks": [
+      {"id": "partial_alpha", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "off_palette", "status": "skipped", "value": null, "threshold": 0},
+      {"id": "outline_gaps", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "l_corners", "status": "pass", "value": 2, "threshold": 10}
+    ],
+    "inputs": [
+      {
+        "path": "slime.pixelspec.json",
+        "sha256": "44169a7231f8d75de590472b7252937c36ebcc9155a0b9223aab88f96a895525",
+        "bytes": 4290
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/green/rest.png",
+        "sha256": "057900b6790b0b0f7be0a9413d65354b0e3882516e2537d215f6006ec25c4ff7",
+        "bytes": 262
+      }
+    ],
+    "tool": {"name": "codeart_core", "version": "1"},
+    "metrics": {"partial_alpha": 0, "off_palette": null, "outline_gaps": 0, "l_corners": 2, "colors": 5, "bbox": [3, 17, 29, 31]}
+  }
+}

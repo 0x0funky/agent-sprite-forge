@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "sockets are N, E, S or W", "set": "/chunks/0/sockets/NE", "value": []},
+    {"why": "graph is mandatory", "remove": "/graph"},
+    {"why": "zero width", "set": "/chunks/0/sockets/E/0/width", "value": 0}
+  ]
+}

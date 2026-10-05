@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "tiles layers need data", "remove": "/data"},
+    {"why": "unknown kind", "set": "/kind", "value": "sprites"}
+  ]
+}

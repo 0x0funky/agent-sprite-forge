@@ -1,0 +1,11 @@
+{
+  "cases": [
+    {"why": "residue count is mandatory", "remove": "/opaque_key_px"},
+    {"why": "fraction above 1", "set": "/outer_ring_spill_fraction", "value": 1.5},
+    {"why": "unknown matte", "set": "/mode", "value": "magic"},
+    {"why": "the matte key is whole-number RGB; round forge_matte's float key", "set": "/key", "value": [235.5, 21, 175], "error": "$.key:"},
+    {"why": "unknown key estimate source", "set": "/key_estimate", "value": {"source": "guess"}, "error": "$.key_estimate.source:"},
+    {"why": "the interior despill decision states its rule", "set": "/interior_despill", "value": {"interior_despill": true}, "error": "'rule' is a required property"},
+    {"why": "the hysteresis band is alpha in [0, 1]", "set": "/temporal", "value": {"mode": "alpha", "band": [0.4, 1.6]}, "error": "$.temporal.band[1]:"}
+  ]
+}

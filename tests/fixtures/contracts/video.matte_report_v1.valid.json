@@ -1,0 +1,13 @@
+{
+  "schema": "video2dsprite.matte_report.v1",
+  "mode": "soft",
+  "key": [235, 21, 175],
+  "despill_mode": "auto",
+  "opaque_key_px": 0,
+  "outer_ring_spill_fraction": 0.004,
+  "semitransparent_fraction": 0.031,
+  "enclosed_key_pockets": 0,
+  "pockets_removed": 16,
+  "flips_per_frame_pair": 5.4,
+  "frames": [{"index": 0, "opaque_key_px": 0, "outer_ring_spill_fraction": 0.004}]
+}

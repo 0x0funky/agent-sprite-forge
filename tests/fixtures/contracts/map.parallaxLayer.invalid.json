@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "display sizes come from the image", "set": "/width", "value": 640},
+    {"why": "alpha is declared", "set": "/alpha", "value": "auto"},
+    {"why": "repeat has two axes", "set": "/repeat", "value": [true]}
+  ]
+}

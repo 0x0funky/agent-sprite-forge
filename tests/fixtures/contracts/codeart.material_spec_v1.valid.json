@@ -1,0 +1,19 @@
+{
+  "schema": "codeart2d.material_spec.v1",
+  "tile_size": 16,
+  "materials": {
+    "water": {"ramp": ["#1d2b53", "#29366f", "#3b5dc9", "#41a6f6"]},
+    "grass": {
+      "ramp": ["#1d4a2c", "#257179", "#38b764", "#a7f070"],
+      "texture": {"noise": "periodic", "octaves": [1, 2, 4]}
+    },
+    "path": {"ramp": ["#5d275d", "#b13e53", "#ef7d57"]}
+  },
+  "sets": [
+    {"kind": "wang_corner", "materials": ["water", "grass"]},
+    {"kind": "blob47", "materials": ["grass", "path"]},
+    {"kind": "wang_corner", "materials": ["water", "grass", "path"]}
+  ],
+  "variants": 4,
+  "seed": 7
+}

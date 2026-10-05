@@ -1,0 +1,405 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/sprite.schema.json",
+  "title": "generate2dsprite contracts",
+  "description": "Frozen contracts, version 1, for still sprites, animation clips, process metadata, scale profiles, sheet QC and palettes. v1 documents written by the cfed170 tools stay valid. Objects stay open (additionalProperties true).",
+  "$defs": {
+    "clipFrame": {
+      "description": "A clip frame source: a manifest-relative PNG path, or {name, file}. Frames share one canvas and one anchor_px, so per-frame anchors are refused.",
+      "anyOf": [
+        {"$ref": "common.schema.json#/$defs/relPath"},
+        {
+          "type": "object",
+          "required": ["file", "name"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "name": {"type": "string", "minLength": 1, "pattern": "\\S"}
+          },
+          "not": {"anyOf": [{"required": ["anchor_px"]}, {"required": ["anchorPx"]}]}
+        }
+      ]
+    },
+    "clipEvent": {
+      "description": "A gameplay event at a 0-based position within the clip's frame list.",
+      "type": "object",
+      "required": ["at", "name"],
+      "properties": {
+        "at": {"type": "integer", "minimum": 0},
+        "name": {"$ref": "common.schema.json#/$defs/eventName"},
+        "data": true
+      }
+    },
+    "clipTransition": {
+      "description": "A hint for switching from this clip to another: enter it at entry_frame, optionally dissolving over dissolve_ms.",
+      "type": "object",
+      "required": ["to"],
+      "properties": {
+        "to": {"type": "string", "minLength": 1},
+        "entry_frame": {"type": "integer", "minimum": 0},
+        "dissolve_ms": {"type": "integer", "minimum": 0},
+        "mode": {"enum": ["dither", "premultiplied"]}
+      }
+    },
+    "clipSpec": {
+      "description": "One clip in a clips manifest. frames are 0-based indices or frame names. Timing is duration_ms (integer ms per frame, or one value for all) or ticks at tick_hz (default 60). Looping is loop (v1) or loop_policy (v2).",
+      "type": "object",
+      "required": ["frames"],
+      "properties": {
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "string", "minLength": 1}]}
+        },
+        "duration_ms": {
+          "anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/durationsMs"}]
+        },
+        "loop": {"type": "boolean"},
+        "stride_world_units": {"type": "number", "exclusiveMinimum": 0},
+        "ticks": {
+          "anyOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1}
+          ]
+        },
+        "tick_hz": {"type": "integer", "minimum": 1, "default": 60},
+        "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/clipEvent"}},
+        "keys": {
+          "description": "Action key poses as 0-based clip positions.",
+          "type": "object",
+          "properties": {
+            "wind_start": {"type": "integer", "minimum": 0},
+            "wind_peak": {"type": "integer", "minimum": 0},
+            "strike": {"type": "integer", "minimum": 0},
+            "recover": {"type": "integer", "minimum": 0},
+            "end": {"type": "integer", "minimum": 0}
+          }
+        },
+        "entry_frame": {"type": "integer", "minimum": 0},
+        "stride_px_per_frame": {"type": "number", "exclusiveMinimum": 0},
+        "cadence_ms": {"type": "number", "exclusiveMinimum": 0},
+        "speed_ref": {"type": "number", "exclusiveMinimum": 0},
+        "transitions": {"type": "array", "items": {"$ref": "#/$defs/clipTransition"}},
+        "hitstop_ticks": {"type": "integer", "minimum": 0},
+        "role": {"enum": ["player", "enemy", "npc", "fx", "prop"]}
+      },
+      "allOf": [
+        {"anyOf": [{"required": ["duration_ms"]}, {"required": ["ticks"]}]},
+        {"anyOf": [{"required": ["loop"]}, {"required": ["loop_policy"]}]}
+      ]
+    },
+    "clips_input": {
+      "description": "Input manifest for build_animation_clips.py. schema is generate2dsprite.animation_clips.v1 or .v2; a missing schema means v1, where every clip needs duration_ms and loop. anchor_px is the shared canvas root, never a per-frame visible bottom. Indexed PNG frames are not valid builder input.",
+      "type": "object",
+      "required": ["frames", "anchor_px", "clips"],
+      "properties": {
+        "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]},
+        "frames": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/clipFrame"}},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/clipSpec"}},
+        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
+        "pixel_art": {"type": "boolean"},
+        "palette_ref": {"$ref": "common.schema.json#/$defs/relPath"},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"},
+        "body_height_px": {"type": "number", "exclusiveMinimum": 0},
+        "shadow": {"$ref": "common.schema.json#/$defs/shadow"}
+      },
+      "if": {"properties": {"schema": {"const": "generate2dsprite.animation_clips.v2"}}, "required": ["schema"]},
+      "then": true,
+      "else": {"properties": {"clips": {"additionalProperties": {"required": ["duration_ms", "loop"]}}}}
+    },
+    "builtClip": {
+      "description": "One clip as written by build_animation_clips.py: resolved frame indices, exact per-frame durations and the WebP preview record. v2 adds events_ms and tick_grid.",
+      "type": "object",
+      "required": ["frames", "duration_ms", "loop", "total_duration_ms"],
+      "properties": {
+        "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+        "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+        "loop": {"type": "boolean"},
+        "total_duration_ms": {"type": "integer", "minimum": 1},
+        "nominal_fps": {"type": ["number", "null"]},
+        "average_fps": {"type": "number", "exclusiveMinimum": 0},
+        "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
+        "events_ms": {
+          "description": "Events resolved to whole milliseconds from clip start.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "at_ms"],
+            "properties": {
+              "name": {"$ref": "common.schema.json#/$defs/eventName"},
+              "at_ms": {"type": "integer", "minimum": 0},
+              "at": {"type": "integer", "minimum": 0},
+              "data": true
+            }
+          }
+        },
+        "tick_grid": {
+          "description": "How well the integer-ms timeline lands on a fixed tick grid.",
+          "type": "object",
+          "required": ["hz", "max_drift_ms"],
+          "properties": {
+            "hz": {"type": "integer", "minimum": 1},
+            "max_drift_ms": {"type": "number", "minimum": 0}
+          }
+        },
+        "preview": {"type": "object"},
+        "transitions": {"type": "array", "items": {"type": "object"}},
+        "last_to_first": {"type": "object"}
+      }
+    },
+    "animation_clips_v2": {
+      "description": "animation-clips.json written by build_animation_clips.py. v1 output stays valid; with schema .v2 every clip carries events_ms and tick_grid, and frame records may list holds and near_duplicates.",
+      "type": "object",
+      "required": ["schema", "frame_size", "anchor_px", "frames", "clips", "states"],
+      "properties": {
+        "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]},
+        "source_manifest": {
+          "type": "object",
+          "required": ["file_sha256"],
+          "properties": {"path": {"type": "string"}, "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"}}
+        },
+        "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["index", "name", "file"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "name": {"type": "string", "minLength": 1},
+              "file": {"$ref": "common.schema.json#/$defs/relPath"},
+              "rgba_pixel_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "holds": {"type": "array"},
+              "near_duplicates": {"type": "array"}
+            }
+          }
+        },
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/builtClip"}},
+        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "diagnostics": {"type": "object"},
+        "contact_sheet": {"type": "object"},
+        "processing": {"type": "object"},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"}
+      },
+      "if": {"properties": {"schema": {"const": "generate2dsprite.animation_clips.v2"}}, "required": ["schema"]},
+      "then": {"properties": {"clips": {"additionalProperties": {"required": ["events_ms", "tick_grid"]}}}}
+    },
+    "pipeline_meta_v2": {
+      "description": "pipeline-meta.json written by generate2dsprite.py process. v1 files carry no schema key and stay valid. v2 (schema generate2dsprite.pipeline_meta.v2) adds the geometry, hygiene and provenance blocks, and every frame record gains trim_offset and source_rect. A keyed sheet may also record the forge_matte.key_still info in matte.",
+      "type": "object",
+      "required": ["target", "mode"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.pipeline_meta.v2"},
+        "target": {"type": "string", "minLength": 1},
+        "mode": {"type": "string", "minLength": 1},
+        "background_mode": {"enum": ["chroma_key", "native_alpha", "opaque"]},
+        "resampler": {"type": "string", "minLength": 1},
+        "rows": {"type": "integer", "minimum": 1},
+        "cols": {"type": "integer", "minimum": 1},
+        "cell_size": {"type": "integer", "minimum": 1},
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "trim_offset": {"description": "[dx, dy] from the source cell origin to the trimmed crop.", "$ref": "common.schema.json#/$defs/point2"},
+              "source_rect": {"description": "Subject box in sheet pixels, [x0, y0, x1, y1).", "$ref": "common.schema.json#/$defs/box"}
+            }
+          }
+        },
+        "qc_summary": {"type": "object"},
+        "qc_config": {"type": "object"},
+        "geometry": {
+          "type": "object",
+          "required": ["alpha_geometry_threshold", "connectivity", "anchor_mode", "scale_strategy"],
+          "properties": {
+            "alpha_geometry_threshold": {"type": "integer", "minimum": 0, "maximum": 255},
+            "connectivity": {"enum": [4, 8]},
+            "anchor_mode": {"enum": ["feet", "stance", "bbox", "centroid", "center", "legacy-p98"]},
+            "scale_strategy": {"enum": ["fit", "preserve", "registered"]},
+            "pixel_scale": {"type": ["integer", "null"], "minimum": 1},
+            "grid_rounding": {"type": ["string", "null"]},
+            "pad_offset": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]}
+          }
+        },
+        "hygiene": {
+          "description": "The forge_core.alpha_hygiene report: the settings used (mode, floor, solid_min, attach_radius, connectivity) and what was removed (floor_px, detached_px, detached_components, max_removed_alpha).",
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {"enum": ["none", "floor", "detached", "both"]},
+            "floor": {"type": "integer", "minimum": 0, "maximum": 255},
+            "solid_min": {"type": "integer", "minimum": 1, "maximum": 255},
+            "attach_radius": {"type": "integer", "minimum": 0},
+            "connectivity": {"enum": [4, 8]},
+            "floor_px": {"type": "integer", "minimum": 0},
+            "detached_px": {"type": "integer", "minimum": 0},
+            "detached_components": {"type": "integer", "minimum": 0},
+            "max_removed_alpha": {"type": "integer", "minimum": 0, "maximum": 255}
+          }
+        },
+        "profile_applied": {"type": "object"},
+        "provenance": {
+          "description": "The input as forge_core.load_rgba read it (sha256, Pillow mode, bit depth, conversion to 8-bit RGBA); raw_copy names the copied original, or null.",
+          "type": "object",
+          "required": ["input_sha256", "source_mode"],
+          "properties": {
+            "input_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "source_mode": {"type": "string", "minLength": 1},
+            "bit_depth": {"enum": [1, 2, 4, 8, 16]},
+            "conversion": {"type": "string", "minLength": 1},
+            "raw_copy": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"type": "null"}]}
+          }
+        },
+        "matte": {
+          "description": "forge_matte.key_still info for a keyed sheet: the quality used and requested, the key as floats, key_estimate (forge_matte.estimate_key info, null for an explicit key), the soft-matte params (KeyParams.to_dict()), interior_despill, key_material_share and qa (forge_matte.matte_qa metrics of the result, not a QA envelope).",
+          "type": "object",
+          "properties": {
+            "quality": {"enum": ["hard", "soft", "dominance", "native_alpha"]},
+            "requested_quality": {"enum": ["hard", "soft", "dominance", "auto"]},
+            "key": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3},
+            "key_estimate": {"type": ["object", "null"]},
+            "params": {"type": "object"},
+            "interior_despill": {"type": "boolean"},
+            "key_material_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "qa": {"type": "object"}
+          }
+        },
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"}
+      },
+      "if": {"required": ["schema"]},
+      "then": {
+        "required": ["background_mode", "geometry", "hygiene", "provenance"],
+        "properties": {"frames": {"items": {"required": ["trim_offset", "source_rect"]}}}
+      }
+    },
+    "scale_profile_v2": {
+      "description": "Scale profile written by process --write-scale-profile. version 1 stays readable and must carry the eleven processing keys of cfed170; version 2 adds reference.output_subject_height_px so drift is judged in output pixels.",
+      "type": "object",
+      "required": ["version", "processing", "reference"],
+      "properties": {
+        "version": {"enum": [1, 2]},
+        "schema": {"const": "generate2dsprite.scale_profile.v2"},
+        "name": {"type": "string"},
+        "processing": {"type": "object"},
+        "output_origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "reference": {
+          "type": "object",
+          "required": ["body_scale_mean"],
+          "properties": {
+            "body_scale_mean": {"type": "number", "exclusiveMinimum": 0},
+            "output_subject_height_px": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "qc": {"type": "object"},
+        "godot_sprite3d": {"type": "object"}
+      },
+      "if": {"properties": {"version": {"const": 1}}},
+      "then": {
+        "properties": {
+          "processing": {
+            "required": ["cell_size", "fit_scale", "trim_border", "edge_clean_depth", "align", "shared_scale", "scale_strategy", "component_mode", "component_padding", "min_component_area", "edge_touch_margin"]
+          }
+        }
+      },
+      "else": {"properties": {"reference": {"required": ["output_subject_height_px"]}}}
+    },
+    "sheet_qc_v1": {
+      "description": "sheet_qc.py report (spill or frames subcommand). It is a QA envelope: status, method, notProven, checks, and hashed inputs and outputs. Cell indices are 0-based and row-major.",
+      "type": "object",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "check", "grid"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.sheet_qc.v1"},
+        "check": {"enum": ["spill", "frames"]},
+        "grid": {
+          "type": "object",
+          "required": ["rows", "cols"],
+          "properties": {"rows": {"type": "integer", "minimum": 1}, "cols": {"type": "integer", "minimum": 1}}
+        },
+        "cells": {"type": "array", "items": {"type": "object"}}
+      }
+    },
+    "scale_frames_v1": {
+      "description": "scale_frames.py processing record: one scale for the whole set and every per-frame shift, so registration can be audited. Padding grows the canvas; frames are never clamped.",
+      "type": "object",
+      "required": ["schema", "scale", "canvas", "anchor_px", "frames"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.scale_frames.v1"},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "resampler": {"enum": ["box", "lanczos", "nearest"]},
+        "canvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "padding": {"$ref": "common.schema.json#/$defs/padding4"},
+        "root_lock": {"type": "string"},
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["source", "output", "shift"],
+            "properties": {
+              "source": {"$ref": "common.schema.json#/$defs/fileRef"},
+              "output": {"$ref": "common.schema.json#/$defs/fileRef"},
+              "shift": {"description": "[dx, dy] applied after scaling, in output pixels.", "$ref": "common.schema.json#/$defs/point2"}
+            }
+          }
+        }
+      }
+    },
+    "palette_v1": {
+      "description": "A palette file. colors are ordered: a colour's position is its index in indexed exports. transparent_index (or null) names the transparent slot; locked palettes must not be re-quantised.",
+      "type": "object",
+      "required": ["schema", "colors", "transparent_index", "locked", "source"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.palette.v1"},
+        "colors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": ["hex"],
+            "properties": {
+              "hex": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+              "name": {"type": "string", "minLength": 1},
+              "reserved": {"type": "boolean"}
+            }
+          }
+        },
+        "transparent_index": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+        "locked": {"type": "boolean"},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "palette_lock_v1": {
+      "description": "Record of locking a palette for an asset set, with the colour-fit report of every source.",
+      "type": "object",
+      "required": ["schema", "palette", "sources"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.palette_lock.v1"},
+        "palette": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "fit": {"type": "object"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

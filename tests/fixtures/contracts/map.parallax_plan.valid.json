@@ -1,0 +1,20 @@
+{
+  "schema": "generate2dmap.parallax_plan.v1",
+  "viewport": [480, 270],
+  "camera": {"x": [0, 960], "y": [0, 0], "zoom": [1, 1.25], "pivot": "center"},
+  "layers": [
+    {"id": "sky", "role": "sky", "image": "sky.png", "alpha": "opaque", "scroll_factor": [0, 0]},
+    {
+      "id": "near",
+      "role": "foreground",
+      "image": "near.png",
+      "alpha": "transparent",
+      "scale": 1,
+      "offset": [0, 0],
+      "anchor_px": [0, 0],
+      "scroll_factor": [1.25, 0],
+      "repeat": [true, false],
+      "require_canvas_coverage": true
+    }
+  ]
+}

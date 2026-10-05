@@ -1,0 +1,14 @@
+{
+  "schema": "generate2dsprite.palette_lock.v1",
+  "palette": {
+    "path": "palette.json",
+    "sha256": "109c353fecd138cd02214ed6e4330f4c28fa60e0391859d4125d5f5fbf668eb2"
+  },
+  "sources": [
+    {
+      "path": "frames/walk-0.png",
+      "sha256": "659266e2ca1154f77a7fa27e72f655b8bb014dff6e2245ff8a48e4004d311067",
+      "fit": {"max_delta_e": 0.0, "off_palette_px": 0}
+    }
+  ]
+}

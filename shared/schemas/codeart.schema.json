@@ -1,0 +1,285 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/codeart.schema.json",
+  "title": "codeart2d contracts",
+  "description": "Frozen contracts, version 1, for code-authored art: PixelSpec, rig animation, FX specs, material specs and the codeart-meta.json that discloses art_source code. codeart2d frames and tiles then use the sprite and map contracts. The PixelSpec $defs describe the form codeart_core.render_pixelspec reads; validate a spec against them before rendering. Objects stay open (additionalProperties true).",
+  "$defs": {
+    "pixelspecColor": {
+      "description": "A PixelSpec colour as codeart_core.hex_to_rgba reads it: an optional '#', then 3, 4, 6 or 8 hex digits (#rgb, #rgba, #rrggbb, #rrggbbaa). Alpha 0 marks an erasing entry that clears lower layers. Write #rrggbb or #rrggbbaa; the short and '#'-less spellings are accepted for hand-written specs.",
+      "type": "string",
+      "pattern": "^#?([0-9A-Fa-f]{3,4}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+    },
+    "charPalette": {
+      "description": "Palette keyed by single characters. '.' and space are reserved for transparency; an alpha-0 colour (#rrggbb00) marks an erasing entry. Used for PixelSpec variants, which may be empty and override base colours only.",
+      "type": "object",
+      "propertyNames": {"minLength": 1, "maxLength": 1, "not": {"enum": [".", " "]}},
+      "additionalProperties": {"$ref": "#/$defs/pixelspecColor"}
+    },
+    "pixelspecPalette": {
+      "description": "The base palette of a PixelSpec: at least one single-character key other than '.' or space. Digit keys work in rows but not in segments, where digits are run counts.",
+      "allOf": [{"$ref": "#/$defs/charPalette"}],
+      "minProperties": 1
+    },
+    "pixelRows": {
+      "description": "Pixel rows, top to bottom; each character is a palette key, '.' or space.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string"}
+    },
+    "pixelSegments": {
+      "description": "Run-length pixel rows, top to bottom, for wide art (recommended above 64 px): each row is a sequence of an optional run count (at least 1) followed by one character, so '13.6l13.' is 13 '.', 6 'l' and 13 '.'. Digits are counts, so segment rows cannot use digit palette characters.",
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "pattern": "^(?:(?:0*[1-9][0-9]*)?\\D)*$"}
+    },
+    "pixelGrid": {
+      "description": "A pose: literal rows, {rows: [...]} or {segments: [...]}. An object with both rows and segments is refused as ambiguous.",
+      "oneOf": [
+        {"$ref": "#/$defs/pixelRows"},
+        {"type": "object", "required": ["rows"], "properties": {"rows": {"$ref": "#/$defs/pixelRows"}}},
+        {"type": "object", "required": ["segments"], "properties": {"segments": {"$ref": "#/$defs/pixelSegments"}}}
+      ]
+    },
+    "pixelLayer": {
+      "description": "A layer placed at origin [x, y] (default [0, 0]) and composited by z (lower first, default 0, ties keep list order); the pixels a layer paints replace those below. rows is a pose name or literal rows; segments hold run-length rows (segments win when both are given). A layer without rows or segments must be hidden or get them from every frame it is rendered in. mirror flips the layer; mirror_safe false keeps asymmetric gear (emblems, text) unflipped when a frame sets flip_x; hidden skips the layer.",
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "z": {"type": "number"},
+        "origin": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+        "rows": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/pixelRows"}]},
+        "segments": {"$ref": "#/$defs/pixelSegments"},
+        "mirror": {"type": "boolean"},
+        "mirror_safe": {"type": "boolean"},
+        "hidden": {"type": "boolean"}
+      }
+    },
+    "pixelFrame": {
+      "description": "A frame: integer dx/dy shift every layer, flip_x mirrors every layer's placement (layers with mirror_safe false keep their orientation), and layers holds per-layer overrides for layers the spec names (rows as a pose name or literal rows, segments, integer dx/dy, hidden, mirror). Clips and render_pixelspec address a frame by name or by index, so name is optional.",
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "dx": {"type": "integer"},
+        "dy": {"type": "integer"},
+        "flip_x": {"type": "boolean"},
+        "layers": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "rows": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/pixelRows"}]},
+              "segments": {"$ref": "#/$defs/pixelSegments"},
+              "dx": {"type": "integer"},
+              "dy": {"type": "integer"},
+              "hidden": {"type": "boolean"},
+              "mirror": {"type": "boolean"}
+            }
+          }
+        }
+      }
+    },
+    "pixelspec_v1": {
+      "description": "PixelSpec (roadmap 4.5): pixel art as editable text, rendered with numpy only by codeart_core.render_pixelspec, which reads this shape. schema is codeart2d.pixelspec.v1, the canonical id to write; codeart.pixelspec.v1 is the legacy alias used by roadmap 4.5 and the design prototype, still accepted. Only schema, canvas, palette and layers are required: without frames the base layers render as one image. poses map names to pixelGrids that layers and frames reference by name. The outline (mode defaults to none) is drawn after compositing with 4-neighbourhood rules, so it needs a 1 px margin; solid and selout outlines name a palette character in color, and selout maps fill characters to outline characters in map. Not expressible here and refused by the renderer: pixels outside the canvas, characters missing from the palette, unknown pose, layer or frame names, duplicate layer names and variant keys missing from the palette. name, anchor_px and clips are not read by render_pixelspec: name labels the asset, anchor_px is the canvas root that the exported clips manifest carries, and clips (sprite clipSpec, frames by name or index) drive the sheet and clips exporters.",
+      "type": "object",
+      "required": ["schema", "canvas", "palette", "layers"],
+      "properties": {
+        "schema": {"enum": ["codeart2d.pixelspec.v1", "codeart.pixelspec.v1"]},
+        "name": {"type": "string", "minLength": 1},
+        "canvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "palette": {"$ref": "#/$defs/pixelspecPalette"},
+        "variants": {"type": "object", "additionalProperties": {"$ref": "#/$defs/charPalette"}},
+        "outline": {
+          "type": "object",
+          "properties": {
+            "mode": {"enum": ["none", "solid", "selout"]},
+            "color": {"type": "string", "minLength": 1, "maxLength": 1},
+            "map": {
+              "type": "object",
+              "propertyNames": {"minLength": 1, "maxLength": 1},
+              "additionalProperties": {"type": "string", "minLength": 1, "maxLength": 1}
+            }
+          },
+          "allOf": [
+            {"if": {"properties": {"mode": {"enum": ["solid", "selout"]}}, "required": ["mode"]}, "then": {"required": ["color"]}},
+            {"if": {"properties": {"mode": {"const": "selout"}}, "required": ["mode"]}, "then": {"required": ["map"], "properties": {"map": {"minProperties": 1}}}}
+          ]
+        },
+        "poses": {"type": "object", "additionalProperties": {"$ref": "#/$defs/pixelGrid"}},
+        "layers": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/pixelLayer"}},
+        "frames": {"type": "array", "items": {"$ref": "#/$defs/pixelFrame"}},
+        "clips": {"type": "object", "additionalProperties": {"$ref": "sprite.schema.json#/$defs/clipSpec"}}
+      }
+    },
+    "easing": {
+      "description": "Easing: linear, sine, in, out, step, cubic-bezier(a,b,c,d) or spring(k,d).",
+      "anyOf": [
+        {"enum": ["linear", "sine", "in", "out", "step"]},
+        {"type": "string", "pattern": "^cubic-bezier\\(\\s*-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)\\s*,\\s*-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)\\s*,\\s*-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)\\s*,\\s*-?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)\\s*\\)$"},
+        {"type": "string", "pattern": "^spring\\(\\s*(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)\\s*,\\s*(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)\\s*\\)$"}
+      ]
+    },
+    "boneTrack": {
+      "description": "Keyframes for one bone as [t, value] pairs with t in [0, 1]: rotate in degrees about the bone pivot, translate [dx, dy], scale (uniform or [sx, sy]), show, and swap to a slot variant.",
+      "type": "object",
+      "minProperties": 1,
+      "properties": {
+        "rotate": {"type": "array", "minItems": 1, "items": {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "number"}], "minItems": 2, "maxItems": 2}},
+        "translate": {"type": "array", "minItems": 1, "items": {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"$ref": "common.schema.json#/$defs/point2"}], "minItems": 2, "maxItems": 2}},
+        "scale": {"type": "array", "minItems": 1, "items": {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"anyOf": [{"type": "number"}, {"$ref": "common.schema.json#/$defs/point2"}]}], "minItems": 2, "maxItems": 2}},
+        "show": {"type": "array", "minItems": 1, "items": {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "boolean"}], "minItems": 2, "maxItems": 2}},
+        "swap": {"type": "array", "minItems": 1, "items": {"type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "string", "minLength": 1}], "minItems": 2, "maxItems": 2}},
+        "ease": {"$ref": "#/$defs/easing"}
+      }
+    },
+    "rigClip": {
+      "description": "One rig clip: frames samples at t = i/frames for loops and t = i/(frames-1) for one-shots. events use normalised t.",
+      "type": "object",
+      "required": ["frames", "loop", "duration_ms"],
+      "properties": {
+        "frames": {"type": "integer", "minimum": 1},
+        "loop": {"type": "boolean"},
+        "duration_ms": {"anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/durationsMs"}]},
+        "ease": {"$ref": "#/$defs/easing"},
+        "stride_world_units": {"type": "number", "exclusiveMinimum": 0},
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["t", "name"],
+            "properties": {
+              "t": {"type": "number", "minimum": 0, "maximum": 1},
+              "name": {"$ref": "common.schema.json#/$defs/eventName"},
+              "data": true
+            }
+          }
+        },
+        "tracks": {"type": "object", "additionalProperties": {"$ref": "#/$defs/boneTrack"}}
+      }
+    },
+    "rig_anim_v1": {
+      "description": "Rig animation (roadmap 4.8) for rig_animate.py: clips that pose the bones of an SVG rig (bones are <g id data-pivot>, slots carry data-z).",
+      "type": "object",
+      "required": ["schema", "rig", "clips"],
+      "properties": {
+        "schema": {"const": "codeart2d.rig_anim.v1"},
+        "rig": {"$ref": "common.schema.json#/$defs/relPath"},
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/rigClip"}}
+      }
+    },
+    "fx_v1": {
+      "description": "Gameplay-timed effects for fx_build.py and the fx.v1 runtime: a runtime spawns an effect at hitAt - impactMs. seeds make particles deterministic.",
+      "type": "object",
+      "required": ["schema", "effects", "palette"],
+      "properties": {
+        "schema": {"const": "codeart2d.fx.v1"},
+        "effects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "durationMs", "impactMs", "seed", "primitives"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "durationMs": {"type": "integer", "minimum": 1},
+              "impactMs": {"type": "integer", "minimum": 0},
+              "seed": {"type": "integer", "minimum": 0},
+              "primitives": {
+                "type": "array",
+                "minItems": 1,
+                "items": {"type": "object", "required": ["type"], "properties": {"type": {"type": "string", "minLength": 1}}}
+              },
+              "ramps": {"type": "object"}
+            }
+          }
+        },
+        "palette": {
+          "anyOf": [
+            {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+            {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "common.schema.json#/$defs/hexColor"}},
+            {"$ref": "common.schema.json#/$defs/relPath"}
+          ]
+        },
+        "routes": {"type": "array", "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "codeart_meta_v1": {
+      "description": "codeart-meta.json beside every codeart2d output. art_source is always code (disclose it as code-drawn, no image model; codeart_core writes that text in disclosure); spec_sha256 binds the outputs to the exact text spec; qa is a QA envelope over the outputs (codeart_core wraps qa_pixels metrics in one). renderer names the tool and version, and for SVG art the codeart_core.rasterize info: backend, engine, zoom and output size. palette is usually {colors, variants} as codeart_core.write_codeart_meta writes it: base colours by name and named variants that override some of them.",
+      "type": "object",
+      "required": ["schema", "art_source", "generator", "spec_sha256", "renderer", "palette", "outputs", "qa"],
+      "properties": {
+        "schema": {"const": "codeart2d.codeart_meta.v1"},
+        "art_source": {"const": "code"},
+        "placeholder": {"type": "boolean"},
+        "disclosure": {"type": "string", "minLength": 1},
+        "generator": {"anyOf": [{"type": "string", "minLength": 1}, {"$ref": "common.schema.json#/$defs/toolInfo"}]},
+        "spec_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "renderer": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/toolInfo"}],
+          "properties": {
+            "backend": {"enum": ["resvg_py", "resvg_js_cli", "chrome"]},
+            "engine": {"type": "string", "minLength": 1},
+            "zoom": {"type": "number", "exclusiveMinimum": 0},
+            "size": {"$ref": "common.schema.json#/$defs/size2"}
+          }
+        },
+        "palette": {
+          "anyOf": [
+            {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+            {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "common.schema.json#/$defs/hexColor"}},
+            {"$ref": "common.schema.json#/$defs/relPath"},
+            {"$ref": "common.schema.json#/$defs/fileRef"},
+            {
+              "type": "object",
+              "required": ["colors"],
+              "properties": {
+                "colors": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "common.schema.json#/$defs/hexColor"}},
+                "variants": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"$ref": "common.schema.json#/$defs/hexColor"}}}
+              }
+            }
+          ]
+        },
+        "outputs": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "material_spec_v1": {
+      "description": "Materials for autotile_build.py: colour ramps (dark to light) per material, the tile sets to build (two or three materials for wang_corner and blob47), interior-only variants and a fixed seed.",
+      "type": "object",
+      "required": ["schema", "tile_size", "materials", "sets", "seed"],
+      "properties": {
+        "schema": {"const": "codeart2d.material_spec.v1"},
+        "tile_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/size2"}]},
+        "materials": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["ramp"],
+            "properties": {
+              "ramp": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+              "texture": {"anyOf": [{"type": "object"}, {"$ref": "common.schema.json#/$defs/relPath"}]}
+            }
+          }
+        },
+        "sets": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["kind", "materials"],
+            "properties": {
+              "kind": {"enum": ["wang_corner", "blob47", "flat", "bevel"]},
+              "materials": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string", "minLength": 1}}
+            },
+            "if": {"properties": {"kind": {"enum": ["wang_corner", "blob47"]}}, "required": ["kind"]},
+            "then": {"properties": {"materials": {"minItems": 2}}}
+          }
+        },
+        "variants": {"type": "integer", "minimum": 1},
+        "seed": {"type": "integer", "minimum": 0}
+      }
+    }
+  }
+}
