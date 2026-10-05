@@ -795,7 +795,24 @@ class ReviewTests(_Bundle):
                 self.build(contract, preview_scale=value)
         with self.assertRaisesRegex(ValueError, "WebP allows at most 16383 px per side"):
             self.build(contract, preview_scale=700)
+        with self.assertRaisesRegex(ValueError, "4800x6400 previews; scaled previews are for small pixel art"):
+            self.build(contract, preview_scale=200)
         self.assert_unpublished()
+
+    def test_sheet_scales_stay_within_their_pixel_budgets(self) -> None:
+        self.assertEqual(MODULE.review_scale((24, 32), 3), 3)
+        self.assertEqual(MODULE.review_scale((500, 500), 4), 2)   # 1000 x 1000 is the largest within 2 MP
+        self.assertEqual(MODULE.review_scale((1600, 1600), 3), 1)
+        self.assertEqual(MODULE.contact_sheet_scale((48, 48), 4, 1), 1)
+        self.assertEqual(MODULE.contact_sheet_scale((960, 960), 145, 1), 1)  # native stays native, as in cfed170
+        scale = MODULE.contact_sheet_scale((64, 64), 40, 16)
+        self.assertTrue(1 < scale < 16)
+
+        def area(value: int) -> int:
+            return 4 * (max(64 * value, 180) + 16) * (10 * (64 * value + 48) + 30)
+
+        self.assertLessEqual(area(scale), MODULE.MAX_REVIEW_PIXELS)
+        self.assertGreater(area(scale + 1), MODULE.MAX_REVIEW_PIXELS)
 
     def test_turn_test_sheet_has_anchor_marks(self) -> None:
         names = []

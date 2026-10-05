@@ -525,6 +525,17 @@ class ChromaAndCropBoxTests(_Workspace):
         self.assertEqual(checks["cross_cell_spill"]["status"], "pass")
         assert_contract(self, result, "sprite", "full_frames_v2")
 
+    def test_green_key_pixel_art_needs_a_soft_or_dominance_keyer(self) -> None:
+        path = self.png("green.png", make_magenta_sheet(1, 2, 32, key=(0, 255, 0)))
+        with self.assertRaisesRegex(ValueError, "pass --key-quality dominance or soft"):
+            self.assemble("--sheet", path, "--rows", 1, "--cols", 2, "--key", "chroma", "--key-color", "green",
+                          "--pixel-art")
+        self.assert_clean_failure()
+        result = self.assemble("--sheet", path, "--rows", 1, "--cols", 2, "--key", "chroma", "--key-color", "green",
+                               "--pixel-art", "--key-quality", "dominance")
+        self.assertEqual(result["sources"][0]["key"]["quality"], "dominance")
+        self.assertEqual(int(self.read_frame(0)[0, 0, 3]), 0)
+
     def test_chroma_key_without_a_backdrop_warns(self) -> None:
         path = self.png("scene.png", Image.new("RGB", (32, 16), (90, 120, 60)))
         result = self.assemble("--input", path, "--key", "chroma")

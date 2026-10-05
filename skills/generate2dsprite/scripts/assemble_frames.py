@@ -149,8 +149,14 @@ def load_png(path: Path) -> tuple[Image.Image, dict[str, object]]:
 
 def key_image(image: Image.Image, args: argparse.Namespace) -> tuple[Image.Image, dict[str, object]]:
     """Key a uniform backdrop with forge_matte.key_still; RGB under alpha 0 is zeroed."""
-    keyed, info = forge_matte.key_still(image.convert("RGBA"), quality=args.key_quality, key=args.key_color,
-                                        resampler_hint="nearest" if args.pixel_art else "lanczos")
+    try:
+        keyed, info = forge_matte.key_still(image.convert("RGBA"), quality=args.key_quality, key=args.key_color,
+                                            resampler_hint="nearest" if args.pixel_art else "lanczos")
+    except ValueError as error:
+        if "hard keying" not in str(error):
+            raise
+        raise ValueError(f"{error} The binary key used by --pixel-art (or --key-quality hard) needs a magenta "
+                         "backdrop; pass --key-quality dominance or soft for a green or blue key.") from error
     pixels = np.array(keyed)
     pixels[pixels[..., 3] == 0] = 0
     qa = {name: value for name, value in info["qa"].items() if name != "key"}

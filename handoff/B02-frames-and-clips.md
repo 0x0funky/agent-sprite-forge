@@ -30,7 +30,7 @@ Run from the user's project root; `<skill-dir>` is the generate2dsprite folder (
 |---|---|
 | `--manifest` | The v1 or v2 clips manifest. |
 | `--output-dir` | A new directory. |
-| `--preview-scale N` | Integer nearest-neighbour scale for the WebP previews, the contact sheet and the reviews; frames stay native. |
+| `--preview-scale N` | Integer nearest-neighbour scale for the WebP previews, the contact sheet and the reviews; frames stay native. Scaled previews stay within 4096x4096 px. The sheets step down to fit about 24 MP per sheet and 2 MP per frame; `contact_sheet.scale`, `review.scale` and `requested_scale` record the result. |
 | `--preview-background` | `all`, `light`, `dark`, `checker` or `#rrggbb`. |
 | `--no-reviews` | Skip the review sheets. |
 | `--tick-hz` | The tick grid of the drift report; default 60. |
@@ -594,3 +594,10 @@ Deviations from the plan, with reasons:
 6. **`--loop-overlap` needs `--ambient`.** This is how "never characters" is enforced; the tool cannot tell a character from water. K is at least 2 and below half the played positions.
 
 **Hit-stop, time-warp and walk phase** are documented for runtimes and resolved into manifest fields. B09 implements them; this module does not test a runtime.
+
+**Memory bounds.**
+
+- At scale 1 the contact sheet keeps its cfed170 size whatever the frame count. A very large set (for example 145 frames of 960x960) still allocates a large sheet, as cfed170 did.
+- Scaled sheets are capped at about 24 MP per sheet and 2 MP per frame.
+- Filmstrips, onion skins and the turn test drop trailing positions or clips to stay within budget, and record `truncated`.
+- Previews are encoded at full size; scaled previews are capped at 4096x4096 px.

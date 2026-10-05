@@ -85,7 +85,9 @@ TICK_HZ = 60
 TELEGRAPH_MIN_TICKS = 28  # 60 Hz ticks between an enemy's tell and its hit (game-opus55 combat-feel-v0)
 NEAR_DUPLICATE_MAE = 1.5  # premultiplied RGBA MAE over the union of visible pixels, 0-255 units
 MAX_WEBP_SIDE = 16383
-MAX_REVIEW_PIXELS = 24_000_000
+MAX_PREVIEW_FRAME_PIXELS = 4096 * 4096  # one scaled WebP preview frame
+MAX_REVIEW_PIXELS = 24_000_000          # one contact or review sheet
+MAX_REVIEW_CELL_PIXELS = 2_000_000      # one scaled frame inside a review sheet
 EVENT_NAMES = ("in", "tell", "hit", "active_end", "cancel", "chain", "impact", "hold", "end", "sfx",
                "step_l", "step_r")
 KEY_NAMES = ("wind_start", "wind_peak", "strike", "recover", "end")
@@ -754,6 +756,26 @@ def _write_clip_webp(path: Path, selected: list[Image.Image], expected, clip: di
     return decoded_records
 
 
+def contact_sheet_scale(size: tuple[int, int], count: int, requested: int) -> int:
+    """The largest scale up to ``requested`` whose contact sheet fits MAX_REVIEW_PIXELS; 1 keeps the
+    native sheet (cfed170), whatever its size."""
+    columns = min(4, math.ceil(math.sqrt(count)))
+    rows = math.ceil(count / columns)
+    for scale in range(requested, 1, -1):
+        width = columns * (max(size[0] * scale, 180) + 16)
+        if width * (rows * (size[1] * scale + 48) + 30) <= MAX_REVIEW_PIXELS:
+            return scale
+    return 1
+
+
+def review_scale(size: tuple[int, int], requested: int) -> int:
+    """The largest scale up to ``requested`` that keeps one review cell within MAX_REVIEW_CELL_PIXELS."""
+    scale = requested
+    while scale > 1 and size[0] * size[1] * scale * scale > MAX_REVIEW_CELL_PIXELS:
+        scale -= 1
+    return scale
+
+
 def make_contact_sheet(path: Path, images: list[Image.Image], names: list[str], anchor: list, *,
                        scale: int = 1) -> None:
     width, height = images[0].size[0] * scale, images[0].size[1] * scale
@@ -913,21 +935,29 @@ class ReviewRenderer:
         return {"background": kind, "positions_shown": keep, "truncated": truncated}
 
     def turn_test(self, path: Path, entries: list[tuple[str, int, float | None]]) -> dict:
-        """Normal row over a row mirrored about the anchor x; a dotted anchor line crosses both rows."""
+        """Each clip's pose above its mirror about the anchor x, six clips per row; a dotted anchor
+        line crosses both. Clips that would push the sheet past MAX_REVIEW_PIXELS are left out."""
         frame_w, frame_h = self.frame_size
         anchor_x = self.anchor[0] * self.scale
         offset = round((2 * self.anchor[0] - self.width) * self.scale)
         span_left, span_right = min(0, offset), max(frame_w, offset + frame_w)
         cell_w = max(span_right - span_left, self.MIN_CELL) + 2 * self.PAD
         row_h = frame_h + 2 * self.PAD
+        band_h = 2 * row_h + self.LABEL
+        columns = max(1, min(6, len(entries)))
+        keep = len(entries)
+        while keep > 1 and columns * cell_w * (self.TITLE + math.ceil(keep / columns) * band_h) > MAX_REVIEW_PIXELS:
+            keep -= 1
         kind = "dark" if "dark" in self.backgrounds else self.backgrounds[0]  # contrast for the yellow marks
-        canvas, draw = self._sheet(len(entries) * cell_w, self.TITLE + 2 * row_h + self.LABEL,
+        canvas, draw = self._sheet(columns * cell_w, self.TITLE + math.ceil(keep / columns) * band_h,
                                    "TURN TEST: top normal, bottom mirrored about the anchor x (yellow)")
         cells = []
-        for column, (name, frame, slide) in enumerate(entries):
+        for position, (name, frame, slide) in enumerate(entries[:keep]):
+            column, band = position % columns, position // columns
             left = column * cell_w + self.PAD - span_left + (cell_w - 2 * self.PAD - (span_right - span_left)) // 2
             screen_x = left + round(anchor_x)
-            tops = [self.TITLE + self.PAD, self.TITLE + row_h + self.PAD]
+            band_top = self.TITLE + band * band_h
+            tops = [band_top + self.PAD, band_top + row_h + self.PAD]
             array = self.arrays[frame]
             for row, top in enumerate(tops):
                 tile_left = left + min(0, offset)
@@ -941,12 +971,13 @@ class ReviewRenderer:
                 for y in range(top, top + frame_h, 2):
                     canvas.putpixel((screen_x, y), ANCHOR_MARK)
             label = f"{name} f{frame}" + ("" if slide is None else f" slide {slide:g}px")
-            self._text(draw, (column * cell_w + self.PAD, self.TITLE + 2 * row_h + 2), label, 28)
+            self._text(draw, (column * cell_w + self.PAD, band_top + 2 * row_h + 2), label, 28)
             cells.append({"clip": name, "frame": frame, "anchor_screen_x": screen_x,
                           "rows": [[tops[0], tops[0] + frame_h], [tops[1], tops[1] + frame_h]],
                           "mirrored_offset_px": offset, "turn_slide_px": slide})
         forge_core.save_png(canvas.convert("RGB"), path)
-        return {"background": kind, "anchor_mark_rgb": list(ANCHOR_MARK[:3]), "cells": cells}
+        return {"background": kind, "anchor_mark_rgb": list(ANCHOR_MARK[:3]), "cells": cells,
+                "clips_shown": keep, "truncated": keep < len(entries)}
 
     def transition(self, path: Path, source: str, hint: dict, first: int, second: int) -> dict:
         samples = min(8, max(2, hint["dissolve_ticks"] + 1))
@@ -985,13 +1016,19 @@ def _position_labels(clip: dict) -> list[str]:
     return labels
 
 
-def render_reviews(stage: Path, clips: dict, arrays: list[np.ndarray], anchor: list, scale: int,
+def render_reviews(stage: Path, clips: dict, arrays: list[np.ndarray], anchor: list, requested_scale: int,
                    backgrounds: list[str]) -> tuple[dict, list[str]]:
-    """Write review/ sheets; returns the manifest record and the written relative paths."""
+    """Write review/ sheets; returns the manifest record and the written relative paths.
+
+    The sheets use ``requested_scale`` unless one scaled frame would exceed MAX_REVIEW_CELL_PIXELS;
+    the record keeps both scales.
+    """
     review = stage / "review"
     review.mkdir()
+    scale = review_scale((arrays[0].shape[1], arrays[0].shape[0]), requested_scale)
     renderer = ReviewRenderer(arrays, anchor, scale, backgrounds)
-    record: dict = {"scale": scale, "backgrounds": backgrounds, "filmstrips": {}, "onion": {}, "transitions": []}
+    record: dict = {"scale": scale, "requested_scale": requested_scale, "backgrounds": backgrounds,
+                    "filmstrips": {}, "onion": {}, "transitions": []}
     written = []
     entries = []
     for clip_index, (name, clip) in enumerate(clips.items()):
@@ -1120,6 +1157,9 @@ def build(manifest_path: Path, output_dir: Path, *, preview_scale: int = 1, prev
     require(width * preview_scale <= MAX_WEBP_SIDE and height * preview_scale <= MAX_WEBP_SIDE,
             f"--preview-scale {preview_scale} makes {width * preview_scale}x{height * preview_scale} previews; "
             f"WebP allows at most {MAX_WEBP_SIDE} px per side.")
+    require(preview_scale == 1 or width * height * preview_scale ** 2 <= MAX_PREVIEW_FRAME_PIXELS,
+            f"--preview-scale {preview_scale} makes {width * preview_scale}x{height * preview_scale} previews; "
+            "scaled previews are for small pixel art and stay within 4096x4096 px.")
     clips, states, lint = resolve_clips(contract, records, version, tick_hz=tick_hz)
     top_level, top_lint = resolve_top_level(contract, manifest_path, final) if version == 2 else ({}, [])
     lint += top_lint
@@ -1160,7 +1200,8 @@ def build(manifest_path: Path, output_dir: Path, *, preview_scale: int = 1, prev
             clip["last_to_first"] = {"applies_to_playback": clip["loop"],
                                      **FRAME_UTILS.transition_metrics(arrays[indices[-1]], arrays[indices[0]])}
         contact = stage / "contact-sheet.png"
-        make_contact_sheet(contact, images, [record["name"] for record in records], anchor, scale=preview_scale)
+        contact_scale = contact_sheet_scale(images[0].size, len(images), preview_scale)
+        make_contact_sheet(contact, images, [record["name"] for record in records], anchor, scale=contact_scale)
         review, review_files = render_reviews(stage, clips, arrays, anchor, preview_scale, backgrounds) \
             if reviews else (None, [])
         result = {
@@ -1177,7 +1218,8 @@ def build(manifest_path: Path, output_dir: Path, *, preview_scale: int = 1, prev
                             "near_duplicate_pairs": [[first, second, distance]
                                                      for (first, second), distance in sorted(pairs.items())],
                             "tick_hz": tick_hz, "lint": lint},
-            "contact_sheet": {"file": "contact-sheet.png", "native_scale": preview_scale == 1, "scale": preview_scale,
+            "contact_sheet": {"file": "contact-sheet.png", "native_scale": contact_scale == 1, "scale": contact_scale,
+                              "requested_scale": preview_scale,
                               "annotated_with_shared_root": True, "not_a_runtime_atlas": True,
                               "file_sha256": FRAME_UTILS.digest(contact.read_bytes())},
             "review": review,

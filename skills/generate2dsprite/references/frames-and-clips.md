@@ -114,7 +114,10 @@ Every v1 key keeps its meaning in `animation-clips.json`. Pingpong clips list th
 
 Frame records list `near_duplicates` and the `holds` they take part in. `qa` is a QA envelope with method, `notProven` and the sha256 of every input and output.
 
-Options: `--preview-scale N` (integer, nearest neighbour; frames stay native), `--preview-background all|light|dark|checker|#rrggbb`, `--no-reviews`, `--tick-hz`, `--near-duplicate-mae`, `--strict`.
+Options:
+
+- `--preview-scale N`: an integer nearest-neighbour scale for small pixel art; frames stay native. Scaled previews stay within 4096x4096 px. The contact and review sheets step down to a smaller scale when the requested one would exceed about 24 MP per sheet or 2 MP per frame; the manifest records both scales.
+- `--preview-background all|light|dark|checker|#rrggbb`, `--no-reviews`, `--tick-hz`, `--near-duplicate-mae`, `--strict`.
 
 ### Lints
 
