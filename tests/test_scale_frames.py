@@ -157,7 +157,8 @@ def test_stance_turn_slide_is_zero(tmp_path):
 
 
 def test_emitted_clips_json_builds(tmp_path):
-    """B03-T3 acceptance: --emit-clips writes a clips manifest that build_animation_clips.py builds."""
+    """B03-T3 acceptance: --emit-clips writes a clips manifest that build_animation_clips.py builds. D11: it is
+    generate2dsprite.animation_clips.v2; exact --duration-ms stays exact."""
     frames = [save(figure(dx=dx), tmp_path / f"walk-{index}.png") for index, dx in enumerate((0, 2, 4, 2))]
     out = tmp_path / "scaled"
     summary = run("--frames", *frames, "--scale-from", "1/2", "--resampler", "box", "--root-lock", "torso-x",
@@ -165,11 +166,42 @@ def test_emitted_clips_json_builds(tmp_path):
     clips = json.loads((out / "clips.json").read_text(encoding="utf-8"))
     assert_valid_contract(clips, "sprite", "clips_input", skill=SKILL)
     record = load_record(summary)
-    assert clips["anchor_px"] == record["anchor_px"]
-    assert clips["clips"] == {"walk": {"frames": [0, 1, 2, 3], "duration_ms": [80, 90, 80, 90], "loop": True}}
+    assert clips["schema"] == "generate2dsprite.animation_clips.v2" and clips["anchor_px"] == record["anchor_px"]
+    assert clips["clips"] == {"walk": {"frames": [0, 1, 2, 3], "duration_ms": [80, 90, 80, 90],
+                                       "loop_policy": "cycle"}}
+    assert "pixel_art" not in clips and "sampling" not in clips  # box resampling is not pixel art
     built = run_cli([BUILDER, "--manifest", out / "clips.json", "--output-dir", tmp_path / "compiled"])
     assert built.returncode == 0, built.stderr
     assert (tmp_path / "compiled" / "animation-clips.json").is_file()
+
+
+def test_emitted_clips_are_v2_ticks_and_pixel_art_for_nearest(tmp_path):
+    """D11 (sprite review B03): the documented 80 ms clip tripped the builder's uneven_ticks lint, so
+    --strict failed. --emit-clips now writes v2 with ticks at tick_hz (default 6 ticks, 100 ms at 60 Hz) and,
+    for integer nearest output, pixel_art and nearest sampling; the strict build is clean."""
+    frames = [save(figure(dx=dx), tmp_path / f"run-{index}.png") for index, dx in enumerate((0, 4, 8, 4))]
+    out = tmp_path / "game"
+    run("--frames", *frames, "--scale-from", "1/2", "--resampler", "nearest", "--emit-clips", "--clip-name", "run",
+        "--ticks", "5", "--no-loop", "--output-dir", out)
+    clips = json.loads((out / "clips.json").read_text(encoding="utf-8"))
+    assert_valid_contract(clips, "sprite", "clips_input", skill=SKILL)
+    assert clips["schema"] == "generate2dsprite.animation_clips.v2"
+    assert clips["clips"] == {"run": {"frames": [0, 1, 2, 3], "ticks": 5, "tick_hz": 60, "loop_policy": "oneshot"}}
+    assert (clips["pixel_art"], clips["sampling"]) == (True, "nearest")
+    built = run_cli([BUILDER, "--manifest", out / "clips.json", "--output-dir", tmp_path / "built", "--strict"])
+    assert built.returncode == 0, built.stderr
+    result = json.loads((tmp_path / "built" / "animation-clips.json").read_text(encoding="utf-8"))
+    run_clip = result["clips"]["run"]
+    assert run_clip["duration_ms"] == [83, 84, 83, 83] and run_clip["tick_grid"]["even"]
+    assert (result["pixel_art"], result["sampling"]) == (True, "nearest")
+    default = tmp_path / "default"
+    run("--frames", *frames, "--scale-from", "1/2", "--resampler", "box", "--emit-clips", "--output-dir", default)
+    clip = json.loads((default / "clips.json").read_text(encoding="utf-8"))["clips"]["action"]
+    assert (clip["ticks"], clip["tick_hz"], clip["loop_policy"]) == (6, 60, "cycle")
+    both = run_cli([SCRIPT, "--frames", *frames, "--emit-clips", "--ticks", "5", "--duration-ms", "80",
+                    "--output-dir", tmp_path / "both"])
+    assert both.returncode == 2 and "not allowed with argument" in both.stderr  # D26: a usage error
+    assert not (tmp_path / "both").exists()
 
 
 # --------------------------------------------------------------------------- behaviour
@@ -280,6 +312,8 @@ def test_lock_and_option_conflicts_are_clean_errors(tmp_path):
         (["--lock", "knee"], "--lock takes"),
         (["--canvas", "60,90"], "go together"),
         (["--duration-ms", "80,90", "--emit-clips"], "--duration-ms"),
+        (["--ticks", "0", "--emit-clips"], "--ticks"),
+        (["--tick-hz", "0", "--emit-clips"], "--tick-hz"),
     ]
     for extra, message in cases:
         result = run_cli([SCRIPT, "--frames", frame, "--scale-from", "1", *extra, "--output-dir", tmp_path / "x"])

@@ -346,6 +346,44 @@ class AnimationClipTests(unittest.TestCase):
         self.assertEqual(list(self.root.glob(".bundle.stage-*")), [])
 
 
+class RegisteredFrameExportTests(unittest.TestCase):
+    """The fork's builder tests that lived in tests/test_generate2dsprite.py (cfed170 sprite suite), moved
+    beside the builder they exercise (sprite review, cross-module issue 10)."""
+
+    def test_registered_clips_preserve_png_bytes_root_and_one_shot_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            for index in range(2):
+                frame = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+                frame.paste((200, 60, 20, 128), (5, 5-index, 10, 12-index))
+                frame.save(base / f"pose-{index}.png")
+            contract = {"frames": ["pose-0.png", "pose-1.png"], "anchor_px": [8, 13],
+                        "clips": {"attack": {"frames": [0, 1], "duration_ms": [80, 160], "loop": False}},
+                        "states": {"attacking": "attack"}}
+            manifest = base / "clips.json"
+            manifest.write_text(json.dumps(contract), encoding="utf-8")
+            result = MODULE.build(manifest, base / "out")
+            self.assertEqual(result["anchor_px"], [8, 13])
+            self.assertEqual(result["clips"]["attack"]["preview"]["total_duration_ms"], 240)
+            self.assertFalse(result["clips"]["attack"]["loop"])
+            for index in range(2):
+                self.assertEqual((base / f"pose-{index}.png").read_bytes(),
+                                 (base / "out" / "frames" / f"frame-{index:02d}.png").read_bytes())
+
+    def test_clips_reject_mismatched_canvas_without_publishing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            for index in range(2):
+                image = Image.new("RGBA", (16+index, 16), (0, 0, 0, 0))
+                image.putpixel((5, 5), (20, 40, 60, 255))
+                image.save(base / f"pose-{index}.png")
+            manifest = base / "clips.json"
+            manifest.write_text(json.dumps({"frames": ["pose-0.png", "pose-1.png"], "anchor_px": [8, 13]}), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "same native canvas"):
+                MODULE.build(manifest, base / "out")
+            self.assertFalse((base / "out").exists())
+
+
 # --------------------------------------------------------------------------- shared fixtures
 
 def walker(phase: int, size: tuple[int, int] = (24, 32), *, offset: int = 0) -> Image.Image:
@@ -513,13 +551,60 @@ class V1CompatibilityTests(_Bundle):
         assert_clips_contract(self, written)
 
     def test_v1_ignores_v2_fields_with_a_lint(self) -> None:
+        """The v2-only fields stay ignored under v1 (with one lint per place); D11's fields do not."""
         contract = self.v1_fixture()
-        contract["clips"]["run"]["events"] = [{"at": 9, "name": "nonsense"}]
-        contract["pixel_art"] = "maybe"
+        contract["clips"]["run"]["keys"] = {"strike": 9}
+        contract["clips"]["run"]["role"] = "boss"
+        contract["body_height_px"] = "tall"
         result = self.build(contract)
+        self.assertEqual(result["schema"], "generate2dsprite.animation_clips.v1")
         self.assertEqual(result["clips"]["run"]["events_ms"], [])
-        self.assertNotIn("pixel_art", result)
+        self.assertNotIn("keys", result["clips"]["run"])
+        self.assertNotIn("body_height_px", result)
         self.assertEqual(self.lint_codes(result), ["v2_field_ignored", "v2_field_ignored"])
+        messages = [item["message"] for item in result["diagnostics"]["lint"]]
+        self.assertIn("keys, role", messages[0])
+        self.assertIn("body_height_px", messages[1])
+
+    def test_v1_honours_art_source_sampling_and_events(self) -> None:
+        """D11: a v1 manifest's top-level art_source, placeholder, pixel_art and sampling and its clip
+        events are not gated by version; they are validated and written as in v2, the schema stays v1."""
+        contract = self.v1_fixture()
+        contract.update({"art_source": "code", "placeholder": True, "pixel_art": True, "sampling": "nearest"})
+        contract["clips"]["run"]["events"] = [{"at": 1, "name": "step_l"}, {"at": 2, "name": "custom:dust",
+                                                                            "data": {"size": 2}}]
+        result = self.build(contract)
+        self.assertEqual(result["schema"], "generate2dsprite.animation_clips.v1")
+        self.assertEqual({key: result[key] for key in ("art_source", "placeholder", "pixel_art", "sampling")},
+                         {"art_source": "code", "placeholder": True, "pixel_art": True, "sampling": "nearest"})
+        self.assertEqual(result["clips"]["run"]["events_ms"],
+                         [{"name": "step_l", "at_ms": 80, "at": 1, "position": 1, "at_tick": 5},
+                          {"name": "custom:dust", "at_ms": 180, "at": 2, "position": 2, "at_tick": 11,
+                           "data": {"size": 2}}])
+        self.assertEqual(result["clips"]["idle"]["events_ms"], [])
+        self.assertEqual(self.lint_codes(result), [])
+        assert_clips_contract(self, result)
+        linear = self.v1_fixture()
+        linear.update({"pixel_art": True, "sampling": "linear"})
+        self.output = self.root / "linear"
+        self.assertEqual(self.lint_codes(self.build(linear)), ["pixel_art_linear_sampling"])
+
+    def test_v1_honoured_fields_are_validated(self) -> None:
+        """D11: honouring the fields in v1 also validates them; a bad value fails and publishes nothing."""
+        for change, message in (({"pixel_art": "maybe"}, "pixel_art must be true or false"),
+                                ({"sampling": "bilinear"}, "sampling must be nearest or linear"),
+                                ({"art_source": "camera"}, "art_source must be one of"),
+                                ({"events": [{"at": 9, "name": "hit"}]}, "at must be a clip position from 0 to 2"),
+                                ({"events": [{"at": 0, "name": "nonsense"}]}, "unknown event name 'nonsense'")):
+            with self.subTest(change=change):
+                contract = self.v1_fixture()
+                if "events" in change:
+                    contract["clips"]["run"]["events"] = change["events"]
+                else:
+                    contract.update(change)
+                with self.assertRaisesRegex(ValueError, message):
+                    self.build(contract)
+                self.assert_unpublished()
 
     @unittest.skipUnless((REPO_ROOT / "handoff" / "B02-frames-and-clips.md").is_file(),
                          "handoff/ is removed once integration applies the requests")
@@ -1021,7 +1106,7 @@ class CliTests(_Bundle):
         self.assertNotIn("Traceback", result.stderr)
         self.assert_unpublished()
 
-    def test_cli_success_prints_one_json_line_and_usage_errors_exit_1(self) -> None:
+    def test_cli_success_prints_one_json_line_and_usage_errors_exit_2(self) -> None:
         self.write(self.v2({"walk": {"frames": [0, 1, 2, 3], "ticks": 6, "loop": True}}))
         result = run_cli([SCRIPT, "--manifest", self.manifest, "--output-dir", self.output, "--preview-scale", "2",
                           "--strict"], "cp1252")
@@ -1034,8 +1119,28 @@ class CliTests(_Bundle):
         self.assertEqual((summary["schema"], summary["clips"], summary["warnings"]), (V2, 1, 0))
         usage = run_cli([SCRIPT, "--manifest", self.manifest, "--output-dir", self.root / "x", "--preview-scale",
                          "2.5"], "cp1252")
-        self.assertEqual(usage.returncode, 1)
+        self.assertEqual(usage.returncode, 2)  # argparse's usage-error convention (D26)
+        self.assertTrue(usage.stderr.startswith("usage:"), usage.stderr)
         self.assertIn("error: argument --preview-scale", usage.stderr)
+        self.assertFalse((self.root / "x").exists())
+
+    def test_bom_manifest_and_unexpected_errors(self) -> None:
+        """D28: a manifest written with a UTF-8 BOM builds; D27: a bug is one ``error: internal error`` line."""
+        self.manifest.write_bytes(b"\xef\xbb\xbf" + json.dumps(self.v2({"walk": {"frames": [0, 1], "ticks": 6,
+                                                                               "loop": True}})).encode("utf-8"))
+        result = run_cli([SCRIPT, "--manifest", self.manifest, "--output-dir", self.output], "cp1252")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.manifest.write_text("{broken", encoding="utf-8")
+        broken = run_cli([SCRIPT, "--manifest", self.manifest, "--output-dir", self.root / "broken"], "cp1252")
+        self.assertEqual(broken.returncode, 1)
+        self.assertTrue(broken.stderr.startswith("error: Manifest clips.json is not valid JSON"), broken.stderr)
+        self.write(self.v2({"walk": {"frames": [0, 1], "ticks": 6, "loop": True}}))
+        import contextlib
+        import io
+        stderr = io.StringIO()
+        with mock.patch.object(MODULE, "build", side_effect=KeyError("boom")), contextlib.redirect_stderr(stderr):
+            status = MODULE.main(["--manifest", str(self.manifest), "--output-dir", str(self.root / "bug")])
+        self.assertEqual((status, stderr.getvalue()), (1, "error: internal error (KeyError: 'boom')\n"))
 
 
 if __name__ == "__main__":

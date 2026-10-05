@@ -106,7 +106,9 @@ Run the checks in this order, from the project root:
 
     python "<skill-dir>/scripts/sheet_qc.py" spill --input raw/run-sheet.png --rows 2 --cols 4 --output-dir qc/run-spill
     python "<skill-dir>/scripts/sheet_qc.py" frames --sheet raw/run-sheet.png --rows 2 --cols 4 --cycle run --game-pixel 8 --output-dir qc/run-frames
-    python "<skill-dir>/scripts/scale_frames.py" --sheet raw/run-sheet.png --rows 2 --cols 4 --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips --clip-name run --duration-ms 80 --output-dir out/run-game
+    python "<skill-dir>/scripts/scale_frames.py" --sheet raw/run-sheet.png --rows 2 --cols 4 --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips --clip-name run --ticks 5 --output-dir out/run-game
     python "<skill-dir>/scripts/build_animation_clips.py" --manifest out/run-game/clips.json --output-dir out/run-clips
+
+`sheet_qc.py` publishes its report either way and exits 1 when a check fails, so a script stops there; read `sheet-qc.json` before deciding. `scale_frames.py --emit-clips` writes a v2 clips manifest timed in 60 Hz ticks (`--ticks 5` is 83 ms per frame), so the strict build stays free of uneven-tick warnings.
 
 If the leading-leg test reports a duplicated half-cycle, regenerate only the second half (frames 4-7 of an 8-frame run), attaching the master, frames 0-3 and the guide. If one frame's head ratio is off, regenerate or repair that frame from the master. Torso drift and row-baseline steps are fixed by `scale_frames.py` (`--root-lock torso-x`, `--row-baseline`), never by moving pixels by hand. In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.

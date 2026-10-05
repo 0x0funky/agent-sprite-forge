@@ -130,27 +130,27 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        output = args.output.resolve()
-        if output.suffix.lower() != ".png":
-            raise ValueError(f"--output must be a .png file: {output.name}")
-        if os.path.lexists(output):
-            raise FileExistsError(f"Refusing to overwrite existing output: {output}")
-        image = build_layout_guide(args.rows, args.cols, args.cell_width, args.cell_height,
-                                   args.safe_margin_x, args.safe_margin_y, args.label_cells)
-        output.parent.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(prefix=f".{output.name}.", dir=output.parent) as temporary:
-            staged = Path(temporary) / output.name
-            forge_core.save_png(image, staged)
-            forge_core.publish_file_no_replace(staged, output)
-    except (ValueError, OSError) as error:
-        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+    output = args.output.resolve()
+    if output.suffix.lower() != ".png":
+        raise ValueError(f"--output must be a .png file: {output.name}")
+    if os.path.lexists(output):
+        raise FileExistsError(f"Refusing to overwrite existing output: {output}")
+    image = build_layout_guide(args.rows, args.cols, args.cell_width, args.cell_height,
+                               args.safe_margin_x, args.safe_margin_y, args.label_cells)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=f".{output.name}.", dir=output.parent) as temporary:
+        staged = Path(temporary) / output.name
+        forge_core.save_png(image, staged)
+        forge_core.publish_file_no_replace(staged, output)
     print(json.dumps({"output": str(output), "size": list(image.size), "rows": args.rows, "cols": args.cols}))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2; other failures print one ``error: ...`` line and exit 1 (D26, D27)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

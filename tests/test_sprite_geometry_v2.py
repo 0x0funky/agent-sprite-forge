@@ -458,7 +458,10 @@ class ContractTests(unittest.TestCase):
                     self.assertEqual(meta["schema"], "generate2dsprite.pipeline_meta.v2")
                     self.assertEqual(contract_errors(meta, "sprite", "pipeline_meta_v2", skill="generate2dsprite"), [])
                     self.assertEqual(contract_errors(meta["qa"], "common", "qaEnvelope", skill="generate2dsprite"), [])
-                    self.assertEqual(meta["qa"]["status"], "pass")
+                    # The binary key leaves the fringe of the anti-aliased edge: key_ring_spill warns (review fix).
+                    warned = [check["id"] for check in meta["qa"]["checks"] if check["status"] == "warn"]
+                    self.assertEqual(warned, ["key_ring_spill"] if name == "hard" else [])
+                    self.assertEqual(meta["qa"]["status"], "warn" if name == "hard" else "pass")
                     self.assertEqual({item["path"] for item in meta["qa"]["outputs"]} <= set(
                         path.name for path in (root / name).iterdir()), True)
 
@@ -482,8 +485,9 @@ class ContractTests(unittest.TestCase):
 
 
 class SoftRegionTests(unittest.TestCase):
-    """The soft still key mattes only the content regions of a sheet and gives the same bytes as one
-    forge_matte.soft_matte call over the whole sheet."""
+    """D15: process keys through forge_matte.key_still, whose region matte (B01's former
+    _local_soft_matte_regions, promoted with an exactness guard) mattes only the content regions of a
+    sheet and gives the same bytes as one forge_matte.soft_matte call over the whole sheet."""
 
     def sheets(self) -> list[tuple[str, np.ndarray, str]]:
         rng = np.random.default_rng(11)
@@ -506,8 +510,40 @@ class SoftRegionTests(unittest.TestCase):
             for interior in (False, True):
                 params = fm.KeyParams(**{**fm.STILL_KEY_PARAMS.to_dict(), "interior_despill": interior})
                 with self.subTest(sheet=index, key=declared, interior_despill=interior):
-                    np.testing.assert_array_equal(G._local_soft_matte_regions(pixels, params, key),
+                    np.testing.assert_array_equal(fm.soft_matte_regions(pixels, params, key),
                                                   fm.soft_matte(pixels, params, key))
+
+    def test_process_soft_key_is_key_still_with_whole_sheet_bytes(self) -> None:
+        """key_sheet makes one key_still call, which mattes by regions; the result is one whole-sheet soft
+        matte with key_still's parameters. The private region copy is gone (D15, D30)."""
+        fm = G.forge_matte
+        self.assertFalse(hasattr(G, "_local_soft_matte_regions"))
+        for index, (declared, pixels, key_name) in enumerate(self.sheets()):
+            with self.subTest(sheet=index, key=declared), \
+                 mock.patch.object(fm, "key_still", wraps=fm.key_still) as still, \
+                 mock.patch.object(fm, "soft_matte_regions", wraps=fm.soft_matte_regions) as regions:
+                keyed, info = G.key_sheet(Image.fromarray(pixels), quality="auto", key=key_name)
+                self.assertEqual((still.call_count, regions.call_count), (1, 1))
+                self.assertEqual((info["quality"], info["requested_quality"]), ("soft", "auto"))
+                key, _estimate = fm.estimate_key(pixels, key_name)
+                expected = fm.soft_matte(pixels, fm.KeyParams(**info["params"]), key)
+                np.testing.assert_array_equal(np.asarray(keyed), expected)
+                self.assertEqual(info["qa"], fm.matte_qa(expected, key))
+
+    def test_hard_key_is_the_legacy_keyer_against_ff00ff(self) -> None:
+        """--key-quality hard never estimates a backdrop: legacy_hard_key with the user's thresholds, QA against
+        #FF00FF (the cfed170 bytes, S03)."""
+        fm = G.forge_matte
+        sheet = make_magenta_sheet(2, 2, 64, fringe=True)
+        keyed, info = G.key_sheet(sheet, quality="hard", threshold=90, edge_threshold=140)
+        expected = np.asarray(fm.legacy_hard_key(sheet, 90, 140))
+        np.testing.assert_array_equal(np.asarray(keyed), expected)
+        self.assertEqual((info["quality"], info["key"], info["key_estimate"]), ("hard", [255.0, 0.0, 255.0], None))
+        self.assertEqual(info["thresholds"], {"threshold": 90, "edge_threshold": 140})
+        self.assertEqual(info["qa"], fm.matte_qa(expected, (255, 0, 255)))
+        auto_nearest, auto_info = G.key_sheet(sheet, quality="auto", resampler="nearest")
+        np.testing.assert_array_equal(np.asarray(auto_nearest), np.asarray(fm.legacy_hard_key(sheet, 100, 150)))
+        self.assertEqual((auto_info["quality"], auto_info["requested_quality"]), ("hard", "auto"))
 
     def test_regions_skip_the_empty_backdrop(self) -> None:
         sheet = np.array(make_magenta_sheet(3, 3, 256, margin=100))
@@ -521,7 +557,7 @@ class SoftRegionTests(unittest.TestCase):
             return original(pixels, *args, **kwargs)
 
         with mock.patch.object(fm, "soft_matte", side_effect=record):
-            G._local_soft_matte_regions(sheet, fm.STILL_KEY_PARAMS, key)
+            fm.soft_matte_regions(sheet, fm.STILL_KEY_PARAMS, key)
         self.assertEqual(len(areas), 9)
         self.assertLess(sum(areas), 0.6 * sheet.shape[0] * sheet.shape[1])
 
@@ -532,7 +568,7 @@ class SoftRegionTests(unittest.TestCase):
                 specks[y:y + 4, x:x + 4, :3] = (40, 90, 150)  # 121 separate groups: one whole-sheet call
         areas.clear()
         with mock.patch.object(fm, "soft_matte", side_effect=record):
-            result = G._local_soft_matte_regions(specks, fm.STILL_KEY_PARAMS, key)
+            result = fm.soft_matte_regions(specks, fm.STILL_KEY_PARAMS, key)
         self.assertEqual(areas, [512 * 512])
         np.testing.assert_array_equal(result, original(specks, fm.STILL_KEY_PARAMS, key))
 

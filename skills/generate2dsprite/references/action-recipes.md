@@ -112,7 +112,7 @@ Write each asset's prompt on its own. Good splits: caster unit, projectile, impa
 
 ## Project presets
 
-Each preset is a starting brief for one kind of game. Copy it into the project's notes, then adjust the numbers to the real game. Canvases are logical game pixels; `render_scale` is how much larger the image model draws them.
+Each preset is a starting brief for one kind of game. Copy it into the project's notes, then adjust the numbers to the real game. Canvases are logical game pixels; `render_scale` is how much larger the image model draws them. Timing is in 60 Hz game ticks (5 ticks = 83 ms, 12 ticks = 200 ms), the unit `scale_frames.py --emit-clips --ticks` writes, so every frame shows for a whole number of updates.
 
 ```yaml
 jrpg_walker:
@@ -126,12 +126,12 @@ jrpg_walker:
   identity: accept a front, side and back turnaround master before the walk sheet
   directions: [down, left, right, up]
   actions:
-    walk: {grid: 4x4, rows: "down, left, right, up", columns: "neutral, step, neutral, step", side_rows: "NEAR foot forward, then FAR foot forward", duration_ms: 120, loop: true}
-    idle: {grid: 2x2, duration_ms: 200, loop: true}
+    walk: {grid: 4x4, rows: "down, left, right, up", columns: "neutral, step, neutral, step", side_rows: "NEAR foot forward, then FAR foot forward", ticks: 7, loop: true}
+    idle: {grid: 2x2, ticks: 12, loop: true}
   pipeline:
     - "sheet_qc.py spill --rows 4 --cols 4"
     - "sheet_qc.py frames on each direction row (--frames-per-row 4)"
-    - "scale_frames.py --scale-from 1/8 --resampler nearest --anchor feet --row-baseline --emit-clips"
+    - "scale_frames.py --scale-from 1/8 --resampler nearest --anchor feet --row-baseline --emit-clips --ticks 7"
     - "build_animation_clips.py"
   checks: [no part crosses a cell line, one scale for every direction, head ratio within 5 percent]
 ```
@@ -147,14 +147,14 @@ platform_hero:
   light: upper front, three tones per material
   anchor: stance, so a mirrored turn keeps the feet in place
   actions:
-    idle: {grid: 2x2, duration_ms: [160, 160, 160, 220], loop: true}
-    run: {grid: 2x4, phases: [contact, down, passing, flight, contact, down, passing, flight], lead: "NEAR leg leads frames 0-3, FAR leg leads frames 4-7", duration_ms: 80, loop: true}
+    idle: {grid: 2x2, ticks: [10, 10, 10, 13], loop: true}
+    run: {grid: 2x4, phases: [contact, down, passing, flight, contact, down, passing, flight], lead: "NEAR leg leads frames 0-3, FAR leg leads frames 4-7", ticks: 5, loop: true}
     jump: {grid: 1x4, phases: [rise, apex, fall, land], loop: false, registration: "shared source root; no feet lock"}
     attack: {grid: 2x3, phases: [anticipation, wind-up, strike, follow-through, recovery, ready], body_only: true, loop: false}
   pipeline:
     - "plan_guide.py --frames 8 --cycle run (opt-in, when sheets keep crossing cells)"
     - "sheet_qc.py spill, then sheet_qc.py frames --cycle run --game-pixel 8"
-    - "scale_frames.py --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips"
+    - "scale_frames.py --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips --ticks 5"
     - "later actions reuse the run's scale-frames.json with --profile and grow the canvas with --action-padding"
     - "build_animation_clips.py"
   checks: [leading leg alternates, torso drift under 2 game px, attack body within 10 percent of idle size]
@@ -171,8 +171,8 @@ iso_tactics_unit:
   light: one fixed screen direction (upper left) for every facing
   directions: [south-east, south-west, north-east, north-west]
   actions:
-    idle: {grid: 2x2, duration_ms: 220, loop: true}
-    walk: {grid: 2x2, per_direction: true, duration_ms: 140, loop: true}
+    idle: {grid: 2x2, ticks: 13, loop: true}
+    walk: {grid: 2x2, per_direction: true, ticks: 8, loop: true}
     attack: {grid: 2x3, body_only: true, loop: false}
     hit: {grid: 2x2, phases: [impact, recoil, stagger, recovery], loop: false}
   pipeline:
@@ -193,7 +193,7 @@ td_tower:
   palette: {max_colors: 16, outline: "1 logical px dark outline", team_color: one reserved accent}
   light: upper front-left, three tones per material
   actions:
-    idle: {grid: 2x2, motion: "rooted; only flags, crystals or lights move", duration_ms: 180, loop: true}
+    idle: {grid: 2x2, motion: "rooted; only flags, crystals or lights move", ticks: 11, loop: true}
     shoot: {grid: 2x2, phases: [ready, recoil, fire peak, settle], body_only: true, effects: "projectile and muzzle flash as separate fx sheets", loop: false}
     upgrades: {grid: 1x3, phases: [level 1, level 2, level 3], rule: "same base footprint, root and palette; only the top grows"}
   pipeline:

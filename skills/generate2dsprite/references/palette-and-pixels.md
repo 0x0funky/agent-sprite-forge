@@ -124,7 +124,7 @@ On synthetic clips, noise flips fall with the noise level:
 | 5 | 36-53% |
 | 8 | 24-41% |
 
-The game-opus55 study measured 45% on a real clip. For noisier sources, raise `--margin`: `1e-3` is dE 0.032.
+On a real image-to-video clip (the game-opus55 study clip: 25 frames, a 255-colour palette, as 8-bit PNG frames) `quantize-seq` cuts noise flips by 46%, and by 49% as a loop with the wrap. On those frames it gives the game's own quantizer's index maps byte for byte; the study measured 45% on the game's unrounded frames. For noisier sources, raise `--margin`: `1e-3` is dE 0.032.
 
 ## 6. LUTs and baked variants
 

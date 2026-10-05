@@ -556,69 +556,6 @@ class SafePublicationTests(unittest.TestCase):
                 self.assertEqual(sheet.getpixel((64, 64)), (255, 0, 255, 128))
 
 
-class RegisteredFrameExportTests(unittest.TestCase):
-    @staticmethod
-    def load_helper(name: str):
-        spec = importlib.util.spec_from_file_location(name, SCRIPT_PATH.with_name(name + ".py"))
-        assert spec and spec.loader
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
-
-    def test_registered_clips_preserve_png_bytes_root_and_one_shot_timing(self) -> None:
-        clips = self.load_helper("build_animation_clips")
-        with tempfile.TemporaryDirectory() as temp:
-            base = Path(temp)
-            for index in range(2):
-                frame = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
-                frame.paste((200, 60, 20, 128), (5, 5-index, 10, 12-index))
-                frame.save(base / f"pose-{index}.png")
-            contract = {"frames": ["pose-0.png", "pose-1.png"], "anchor_px": [8, 13],
-                        "clips": {"attack": {"frames": [0, 1], "duration_ms": [80, 160], "loop": False}},
-                        "states": {"attacking": "attack"}}
-            manifest = base / "clips.json"
-            manifest.write_text(json.dumps(contract), encoding="utf-8")
-            result = clips.build(manifest, base / "out")
-            self.assertEqual(result["anchor_px"], [8, 13])
-            self.assertEqual(result["clips"]["attack"]["preview"]["total_duration_ms"], 240)
-            self.assertFalse(result["clips"]["attack"]["loop"])
-            for index in range(2):
-                self.assertEqual((base / f"pose-{index}.png").read_bytes(),
-                                 (base / "out" / "frames" / f"frame-{index:02d}.png").read_bytes())
-
-    def test_complete_frames_are_not_keyed_or_resized(self) -> None:
-        assembler = self.load_helper("assemble_frames")
-        with tempfile.TemporaryDirectory() as temp:
-            base = Path(temp)
-            paths = []
-            for index in range(2):
-                image = Image.new("RGB", (23, 17), (255, 0, 255))
-                image.putpixel((index, index), (0, 10, 20))
-                path = base / f"phase-{index}.png"
-                image.save(path)
-                paths.append(str(path))
-            args = assembler.build_parser().parse_args(["--input", *paths, "--duration", "90", "--output-dir", str(base / "out")])
-            result = assembler.assemble(args)
-            self.assertEqual(result["frame_size"], [23, 17])
-            self.assertEqual(result["total_duration_ms"], 180)
-            with Image.open(base / "out" / "frames" / "frame-00.png") as output:
-                self.assertEqual(output.getpixel((10, 10)), (255, 0, 255))
-
-    def test_clips_reject_mismatched_canvas_without_publishing(self) -> None:
-        clips = self.load_helper("build_animation_clips")
-        with tempfile.TemporaryDirectory() as temp:
-            base = Path(temp)
-            for index in range(2):
-                image = Image.new("RGBA", (16+index, 16), (0, 0, 0, 0))
-                image.putpixel((5, 5), SUBJECT)
-                image.save(base / f"pose-{index}.png")
-            manifest = base / "clips.json"
-            manifest.write_text(json.dumps({"frames": ["pose-0.png", "pose-1.png"], "anchor_px": [8, 13]}), encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "same native canvas"):
-                clips.build(manifest, base / "out")
-            self.assertFalse((base / "out").exists())
-
-
 class LegacyDefaultParserTests(unittest.TestCase):
     def test_legacy_background_and_resize_defaults_are_preserved(self) -> None:
         """Profile-governed flags parse as unset (S09); the effective defaults stay the legacy ones."""
@@ -709,7 +646,7 @@ class AlphaAndResamplingTests(unittest.TestCase):
         image.putpixel((0, 1), (0, 0, 0, 255))
         image.putpixel((0, 0), (0, 0, 0, 0))
         image.putpixel((2, 2), (200, 60, 40, 127))
-        with mock.patch.object(MODULE, "remove_bg_magenta", wraps=MODULE.remove_bg_magenta) as chroma, \
+        with mock.patch.object(MODULE.forge_matte, "key_still", wraps=MODULE.forge_matte.key_still) as chroma, \
              mock.patch.object(MODULE, "clean_edges", wraps=MODULE.clean_edges) as edges:
             frames, info = self.split(image)
         self.assertEqual(frames[0].tobytes(), image.tobytes())
@@ -869,7 +806,9 @@ class PublicationTests(unittest.TestCase):
             args = self.make_args(root, "--strict-qc", "--godot-world-height", "0.7",
                                   "--write-scale-profile", str(profile), "--key-quality", "hard")
             source_bytes = args.input.read_bytes()
-            with mock.patch.object(MODULE, "remove_bg_magenta", wraps=MODULE.remove_bg_magenta) as remove:
+            # --key-quality hard runs the shared binary keyer exactly once, through forge_matte.key_still (D15).
+            hard_key = MODULE.forge_matte.legacy_hard_key
+            with mock.patch.object(MODULE.forge_matte, "legacy_hard_key", wraps=hard_key) as remove:
                 MODULE.cmd_process(args)
             self.assertEqual(remove.call_count, 1)
             metadata = json.loads((args.output_dir / "pipeline-meta.json").read_text())
@@ -877,7 +816,8 @@ class PublicationTests(unittest.TestCase):
             saved_profile = json.loads(profile.read_text())
             # Manifest paths are relative POSIX fileRefs, never absolute (F-03 publication, MAP-24).
             self.assertEqual(metadata["scale_profile_output"],
-                             {"path": "scale.json", "sha256": MODULE.forge_core.sha256_file(profile)})
+                             {"path": "scale.json", "sha256": MODULE.forge_core.sha256_file(profile),
+                              "bytes": profile.stat().st_size})
             self.assertEqual(metadata["godot_sprite3d_output"]["path"], "godot-sprite3d.json")
             self.assertNotIn(".stage-", json.dumps(metadata))
             self.assertNotIn(".sidecars-", json.dumps(metadata))
@@ -1057,6 +997,37 @@ def leftovers(root: Path) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.name.startswith("."))
 
 
+# Times `process` on <root>/sheet.png in a fresh interpreter after one warm-up run on <root>/warm.png; prints the
+# seconds of three runs as one JSON list. argv: the generate2dsprite.py path, the work folder.
+_FRESH_PROCESS_TIMING = r"""
+import contextlib, importlib.util, io, json, sys, time
+from pathlib import Path
+sys.dont_write_bytecode = True
+spec = importlib.util.spec_from_file_location("generate2dsprite_perf", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = module
+spec.loader.exec_module(module)
+root = Path(sys.argv[2])
+common = ["--target", "asset", "--mode", "sheet", "--rows", "4", "--cols", "4"]
+
+
+def run(source, output):
+    args = module.build_parser().parse_args(["process", "--input", str(root / source), "--output-dir",
+                                             str(root / output), *common])
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        module.cmd_process(args)
+
+
+run("warm.png", "warm")
+times = []
+for attempt in range(3):
+    started = time.perf_counter()
+    run("sheet.png", f"run{attempt}")
+    times.append(round(time.perf_counter() - started, 3))
+print(json.dumps(times))
+"""
+
+
 class SharedCoreAdoptionTests(unittest.TestCase):
     """B01-T2: forge_core / forge_matte adoption (F-03, S03, S04, S16)."""
 
@@ -1169,6 +1140,27 @@ class SharedCoreAdoptionTests(unittest.TestCase):
                 best = min(best, time.perf_counter() - started)
             self.assertEqual(meta["qc_summary"]["valid_frame_count"], 16)
             self.assertLessEqual(best, 3.0)
+
+    @pytest.mark.perf
+    def test_process_2048_default_soft_key_under_3s(self) -> None:
+        """D15: with forge_matte.key_still's region matte the DEFAULT path (auto -> soft key) also processes
+        the 2048^2 4x4 perf sheet end to end in at most 3 s (best of 3); before D15 it took 3.1-4.4 s.
+
+        Timed in a fresh interpreter, as the CLI runs once per sheet: on Windows a long-lived process
+        (a full test session) runs the same numpy work up to about 50% slower after its first heavy runs,
+        a property of the process, not of the tool (a plain numpy loop shows it too). Measured at
+        integration with other agents running: 2.2-2.6 s for the first run of a fresh process."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_magenta_sheet(4, 4, 512, margin=100, fringe=True).save(root / "sheet.png")
+            make_magenta_sheet(4, 4, 64).save(root / "warm.png")
+            timed = run_cli(["-c", _FRESH_PROCESS_TIMING, SCRIPT_PATH, root], timeout=600)
+            self.assertEqual(timed.returncode, 0, timed.stderr)
+            times = json.loads(timed.stdout.strip().splitlines()[-1])
+            meta = json.loads((root / "run0" / "pipeline-meta.json").read_text(encoding="utf-8"))
+            self.assertEqual((meta["matte"]["quality"], meta["matte"]["requested_quality"]), ("soft", "auto"))
+            self.assertEqual(meta["qc_summary"]["valid_frame_count"], 16)
+            self.assertLessEqual(min(times), 3.0, f"2048^2 default soft path, seconds per run: {times}")
 
 
 class SilentErrorTests(unittest.TestCase):
@@ -1578,6 +1570,114 @@ class CliConventionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("error: QC failed: empty frames", result.stderr)
             self.assertEqual(sorted(path.name for path in root.iterdir()), ["blank.png"])
+
+
+def _with_bom(path: Path) -> None:
+    """Rewrite a UTF-8 file the way Windows PowerShell 5.1 writes it: with a byte-order mark."""
+    path.write_bytes(b"\xef\xbb\xbf" + path.read_bytes())
+
+
+class IntegrationConventionTests(unittest.TestCase):
+    """Phase 3 integration: D27 catch-all, D28 BOM-tolerant inputs, D29 package version, key ring-spill QA."""
+
+    def test_bom_profile_contract_and_prompt_are_read(self) -> None:
+        """D28: a scale profile, a Godot contract and a prompt file written with a UTF-8 BOM are read."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_magenta_sheet(1, 2, 64).save(root / "sheet.png")
+            profile = root / "profile.json"
+            run_process("--input", str(root / "sheet.png"), "--target", "asset", "--mode", "idle", "--rows", "1",
+                        "--cols", "2", "--align", "feet", "--godot-world-height", "0.7",
+                        "--write-scale-profile", str(profile), "--output-dir", str(root / "idle"))
+            _with_bom(profile)
+            _with_bom(root / "idle" / "godot-sprite3d.json")
+            (root / "prompt.txt").write_bytes(b"\xef\xbb\xbfA small blue knight.")
+            meta, _stderr, out = run_process("--input", str(root / "sheet.png"), "--target", "asset", "--mode",
+                                             "idle", "--rows", "1", "--cols", "2", "--align", "feet",
+                                             "--scale-profile", str(profile), "--prompt-file",
+                                             str(root / "prompt.txt"), "--output-dir", str(root / "again"))
+            self.assertEqual(meta["scale_profile"]["path"]["path"], "../profile.json")
+            self.assertEqual((out / "prompt-used.txt").read_bytes(), b"A small blue knight.")
+            self.assertEqual(meta["prompt_sha256"], MODULE.forge_core.sha256_bytes(b"A small blue knight."))
+            bundle = cli("build-godot-bundle", "--action", f"idle={root / 'idle' / 'godot-sprite3d.json'}",
+                         "--default-action", "idle", "--output", str(root / "bundle.json"))
+            self.assertEqual(bundle.returncode, 0, bundle.stderr)
+            (root / "broken.json").write_text("{not json", encoding="utf-8")
+            broken = cli("build-godot-bundle", "--action", f"idle={root / 'broken.json'}", "--default-action", "idle",
+                         "--output", str(root / "broken-bundle.json"))
+            self.assertEqual(broken.returncode, 1)
+            self.assertRegex(broken.stderr, r"^error: Action contract 'idle' is not valid JSON \(broken\.json\)")
+            self.assertFalse((root / "broken-bundle.json").exists())
+
+    def test_unexpected_errors_are_one_internal_error_line(self) -> None:
+        """D27: a bug in any of the three CLIs is one ``error: internal error (...)`` line, exit 1."""
+        guide_path = SCRIPT_PATH.with_name("make_layout_guide.py")
+        guide_spec = importlib.util.spec_from_file_location("make_layout_guide_d27", guide_path)
+        guide = importlib.util.module_from_spec(guide_spec)
+        guide_spec.loader.exec_module(guide)
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_magenta_sheet(1, 1, 32).save(root / "sheet.png")
+            cases = (
+                (MODULE, "cmd_process", ["process", "--input", str(root / "sheet.png"), "--target", "asset",
+                                         "--mode", "single", "--output-dir", str(root / "out")]),
+                (ANCHOR_MODULE, "build_anchor_layout", ["--input", str(root / "sheet.png"), "--rows", "1",
+                                                        "--cols", "1", "--output", str(root / "anchor.png")]),
+                (guide, "build_layout_guide", ["--rows", "1", "--cols", "1", "--output", str(root / "guide.png")]),
+            )
+            for module, target, argv in cases:
+                stderr = io.StringIO()
+                with self.subTest(target=target), contextlib.redirect_stderr(stderr), \
+                     contextlib.redirect_stdout(io.StringIO()), \
+                     mock.patch.object(module, target, side_effect=KeyError("boom")):
+                    self.assertEqual(module.main(argv), 1)
+                    self.assertEqual(stderr.getvalue(), "error: internal error (KeyError: 'boom')\n")
+            self.assertEqual(sorted(path.name for path in root.iterdir()), ["sheet.png"])
+
+    def test_usage_errors_keep_argparse_exit_2(self) -> None:
+        """D26: usage errors are argparse's ``usage: ... error: ...`` with exit 2 in all three CLIs."""
+        for script in ("generate2dsprite.py", "make_anchor_layout.py", "make_layout_guide.py"):
+            with self.subTest(script=script):
+                result = run_cli([SCRIPT_PATH.with_name(script), "--no-such-flag"])
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("usage:", result.stderr)
+                self.assertIn("error:", result.stderr)
+
+    def test_qa_tool_version_is_the_package_version(self) -> None:
+        """D29: the QA envelope records the integrated package version."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_magenta_sheet(1, 1, 32).save(root / "sheet.png")
+            meta, _stderr, _out = run_process("--input", str(root / "sheet.png"), "--target", "asset", "--mode",
+                                              "single", "--output-dir", str(root / "out"))
+        self.assertEqual(meta["qa"]["tool"], {"name": "generate2dsprite.py process",
+                                              "version": MODULE.forge_core.FORGE_PACKAGE_VERSION})
+        self.assertEqual(MODULE.forge_core.FORGE_PACKAGE_VERSION, "0.4.0")
+
+    def test_binary_key_fringe_warns_until_despilled(self) -> None:
+        """Review (sprite B01): the QA gated only opaque key pixels, so a binary key that left a magenta
+        fringe on every anti-aliased edge passed. key_ring_spill warns above 0.01 (the video residue gate);
+        it measures the published sheet, so a despill clears it. Never fatal."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_magenta_sheet(2, 2, 64, fringe=True).save(root / "fringe.png")
+            runs = {"soft": (), "hard": ("--key-quality", "hard", "--strict-qc"),  # a warning, never fatal
+                    "hard-despill": ("--key-quality", "hard", "--despill-radius", "1"),
+                    "nearest": ("--resampler", "nearest", "--pixel-scale", "1")}
+            statuses = {}
+            for name, extra in runs.items():
+                meta, _stderr, _out = run_process("--input", str(root / "fringe.png"), "--target", "asset", "--mode",
+                                                  "idle", "--output-dir", str(root / name), *extra)
+                ring = next(check for check in meta["qa"]["checks"] if check["id"] == "key_ring_spill")
+                statuses[name] = (meta["qa"]["status"], ring["status"], ring["value"], ring["threshold"])
+                if name == "hard-despill":
+                    self.assertEqual(meta["matte"]["qa"]["outer_ring_spill_fraction"], 1.0)
+                    self.assertEqual(meta["matte"]["qa_after_despill"]["outer_ring_spill_fraction"], 0.0)
+                else:
+                    self.assertNotIn("qa_after_despill", meta["matte"])
+        self.assertEqual(statuses, {"soft": ("pass", "pass", 0.0, 0.01), "hard": ("warn", "warn", 1.0, 0.01),
+                                    "hard-despill": ("pass", "pass", 0.0, 0.01),
+                                    "nearest": ("warn", "warn", 1.0, 0.01)})
 
 
 if __name__ == "__main__":

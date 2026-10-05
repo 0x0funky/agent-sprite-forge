@@ -2,7 +2,7 @@
 
 Run every command from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`, where `<skill-dir>` is this skill's folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Write outputs to a **new** folder inside your project, never inside the skill folder. The tools need Python 3.10+, numpy and Pillow 10.1 or newer; scipy only speeds up component labelling.
 
-`process` is for generated or painted sheets that still need keying, cell splitting and registration. Code art never goes through `process`: codeart2d frames are already on their pixel grid and go straight to `build_animation_clips.py`. Packaging registered frames (`build_animation_clips.py`) and complete rectangular frames (`assemble_frames.py`) is described in frames-and-clips.md in this folder.
+`process` is for generated or painted sheets that still need keying, cell splitting and registration. Code art never goes through `process`: codeart2d frames are already on their pixel grid and go straight to `build_animation_clips.py`. Packaging registered frames (`build_animation_clips.py`) and complete rectangular frames (`assemble_frames.py`) is described in [frames-and-clips.md](frames-and-clips.md). Before `process`, run `sheet_qc.py spill` on a raw sheet; for one scale and whole-pixel locks across an action, `scale_frames.py` replaces per-frame fitting ([prompt-rules.md](prompt-rules.md) lists the check order).
 
 ## Normalize a generated sheet
 
@@ -35,7 +35,7 @@ Host image tools often leave invisible haze: the 2026-10 fox sheet had 67,907 pi
 python -c "import numpy as np; from PIL import Image; a = np.asarray(Image.open('raw/hero-idle.png').convert('RGBA'))[..., 3]; print(np.histogram(a, [0, 1, 5, 17, 32, 255, 256])[0])"
 ```
 
-`native_alpha` input gets `--alpha-hygiene both` by default: alpha at or below `--alpha-floor` (4) becomes 0 and faint islands with no solid pixel (alpha 32 or more) within 2 px are removed. The counts are in `pipeline-meta.json` under `hygiene`. Visible art is never changed by hygiene; `--alpha-hygiene none` keeps every pixel.
+`native_alpha` input gets `--alpha-hygiene both` by default: alpha at or below `--alpha-floor` (4) becomes 0 and faint islands with no solid pixel (alpha 32 or more) within 2 px are removed. The counts are in `pipeline-meta.json` under `hygiene`. Visible art is never changed by hygiene; `--alpha-hygiene none` keeps every pixel. A `faint_specks` warning from `sheet_qc.py spill` counts this same haze; `--alpha-hygiene both` is its fix.
 
 ## Background modes and keying
 
@@ -43,7 +43,8 @@ python -c "import numpy as np; from PIL import Image; a = np.asarray(Image.open(
   - `--key-quality auto` (default) uses the soft still matte for smooth art and the binary magenta keyer for `--resampler nearest`. `soft` keeps anti-aliased edges as partial alpha and un-mixes the key colour out of them; `hard` is the legacy binary keyer, byte for byte; `dominance` is a fast channel-dominance key.
   - `--key magenta|green|blue` names the backdrop (default magenta). A green or blue key always uses the soft matte, because the binary keyer is magenta-only.
   - `--despill-radius 1..3` removes key excess within that many pixels of transparency. It can desaturate real purple at an edge; default 0.
-  - Quote the `matte.qa` numbers of `pipeline-meta.json` (opaque key pixels, ring spill share, semi-transparent share, enclosed pockets) when you claim a clean key.
+  - Quote the `matte.qa` numbers of `pipeline-meta.json` (opaque key pixels, ring spill share, semi-transparent share, enclosed pockets) when you claim a clean key. After a despill, `matte.qa_after_despill` measures the published sheet again.
+  - The `qa` envelope warns with `key_residue` (opaque key-coloured pixels) and `key_ring_spill` (more than 1% of the outer edge ring still key-coloured, the video residue gate). The binary key leaves that fringe on anti-aliased edges; `--despill-radius 1` or `--key-quality soft` clears it. Both are warnings: `--strict-qc` does not fail on them.
 - `native_alpha` needs real transparent pixels plus visible art and keeps RGBA as delivered, including purple. A painted checkerboard is refused.
 - `opaque` needs fully opaque input and only works for single images. A grid of opaque cells is refused: package complete rectangular frames with `assemble_frames.py` instead.
 
@@ -68,6 +69,7 @@ Changed defaults and their legacy switches:
 | soft key for chroma + lanczos | `--key-quality hard` |
 | a profile/flag conflict is an error | `--profile-override` |
 | `--align bottom` is an alias of `feet` (warns) | none |
+| `preserve` samples every cell on one shared grid and moves frames by whole output pixels, so static parts never shimmer; its frames differ slightly from earlier releases | none |
 
 ## Scale strategies and resampling
 
@@ -90,7 +92,7 @@ Host image tools return their own canvas: 1254x1254, 1672x941 and 1774x887 are c
 
 ## QC and scale profiles
 
-`--strict-qc` fails on empty frames, clamped frames, output-edge contact and source-edge contact, plus the optional limits below. A failed run publishes nothing; an existing output folder is never touched.
+`--strict-qc` fails on empty frames, clamped frames, output-edge contact and source-edge contact, plus the optional limits below. A failed run publishes nothing; an existing output folder is never touched. Exit status: 0 on success (the `qa` envelope may still warn), 1 for an `error: ...` (nothing published), 2 for a usage error. Scale profiles, Godot contracts and `--prompt-file` may be UTF-8 with or without a byte-order mark (Windows PowerShell 5.1 writes one).
 
 - `--max-body-scale-cv` limits the variation of the visible output subject height across frames (0.08 suits grounded humanoids; crouches, flight and creature posture changes legitimately exceed it).
 - `--max-anchor-y-std` limits the normalized vertical anchor spread (0.05).

@@ -484,6 +484,105 @@ def test_hysteresis_cuts_noise_flips(seed):
     assert hysteresis["alpha_flip"] <= plain["alpha_flip"]
 
 
+# Opt-in bench on the real clip of the -45% figure (plan study-game-opus55/exp_hysteresis.py). It runs only with
+# -m bench and reads the owner's game folder in place; nothing is copied into this repository.
+OPUS55_CLIP, OPUS55_SEGMENT_FRAMES = "a_homura_idle", 24  # the study's clip and its frame cap (segment 44:92:2)
+
+
+def _opus55_root():
+    """FORGE_BENCH_OPUS55, else D:/chain/game-opus55; None when its pixelate tool or palette is missing."""
+    from pathlib import Path
+
+    root = Path(os.environ.get("FORGE_BENCH_OPUS55") or "D:/chain/game-opus55")
+    needed = (root / "tools" / "pixelate.py", root / "tools" / "assets.json", root / "art" / "proc" / "manifest.json")
+    return root if all(path.is_file() for path in needed) else None
+
+
+def _opus55_study_frames(root):
+    """The study's frames, prepared by the game's own pixelate.prep_vframes, read only.
+
+    Like exp_hysteresis.py, the tool's source is executed from text (never imported from its folder, so no
+    bytecode cache is written there) with its one directory creation removed; prep_vframes only reads the
+    raw video frames. Returns the game module, the (rgb float 0..255, alpha 0..1) frames and its palette."""
+    import types
+
+    source = (root / "tools" / "pixelate.py").read_text(encoding="utf-8")
+    assert source.count("os.makedirs(PROC, exist_ok=True)") == 1, "pixelate.py changed: review the bench first"
+    game = types.ModuleType("forge_bench_pixelate_ro")
+    game.__file__ = str(root / "tools" / "pixelate.py")  # ROOT and RAW resolve to the game's own art
+    exec(compile(source.replace("os.makedirs(PROC, exist_ok=True)", "pass  # read-only bench"),
+                 "forge_bench_pixelate_ro", "exec"), game.__dict__)
+    spec = dict(json.loads((root / "tools" / "assets.json").read_text(encoding="utf-8"))[OPUS55_CLIP])
+    first, last, *rest = spec["segments"][0]
+    step = rest[0] if rest else 1
+    spec["segments"] = [[first, min(last, first + OPUS55_SEGMENT_FRAMES * step), step]]
+    frames = game.prep_vframes(spec, OPUS55_CLIP)
+    manifest = json.loads((root / "art" / "proc" / "manifest.json").read_text(encoding="utf-8"))
+    return game, frames, [game.hex2rgb(value) for value in manifest["palette"]]
+
+
+@pytest.mark.bench
+def test_bench_hysteresis_on_the_game_opus55_clip():
+    """B04-T2 on the real clip (opt-in, -m bench): the game-opus55 a_homura_idle study clip (25 frames of
+    72x63 from its own video pipeline, 255-colour shipped palette). Harness check: the game's quantizer on the
+    float frames reproduces the study's -45.1% noise flips. forge_palette on the 8-bit RGBA frames (what
+    palette_tool quantize-seq reads from PNGs) must give the game's index maps byte for byte (study protocol:
+    unseeded, consecutive pairs) and cut noise flips by at least 40% against per-frame nearest quantizing with
+    the same cleanup. Measured at integration on 2026-10-05: -46.4% (study protocol), -48.1% seeded as a
+    loop, -48.9% counting the wrap pair; the study measured -45.1% on the float frames."""
+    root = _opus55_root()
+    if root is None:
+        pytest.skip("set FORGE_BENCH_OPUS55 to the game-opus55 folder (tools/pixelate.py, art/proc/manifest.json)")
+    game, frames, colours = _opus55_study_frames(root)
+    assert len(frames) == 25 and frames[0][1].shape == (63, 72)
+    game_lab = game.to_oklab(np.array(colours, np.float32)).astype(np.float32)
+
+    def game_quantize(clip, hysteresis):
+        maps, previous = [], None
+        for rgb, alpha in clip:
+            if hysteresis:
+                index = game.cleanup_alpha(game.cleanup(game.quantize_seq(rgb, alpha, game_lab, previous, 0.0004), 1))
+            else:
+                index = game.cleanup(game.quantize(rgb, alpha, game_lab, 0.0), 1)
+            maps.append(index)
+            previous = index
+        return maps
+
+    def study_noise_flip(maps, clip):
+        labs = [game.to_oklab(rgb).astype(np.float32) for rgb, _alpha in clip]
+        flips = []
+        for second in range(1, len(maps)):
+            both = (maps[second - 1] != game.TRANSP) & (maps[second] != game.TRANSP)
+            still = both & (np.sqrt(((labs[second] - labs[second - 1]) ** 2).sum(-1)) < 0.02)
+            flips.append((still & (maps[second - 1] != maps[second])).sum() / max(1, still.sum()))
+        return float(np.mean(flips))
+
+    study = 1 - study_noise_flip(game_quantize(frames, True), frames) / study_noise_flip(game_quantize(frames, False),
+                                                                                         frames)
+    assert abs(study - 0.451) < 0.0015, f"the study frames changed: {study:.4f}"
+
+    clip = []
+    for rgb, alpha in frames:  # 8-bit straight RGBA, rounded half-up, RGB zeroed under alpha 0
+        pixels = np.zeros(alpha.shape + (4,), np.uint8)
+        pixels[..., :3] = np.floor(np.clip(rgb, 0, 255) + 0.5)
+        pixels[..., 3] = np.floor(np.clip(alpha, 0, 1) * 255 + 0.5)
+        pixels[pixels[..., 3] == 0] = 0
+        clip.append(pixels)
+    palette = fp.Palette(tuple(tuple(int(value) for value in colour) for colour in colours), transparent_index=255)
+    unseeded = fp.quantize_sequence(clip, palette, loop=False)
+    eight_bit = [(pixels[..., :3].astype(np.float32), pixels[..., 3].astype(np.float32) / 255) for pixels in clip]
+    assert all(np.array_equal(ours, theirs) for ours, theirs in zip(unseeded, game_quantize(eight_bit, True)))
+    plain = [fp.cleanup_alpha(fp.cleanup_orphans(fp.quantize_image(pixels, palette), 1)) for pixels in clip]
+    nearest, held = fp.flip_stats(plain, clip), fp.flip_stats(unseeded, clip)
+    looped = fp.flip_stats(fp.quantize_sequence(clip, palette, loop=True), clip, loop=True)
+    reduction = 1 - held["noise_flip"] / nearest["noise_flip"]
+    loop_reduction = 1 - looped["noise_flip"] / fp.flip_stats(plain, clip, loop=True)["noise_flip"]
+    print(f"\ngame-opus55 {OPUS55_CLIP}: noise flips {nearest['noise_flip']:.4f} -> {held['noise_flip']:.4f} "
+          f"({reduction:.1%} fewer; looped {loop_reduction:.1%}; study {study:.1%})")
+    assert reduction >= 0.40 and loop_reduction >= 0.40
+    assert held["alpha_flip"] <= nearest["alpha_flip"]
+
+
 def test_hysteresis_switches_real_changes_at_once():
     palette = fp.Palette(((200, 40, 40), (40, 40, 200), (20, 20, 20)))
     frames = []

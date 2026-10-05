@@ -139,13 +139,15 @@ def test_layout_only_guide_and_input_errors(tmp_path):
     plan = plan_of(run("--frames", 4, "--output-dir", tmp_path / "layout"))
     assert plan["phases"] == [] and {item["id"]: item for item in plan["qa"]["checks"]}["leg_alternation"][
         "status"] == "skipped"
-    for args, message in ((["--frames", "7", "--cycle", "run"], "even number"),
-                          (["--frames", "8", "--aspect", "3x2"], "3:2"),
-                          (["--frames", "8", "--rows", "2"], "go together"),
-                          (["--frames", "8", "--gutter", "0.3"], "--gutter")):
+    # D26: argparse usage errors exit 2 (usage: ... error: ...); other refusals print one error line, exit 1.
+    for args, message, code in ((["--frames", "7", "--cycle", "run"], "even number", 1),
+                                (["--frames", "8", "--aspect", "3x2"], "3:2", 2),
+                                (["--frames", "8", "--rows", "2"], "go together", 1),
+                                (["--frames", "8", "--gutter", "0.3"], "--gutter", 1)):
         result = run_cli([SCRIPT, *args, "--output-dir", tmp_path / "bad"])
-        assert result.returncode == 1 and message in result.stderr, (args, result.stderr)
-        assert "Traceback" not in result.stderr
+        assert result.returncode == code and message in result.stderr, (args, result.stderr)
+        assert result.stderr.startswith("usage:" if code == 2 else "error:"), result.stderr
+        assert "Traceback" not in result.stderr and not (tmp_path / "bad").exists()
 
 
 # --------------------------------------------------------------------------- schema requests
@@ -165,7 +167,7 @@ def test_requested_schema_additions_accept_every_b03_producer(tmp_path):
     make_magenta_sheet(2, 2, 64, spill_px=6).save(sheet)
     spill = run_cli([script_path(SKILL, "sheet_qc"), "spill", "--input", sheet, "--rows", "2", "--cols", "2", "--output-dir",
                      tmp_path / "spill"])
-    assert spill.returncode == 0, spill.stderr
+    assert spill.returncode == 1 and json.loads(spill.stdout)["status"] == "fail", spill.stderr  # D26: spill found
     spill_report = json.loads((tmp_path / "spill" / "sheet-qc.json").read_text(encoding="utf-8"))
     assert_requested_contract(spill_report, "sheet_qc_v1")
     if spill_report.get("cells"):  # the typed cells replacement of section 5.2 is the integrated rule
@@ -174,7 +176,7 @@ def test_requested_schema_additions_accept_every_b03_producer(tmp_path):
         assert any("cells" in error.json_path for error in requested_validator("sheet_qc_v1").iter_errors(broken))
     frames = run_cli([script_path(SKILL, "sheet_qc"), "frames", "--sheet", sheet, "--rows", "2", "--cols", "2", "--cycle", "walk",
                       "--output-dir", tmp_path / "frames"])
-    assert frames.returncode == 0, frames.stderr
+    assert frames.returncode == (1 if json.loads(frames.stdout)["status"] == "fail" else 0), frames.stderr
     assert_requested_contract(json.loads((tmp_path / "frames" / "sheet-qc.json").read_text(encoding="utf-8")),
                               "sheet_qc_v1")
     scaled = run_cli([script_path(SKILL, "scale_frames"), "--sheet", sheet, "--rows", "2", "--cols", "2",

@@ -102,10 +102,14 @@ def no_stage_left(parent: Path) -> bool:
 
 
 def run_ok(*args) -> dict:
+    """Run sheet_qc and return its one-line summary. The report is published either way; D26: a report
+    whose status is fail exits 1, pass and warn exit 0."""
     result = run_cli([SCRIPT, *map(str, args)])
-    assert result.returncode == 0, result.stderr
     assert result.stdout.isascii()
-    return json.loads(result.stdout)
+    summary = json.loads(result.stdout)
+    assert result.returncode == (1 if summary["status"] == "fail" else 0), result.stderr
+    assert Path(summary["metadata"]).is_file()
+    return summary
 
 
 # --------------------------------------------------------------------------- CLI conventions
@@ -154,6 +158,53 @@ def test_errors_are_one_line_without_traceback(tmp_path):
     assert "Traceback" not in result.stderr
     result = run_cli([SCRIPT, "frames", "--frames", opaque, "--near-colors", "#zzzzzz", "--output-dir", tmp_path / "x"])
     assert result.returncode == 1 and "Traceback" not in result.stderr
+
+
+def test_exit_codes_follow_d26_and_d27(tmp_path):
+    """D26: usage errors exit 2 (argparse); a published failing report exits 1, pass and warn exit 0.
+    D27: an unexpected failure is one ``error: internal error (...)`` line with exit 1."""
+    sheet, _ = tail_sheet(tmp_path)
+    usage = run_cli([SCRIPT, "spill", "--input", sheet, "--rows", "0", "--cols", "2", "--output-dir", tmp_path / "u"])
+    assert usage.returncode == 2 and usage.stderr.startswith("usage:") and "error: argument --rows" in usage.stderr
+    assert not (tmp_path / "u").exists()
+    failed = run_cli([SCRIPT, "spill", "--input", sheet, "--rows", "1", "--cols", "2", "--output-dir", tmp_path / "f"])
+    assert failed.returncode == 1 and json.loads(failed.stdout)["status"] == "fail"
+    assert (tmp_path / "f" / "sheet-qc.json").is_file() and failed.stderr == ""
+    (tmp_path / "clean").mkdir()
+    clean, _ = tail_sheet(tmp_path / "clean", spill_px=0)
+    passed = run_cli([SCRIPT, "spill", "--input", clean, "--rows", "1", "--cols", "2", "--output-dir", tmp_path / "p"])
+    assert passed.returncode == 0 and json.loads(passed.stdout)["status"] in ("pass", "warn")
+    import contextlib
+    import io
+    from unittest import mock
+    stderr = io.StringIO()
+    with mock.patch.object(sq, "analyse_spill", side_effect=KeyError("boom")), contextlib.redirect_stderr(stderr):
+        status = sq.main(["spill", "--input", str(sheet), "--rows", "1", "--cols", "2", "--output-dir",
+                          str(tmp_path / "bug")])
+    assert (status, stderr.getvalue()) == (1, "error: internal error (KeyError: 'boom')\n")
+
+
+def test_ownership_slice_is_the_shared_slicer_with_the_spill_qc_policy(tmp_path):
+    """D14: sheet_qc slices through forge_core.ownership_slice with haze drop (alpha > 127, 64 px); an
+    empty returned cell is still a clean QcError naming the cell."""
+    image, _boxes = make_magenta_sheet(1, 3, 48, spill_px=6, return_boxes=True)
+    pixels = keyed(image)
+    pixels[2, 140] = (9, 9, 9, 3)  # detached haze: dropped by the spill-QC policy
+    boxes = [(0, 0, 48, 48), (48, 0, 96, 48), (96, 0, 144, 48)]
+    frames, info = sq.ownership_slice(pixels, boxes)
+    shared, report = sq.forge_core.ownership_slice(pixels, boxes=boxes, alpha_threshold=127, min_area=64,
+                                                   haze="drop")
+    assert all(np.array_equal(a, b) for a, b in zip(frames, shared)) and len(frames) == 3
+    assert info["haze"] == "drop" and info["dropped_px"] == report["dropped_px"] == 1
+    assert {key: info[key] for key in ("padding", "canvas", "frame_origins_in_sheet")} == \
+        {key: report[key] for key in ("padding", "canvas", "frame_origins_in_sheet")}
+    assert not hasattr(sq, "_attach_soft") and not hasattr(sq, "oklab_lightness")
+    empty = pixels.copy()
+    empty[:, 96:] = 0
+    with pytest.raises(sq.QcError, match=r"Cell \[0, 2\] holds no subject"):
+        sq.ownership_slice(empty, boxes)
+    frames, info = sq.ownership_slice(empty, boxes, count=2)
+    assert len(frames) == 2 and info["cells_used"] == 2
 
 
 # --------------------------------------------------------------------------- spill (B03-T1)
@@ -259,7 +310,7 @@ def test_fox_spill_runs_within_1_5_s(tmp_path):
     start = time.perf_counter()
     status = sq.main(["spill", "--input", str(fox), "--rows", "2", "--cols", "4", "--output-dir", str(tmp_path / "t")])
     elapsed = time.perf_counter() - start
-    assert status == 0
+    assert status == 1 and (tmp_path / "t" / "sheet-qc.json").is_file()  # the fox fails spill QC (D26: exit 1)
     assert elapsed <= 1.5, f"spill took {elapsed:.2f} s"
 
 

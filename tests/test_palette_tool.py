@@ -414,3 +414,39 @@ def test_quantize_seq_lock_must_cover_the_whole_clip(tmp_path):
     assert "alpha-band needs" in fails("quantize-seq", "--palette", palette, "--input", frames, "--alpha-band",
                                        "0.7", "0.2", "--output-dir", tmp_path / "bad")
     assert nothing_published(tmp_path, "bad")
+
+
+# --------------------------------------------------------------------------- integration conventions (D26-D29)
+
+def test_cli_conventions_after_integration(tmp_path):
+    """D26: usage errors exit 2; D27: a bug is one ``error: internal error (...)`` line with exit 1; D28: a JSON
+    skin map written with a UTF-8 BOM (Windows PowerShell 5.1) is read; D29: QA envelopes record the package
+    version; D30: fileRefs come from forge_core."""
+    import contextlib
+    import io
+    from unittest import mock
+
+    palette, sprite = _on_palette_sprite()
+    fp.write_palette(palette, tmp_path / "palette.json")
+    frames = write_frames(tmp_path / "frames", [sprite])
+    (tmp_path / "skin-bom.json").write_bytes(b"\xef\xbb\xbf" + json.dumps({"#c8783c": "#3c78c8"}).encode("utf-8"))
+    baked = ok("variants", "--palette", tmp_path / "palette.json", "--input", frames, "--variant", "hitflash",
+               "--skin-map", tmp_path / "skin-bom.json", "--output-dir", tmp_path / "var")
+    assert baked["variants"] == ["hitflash", "skin-skin-bom"]
+    qa = json.loads((tmp_path / "var" / "variants-qa.json").read_text(encoding="utf-8"))
+    assert qa["tool"] == {"name": "palette_tool", "version": fc.FORGE_PACKAGE_VERSION} == {
+        "name": "palette_tool", "version": "0.4.0"}
+    check_file_refs(qa, tmp_path / "var")
+    (tmp_path / "broken.json").write_text("{broken", encoding="utf-8")
+    assert fails("variants", "--palette", tmp_path / "palette.json", "--input", frames, "--skin-map",
+                 tmp_path / "broken.json", "--output-dir", tmp_path / "bad").startswith(
+        "error: skin map broken.json is not valid JSON")
+    usage = tool("build", "--input", frames, "--colors", "many", "--output-dir", tmp_path / "usage")
+    assert usage.returncode == 2 and usage.stderr.startswith("usage:") and "error: argument --colors" in usage.stderr
+    module = load_script("generate2dsprite", "palette_tool")
+    stderr = io.StringIO()
+    with mock.patch.dict(module.COMMANDS, {"build": mock.Mock(side_effect=KeyError("boom"))}), \
+         contextlib.redirect_stderr(stderr):
+        status = module.main(["build", "--input", str(frames), "--colors", "4", "--output-dir", str(tmp_path / "x")])
+    assert (status, stderr.getvalue()) == (1, "error: internal error (KeyError: 'boom')\n")
+    assert nothing_published(tmp_path, "bad") and nothing_published(tmp_path, "usage") and nothing_published(tmp_path, "x")

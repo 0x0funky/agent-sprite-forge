@@ -382,6 +382,28 @@ class AssembleFramesTests(unittest.TestCase):
             MODULE.validate_webp(path, [MODULE.pixel_array(other)], [0], 250)
 
 
+class RegisteredFrameExportTests(unittest.TestCase):
+    """The fork's whole-frame test that lived in tests/test_generate2dsprite.py (cfed170 sprite suite), moved
+    beside the assembler it exercises (sprite review, cross-module issue 10)."""
+
+    def test_complete_frames_are_not_keyed_or_resized(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            base = Path(temp)
+            paths = []
+            for index in range(2):
+                image = Image.new("RGB", (23, 17), (255, 0, 255))
+                image.putpixel((index, index), (0, 10, 20))
+                path = base / f"phase-{index}.png"
+                image.save(path)
+                paths.append(str(path))
+            args = MODULE.build_parser().parse_args(["--input", *paths, "--duration", "90", "--output-dir", str(base / "out")])
+            result = MODULE.assemble(args)
+            self.assertEqual(result["frame_size"], [23, 17])
+            self.assertEqual(result["total_duration_ms"], 180)
+            with Image.open(base / "out" / "frames" / "frame-00.png") as output:
+                self.assertEqual(output.getpixel((10, 10)), (255, 0, 255))
+
+
 class _Workspace(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
@@ -522,14 +544,24 @@ class ChromaAndCropBoxTests(_Workspace):
         self.assertEqual(result["sources"][0]["key"]["quality"], "dominance")
         self.assertEqual(int(self.read_frame(0)[0, 0, 3]), 0)
 
-    def test_chroma_key_without_a_backdrop_warns(self) -> None:
+    def test_chroma_key_without_a_backdrop_is_refused(self) -> None:
+        """Sprite review (B02): --key chroma on an opaque image with no backdrop of the declared key published
+        unkeyed frames with exit 0. Keying was asked for, so it is an error and nothing is published."""
         path = self.png("scene.png", Image.new("RGB", (32, 16), (90, 120, 60)))
-        result = self.assemble("--input", path, "--key", "chroma")
-        self.assertFalse(result["sources"][0]["key"]["key_estimate"]["valid"])
+        with self.assertRaisesRegex(ValueError, r"--key chroma found no magenta backdrop on the border of scene\.png"):
+            self.assemble("--input", path, "--key", "chroma")
+        self.assert_clean_failure()
+        green = self.png("green.png", make_magenta_sheet(1, 2, 32, key=(0, 255, 0)))
+        self.output = self.root / "green-as-magenta"
+        with self.assertRaisesRegex(ValueError, "Pass --key-color green, blue or #rrggbb"):
+            self.assemble("--sheet", green, "--rows", 1, "--cols", 2, "--key", "chroma")
+        self.assert_clean_failure()
+        self.output = self.root / "green"
+        result = self.assemble("--sheet", green, "--rows", 1, "--cols", 2, "--key", "chroma", "--key-color", "green")
+        self.assertTrue(result["sources"][0]["key"]["key_estimate"]["valid"])
+        self.assertEqual(int(self.read_frame(0)[0, 0, 3]), 0)
         checks = {check["id"]: check for check in result["qa"]["checks"]}
-        self.assertEqual((checks["chroma_key_backdrop"]["status"], checks["chroma_key_backdrop"]["value"]), ("warn", 1))
-        self.assertEqual(int(self.read_frame(0)[..., 3].min()), 255)  # nothing near the key: nothing keyed
-        self.assertEqual(result["qa"]["status"], "warn")
+        self.assertEqual((checks["chroma_key_backdrop"]["status"], checks["chroma_key_backdrop"]["value"]), ("pass", 0))
 
     def test_documented_crop_box_example_is_valid(self) -> None:
         text = (SKILLS_DIR / "generate2dsprite" / "references" / "frames-and-clips.md").read_text(encoding="utf-8")
@@ -796,7 +828,7 @@ class CliTests(_Workspace):
         self.assertEqual(result.stdout, "")
         self.assert_clean_failure()
 
-    def test_cli_success_prints_one_json_line_and_usage_errors_exit_1(self) -> None:
+    def test_cli_success_prints_one_json_line_and_usage_errors_exit_2(self) -> None:
         frame = self.png("f.png", Image.new("RGB", (4, 4), (10, 20, 30)))
         result = run_cli([SCRIPT, "--input", frame, frame, "--output-dir", self.output], "cp1252")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -807,8 +839,31 @@ class CliTests(_Workspace):
         self.assertTrue(Path(summary["metadata"]).is_file())
         self.assertEqual((summary["frames"], summary["sequence"]), (2, 2))
         usage = run_cli([SCRIPT, "--input", frame, "--output-dir", self.root / "x", "--slice", "wedge"], "cp1252")
-        self.assertEqual(usage.returncode, 1)
-        self.assertIn("error:", usage.stderr)
+        self.assertEqual(usage.returncode, 2)  # argparse's usage-error convention (D26)
+        self.assertTrue(usage.stderr.startswith("usage:"), usage.stderr)
+        self.assertIn("error: argument --slice", usage.stderr)
+        self.assertFalse((self.root / "x").exists())
+        boxes = self.root / "boxes.json"
+        boxes.write_bytes(b"\xef\xbb\xbf" + json.dumps({"items": [{"box": [0, 0, 2, 4]}, {"box": [2, 0, 4, 4]}]})
+                          .encode("utf-8"))
+        sheet = self.png("sheet.png", Image.new("RGB", (4, 4), (10, 20, 30)))
+        bom = run_cli([SCRIPT, "--sheet", sheet, "--crop-boxes", boxes, "--output-dir", self.root / "bom"], "cp1252")
+        self.assertEqual(bom.returncode, 0, bom.stderr)  # D28: a PowerShell-written (BOM) JSON file is read
+        boxes.write_text("{broken", encoding="utf-8")
+        broken = run_cli([SCRIPT, "--sheet", sheet, "--crop-boxes", boxes, "--output-dir", self.root / "broken"],
+                         "cp1252")
+        self.assertEqual(broken.returncode, 1)
+        self.assertTrue(broken.stderr.startswith("error: boxes.json is not valid JSON"), broken.stderr)
+
+    def test_unexpected_errors_are_one_internal_error_line(self) -> None:
+        """D27: a bug is reported as one ``error: internal error (...)`` line with exit 1, never a traceback."""
+        import contextlib
+        import io
+        frame = self.png("f.png", Image.new("RGB", (4, 4), (10, 20, 30)))
+        stderr = io.StringIO()
+        with mock.patch.object(MODULE, "assemble", side_effect=KeyError("boom")), contextlib.redirect_stderr(stderr):
+            status = MODULE.main(["--input", str(frame), "--output-dir", str(self.output)])
+        self.assertEqual((status, stderr.getvalue()), (1, "error: internal error (KeyError: 'boom')\n"))
 
 
 if __name__ == "__main__":

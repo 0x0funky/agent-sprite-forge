@@ -19,6 +19,9 @@ success one ASCII JSON line names the output folder and its metadata file.
   variants      bake hitflash / frozen / silhouette / skin variants of on-palette frames
   quantize-seq  quantize a clip with temporal hysteresis (cycle, pingpong or oneshot)
 
+Usage errors exit 2 (argparse); every other failure prints one "error: ..." line,
+publishes nothing and exits 1. JSON inputs may carry a UTF-8 byte-order mark.
+
 Example: python palette_tool.py build --input frames --colors 16 --output-dir palette
 Run "python palette_tool.py <command> --help" for each command's options.
 """
@@ -43,13 +46,13 @@ except ImportError as missing:  # numpy and Pillow are needed before forge_core 
     raise SystemExit(1)
 
 TOOL_NAME = "palette_tool"
-TOOL_VERSION = "1"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 LOOP_POLICIES = ("cycle", "pingpong", "oneshot")
 LUT_VARIANTS = ("hitflash", "frozen", "silhouette")
 
 
-class ToolError(Exception):
-    """A user-facing failure: bad input, or QA that must not publish."""
+class ToolError(ValueError):
+    """A user-facing failure: bad input, or QA that must not publish (one ``error: ...`` line, exit 1)."""
 
 
 # --------------------------------------------------------------------------- CLI helpers (pixel_reduce.py uses them)
@@ -133,21 +136,24 @@ def enforce(envelope: dict[str, Any], strict: bool, what: str) -> None:
 
 def run_main(parser: argparse.ArgumentParser, commands: dict[str, Callable[[argparse.Namespace], dict]],
              argv: Sequence[str] | None = None) -> int:
-    """Parse, run one command, print its one-line JSON summary; errors go to stderr as 'error: ...'."""
-    forge_core.utf8_stdio()
-    args = parser.parse_args(argv)
-    try:
-        summary = commands[getattr(args, "command", None) or "run"](args)
-    except KeyboardInterrupt:
-        raise
-    except Exception as error:  # every failure is reported as one line, never a traceback
-        message = str(error) or type(error).__name__
-        if isinstance(error, FileExistsError) and getattr(error, "filename", None):
-            message = f"output already exists, choose a new --output-dir: {error.filename}"
-        print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
-        return 1
-    print(json.dumps(summary, ensure_ascii=True))
-    return 0
+    """Parse, run one command and print its one-line JSON summary, under forge_core.run_cli (D26, D27).
+
+    Usage errors keep argparse's exit 2; a user-facing failure (ToolError, PaletteError, OSError,
+    ValueError) prints one ``error: ...`` line and exits 1; anything else prints
+    ``error: internal error (<Type>: <message>)`` and exits 1. Tracebacks never reach the user.
+    """
+    def main() -> int:
+        args = parser.parse_args(argv)
+        try:
+            summary = commands[getattr(args, "command", None) or "run"](args)
+        except FileExistsError as error:
+            if not getattr(error, "filename", None):
+                raise
+            raise ToolError(f"output already exists, choose a new --output-dir: {error.filename}") from None
+        print(json.dumps(summary, ensure_ascii=True))
+        return 0
+
+    return forge_core.run_cli(main)
 
 
 def colour_arg(value: str) -> str:
@@ -250,7 +256,10 @@ def _skin_rows(paths: Sequence[Path], palette: fp.Palette) -> dict[str, Any]:
         if name in rows:
             raise ToolError(f"two skin maps are both named {name}")
         if path.suffix.lower() == ".json":
-            document = json.loads(path.read_text(encoding="utf-8-sig"))
+            try:
+                document = forge_core.read_json(path)  # UTF-8 with or without a BOM (D28)
+            except ValueError as error:
+                raise ToolError(f"skin map {path.name} is not valid JSON: {error}") from None
             is_palette = isinstance(document, dict) and (
                 document.get("schema") == fp.PALETTE_SCHEMA or "colors" in document)
             rows[name] = fp.as_palette(document) if is_palette or isinstance(document, list) else document
@@ -314,11 +323,11 @@ def cmd_build(args: argparse.Namespace) -> dict[str, Any]:
             not_proven=["Visual quality of the palette: look at swatches.png and an applied frame.",
                         "Colours of pixels below the alpha threshold were not sampled or measured."]
                        + ([] if args.max_delta_e is not None else ["No --max-delta-e gate was set."]),
-            inputs=[fp.file_ref(path, stage) for path in inputs],
-            outputs=[fp.file_ref(path, stage) for path in written],
+            inputs=[forge_core.file_ref(path, stage) for path in inputs],
+            outputs=[forge_core.file_ref(path, stage) for path in written],
             palette={"colors": len(palette), "reserved": int(sum(palette.reserved)),
                      "transparent_index": palette.transparent_index, "seed": args.seed},
-            fit={fp.manifest_path(path, stage): fit for path, fit in zip(inputs, fits)},
+            fit={forge_core.manifest_path(path, stage): fit for path, fit in zip(inputs, fits)},
             totals=totals)
         forge_core.write_json(stage / "palette-qa.json", envelope)
         enforce(envelope, args.strict, "build")
@@ -372,9 +381,9 @@ def cmd_apply(args: argparse.Namespace) -> dict[str, Any]:
             not_proven=["Visual quality after snapping: compare an output with its input.",
                         "Indexed PNGs are engine exports; they are not checked by builders."]
                        + ([] if args.max_delta_e is not None else ["No --max-delta-e gate was set."]),
-            inputs=[fp.file_ref(path, stage) for path in inputs + [args.palette]]
-                   + ([fp.file_ref(args.lock, stage)] if args.lock else []),
-            outputs=[fp.file_ref(path, stage) for path in outputs + indexed],
+            inputs=[forge_core.file_ref(path, stage) for path in inputs + [args.palette]]
+                   + ([forge_core.file_ref(args.lock, stage)] if args.lock else []),
+            outputs=[forge_core.file_ref(path, stage) for path in outputs + indexed],
             fit={name: fit for name, fit in zip(names, fits)}, totals=totals, locked_inputs=locked_inputs)
         forge_core.write_json(stage / "apply-qa.json", envelope)
         enforce(envelope, args.strict, "apply")
@@ -412,14 +421,14 @@ def cmd_luts(args: argparse.Namespace) -> dict[str, Any]:
     final = Path(args.output_dir)
     with forge_core.staged_output(final) as stage:
         forge_core.save_png(fp.lut_image(document), stage / "luts.png")
-        record = {"schema": document["schema"], "palette": fp.file_ref(args.palette, stage),
-                  "image": fp.file_ref(stage / "luts.png", stage)}
+        record = {"schema": document["schema"], "palette": forge_core.file_ref(args.palette, stage),
+                  "image": forge_core.file_ref(stage / "luts.png", stage)}
         record.update({key: value for key, value in document.items() if key != "schema"})
         if args.palettize_size:
             name = f"palettize-{args.palettize_size}.png"
             forge_core.save_png(fp.palettize_lut(palette, size=args.palettize_size), stage / name)
             record["palettize"] = {
-                "image": fp.file_ref(stage / name, stage), "size": args.palettize_size,
+                "image": forge_core.file_ref(stage / name, stage), "size": args.palettize_size,
                 "layout": "texel (x = r + size * b, y = g) holds the OKLab-nearest palette colour of RGB level "
                           "(r, g, b); level v is 8-bit round(v * 255 / (size - 1)); sample with nearest filtering"}
         record["usage"] = ("luts.png row r is LUT row rows[r]; column i is the colour index i shows in that row; "
@@ -476,8 +485,8 @@ def cmd_variants(args: argparse.Namespace) -> dict[str, Any]:
                     "row (forge_palette.luts); alpha is copied unchanged and re-read from the written PNGs"),
             not_proven=["Whether the variant reads well in game (flash timing, frozen tint): look at the frames."]
                        + ([] if args.snap else ["Without --snap the variant colours may lie off the palette."]),
-            inputs=[fp.file_ref(path, stage) for path in inputs + [args.palette]],
-            outputs=[fp.file_ref(path, stage) for path in outputs],
+            inputs=[forge_core.file_ref(path, stage) for path in inputs + [args.palette]],
+            outputs=[forge_core.file_ref(path, stage) for path in outputs],
             luts={name: document["luts"][name] for name in rows})
         forge_core.write_json(stage / "variants-qa.json", envelope)
         enforce(envelope, args.strict, "variants")
@@ -560,10 +569,10 @@ def cmd_quantize_seq(args: argparse.Namespace) -> dict[str, Any]:
                        + (["Forward frames only: play them with loop_policy pingpong; the way back reuses them."]
                           if policy == "pingpong" else [])
                        + ([] if args.max_delta_e is not None else ["No --max-delta-e gate was set."]),
-            inputs=[fp.file_ref(path, stage) for path in inputs]
-                   + ([] if built else [fp.file_ref(args.palette, stage)])
-                   + ([fp.file_ref(args.lock, stage)] if args.lock else []),
-            outputs=[fp.file_ref(path, stage) for path in outputs + indexed
+            inputs=[forge_core.file_ref(path, stage) for path in inputs]
+                   + ([] if built else [forge_core.file_ref(args.palette, stage)])
+                   + ([forge_core.file_ref(args.lock, stage)] if args.lock else []),
+            outputs=[forge_core.file_ref(path, stage) for path in outputs + indexed
                      + ([palette_file] if built else [])],
             loop_policy=policy, locked=used is view and view is not None,
             params={"margin": args.margin, "alpha_band": [low, high], "alpha_threshold": args.alpha_threshold,
