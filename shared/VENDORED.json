@@ -36,6 +36,23 @@
       ]
     },
     {
+      "canonical": "shared/forge_nav.py",
+      "owner": "integration (D4)",
+      "targets": [
+        "skills/generate2dmap/scripts/forge_nav.py",
+        "skills/codeart2d/scripts/forge_nav.py"
+      ]
+    },
+    {
+      "canonical": "shared/forge_schema.py",
+      "owner": "integration (D31)",
+      "targets": [
+        "skills/generate2dmap/scripts/forge_schema.py",
+        "skills/codeart2d/scripts/forge_schema.py",
+        "skills/video2dsprite/scripts/forge_schema.py"
+      ]
+    },
+    {
       "canonical": "shared/schemas/common.schema.json",
       "owner": "A0-contracts",
       "targets": [
