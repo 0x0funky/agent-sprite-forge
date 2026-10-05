@@ -1,0 +1,257 @@
+{
+  "schema": "codeart2d.rig_report.v1",
+  "route": "pixel",
+  "frame_size": [64, 64],
+  "anchor_px": [32.0, 59.0],
+  "ground_px": 59.0,
+  "zoom": 1,
+  "palette": [
+    "#1a1c2c",
+    "#29366f",
+    "#333c57",
+    "#3b5dc9",
+    "#3d2618",
+    "#4a5a85",
+    "#5a3a2a",
+    "#6b3d2e",
+    "#73464c",
+    "#c8845e",
+    "#f0b98c"
+  ],
+  "clips": {
+    "walk": {
+      "frames": [
+        {
+          "id": "walk-00",
+          "t": 0.0,
+          "qa": {
+            "visible": 650,
+            "partial_alpha": 0,
+            "colors": 9,
+            "off_palette": 0,
+            "orphans": 39,
+            "l_corners": 6,
+            "outline_gaps": 0,
+            "bbox": [22, 13, 46, 59]
+          },
+          "ground": {"grounded": true, "edge": 59, "gap_px": 0},
+          "margin_px": 5,
+          "contacts": {
+            "leg_f": {
+              "planted": true,
+              "grounded": true,
+              "ankle": [39.5, 56.0],
+              "target": [39.5, 56.0],
+              "angle": 0.0,
+              "lowest_y": 59.0,
+              "toe_x": 45.0,
+              "heel_x": 37.0,
+              "clamp_px": 0.0
+            },
+            "leg_b": {
+              "planted": true,
+              "grounded": true,
+              "ankle": [25.5, 56.0],
+              "target": [25.5, 56.0],
+              "angle": 0.0,
+              "lowest_y": 59.0,
+              "toe_x": 31.0,
+              "heel_x": 23.0,
+              "clamp_px": 0.0
+            }
+          },
+          "clamps": [],
+          "file": "frames/walk-00.png",
+          "stored_as": "walk-00"
+        },
+        {
+          "id": "walk-01",
+          "t": 0.125,
+          "qa": {
+            "visible": 633,
+            "partial_alpha": 0,
+            "colors": 9,
+            "off_palette": 0,
+            "orphans": 29,
+            "l_corners": 6,
+            "outline_gaps": 0,
+            "bbox": [21, 12, 44, 59]
+          },
+          "ground": {"grounded": true, "edge": 59, "gap_px": 0},
+          "margin_px": 5,
+          "contacts": {
+            "leg_f": {
+              "planted": true,
+              "grounded": true,
+              "ankle": [36.5, 56.0],
+              "target": [36.5, 56.0],
+              "angle": 0.0,
+              "lowest_y": 59.0,
+              "toe_x": 42.0,
+              "heel_x": 34.0,
+              "clamp_px": 0.0
+            },
+            "leg_b": {
+              "planted": false,
+              "grounded": true,
+              "ankle": [25.004809, 53.95168],
+              "target": [25.004809, 53.95168],
+              "angle": 7.5,
+              "lowest_y": 57.5,
+              "toe_x": 30.501082,
+              "heel_x": 22.417609,
+              "clamp_px": 0.0
+            }
+          },
+          "clamps": [],
+          "file": "frames/walk-01.png",
+          "stored_as": "walk-01"
+        }
+      ],
+      "loop": true,
+      "duration_ms": [100, 100, 100, 100, 100, 100, 100, 100],
+      "seam": {
+        "frames": 8,
+        "seam": 5.465881,
+        "adjacent_median": 5.489014,
+        "adjacent_p95": 6.31665,
+        "adjacent_max": 6.420837,
+        "seam_over_median": 0.995786,
+        "seam_over_p95": 0.865313,
+        "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+      },
+      "contact": {
+        "leg_f": {
+          "planted_frames": [0, 1, 2, 3, 4],
+          "runs": [
+            {"frames": [0, 1, 2, 3, 4], "world_x": 39.5, "drift_x_px": 0.0, "drift_y_px": 0.0}
+          ],
+          "drift_x_px": 0.0,
+          "drift_y_px": 0.0
+        },
+        "leg_b": {
+          "planted_frames": [0, 4, 5, 6, 7],
+          "runs": [
+            {"frames": [4, 5, 6, 7, 0], "world_x": 49.5, "drift_x_px": 0.0, "drift_y_px": 0.0}
+          ],
+          "drift_x_px": 0.0,
+          "drift_y_px": 0.0
+        }
+      },
+      "entry_frame": 2,
+      "stride_world_units": 24.0,
+      "stride_px_per_frame": 3.0,
+      "events": [{"at": 0, "name": "step_r"}, {"at": 4, "name": "step_l"}]
+    }
+  },
+  "ik_clamps": [],
+  "ground_failures": [],
+  "margin_failures": [],
+  "build_clips": {"returncode": 0, "output": "compiled-clips/animation-clips.json"},
+  "review": {
+    "walk": {
+      "sheet": "review/walk.png",
+      "onion": "review/walk-onion.png",
+      "travel": "review/walk-travel.png"
+    },
+    "idle": {"sheet": "review/idle.png", "onion": "review/idle-onion.png"}
+  },
+  "godot": null,
+  "qa": {
+    "status": "pass",
+    "method": "rig_animate: FK and two-bone IK sampled per clip; pixel route: codeart_core.qa_pixels on every published frame against the route palette (partial alpha, exact palette, outline gaps, L-corners per codeart_core.QA_PIXEL_GATES); forge_core.seam_report (premultiplied MAE, seam over median adjacent step) on each loop of 3+ frames; planted-foot drift measured on the rig geometry (ankle x + stride * t, ankle y) per run of planted frames; IK clamps; lowest alpha row of grounded frames against the ground line; transparent margin; optional build_animation_clips run",
+    "notProven": [
+      "Appeal, silhouette, anatomy and readability at game scale: look at review/*.png.",
+      "Timing, weight and acting in motion: the checks measure geometry, not feel.",
+      "Planted-foot drift is measured on rig geometry; rendered pixels may still differ by coverage rounding or anti-aliasing when the per-frame travel is not a whole number of pixels."
+    ],
+    "checks": [
+      {"id": "partial_alpha", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "off_palette", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "outline_gaps", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "l_corners", "status": "pass", "value": 8, "threshold": 10},
+      {"id": "seam:walk", "status": "pass", "value": 0.9958, "threshold": [0.8, 1.25]},
+      {"id": "seam:idle", "status": "pass", "value": 0.9571, "threshold": [0.8, 1.25]},
+      {"id": "ik_foot_drift", "status": "pass", "value": 0.0, "threshold": 0.0},
+      {"id": "ik_clamp", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "ground_row", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "margins", "status": "pass", "value": 0, "threshold": 1},
+      {"id": "build_clips", "status": "pass", "value": 0, "threshold": 0}
+    ],
+    "inputs": [
+      {
+        "path": "hero.rig.svg",
+        "sha256": "3ef883e4a58e5a2704539ca2d6f3e198a91b2f5e5e5ba20d47177bc15528eed8",
+        "bytes": 3358
+      },
+      {
+        "path": "hero.anim.json",
+        "sha256": "ed68148236479cb3392940eacd38f9927c2a2198b94cceb7f6492e2d1addf4de",
+        "bytes": 2259
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/walk-00.png",
+        "sha256": "605ffffaf7123e0ff99237e0e7a08d449e1b8418066016a5bb622ccfb305a65f",
+        "bytes": 675
+      },
+      {
+        "path": "frames/walk-01.png",
+        "sha256": "def8a8c54c00ea0e05c185723365abfda6e7050dd696d7b921c00b24916b4031",
+        "bytes": 647
+      },
+      {
+        "path": "frames/walk-02.png",
+        "sha256": "4e1551ebff4d909ec03aeaa04aecb033a9b9f5ec1361702b14057ab89b387ef9",
+        "bytes": 612
+      },
+      {
+        "path": "frames/walk-03.png",
+        "sha256": "6c491ad1465aa7f1859e1edbfaa6a21033416a9f31dba6bfdd3e7a39b506ea7f",
+        "bytes": 644
+      },
+      {
+        "path": "frames/walk-04.png",
+        "sha256": "b1ab3384605ac122f06fd2271b3458e0a64473d9ca0cad58ed7d8878967d180f",
+        "bytes": 680
+      },
+      {
+        "path": "frames/walk-05.png",
+        "sha256": "f9c340e19b888e1c626f6fb5277ecd79a8a7c3fb83ddd1664dafe4f5424d3e0c",
+        "bytes": 635
+      },
+      {
+        "path": "frames/walk-06.png",
+        "sha256": "0afeed1570db21c58e2d62819463dbb4f9015b1a58a22ed49d66580c75e69a8a",
+        "bytes": 630
+      },
+      {
+        "path": "frames/walk-07.png",
+        "sha256": "1a16dfb76c8b06a3a1c33cd642016c5ae4c9f661893ac45aa41797516e2c7c4e",
+        "bytes": 680
+      },
+      {
+        "path": "frames/idle-00.png",
+        "sha256": "74a9b463a7a2022e9d3d5550f641a160fa1434dc51d76f7aa68532160a37f502",
+        "bytes": 550
+      },
+      {
+        "path": "frames/idle-01.png",
+        "sha256": "48706f517eda6bc80c2751d89cd2e3916f0261c84af4c3cac5083ea70fde6b4e",
+        "bytes": 579
+      },
+      {
+        "path": "frames/idle-02.png",
+        "sha256": "a48c2f211995901b6907cea2b0f728895c8b405ff1135947051417074e553a1b",
+        "bytes": 586
+      },
+      {
+        "path": "clips.json",
+        "sha256": "fe4e713bd7ec7441d7ded2b9605b09633b2ffaf5c8d6490d161a0100ebfc3fb5",
+        "bytes": 1918
+      }
+    ],
+    "tool": {"name": "codeart2d/rig_animate.py", "version": "1"}
+  }
+}

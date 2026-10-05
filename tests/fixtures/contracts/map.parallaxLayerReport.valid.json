@@ -1,0 +1,81 @@
+{
+  "id": "far",
+  "role": "far",
+  "image": "far.png",
+  "source_mode": "RGBA",
+  "source_sha256": "aec3b1a46dcfc3599704de454c1a8574534bd21a83c2ddd259738afb5f38f4e6",
+  "source_size": [96, 32],
+  "scale": 1.0,
+  "display_size": [96.0, 32.0],
+  "offset": [0.0, 0.0],
+  "anchor_px": [0.0, 0.0],
+  "scroll_factor": [0.5, 0.0],
+  "repeat": [true, false],
+  "repeat_period_world_px": [96.0, null],
+  "alpha": {
+    "expected": "transparent",
+    "min": 0,
+    "max": 255,
+    "fully_clear_pixels": 1728,
+    "partly_transparent_pixels": 0,
+    "fully_opaque_pixels": 1344,
+    "total_pixels": 3072,
+    "nonzero_bbox_px": [1, 6, 96, 32],
+    "allow_empty": false
+  },
+  "require_canvas_coverage": true,
+  "coverage_rule": "repeated layer",
+  "canvas_coverage_passed": true,
+  "opaque_viewport_coverage_verified": false,
+  "extrema": [
+    {
+      "camera": [0.0, 0.0],
+      "zoom": 1.0,
+      "screen_canvas_rect": [0.0, 0.0, 96.0, 32.0],
+      "canvas_coverage_axes": [true, true],
+      "canvas_covers_viewport": true,
+      "canvas_visible": true,
+      "gaps_px": [0.0, 0.0, 0.0, 0.0],
+      "nonzero_alpha_bbox_screen": [1.0, 6.0, 96.0, 32.0]
+    },
+    {
+      "camera": [0.0, 0.0],
+      "zoom": 1.5,
+      "screen_canvas_rect": [-16.0, -8.0, 128.0, 40.0],
+      "canvas_coverage_axes": [true, true],
+      "canvas_covers_viewport": true,
+      "canvas_visible": true,
+      "gaps_px": [0.0, 0.0, 0.0, 0.0],
+      "nonzero_alpha_bbox_screen": [-14.5, 1.0, 128.0, 40.0]
+    }
+  ],
+  "repeat_seams": [
+    {
+      "axis": "x",
+      "alpha_mae": 7.96875,
+      "visible_rgb_mae": null,
+      "jointly_visible_pixels": 0,
+      "premultiplied_rgb_mae": 2.2916666666666665,
+      "seamless_verified": false,
+      "seam": 3.7109375,
+      "adjacent_median": 3.7109375,
+      "adjacent_p95": 3.7109375,
+      "adjacent_max": 7.421875,
+      "seam_over_median": 1.0,
+      "seam_over_p95": 1.0,
+      "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first",
+      "frames": 96,
+      "verdict": "continuous"
+    }
+  ],
+  "pixel_grid": {
+    "screen_px_per_source_px": [1.0, 1.5],
+    "integer_pixels": false,
+    "rest_position_at_camera_0": [[0.0, 0.0], [-16.0, -8.0]],
+    "rest_position_integral": true,
+    "scroll_px_per_camera_px": [[0.5, 0.0], [0.75, 0.0]],
+    "subpixel_scroll": true
+  },
+  "passed": false,
+  "issues": ["Pixel art needs whole screen pixels per source pixel; scale x zoom is 1, 1.5."]
+}

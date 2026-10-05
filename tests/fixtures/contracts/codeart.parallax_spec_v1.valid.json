@@ -1,0 +1,66 @@
+{
+  "schema": "codeart2d.parallax_spec.v1",
+  "viewport": [480, 270],
+  "camera": {"x": [0, 1920], "y": [0, 0], "zoom": [1, 1]},
+  "seed": 11,
+  "pixel_art": true,
+  "sweep_frames": 49,
+  "layers": [
+    {
+      "id": "sky",
+      "kind": "sky",
+      "colors": ["#1b1f3b", "#5d3f6a", "#c06070"],
+      "bands": 8,
+      "dither": true,
+      "stars": {"count": 60, "color": "#f4f4f4", "band": [0.0, 0.45]}
+    },
+    {
+      "id": "clouds",
+      "kind": "clouds",
+      "scroll": 0.08,
+      "period": 480,
+      "count": 5,
+      "y_range": [30, 90],
+      "size": [8, 16],
+      "fill": "#d9a0a8",
+      "shade": "#a8707e"
+    },
+    {
+      "id": "far",
+      "kind": "ridge",
+      "role": "far",
+      "scroll": 0.2,
+      "period": 480,
+      "base_y": 170,
+      "amplitude": 70,
+      "cells": 3,
+      "fill": "#333c57",
+      "rim": "#566c86",
+      "rim_px": 2
+    },
+    {
+      "id": "mid",
+      "kind": "ridge",
+      "role": "mid",
+      "scroll": 0.5,
+      "period": 640,
+      "base_y": 215,
+      "amplitude": 50,
+      "cells": 4,
+      "fill": "#257179",
+      "rim": "#38b764",
+      "trees": {"count": 40, "height": [8, 18], "width_ratio": 0.5, "tiers": 3}
+    },
+    {
+      "id": "near",
+      "kind": "foreground",
+      "scroll": 1.25,
+      "period": 800,
+      "base_y": 258,
+      "amplitude": 14,
+      "cells": 6,
+      "fill": "#1a1c2c",
+      "grass": {"count": 80, "height": [4, 10]}
+    }
+  ]
+}

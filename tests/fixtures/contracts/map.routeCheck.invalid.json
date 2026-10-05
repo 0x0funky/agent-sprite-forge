@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "why": "target kinds are exit, interaction, approach or slot",
+      "set": "/results/0/kind",
+      "value": "door",
+      "error": "'door' is not one of"
+    },
+    {
+      "why": "activations are crossing or intent",
+      "set": "/portals/0/activation",
+      "value": "touch",
+      "error": "'touch' is not one of"
+    },
+    {
+      "why": "the tick rate is a whole number",
+      "set": "/tickHz",
+      "value": 0,
+      "error": "0 is less than the minimum of 1"
+    },
+    {"why": "the verdict is recorded", "remove": "/ok", "error": "'ok' is a required property"}
+  ]
+}

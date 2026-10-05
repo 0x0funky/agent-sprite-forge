@@ -2,6 +2,18 @@
   "cases": [
     {"why": "sockets are N, E, S or W", "set": "/chunks/0/sockets/NE", "value": []},
     {"why": "graph is mandatory", "remove": "/graph"},
-    {"why": "zero width", "set": "/chunks/0/sockets/E/0/width", "value": 0}
+    {"why": "zero width", "set": "/chunks/0/sockets/E/0/width", "value": 0},
+    {
+      "why": "grid rows are . and #",
+      "set": "/chunks/0/grid",
+      "value": ["..x"],
+      "error": "does not match"
+    },
+    {
+      "why": "graph items are id rows or edges",
+      "set": "/graph",
+      "value": [{"from": "hall"}],
+      "error": "is not valid under any"
+    }
   ]
 }

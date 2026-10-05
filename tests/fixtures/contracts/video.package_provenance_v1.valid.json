@@ -1,0 +1,66 @@
+{
+  "schema": "video2dsprite.provenance.v1",
+  "tool": "engine_export.py",
+  "version": "3.0.0",
+  "params": {
+    "name": "run",
+    "formats": ["packed", "png", "webm"],
+    "maxSide": 384,
+    "cropUnion": false,
+    "fps": null,
+    "loopPolicy": "cycle",
+    "tiers": ["actor:320@24"],
+    "resampler": "lanczos",
+    "pixelArt": false,
+    "key": [253, 0, 253],
+    "keySource": "pipeline-meta",
+    "allowKeyResidue": true,
+    "crfWebm": 28,
+    "crfPacked": 18,
+    "sourceSize": null,
+    "sourceAnchor": null
+  },
+  "inputs": [
+    {
+      "path": "frame_000040.png",
+      "sha256": "cb0d5045e47e9be48564d660feeb6a95dd742478b77b8d5d9086301037670fdd",
+      "bytes": 13753,
+      "role": "frame"
+    },
+    {
+      "path": "frame_000041.png",
+      "sha256": "1f9af597e98a5c78357a83f50ffeb11cd361d3b1a1f1ae77d0db2f38bb3286c8",
+      "bytes": 14057,
+      "role": "frame"
+    },
+    {
+      "path": "frame_000042.png",
+      "sha256": "a8aae3be3a8e8608a5e206a17d8970138c7367332b37035b33cfe7af250459b7",
+      "bytes": 17864,
+      "role": "frame"
+    }
+  ],
+  "inputDigest": "3ed42effe7015cb19947020f2650b16dfc449e82d2c4dc48f4bc79ebf87886f8",
+  "libraries": {"forge_core": "1", "forge_matte": "1", "forge_av": "1"},
+  "inputDirectory": "../../../work/hero-run-reg/frames",
+  "renderer": {"name": "ffmpeg", "version": "8.0.1-full_build-www.gyan.dev"},
+  "selection": {
+    "schema": "forge-frame-selection/v2",
+    "start": 40,
+    "endExclusive": 56,
+    "status": "selected-needs-visual-review",
+    "method": "gait_loop select (run): harmonic least-squares period 16.00 frames, full-stride half-period guard, unified seam score",
+    "loopPolicy": "cycle",
+    "sha256": "826119d6e432cf60e6159756174390936fa41848e5d8ebdcc2ca6b7bf27d333d"
+  },
+  "registration": {
+    "mode": "construction",
+    "registrationSha256": "20eecbfa104f7991cc358981a3d92abf5096964557205e23d4fc0c7be17714ac",
+    "jobSha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55",
+    "baseSize": [256, 256],
+    "baseAnchor": [130.5, 233.0],
+    "padding": [0, 0, 0, 0],
+    "sourceSize": [256, 256],
+    "sourceAnchor": [130.5, 233.0]
+  }
+}

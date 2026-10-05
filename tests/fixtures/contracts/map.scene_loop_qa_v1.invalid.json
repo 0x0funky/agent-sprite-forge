@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {
+      "why": "metrics include the decoded seam",
+      "remove": "/metrics/decodedSeam",
+      "error": "'decodedSeam' is a required property"
+    },
+    {
+      "why": "thresholds are recorded",
+      "remove": "/thresholds",
+      "error": "'thresholds' is a required property"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.scene_loop_qa.v2",
+      "error": "was expected"
+    }
+  ]
+}

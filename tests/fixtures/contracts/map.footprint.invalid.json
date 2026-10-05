@@ -1,6 +1,12 @@
 {
   "cases": [
     {"why": "an ellipse needs width and depth", "remove": "/width"},
-    {"why": "unknown shape", "set": "/shape", "value": "circle"}
+    {"why": "unknown shape", "set": "/shape", "value": "circle"},
+    {
+      "why": "footprint bases are prop_px or world_px (per D7)",
+      "set": "/basis",
+      "value": "screen_px",
+      "error": "'screen_px' is not one of"
+    }
   ]
 }

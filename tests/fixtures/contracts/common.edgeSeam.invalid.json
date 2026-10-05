@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "why": "verdicts are snake_case (per D9)",
+      "set": "/verdict",
+      "value": "duplicate-edge",
+      "error": "$.verdict: 'duplicate-edge' is not one of"
+    },
+    {
+      "why": "a measured join records its seam ratio",
+      "remove": "/seam_ratio",
+      "error": "'seam_ratio' is a required property"
+    },
+    {
+      "why": "a measured join records the seamReport numbers",
+      "remove": "/adjacent_p95",
+      "error": "'adjacent_p95' is a required property"
+    },
+    {
+      "why": "a step cannot be negative",
+      "set": "/seam",
+      "value": -1,
+      "error": "-1 is less than the minimum of 0"
+    },
+    {
+      "why": "every report has a verdict",
+      "remove": "/verdict",
+      "error": "'verdict' is a required property"
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "an aspect is W:H",
+      "set": "/aspect",
+      "value": "wide",
+      "error": "$.aspect: 'wide' does not match"
+    },
+    {
+      "why": "the guide's self-check is a QA envelope",
+      "remove": "/qa",
+      "error": "'qa' is a required property"
+    },
+    {
+      "why": "layout states the safe box",
+      "remove": "/layout/safe_box",
+      "error": "'safe_box' is a required property"
+    },
+    {"why": "cells are [row, col]", "set": "/cells/0/cell", "value": [0], "error": "is too short"},
+    {
+      "why": "the toe ahead is near or far",
+      "set": "/cells/0/toe_ahead",
+      "value": "left",
+      "error": "'left' is not one of"
+    }
+  ]
+}

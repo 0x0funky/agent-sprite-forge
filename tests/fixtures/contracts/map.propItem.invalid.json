@@ -2,6 +2,12 @@
   "cases": [
     {"why": "accepted items only", "set": "/status", "value": "rejected"},
     {"why": "unknown class", "set": "/occlusion_class", "value": "canopy"},
-    {"why": "padding has four sides", "set": "/padding", "value": [8, 8]}
+    {"why": "padding has four sides", "set": "/padding", "value": [8, 8]},
+    {
+      "why": "anchor sources are fixed",
+      "set": "/anchor_source",
+      "value": "guessed",
+      "error": "'guessed' is not one of"
+    }
   ]
 }

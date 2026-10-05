@@ -1,0 +1,136 @@
+{
+  "schema": "generate2dmap.scene_guide.v1",
+  "tool": {"name": "scene_layout_guide", "version": "1.0"},
+  "stage": {
+    "path": "../src/stage.json",
+    "sha256": "59d6054c366cd0e25f9d55b5fa89f673c302f84767f4e4be9f33a41d773d3daa",
+    "bytes": 759
+  },
+  "canvas": [334, 188],
+  "guide": {
+    "path": "guide.png",
+    "sha256": "54972f3975ad5ead764528029001aaa01b402c75fd5b7577a5a4b8e5647738e3",
+    "bytes": 13263
+  },
+  "promptBlock": {
+    "path": "prompt-block.txt",
+    "sha256": "37478063ebc4df1990e8ebf8ae939727c68d8ce27bcc301a075b38fdfa0008d2",
+    "bytes": 1789
+  },
+  "percent": {
+    "ground": {"box": [4, 62, 96, 98], "polygons": [[[17, 62], [83, 62], [96, 98], [4, 98]]]},
+    "band": {"y": [60, 98], "x": [4, 96]},
+    "alwaysVisible": [12, 12, 88, 88],
+    "slots": [
+      {"id": "H1", "role": "hero", "x": 69, "y": 80},
+      {"id": "H2", "role": "hero", "x": 78, "y": 88},
+      {"id": "E1", "role": "enemy", "x": 25, "y": 78},
+      {"id": "E2", "role": "enemy", "x": 18, "y": 86},
+      {"id": "E3", "role": "enemy", "x": 32, "y": 90},
+      {"id": "B", "role": "boss", "x": 33, "y": 84}
+    ],
+    "approach": [{"x": 50, "y": 75}],
+    "landmarks": [{"id": "stone-arch", "box": [56, 20, 74, 55]}],
+    "surfaces": [{"id": "stream-surface", "kind": "ripple", "box": [38, 66, 62, 74]}]
+  },
+  "forbiddenInWalk": [
+    "people, characters, creatures or silhouettes",
+    "trees, tall shrubs, grass clumps or hedges",
+    "lamps, lanterns, pillars, posts or statues",
+    "furniture, tables, crates, barrels or piles",
+    "stairs, steps, ledges or raised platforms",
+    "walls, fences, railings, gates or balustrades",
+    "ponds, puddles, wells or streams",
+    "boats, carts or vehicles",
+    "loose items: tools, bottles, rope, debris or pickups",
+    "large cast shadows",
+    "text, signs, symbols, labels or UI"
+  ],
+  "bakedContent": {"actors": false, "collectibles": false},
+  "qa": {
+    "status": "fail",
+    "method": "scene_layout_guide: the stage's UV geometry drawn at sourceSize and restated in whole percent; the plan checked with validate_stage's static checks (footprint point-in-polygon tests of every slot against ground, landmarks and water; polygon simplicity; effect overlaps).",
+    "notProven": [
+      "The guide and prompt describe the plan; they do not make an image model follow it. Measure the returned plate, fix sourceSize and the polygons after looking at it, then run validate_stage.py on the real plate.",
+      "Percentages are rounded to whole percent; the stage file keeps the exact values.",
+      "The always-visible area assumes the stage's fit and objectPosition at the two ends of reviewedAspectRange."
+    ],
+    "checks": [
+      {"id": "ground polygons are simple", "status": "pass", "value": null, "threshold": null},
+      {
+        "id": "slots stand on ground",
+        "status": "pass",
+        "value": null,
+        "threshold": {"footRadius": 0.01, "ySquash": 0.58}
+      },
+      {
+        "id": "slots avoid walk-protected regions",
+        "status": "pass",
+        "value": null,
+        "threshold": {"footRadius": 0.01, "ySquash": 0.58}
+      },
+      {
+        "id": "slots stay off water",
+        "status": "pass",
+        "value": null,
+        "threshold": {"footRadius": 0.01, "ySquash": 0.58}
+      },
+      {"id": "slots inside playableBand", "status": "pass", "value": null, "threshold": [0.6, 0.98]},
+      {
+        "id": "approach points are standable",
+        "status": "fail",
+        "value": [{"point": 0, "uv": [0.5, 0.75]}],
+        "threshold": {"footRadius": 0.01, "ySquash": 0.58}
+      },
+      {
+        "id": "slot footprints do not overlap",
+        "status": "pass",
+        "value": null,
+        "threshold": {"footprintPx": [6.68, 3.8744]}
+      },
+      {
+        "id": "effects avoid motion-protected regions",
+        "status": "pass",
+        "value": null,
+        "threshold": null
+      },
+      {
+        "id": "water stays off ground polygons",
+        "status": "warn",
+        "value": [{"effect": "stream-surface", "overlapPx": 1100.0}],
+        "threshold": "split the ground polygon around the water: a runtime that tests only groundPolygons would let actors stand in it (validate_stage also tests ripple polygons)"
+      },
+      {"id": "bakedContent declared", "status": "pass", "value": {"painted": []}, "threshold": null},
+      {
+        "id": "slots always on screen",
+        "status": "warn",
+        "value": [{"slot": "E3", "uv": [0.32, 0.9]}],
+        "threshold": {
+          "alwaysVisibleUv": [0.1248, 0.1193, 0.8752, 0.8807],
+          "note": "cropped slots rely on the runtime layout moving actors (see validate_stage.py)"
+        }
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../src/stage.json",
+        "sha256": "59d6054c366cd0e25f9d55b5fa89f673c302f84767f4e4be9f33a41d773d3daa",
+        "bytes": 759
+      }
+    ],
+    "outputs": [
+      {
+        "path": "guide.png",
+        "sha256": "54972f3975ad5ead764528029001aaa01b402c75fd5b7577a5a4b8e5647738e3",
+        "bytes": 13263
+      },
+      {
+        "path": "prompt-block.txt",
+        "sha256": "37478063ebc4df1990e8ebf8ae939727c68d8ce27bcc301a075b38fdfa0008d2",
+        "bytes": 1789
+      }
+    ],
+    "tool": {"name": "scene_layout_guide", "version": "1.0"}
+  },
+  "warnings": []
+}

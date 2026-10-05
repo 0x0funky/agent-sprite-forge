@@ -1,0 +1,54 @@
+{
+  "status": "pass",
+  "method": "forge_palette.build_palette (weighted k-means++ in OKLab over unique colours, reserved colours fixed, coverage skipping) then forge_palette.fit_report of every input: OKLab dE of each pixel with alpha >= the threshold to its nearest palette colour",
+  "notProven": [
+    "Visual quality of the palette: look at swatches.png and an applied frame.",
+    "Colours of pixels below the alpha threshold were not sampled or measured.",
+    "No --max-delta-e gate was set."
+  ],
+  "checks": [
+    {"id": "palette_colors", "status": "pass", "value": 8, "threshold": 8},
+    {"id": "inputs_without_samples", "status": "pass", "value": 0, "threshold": 0, "files": []},
+    {"id": "max_delta_e", "status": "skipped", "value": 0.075717, "threshold": null}
+  ],
+  "inputs": [
+    {
+      "path": "../out/run/raw-sheet-clean.png",
+      "sha256": "b6efb451d72e823ffac237bd9df87eba9cb8db341f3324c87f379edf08d22953",
+      "bytes": 427
+    },
+    {
+      "path": "../out/run/raw-sheet.png",
+      "sha256": "b6efb451d72e823ffac237bd9df87eba9cb8db341f3324c87f379edf08d22953",
+      "bytes": 427
+    }
+  ],
+  "outputs": [
+    {
+      "path": "palette.json",
+      "sha256": "cf73ba57f528e43a4a495a5ec3597ea5c1552b62e8e8f2b5699798b7dde3c193",
+      "bytes": 483
+    },
+    {
+      "path": "palette.gpl",
+      "sha256": "bb19a1f09ea0420fd39f0628a450482d9366de772977e2448fa9a3895dbd2a40",
+      "bytes": 219
+    }
+  ],
+  "tool": {"name": "palette_tool", "version": "1"},
+  "palette": {"colors": 8, "reserved": 0, "transparent_index": 255, "seed": 0},
+  "fit": {
+    "../out/run/raw-sheet-clean.png": {
+      "measured_px": 5248,
+      "alpha_threshold": 128,
+      "off_palette_px": 672,
+      "partial_alpha_px": 0,
+      "colors": 3,
+      "palette_colors_used": 3,
+      "mean_delta_e": 0.000193,
+      "p95_delta_e": 0.001508,
+      "max_delta_e": 0.001508
+    }
+  },
+  "totals": {"max_delta_e": 0.075717, "worst_p95_delta_e": 0.011265, "off_palette_px": 5420}
+}

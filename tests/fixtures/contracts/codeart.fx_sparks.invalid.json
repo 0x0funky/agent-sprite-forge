@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "at most 256 sparks",
+      "set": "/count",
+      "value": 300,
+      "error": "300 is greater than the maximum of 256"
+    },
+    {
+      "why": "presets refuse unknown parameters",
+      "set": "/color",
+      "value": "#ffffff",
+      "error": "Additional properties are not allowed"
+    },
+    {
+      "why": "the life is not negative",
+      "set": "/lifeMs",
+      "value": -1,
+      "error": "-1 is less than the minimum of 0"
+    }
+  ]
+}

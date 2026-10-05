@@ -8,6 +8,23 @@
     {"why": "unknown background mode", "set": "/background_mode", "value": "magenta"},
     {"why": "hygiene solid_min is at least 1", "set": "/hygiene/solid_min", "value": 0, "error": "$.hygiene.solid_min:"},
     {"why": "bit_depth is a PNG bit depth", "set": "/provenance/bit_depth", "value": 32, "error": "$.provenance.bit_depth:"},
-    {"why": "key_still records the resolved quality, never auto", "set": "/matte", "value": {"quality": "auto"}, "error": "$.matte.quality:"}
+    {"why": "key_still records the resolved quality, never auto", "set": "/matte", "value": {"quality": "auto"}, "error": "$.matte.quality:"},
+    {
+      "why": "a source_rect that is not null is a box",
+      "set": "/frames/0/source_rect",
+      "value": [3, 2, 45],
+      "error": "is not valid under any"
+    },
+    {
+      "why": "profile_applied records the keys applied",
+      "remove": "/profile_applied/applied",
+      "error": "'applied' is a required property"
+    },
+    {
+      "why": "v2 sidecars are fileRefs",
+      "set": "/scale_profile_output",
+      "value": "C:/out/profile.json",
+      "error": "$.scale_profile_output: 'C:/out/profile.json' is not of type 'object'"
+    }
   ]
 }

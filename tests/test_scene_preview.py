@@ -1,14 +1,12 @@
 """build_scene_preview.py (B17-T2): a deterministic, self-contained, at most 16 MB preview.html.
 
 Fixtures are synthetic and written per test. Contracts are checked against the generate2dmap vendored
-schemas; the schema additions this module requests (handoff/B17-map-scene-preview.md section 5) are
-applied in memory by ``patched_errors`` until integration adds them to shared/schemas.
+schemas, which hold the additions this module requested (handoff/B17-map-scene-preview.md section 5).
 """
 from __future__ import annotations
 
 import base64
 import copy
-import functools
 import hashlib
 import io
 import json
@@ -25,157 +23,18 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, require_node, run_cli,
-                             script_path)
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script,
+                             require_node, run_cli, script_path)
 
 SKILL = "generate2dmap"
 SCRIPT = script_path(SKILL, "build_scene_preview")
 PREVIEW = load_script(SKILL, "build_scene_preview")
 RUNTIME = SKILLS_DIR / SKILL / "references" / "runtime" / "map-runtime.mjs"
-SCHEMAS = SKILLS_DIR / SKILL / "references" / "schemas"
-
-# Section 5 of the handoff: additions to map.schema.json, as JSON pointer -> fragment.
-SCHEMA_PATCH = {
-    "/$defs/mapObject/properties/image": {
-        "$ref": "common.schema.json#/$defs/relPath",
-        "description": "The object's art when it is not found through its prop label; drawn with anchor_px at (x, y)."},
-    "/$defs/mapObject/properties/image_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-    "/$defs/map_bundle_v2/properties/name": {"type": "string", "minLength": 1},
-    "/$defs/map_bundle_v2/properties/prop_packs": {
-        "description": "Prop-pack manifests whose accepted labels name the objects' prop.",
-        "type": "array",
-        "items": {"type": "object", "required": ["manifest"],
-                  "properties": {"id": {"type": "string", "minLength": 1},
-                                 "manifest": {"$ref": "common.schema.json#/$defs/relPath"},
-                                 "sha256": {"$ref": "common.schema.json#/$defs/sha256"}}}},
-    "/$defs/routeCheck": {
-        "description": "map-runtime.mjs traverseRoutes(): every exit, interaction, approach point and slot walked from the "
-                       "first spawn that reaches it, with the per-tick walker.",
-        "type": "object",
-        "required": ["ok", "speed", "budget", "tickHz", "cell", "spawns", "results", "portals"],
-        "properties": {
-            "ok": {"type": "boolean"},
-            "speed": {"type": "number", "exclusiveMinimum": 0},
-            "budget": {"type": "number", "exclusiveMinimum": 0},
-            "tickHz": {"type": "integer", "minimum": 1},
-            "cell": {"type": "integer", "minimum": 1},
-            "spawns": {"type": "array", "items": {
-                "type": "object", "required": ["id", "valid", "reachableCells"],
-                "properties": {"id": {"type": "string"}, "valid": {"type": "boolean"},
-                               "reachableCells": {"type": "integer", "minimum": 0}}}},
-            "results": {"type": "array", "items": {
-                "type": "object", "required": ["target", "kind", "from", "ok", "reachable", "reason"],
-                "properties": {
-                    "target": {"type": "string", "minLength": 1},
-                    "kind": {"enum": ["exit", "interaction", "approach", "slot"]},
-                    "from": {"type": ["string", "null"]},
-                    "ok": {"type": "boolean"}, "reachable": {"type": "boolean"},
-                    "reason": {"type": ["string", "null"]},
-                    "ticks": {"type": "integer", "minimum": 0}, "distance": {"type": "number", "minimum": 0},
-                    "maxStep": {"type": "number", "minimum": 0},
-                    "zeroMotionTicks": {"type": "integer", "minimum": 0}, "blocked": {"type": "boolean"},
-                    "fired": {"type": "boolean"}, "inwardFired": {"type": "boolean"},
-                    "firedEnRoute": {"type": "array", "items": {"type": "string"}},
-                    "end": {"anyOf": [{"type": "null"}, {"$ref": "common.schema.json#/$defs/point2"}]}}}},
-            "portals": {"type": "array", "items": {
-                "type": "object", "required": ["id", "activation", "arrivals"],
-                "properties": {"id": {"type": "string"}, "activation": {"enum": ["crossing", "intent"]},
-                               "to": {"type": "string"},
-                               "arrivals": {"type": "array", "items": {
-                                   "type": "object", "required": ["from", "spawn", "found"],
-                                   "properties": {"from": {"type": "string"}, "spawn": {"type": "string"},
-                                                  "found": {"type": "boolean"},
-                                                  "insideTrigger": {"type": ["boolean", "null"]},
-                                                  "inZone": {"type": ["boolean", "null"]},
-                                                  "latchedOnArrival": {"type": ["boolean", "null"]}}}}}}}}},
-    "/$defs/scene_snapshot_v1": {
-        "description": "window.__scene.snapshot() of a build_scene_preview page, scene-snapshot.json from --verify, or "
-                       "map-runtime.mjs runtimeSnapshot(): world, actor, events and the route check when it ran.",
-        "type": "object",
-        "required": ["schema", "runtime", "world", "actor"],
-        "properties": {
-            "schema": {"const": "generate2dmap.scene_snapshot.v1"},
-            "runtime": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "world": {"type": "object", "required": ["width", "height", "actorRadius", "ySquash", "cell", "tickHz"],
-                      "properties": {"width": {"type": "number", "exclusiveMinimum": 0},
-                                     "height": {"type": "number", "exclusiveMinimum": 0},
-                                     "actorRadius": {"type": "number", "minimum": 0},
-                                     "ySquash": {"type": "number", "exclusiveMinimum": 0},
-                                     "cell": {"type": "integer", "minimum": 1},
-                                     "tickHz": {"type": "integer", "minimum": 1}}},
-            "actor": {"anyOf": [{"type": "null"}, {
-                "type": "object", "required": ["x", "y", "valid", "latched"],
-                "properties": {"x": {"type": "number"}, "y": {"type": "number"}, "valid": {"type": "boolean"},
-                               "facing": {"$ref": "common.schema.json#/$defs/point2"},
-                               "latched": {"type": "array", "items": {"type": "string"}},
-                               "travelled": {"type": "number", "minimum": 0},
-                               "pathLength": {"type": "integer", "minimum": 0}}}]},
-            "ready": {"type": "boolean"},
-            "error": {"type": ["string", "null"]},
-            "tick": {"type": "integer", "minimum": 0},
-            "source": {"type": "object", "properties": {"file": {"type": "string"},
-                                                        "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-                                                        "schema": {"type": "string"}}},
-            "events": {"type": "array", "items": {
-                "type": "object", "required": ["tick", "type"],
-                "properties": {"tick": {"type": "integer", "minimum": 0},
-                               "type": {"enum": ["arrive", "exit", "reach", "interact", "teleport", "routes"]}}}},
-            "exitsFired": {"type": "array", "items": {"type": "string"}},
-            "interactionsReached": {"type": "array", "items": {"type": "string"}},
-            "drawOrder": {"type": "array", "items": {"type": "string"}},
-            "routes": {"anyOf": [{"type": "null"}, {"$ref": "#/$defs/routeCheck"}]}}},
-    "/$defs/scene_preview_qa_v1": {
-        "description": "preview-qa.json of build_scene_preview.py: a QA envelope plus what the page contains.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "required": ["schema", "preview", "warnings", "verify"],
-        "properties": {
-            "schema": {"const": "generate2dmap.scene_preview_qa.v1"},
-            "preview": {"type": "object",
-                        "required": ["file", "bytes", "sha256", "runtime", "world", "start", "drawOrder", "layers"],
-                        "properties": {"file": {"$ref": "common.schema.json#/$defs/relPath"},
-                                       "bytes": {"type": "integer", "minimum": 1},
-                                       "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-                                       "runtime": {"type": "object", "required": ["version", "sha256"],
-                                                   "properties": {"sha256": {"$ref": "common.schema.json#/$defs/sha256"}}},
-                                       "world": {"type": "array", "items": {"type": "number"}, "minItems": 2,
-                                                 "maxItems": 2},
-                                       "drawOrder": {"type": "array", "items": {"type": "string"}},
-                                       "layers": {"type": "array", "items": {
-                                           "type": "object", "required": ["name", "source"],
-                                           "properties": {"source": {"enum": ["image", "tiles", "objects"]}}}}}},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-            "verify": {"type": "object", "required": ["status"],
-                       "properties": {"status": {"enum": ["not-requested", "SKIPPED", "pass", "fail"]}}}}},
-}
-
-
-@functools.lru_cache(maxsize=None)
-def _patched_registry():
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in SCHEMAS.glob("*.schema.json")}
-    patched = copy.deepcopy(schemas["map"])
-    for pointer, fragment in SCHEMA_PATCH.items():
-        *parents, leaf = pointer.strip("/").split("/")
-        node = patched
-        for part in parents:
-            node = node[part]
-        assert leaf not in node, f"{pointer} already exists in the vendored map.schema.json"
-        node[leaf] = fragment
-    schemas["map"] = patched
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas.values())
-    return patched["$id"], registry
 
 
 def patched_errors(instance, name: str) -> list[str]:
-    """Validation errors against map.schema.json with SCHEMA_PATCH applied (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-
-    schema_id, registry = _patched_registry()
-    validator = Draft202012Validator({"$ref": f"{schema_id}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(instance)]
+    """Validation errors against the vendored map.schema.json, which holds the section 5 additions."""
+    return contract_errors(instance, "map", name, skill=SKILL)
 
 
 # --------------------------------------------------------------------------- fixtures

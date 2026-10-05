@@ -5,12 +5,11 @@ through forge_core.staged_output, so the competing-publish test patches
 forge_core.publish_directory_no_replace. The other classes cover v1 compatibility (golden
 values recorded from the cfed170 builder), the v2 manifest fields, timing on the 60 Hz tick
 grid, the lints, the review sheets and the CLI conventions. Contracts are checked against the
-vendored generate2dsprite schemas, with the optional-field documentation proposed in
-handoff/B02-frames-and-clips.md section 5 applied in memory.
+vendored generate2dsprite schemas, which hold the optional-field documentation requested in
+handoff/B02-frames-and-clips.md section 5 (with the D12/D13 position and transition-hint semantics).
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 from pathlib import Path
@@ -22,7 +21,7 @@ import numpy as np
 from PIL import Image
 
 from forge_testutils import (FIXTURES_DIR, REPO_ROOT, SKILLS_DIR, assert_cli_help, assert_valid_contract,
-                             load_script, run_cli, script_path)
+                             contract_validator, load_script, run_cli, script_path)
 
 MODULE = load_script("generate2dsprite", "build_animation_clips")
 SCRIPT = script_path("generate2dsprite", "build_animation_clips")
@@ -30,9 +29,9 @@ V2 = "generate2dsprite.animation_clips.v2"
 
 _INT0 = {"type": "integer", "minimum": 0}
 _POSITIVE = {"type": "number", "exclusiveMinimum": 0}
-# Optional fields the v2 builder writes, proposed for sprite.schema.json in handoff section 5
-# (JSON pointer, properties merged in). Objects are open, so the vendored schema already accepts
-# them; applying the proposal checks that the documentation matches the output.
+# Optional fields the v2 builder writes, requested for sprite.schema.json in handoff section 5
+# (JSON pointer, properties merged in): the record the handoff test compares. Integration applied them;
+# test_requests_are_integrated checks that every requested property is in the vendored schema.
 CLIPS_SCHEMA_PATCH = [
     ("/$defs/builtClip/properties", {
         "authored_frames": {"type": "array", "minItems": 1, "items": _INT0},
@@ -113,30 +112,25 @@ CLIPS_SCHEMA_PATCH = [
 
 
 def patched_validator(name: str):
-    """Validator over the vendored generate2dsprite schemas with CLIPS_SCHEMA_PATCH merged in."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / "generate2dsprite" / "references" / "schemas"
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in folder.glob("*.schema.json")}
-    for pointer, fragment in CLIPS_SCHEMA_PATCH:
-        target = schemas["sprite"]
-        for token in pointer.strip("/").split("/"):
-            target = target[token.replace("~1", "/").replace("~0", "~")]
-        for key, value in fragment.items():
-            target.setdefault(key, copy.deepcopy(value))
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema))
-                                         for schema in schemas.values())
-    return Draft202012Validator({"$ref": f"{schemas['sprite']['$id']}#/$defs/{name}"}, registry=registry)
+    """Validator for the vendored generate2dsprite sprite/<name>, which holds CLIPS_SCHEMA_PATCH."""
+    return contract_validator("sprite", name, skill="generate2dsprite")
 
 
 def assert_clips_contract(test: unittest.TestCase, document: object, name: str = "animation_clips_v2") -> None:
-    """Valid against the vendored contract as frozen, and against it with the B02 documentation applied."""
-    assert_valid_contract(document, "sprite", name, skill="generate2dsprite")
+    """Valid against the vendored contract, which holds the B02 documentation."""
     errors = [f"{error.json_path}: {error.message}" for error in patched_validator(name).iter_errors(document)]
-    test.assertEqual(errors, [], f"sprite/{name} with the B02 proposal")
+    test.assertEqual(errors, [], f"sprite/{name}")
+
+
+def test_requests_are_integrated() -> None:
+    """Every property CLIPS_SCHEMA_PATCH requested is in the vendored sprite schema."""
+    sprite = json.loads((SKILLS_DIR / "generate2dsprite" / "references" / "schemas" / "sprite.schema.json")
+                        .read_text(encoding="utf-8"))
+    for pointer, fragment in CLIPS_SCHEMA_PATCH:
+        target = sprite
+        for token in pointer.strip("/").split("/"):
+            target = target[token.replace("~1", "/").replace("~0", "~")]
+        assert set(fragment) <= set(target), pointer
 
 
 class AnimationClipTests(unittest.TestCase):

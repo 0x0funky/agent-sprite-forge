@@ -3,6 +3,12 @@
     {"why": "intent exits need a direction", "remove": "/travelDirection"},
     {"why": "rect and circle together", "set": "/circle", "value": [624, 200, 8]},
     {"why": "no trigger shape", "remove": "/rect"},
-    {"why": "destination is mandatory", "remove": "/to"}
+    {"why": "destination is mandatory", "remove": "/to"},
+    {
+      "why": "edges are west, east, north or south",
+      "set": "/edge",
+      "value": "up",
+      "error": "'up' is not one of"
+    }
   ]
 }

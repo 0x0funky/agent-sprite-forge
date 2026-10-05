@@ -1,0 +1,120 @@
+{
+  "schema": "generate2dmap.scene_loop_qa.v1",
+  "status": "warn",
+  "method": "scene_motion qa: the video decoded once with ffmpeg and composited over the plate with the mask (decoded * mask + plate * (1 - mask)); forge_core.seam_report weighted by the mask for the wrap, mean absolute RGB differences for motion, leak, stability and poster swap; ffprobe packets for keyframes.",
+  "notProven": [
+    "Playback in a browser, engine or device: only an offline ffmpeg decode was measured.",
+    "Perceptual seamlessness and content quality: numbers inside the mask, not a visual review.",
+    "The runtime composite assumes decoded * mask + plate * (1 - mask); a runtime that plays the video full frame shows the leak ring and protected-core numbers instead.",
+    "Thresholds come from one project's loops and are provisional."
+  ],
+  "checks": [
+    {"id": "frame_count", "status": "pass", "value": 12, "threshold": 12},
+    {
+      "id": "gop_aligned",
+      "status": "pass",
+      "value": {"keyframes": [0], "gop": 12, "frames": 12},
+      "threshold": "keyframes at 0, g, 2g, ... with g dividing the loop and g = 12"
+    },
+    {
+      "id": "container",
+      "status": "pass",
+      "value": {"timestampsIncreasing": true, "moovBeforeMdat": true},
+      "threshold": "increasing decode timestamps; moov before mdat for streaming"
+    },
+    {"id": "decoded_seam", "status": "pass", "value": 0.207556, "threshold": 1.0},
+    {"id": "mean_opacity", "status": "pass", "value": 0.347871, "threshold": 0.07},
+    {"id": "motion_energy", "status": "pass", "value": 7.981297, "threshold": 2.0},
+    {"id": "leak_ring", "status": "pass", "value": 0.491796, "threshold": 0.5},
+    {"id": "protected_stability", "status": "warn", "value": 1.459524, "threshold": 0.5},
+    {
+      "id": "region_stability",
+      "status": "pass",
+      "value": {"unstable": [], "stills": []},
+      "threshold": {"maxSeamRatio": 1.0, "stillFloor": 0.05, "stillTolerance": 1.0}
+    },
+    {
+      "id": "poster_swap",
+      "status": "pass",
+      "value": {"swapMAE": 0.0, "outsideMaskMaxDelta": 0},
+      "threshold": {"swapMAE": 10.841784, "outsideMaskMaxDelta": 0}
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../motion/loop.mp4",
+      "sha256": "1192f8559fe647ba9d876fde3f7c9693c3e58c3c2f28d74ebcfee12ea33becd2",
+      "bytes": 2992
+    },
+    {
+      "path": "../src/scene.png",
+      "sha256": "90cb35f20d5e4100f875a88499f06a2a4c7458b321df4eaab72db5faac3a0f39",
+      "bytes": 212
+    },
+    {
+      "path": "../motion/motion-mask.png",
+      "sha256": "2980e91e46da3844a6ce06ce5aaec6186fcfa7eaadcdef67363cec48191b0a56",
+      "bytes": 235
+    },
+    {
+      "path": "../motion/poster.png",
+      "sha256": "de7a87145abfefe4eebdc5fd60dbc8c60ae705296df288288699f8b2b88f4dbc",
+      "bytes": 610
+    }
+  ],
+  "outputs": [
+    {
+      "path": "seam-diff.png",
+      "sha256": "1d0f09163808b1e7437a99817c67e9aeb13ca6e994ce8d2e33ffd37655ba69c2",
+      "bytes": 363
+    }
+  ],
+  "tool": {"name": "scene_motion", "version": "1.0.0"},
+  "metrics": {
+    "frames": 12,
+    "keyframes": [0],
+    "gop": 12,
+    "video": {"width": 96, "height": 64, "fps": "12/1", "codec": "h264", "pixFmt": "yuv420p"},
+    "decodedSeam": {
+      "frames": 12,
+      "seam": 1.687712,
+      "adjacent_median": 2.038793,
+      "adjacent_p95": 8.131338,
+      "adjacent_max": 8.375658,
+      "seam_over_median": 0.827799,
+      "seam_over_p95": 0.207556,
+      "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+    },
+    "rgbSteps": {"median": 2.718391, "p95": 10.841784, "max": 11.167545},
+    "meanOpacity": 0.347871,
+    "motionEnergy": {"max": 7.981297, "mean": 4.506444},
+    "leakRing": {
+      "ringPx": 4,
+      "pixels": 868,
+      "meanStep": 0.491796,
+      "maxStep": 1.225039,
+      "staticError": 1.389785
+    },
+    "protectedDrift": 1.459524,
+    "regions": [
+      {
+        "id": "water",
+        "mode": "loop",
+        "status": "pass",
+        "seam": 2.250283,
+        "adjacentP95": 10.841784,
+        "seamOverP95": 0.207556,
+        "maxDrift": 7.981297
+      }
+    ],
+    "poster": {"swapMAE": 0.0, "outsideMaskMaxDelta": 0}
+  },
+  "thresholds": {
+    "maxSeamRatio": 1.0,
+    "warnMeanOpacity": 0.07,
+    "warnMotionEnergy": 2.0,
+    "warnLeak": 0.5,
+    "warnProtected": 0.5,
+    "ringPx": 4
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "why": "groups are props, objects, actors or foreground",
+      "set": "/group",
+      "value": "decals",
+      "error": "'decals' is not one of"
+    },
+    {
+      "why": "the anchor source is manifest, px or a box anchor",
+      "set": "/anchor_source",
+      "value": "auto",
+      "error": "does not match"
+    },
+    {
+      "why": "sort sources are fixed",
+      "set": "/sort_source",
+      "value": "z",
+      "error": "'z' is not one of"
+    },
+    {
+      "why": "draw rectangles have a positive size",
+      "set": "/w",
+      "value": 0,
+      "error": "0 is less than the minimum of 1"
+    },
+    {
+      "why": "the effective anchor is recorded",
+      "remove": "/anchorPx",
+      "error": "'anchorPx' is a required property"
+    }
+  ]
+}

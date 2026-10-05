@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "why": "formations are fixed",
+      "set": "/formation",
+      "value": "duel",
+      "error": "'duel' is not one of"
+    },
+    {
+      "why": "actor roles are hero, enemy or boss",
+      "set": "/actors/0/role",
+      "value": "npc",
+      "error": "'npc' is not one of"
+    },
+    {
+      "why": "a scale-ladder factor is at most 1",
+      "set": "/actors/0/scale",
+      "value": 1.5,
+      "error": "1.5 is greater than the maximum of 1"
+    },
+    {
+      "why": "slots are UV points",
+      "set": "/actors/0/slot",
+      "value": [1.5, 0.5],
+      "error": "1.5 is greater than the maximum of 1"
+    }
+  ]
+}

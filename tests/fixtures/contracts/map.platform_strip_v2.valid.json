@@ -1,0 +1,307 @@
+{
+  "schema": "generate2dmap.platform_strip.v2",
+  "source": {
+    "path": "../src/strip.png",
+    "sha256": "aa6665d353837b355e3fa10294de892d250a33e22925241d70d2775a213e2f7f",
+    "bytes": 94,
+    "size": [24, 8],
+    "mode": "RGBA",
+    "bit_depth": 8,
+    "conversion": "none"
+  },
+  "spec": {
+    "path": "../src/strip.json",
+    "sha256": "174ac955d7fd8f100511faf9c72cdfa95f98f1350059ee3c4b485c6e17e53883",
+    "bytes": 250,
+    "content": {
+      "surface_y_px": 2,
+      "collision_depth_px": 4,
+      "pieces": [
+        {"id": "left", "role": "left_cap", "source_box": [0, 0, 8, 8]},
+        {"id": "mid", "role": "middle", "source_box": [8, 0, 16, 8]},
+        {"id": "right", "role": "right_cap", "source_box": [16, 0, 24, 8]}
+      ]
+    }
+  },
+  "processing": {
+    "background_mode": "native_alpha",
+    "despill_radius": 0,
+    "geometry": "explicit_native_rectangles",
+    "resized": false,
+    "trimmed": false,
+    "aligned": false,
+    "transparent_rgb": "zeroed"
+  },
+  "surface_y_px": 2,
+  "collision_depth_px": 4,
+  "coordinate_contract": "Origin at crop top-left; +x right, +y down. Collision rect is [x,y,width,height]. At uniform scale s, place crop at (collision_left-s*collision_span_px[0], collision_top-s*surface_y_px). anchor_px is the visual left/top-surface anchor, not necessarily the collision-left when a cap has outer padding. Middle variants are interchangeable: any middle may follow the left cap, any other middle or itself, and precede the right cap. Collision is declared metadata; alpha coverage does not infer physical geometry.",
+  "pieces": [
+    {
+      "id": "left",
+      "role": "left_cap",
+      "source_box": [0, 0, 8, 8],
+      "size": [8, 8],
+      "collision_span_px": [0, 8],
+      "path": "left.png",
+      "anchor_px": [0, 2],
+      "collision_rect_px": [0, 2, 8, 4],
+      "surface_y_source_px": 2,
+      "coverage": {
+        "solid_fraction_by_column": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        "minimum_column_fraction": 1.0,
+        "insufficient_columns": [],
+        "missing_surface_columns": [],
+        "non_solid_band_pixels": 0
+      },
+      "surface": {
+        "declared_y_px": 2,
+        "measured": true,
+        "measured_y_px_by_column": [2, 2, 2, 2, 2, 2, 2, 2],
+        "max_rise_px": 0,
+        "columns_above_tolerance": [],
+        "decoration_band_px": 0,
+        "decoration_px": 0
+      },
+      "sha256": "71a9986849564cdfd3e6c70b9d63f1d85c5e19ed0ff32105bf9428f4b6258805"
+    },
+    {
+      "id": "mid",
+      "role": "middle",
+      "source_box": [8, 0, 16, 8],
+      "size": [8, 8],
+      "collision_span_px": [0, 8],
+      "path": "mid.png",
+      "anchor_px": [0, 2],
+      "collision_rect_px": [0, 2, 8, 4],
+      "surface_y_source_px": 2,
+      "coverage": {
+        "solid_fraction_by_column": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        "minimum_column_fraction": 1.0,
+        "insufficient_columns": [],
+        "missing_surface_columns": [],
+        "non_solid_band_pixels": 0
+      },
+      "surface": {
+        "declared_y_px": 2,
+        "measured": true,
+        "measured_y_px_by_column": [2, 2, 2, 2, 2, 2, 2, 2],
+        "max_rise_px": 0,
+        "columns_above_tolerance": [],
+        "decoration_band_px": 0,
+        "decoration_px": 0
+      },
+      "sha256": "71a9986849564cdfd3e6c70b9d63f1d85c5e19ed0ff32105bf9428f4b6258805"
+    },
+    {
+      "id": "right",
+      "role": "right_cap",
+      "source_box": [16, 0, 24, 8],
+      "size": [8, 8],
+      "collision_span_px": [0, 8],
+      "path": "right.png",
+      "anchor_px": [0, 2],
+      "collision_rect_px": [0, 2, 8, 4],
+      "surface_y_source_px": 2,
+      "coverage": {
+        "solid_fraction_by_column": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+        "minimum_column_fraction": 1.0,
+        "insufficient_columns": [],
+        "missing_surface_columns": [],
+        "non_solid_band_pixels": 0
+      },
+      "surface": {
+        "declared_y_px": 2,
+        "measured": true,
+        "measured_y_px_by_column": [2, 2, 2, 2, 2, 2, 2, 2],
+        "max_rise_px": 0,
+        "columns_above_tolerance": [],
+        "decoration_band_px": 0,
+        "decoration_px": 0
+      },
+      "sha256": "71a9986849564cdfd3e6c70b9d63f1d85c5e19ed0ff32105bf9428f4b6258805"
+    }
+  ],
+  "joins": [
+    {
+      "join": "left_cap->middle",
+      "left": "left",
+      "right": "mid",
+      "full_edge": {
+        "alpha_mae": 0.0,
+        "visible_rgb_mae": 0.0,
+        "jointly_visible_rows": 6,
+        "premultiplied_rgb_mae": 0.0
+      },
+      "contact_band": {
+        "alpha_mae": 0.0,
+        "visible_rgb_mae": 0.0,
+        "jointly_visible_rows": 4,
+        "premultiplied_rgb_mae": 0.0,
+        "y_range_px": [2, 6],
+        "solid_contact_by_row": [true, true, true, true],
+        "solid_contact_fraction": 1.0
+      },
+      "seam": {
+        "seam": 0.0,
+        "adjacent_median": 0.0,
+        "adjacent_p95": 0.0,
+        "adjacent_max": 0.0,
+        "seam_over_median": 0.0,
+        "seam_over_p95": 0.0,
+        "seam_ratio": 0.0,
+        "near_median": 0.0,
+        "verdict": "continuous",
+        "method": "premultiplied RGBA column steps (0-255); join vs interior steps within 8 columns per side, whole edge and worst 4-row window"
+      }
+    },
+    {
+      "join": "middle->middle",
+      "left": "mid",
+      "right": "mid",
+      "full_edge": {
+        "alpha_mae": 0.0,
+        "visible_rgb_mae": 0.0,
+        "jointly_visible_rows": 6,
+        "premultiplied_rgb_mae": 0.0
+      },
+      "contact_band": {
+        "alpha_mae": 0.0,
+        "visible_rgb_mae": 0.0,
+        "jointly_visible_rows": 4,
+        "premultiplied_rgb_mae": 0.0,
+        "y_range_px": [2, 6],
+        "solid_contact_by_row": [true, true, true, true],
+        "solid_contact_fraction": 1.0
+      },
+      "seam": {
+        "seam": 0.0,
+        "adjacent_median": 0.0,
+        "adjacent_p95": 0.0,
+        "adjacent_max": 0.0,
+        "seam_over_median": 0.0,
+        "seam_over_p95": 0.0,
+        "seam_ratio": 0.0,
+        "near_median": 0.0,
+        "verdict": "continuous",
+        "method": "premultiplied RGBA column steps (0-255); join vs interior steps within 8 columns per side, whole edge and worst 4-row window"
+      }
+    },
+    {
+      "join": "middle->right_cap",
+      "left": "mid",
+      "right": "right",
+      "full_edge": {
+        "alpha_mae": 0.0,
+        "visible_rgb_mae": 0.0,
+        "jointly_visible_rows": 6,
+        "premultiplied_rgb_mae": 0.0
+      },
+      "contact_band": {
+        "alpha_mae": 0.0,
+        "visible_rgb_mae": 0.0,
+        "jointly_visible_rows": 4,
+        "premultiplied_rgb_mae": 0.0,
+        "y_range_px": [2, 6],
+        "solid_contact_by_row": [true, true, true, true],
+        "solid_contact_fraction": 1.0
+      },
+      "seam": {
+        "seam": 0.0,
+        "adjacent_median": 0.0,
+        "adjacent_p95": 0.0,
+        "adjacent_max": 0.0,
+        "seam_over_median": 0.0,
+        "seam_over_p95": 0.0,
+        "seam_ratio": 0.0,
+        "near_median": 0.0,
+        "verdict": "continuous",
+        "method": "premultiplied RGBA column steps (0-255); join vs interior steps within 8 columns per side, whole edge and worst 4-row window"
+      }
+    }
+  ],
+  "qc": {
+    "passed": true,
+    "structural_passed": true,
+    "issues": [],
+    "warnings": [],
+    "solid_alpha_threshold": 255,
+    "min_column_coverage": 1.0,
+    "surface_tolerance_px": 0,
+    "decoration_band_px": 0,
+    "max_seam_ratio": null,
+    "max_seam_rgb_mae": null,
+    "max_seam_alpha_mae": null,
+    "seam_metrics_note": "seam.seam_ratio compares each join with the interior steps near it: about 1 or less looks like the art, well above 1 is a seam, a join much flatter than its neighbours duplicates an edge. Raw edge MAE values are 0..255 diagnostics; no seam is repaired and no aesthetic seamlessness is certified."
+  },
+  "preview": {
+    "path": "strip-preview.png",
+    "size": [40, 8],
+    "sha256": "567ef0ee4c57b93c42e7a0e455993dbf2750b47b1f74f4edbe76b0a9a9522126",
+    "placements": [
+      {"role": "left_cap", "id": "left", "left": 0, "top": 0, "size": [8, 8]},
+      {"role": "middle", "id": "mid", "left": 8, "top": 0, "size": [8, 8]},
+      {"role": "middle", "id": "mid", "left": 16, "top": 0, "size": [8, 8]},
+      {"role": "middle", "id": "mid", "left": 24, "top": 0, "size": [8, 8]},
+      {"role": "right_cap", "id": "right", "left": 32, "top": 0, "size": [8, 8]}
+    ]
+  },
+  "qa": {
+    "status": "pass",
+    "method": "Exact rectangular crops of the keyed source. Collision band coverage and a solid declared surface row per collision column; the first solid row above it (outside the decoration band) against the surface tolerance; every join (left cap, each middle variant, right cap) by premultiplied column steps normalised by the art's own steps near the join.",
+    "notProven": [
+      "artistic continuity, lighting or style match at joins (only pixel steps are measured)",
+      "runtime behaviour: crossing every join, one-way platforms, slopes and pixel snapping",
+      "that the declared collision depth matches the intended physics",
+      "chroma keying quality beyond the legacy keyer rules"
+    ],
+    "checks": [
+      {
+        "id": "collision_band_coverage",
+        "status": "pass",
+        "value": {"left": 1.0, "mid": 1.0, "right": 1.0},
+        "threshold": 1.0
+      },
+      {"id": "surface_row_solid", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "surface_rise_px", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "seam_ratio", "status": "pass", "value": 0.0, "threshold": 1.25},
+      {"id": "duplicate_edges", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "seam_rgb_mae", "status": "skipped", "value": 0.0, "threshold": null},
+      {"id": "seam_alpha_mae", "status": "skipped", "value": 0.0, "threshold": null}
+    ],
+    "inputs": [
+      {
+        "path": "../src/strip.png",
+        "sha256": "aa6665d353837b355e3fa10294de892d250a33e22925241d70d2775a213e2f7f",
+        "bytes": 94
+      },
+      {
+        "path": "../src/strip.json",
+        "sha256": "174ac955d7fd8f100511faf9c72cdfa95f98f1350059ee3c4b485c6e17e53883",
+        "bytes": 250
+      }
+    ],
+    "outputs": [
+      {
+        "path": "left.png",
+        "sha256": "71a9986849564cdfd3e6c70b9d63f1d85c5e19ed0ff32105bf9428f4b6258805",
+        "bytes": 87
+      },
+      {
+        "path": "mid.png",
+        "sha256": "71a9986849564cdfd3e6c70b9d63f1d85c5e19ed0ff32105bf9428f4b6258805",
+        "bytes": 87
+      },
+      {
+        "path": "right.png",
+        "sha256": "71a9986849564cdfd3e6c70b9d63f1d85c5e19ed0ff32105bf9428f4b6258805",
+        "bytes": 87
+      },
+      {
+        "path": "strip-preview.png",
+        "sha256": "567ef0ee4c57b93c42e7a0e455993dbf2750b47b1f74f4edbe76b0a9a9522126",
+        "bytes": 103
+      }
+    ],
+    "tool": {"name": "extract_platform_strip.py", "version": "2.0"}
+  }
+}

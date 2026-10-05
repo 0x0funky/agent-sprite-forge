@@ -1,0 +1,104 @@
+{
+  "schema": "generate2dmap.tiled_export.v1",
+  "status": "pass",
+  "method": "TMJ and TSX written from the bundle, read back with the built-in reader (TSX via ElementTree) and re-rendered (tile layers, image layers, prop tile objects in draw order); the re-render must equal render_map(bundle) pixel for pixel (preview.png)",
+  "notProven": [
+    "Tiled GUI not verified: opening the map, wang/terrain brushes and the mixed blob wangset in the editor",
+    "Phaser or another engine rendering map.embedded.tmj the same way",
+    "runtime depth sorting by the sortY property (Tiled's own topdown order sorts by image bottom)"
+  ],
+  "checks": [
+    {"id": "tsx_well_formed", "status": "pass", "value": [], "threshold": []},
+    {"id": "rerender_map_tmj", "status": "pass", "value": 0, "threshold": 0}
+  ],
+  "inputs": [
+    {
+      "path": "../map/map-bundle.json",
+      "sha256": "97e20c9edc61c1241f50cdfec8c5b451529ebc4594dfd87e49f2955f660bef67",
+      "bytes": 5970
+    },
+    {
+      "path": "../map/tiles/terrain.tileset.json",
+      "sha256": "99c6c150ce0bf3d29f598bfb563b7f68f218ba82cc08060187bdd9b596e87071",
+      "bytes": 5726
+    },
+    {
+      "path": "../map/tiles/terrain.png",
+      "sha256": "bfcc09cbe13573c3363d343272bf29926f950aa50b005d091ca8f52a880532db",
+      "bytes": 667
+    },
+    {
+      "path": "../map/tiles/path.tileset.json",
+      "sha256": "80b8f6895090b0415974ce45e583920aa3fd810780b25b201472fe84483205d2",
+      "bytes": 4873
+    },
+    {
+      "path": "../map/tiles/path.png",
+      "sha256": "b8f78453de7b8e9f54924657005e121b3ad80ccf78db81a0f2fd9b2c0c464405",
+      "bytes": 599
+    },
+    {
+      "path": "../map/art/backdrop.png",
+      "sha256": "2f10109f2846131dcf9b3b92e528124b118ea8eb94fcad22b7c636d23966dca2",
+      "bytes": 440
+    },
+    {
+      "path": "../map/layers/ground.csv",
+      "sha256": "963e55df716aaa6e7470a42ca4f528ea13cbd3d89610c17a25bf1c5bde7b2ecb",
+      "bytes": 290
+    },
+    {
+      "path": "../map/terrain-vertices.json",
+      "sha256": "4e40b3fd78e72d00b588aeb7385d1cdb31ded6a59f36cadfdc0671a0c7a1479a",
+      "bytes": 369
+    },
+    {
+      "path": "../map/props/tree.png",
+      "sha256": "128928e0753a11e00a60b57ca09bc3ebdfa091398c2378f4fc1d689fc10a8e18",
+      "bytes": 1054
+    },
+    {
+      "path": "../map/props/rock.png",
+      "sha256": "a9b6ffa87efbaaaab023194bb0fade8fedb2ed7ea6c19009e5cd57b85952542f",
+      "bytes": 360
+    },
+    {
+      "path": "../map/props/bush.png",
+      "sha256": "1f68b8e59914d19c68eb93409f44de41a12d23f61a55dea02ad9d137dbcafa7d",
+      "bytes": 287
+    },
+    {
+      "path": "../map/materials.png",
+      "sha256": "21d675e691a801cc1ff288164b6f670b1b2df861acc56478852280c5acbd64d2",
+      "bytes": 102
+    }
+  ],
+  "outputs": [
+    {
+      "path": "images/backdrop.png",
+      "sha256": "2f10109f2846131dcf9b3b92e528124b118ea8eb94fcad22b7c636d23966dca2",
+      "bytes": 440
+    },
+    {
+      "path": "images/bush.png",
+      "sha256": "1f68b8e59914d19c68eb93409f44de41a12d23f61a55dea02ad9d137dbcafa7d",
+      "bytes": 287
+    },
+    {
+      "path": "images/path.png",
+      "sha256": "b8f78453de7b8e9f54924657005e121b3ad80ccf78db81a0f2fd9b2c0c464405",
+      "bytes": 599
+    }
+  ],
+  "tool": {"name": "export_tiled.py", "version": "1.0.0"},
+  "tiled": {
+    "format": "1.10",
+    "app": "1.11.0",
+    "tilesets": [
+      {"file": "terrain.tsx", "name": "terrain", "firstgid": 1, "tilecount": 16},
+      {"file": "path.tsx", "name": "path", "firstgid": 17, "tilecount": 48},
+      {"file": "props.tsx", "name": "props", "firstgid": 65, "tilecount": 3}
+    ],
+    "layers": ["backdrop", "ground", "decoration", "props", "collision", "interactions"]
+  }
+}

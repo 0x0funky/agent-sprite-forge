@@ -7,14 +7,13 @@ memory exactly as filed.
 """
 from __future__ import annotations
 
-import copy
 import json
 from pathlib import Path
 
 import numpy as np
 import pytest
 
-from forge_testutils import (REPO_ROOT, assert_cli_help, assert_valid_contract, load_script, run_cli,
+from forge_testutils import (assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli,
                              script_path)
 
 TOOL = script_path("generate2dsprite", "palette_tool")
@@ -23,63 +22,12 @@ fc = load_script("generate2dsprite", "forge_core")
 SUBCOMMANDS = ("build", "apply", "lock", "luts", "variants", "quantize-seq")
 
 # --------------------------------------------------------------------------- B04 schema change requests (section 5)
-
-PALETTE_LOCK_V1_PROPERTIES = {
-    "colors": {
-        "description": "The locked colours in index order (#rrggbb); sources listed here are re-applied with "
-                       "exactly these colours after the palette grows (forge_palette.lock_view).",
-        "type": "array", "minItems": 1, "maxItems": 256,
-        "items": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}},
-    "transparent_index": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
-}
-
-PALETTE_LUTS_V1 = {
-    "description": "Palette-swap LUTs (palette_tool.py luts): one colour per palette index for every row; "
-                   "image is the 256-wide LUT texture, one row per entry of rows, in that order.",
-    "type": "object",
-    "required": ["schema", "palette", "size", "rows", "luts"],
-    "properties": {
-        "schema": {"const": "generate2dsprite.palette_luts.v1"},
-        "palette": {"$ref": "common.schema.json#/$defs/fileRef"},
-        "image": {"$ref": "common.schema.json#/$defs/fileRef"},
-        "size": {"type": "integer", "minimum": 1, "maximum": 256},
-        "transparent_index": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
-        "rows": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-        "luts": {
-            "type": "object", "minProperties": 1,
-            "additionalProperties": {
-                "type": "object", "required": ["kind", "colors"],
-                "properties": {
-                    "kind": {"enum": ["identity", "hitflash", "frozen", "silhouette", "skin"]},
-                    "colors": {"type": "array", "minItems": 1, "maxItems": 256,
-                               "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
-                    "index": {"type": "array", "minItems": 1, "maxItems": 256,
-                              "items": {"type": "integer", "minimum": 0, "maximum": 255}}}}},
-        "palettize": {
-            "type": "object", "required": ["image", "size"],
-            "properties": {"image": {"$ref": "common.schema.json#/$defs/fileRef"},
-                           "size": {"type": "integer", "minimum": 2, "maximum": 64},
-                           "layout": {"type": "string"}}},
-        "usage": {"type": "string"},
-    },
-}
-
+# Integrated into shared/schemas/sprite.schema.json: palette_lock_v1 colors and transparent_index, and the new
+# palette_luts_v1. Validated against the vendored generate2dsprite copy.
 
 def amended_errors(instance, name: str) -> list[str]:
-    """Validate against the vendored sprite schema with B04's section 5 requests applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = REPO_ROOT / "skills" / "generate2dsprite" / "references" / "schemas"
-    common = json.loads((folder / "common.schema.json").read_text(encoding="utf-8"))
-    sprite = copy.deepcopy(json.loads((folder / "sprite.schema.json").read_text(encoding="utf-8")))
-    sprite["$defs"]["palette_lock_v1"]["properties"].update(PALETTE_LOCK_V1_PROPERTIES)
-    sprite["$defs"]["palette_luts_v1"] = PALETTE_LUTS_V1
-    registry = Registry().with_resources(
-        (schema["$id"], DRAFT202012.create_resource(schema)) for schema in (common, sprite))
-    validator = Draft202012Validator({"$ref": f"{sprite['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(instance)]
+    """Errors against the vendored sprite schema, which holds B04's section 5 requests."""
+    return contract_errors(instance, "sprite", name, skill="generate2dsprite")
 
 
 # --------------------------------------------------------------------------- helpers

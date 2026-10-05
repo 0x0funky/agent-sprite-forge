@@ -3,6 +3,12 @@
     {"why": "QA states its method", "remove": "/method"},
     {"why": "unknown check", "set": "/check", "value": "colors"},
     {"why": "grid is mandatory", "remove": "/grid"},
-    {"why": "a pass cannot hold a failed check", "set": "/status", "value": "pass"}
+    {"why": "a pass cannot hold a failed check", "set": "/status", "value": "pass"},
+    {
+      "why": "cells give [row, col] or null",
+      "set": "/cells/0/cell",
+      "value": "0,0",
+      "error": "is not valid under any"
+    }
   ]
 }

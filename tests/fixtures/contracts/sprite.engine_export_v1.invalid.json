@@ -1,0 +1,38 @@
+{
+  "cases": [
+    {
+      "why": "targets are the three engine exports",
+      "set": "/targets/0",
+      "value": "unity",
+      "error": "'unity' is not one of"
+    },
+    {
+      "why": "the export names its source clips",
+      "remove": "/source",
+      "error": "'source' is a required property"
+    },
+    {
+      "why": "the source is bound by sha256",
+      "remove": "/source/sha256",
+      "error": "'sha256' is a required property"
+    },
+    {
+      "why": "the name is a file-safe stem",
+      "set": "/name",
+      "value": "hero idle",
+      "error": "does not match"
+    },
+    {
+      "why": "atlas sides are at most 4096 px",
+      "set": "/atlas/max_size",
+      "value": 8192,
+      "error": "8192 is greater than the maximum of 4096"
+    },
+    {
+      "why": "QA is a QA envelope",
+      "set": "/qa",
+      "value": {"status": "pass"},
+      "error": "'method' is a required property"
+    }
+  ]
+}

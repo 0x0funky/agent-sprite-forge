@@ -1,0 +1,12 @@
+{
+  "schema": "generate2dsprite.godot_sprite3d_bundle.v1",
+  "default_action": "idle",
+  "world_height": 1.6,
+  "world_height_max_drift": 0.0,
+  "pixel_size": 0.014814814814814815,
+  "pixel_size_max_drift": 0.0,
+  "actions": {
+    "idle": {"contract": "idle/godot-sprite3d.json", "loop": true},
+    "run": {"contract": "run/godot-sprite3d.json", "loop": true}
+  }
+}

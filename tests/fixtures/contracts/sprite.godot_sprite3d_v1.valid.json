@@ -1,0 +1,36 @@
+{
+  "schema": "generate2dsprite.godot_sprite3d.v1",
+  "clip": "idle",
+  "frame_size": [64, 96],
+  "output_origin": [32.0, 92.0],
+  "sprite3d_offset": [0.0, 44.0],
+  "reference_subject_height_px": 76.0,
+  "world_height": 1.5999999999999999,
+  "recommended_pixel_size": 0.021052631578947368,
+  "rendered_subject_height_world": 1.5999999999999999,
+  "scale_source": "--world-height",
+  "billboard": "enabled",
+  "texture_filter": "nearest",
+  "duration_ms": 100,
+  "fps": 10.0,
+  "frames": [
+    "frames/frame-000.png",
+    "frames/frame-001.png",
+    "frames/frame-002.png",
+    "frames/frame-003.png",
+    "frames/frame-002.png",
+    "frames/frame-001.png"
+  ],
+  "frame_sha256": [
+    "fdf653266184f25b2743d99d017e7759c028454307263e8176baf4f3cdfbdf0d",
+    "16f1416827ae571cc366d7f8497eba6420c86f8410e11aeb0e7031dba962389c",
+    "96909437646a4bb402bd8981efdb9ede3349eab0f5f8cef8a4a0bf0041f1b081",
+    "348df0cb0d0436ebe2d23c1b881cd88772499cc982e9efe21d6e561452a76b7e",
+    "96909437646a4bb402bd8981efdb9ede3349eab0f5f8cef8a4a0bf0041f1b081",
+    "16f1416827ae571cc366d7f8497eba6420c86f8410e11aeb0e7031dba962389c"
+  ],
+  "durations_ms": [100, 100, 100, 100, 100, 100],
+  "loop": true,
+  "loop_policy": "pingpong",
+  "events_ms": [{"name": "sfx", "at_ms": 100, "at": 1}, {"name": "sfx", "at_ms": 500, "at": 1}]
+}

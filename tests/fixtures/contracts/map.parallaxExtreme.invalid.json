@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "why": "the canvas rectangle is a box",
+      "set": "/screen_canvas_rect",
+      "value": [0, 0, 64],
+      "error": "is too short"
+    },
+    {
+      "why": "coverage per axis is two booleans",
+      "set": "/canvas_coverage_axes",
+      "value": [true],
+      "error": "is too short"
+    },
+    {
+      "why": "zoom is positive",
+      "set": "/zoom",
+      "value": 0,
+      "error": "0 is less than or equal to the minimum of 0"
+    },
+    {
+      "why": "gaps are left, top, right, bottom",
+      "set": "/gaps_px",
+      "value": [0, 0],
+      "error": "is too short"
+    }
+  ]
+}

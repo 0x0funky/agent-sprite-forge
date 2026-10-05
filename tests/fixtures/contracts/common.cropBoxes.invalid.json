@@ -1,0 +1,30 @@
+{
+  "cases": [
+    {"why": "items is required", "remove": "/items", "error": "'items' is a required property"},
+    {
+      "why": "at least one box",
+      "set": "/items",
+      "value": [],
+      "error": "$.items: [] should be non-empty"
+    },
+    {
+      "why": "a box has four numbers",
+      "set": "/items/0/box",
+      "value": [0, 0, 8],
+      "error": "is too short"
+    },
+    {
+      "why": "boxes are whole pixels",
+      "set": "/items/0/box",
+      "value": [0, 0, 8.5, 9],
+      "error": "8.5 is not of type 'integer'"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "forge-crop-boxes/v2",
+      "error": "'forge-crop-boxes/v1' was expected"
+    },
+    {"why": "an id is not blank", "set": "/items/0/id", "value": " ", "error": "does not match"}
+  ]
+}

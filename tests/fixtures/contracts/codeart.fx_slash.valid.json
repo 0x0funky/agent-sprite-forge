@@ -1,0 +1,10 @@
+{
+  "type": "slash",
+  "ramp": "blade",
+  "center": [30, 32],
+  "radius": 18,
+  "from": -150,
+  "to": 30,
+  "width": 8,
+  "trail": 0.9
+}

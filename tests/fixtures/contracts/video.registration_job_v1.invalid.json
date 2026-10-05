@@ -3,6 +3,18 @@
     {"why": "work region is mandatory", "remove": "/workRegion"},
     {"why": "zero scale", "set": "/referenceScale", "value": 0},
     {"why": "unknown key", "set": "/keyColor", "value": "pink"},
-    {"why": "three sides", "set": "/padding", "value": [96, 80, 96]}
+    {"why": "three sides", "set": "/padding", "value": [96, 80, 96]},
+    {
+      "why": "action kinds are fixed",
+      "set": "/actionKind",
+      "value": "dance",
+      "error": "'dance' is not one of"
+    },
+    {
+      "why": "a view box is a half-open box",
+      "set": "/master/viewBox",
+      "value": [0, 0, 64],
+      "error": "is too short"
+    }
   ]
 }

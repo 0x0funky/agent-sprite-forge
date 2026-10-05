@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "presets refuse unknown parameters",
+      "set": "/spin",
+      "value": 3,
+      "error": "Additional properties are not allowed"
+    },
+    {
+      "why": "the trail is a fraction",
+      "set": "/trail",
+      "value": 1.5,
+      "error": "1.5 is greater than the maximum of 1"
+    },
+    {
+      "why": "the radius is not negative",
+      "set": "/radius",
+      "value": -2,
+      "error": "-2 is less than the minimum of 0"
+    }
+  ]
+}

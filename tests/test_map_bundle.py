@@ -239,6 +239,8 @@ def write_demo_bundle(root: Path, *, hashes: bool = True, name: str = "map-bundl
 
 
 # --------------------------------------------------------------------------- schema additions (handoff section 5)
+# The record of what handoff/B13 section 5 asked for. Integration applied it to shared/schemas/map.schema.json
+# (bundleProp per D8 as a superset of propItem); the helpers below validate against the vendored schemas.
 
 SCHEMA_PATCH = {
     "defs": {
@@ -331,51 +333,37 @@ SCHEMA_PATCH = {
 }
 
 
-def patched_map_schema() -> dict:
-    """The vendored map schema with SCHEMA_PATCH applied (what handoff section 5 asks for)."""
-    schema = json.loads((SCHEMA_DIR / "map.schema.json").read_text(encoding="utf-8"))
-    schema["$defs"].update(copy.deepcopy(SCHEMA_PATCH["defs"]))
-    for pointer, additions in SCHEMA_PATCH["properties"].items():
-        node = schema
-        for part in pointer.split("/")[1:]:
-            node = node[part]
-        assert not set(additions) & set(node.setdefault("properties", {})), f"{pointer} already defines {additions}"
-        node["properties"].update(copy.deepcopy(additions))
-    return schema
-
-
 def patched_errors(instance, name: str) -> list[str]:
-    """Validate against the vendored map schema with SCHEMA_PATCH applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    common = json.loads((SCHEMA_DIR / "common.schema.json").read_text(encoding="utf-8"))
-    patched = patched_map_schema()
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in (common, patched))
-    validator = Draft202012Validator({"$ref": f"{patched['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{e.json_path}: {e.message}" for e in validator.iter_errors(instance)]
+    """Errors against the vendored map schema, which holds the section 5 requests (per D33)."""
+    return contract_errors(instance, "map", name, skill=SKILL)
 
 
 def assert_patched_valid(instance, name: str) -> None:
-    errors = patched_errors(instance, name)
-    assert not errors, "\n".join(errors)
+    assert_valid_contract(instance, "map", name, skill=SKILL)
 
 
-def test_schema_patch_is_valid_and_additive():
+def test_schema_patch_is_integrated():
+    """Every $def and property of handoff/B13 section 5 is in the vendored map schema, every valid map
+    fixture still validates, and the requested rules hold (a map id has no colon; a registry prop names an
+    image, or a pack and a label)."""
     from jsonschema import Draft202012Validator
 
-    patched = patched_map_schema()
-    Draft202012Validator.check_schema(patched)
     vendored = json.loads((SCHEMA_DIR / "map.schema.json").read_text(encoding="utf-8"))
-    assert set(vendored["$defs"]) < set(patched["$defs"])
-    assert all(definition.get("description") for definition in SCHEMA_PATCH["defs"].values())
-    for path in sorted(FIXTURES_DIR.glob("contracts/map.*.json")):  # every valid A0 map fixture stays valid
+    Draft202012Validator.check_schema(vendored)
+    assert set(SCHEMA_PATCH["defs"]) <= set(vendored["$defs"])
+    for pointer, additions in SCHEMA_PATCH["properties"].items():
+        node = vendored
+        for part in pointer.split("/")[1:]:
+            node = node[part]
+        assert set(additions) <= set(node["properties"]), pointer
+    for path in sorted(FIXTURES_DIR.glob("contracts/map.*.json")):
         _, name, kind = path.name[:-5].split(".", 2)
         if kind != "invalid":
             assert not patched_errors(json.loads(path.read_text(encoding="utf-8")), name), path.name
-    assert patched_errors({"schema": "generate2dmap.map_bundle.v1", "id": "a:b"}, "map_bundle_v2")
-    assert patched_errors({"schema": "generate2dmap.map_bundle.v1", "props": {"x": {"label": "y"}}}, "map_bundle_v2")
+    v1 = {"schema": "generate2dmap.map_bundle.v1"}
+    assert patched_errors({**v1, "id": "a:b"}, "map_bundle_v2")
+    assert patched_errors({**v1, "props": {"x": {"label": "y"}}}, "map_bundle_v2")
+    assert not patched_errors({**v1, "props": {"x": {"pack": "props/prop-pack.json", "label": "y"}}}, "map_bundle_v2")
 
 
 # --------------------------------------------------------------------------- helpers
@@ -708,6 +696,8 @@ def _set(pointer: str, value):
     return change
 
 
+# Rules the integrated map schema now states (B13 section 5: reciprocal, id, props, layers[].offset) are
+# reported by the schema check at the same path, with the evaluator's message.
 RULES = [
     ("duplicate object id", _set("/objects/1/id", "tree-1"), "$.objects[1].id", "duplicate object id"),
     ("duplicate spawn id", _set("/spawns/1/id", "start"), "$.spawns[1].id", "duplicate spawn id"),
@@ -731,27 +721,30 @@ RULES = [
      "$.portals[0].entranceByFrom.road", "neither a spawn"),
     ("zero travel direction", _set("/portals/0/travelDirection", [0, 0]), "$.portals[0].travelDirection",
      "must not be [0, 0]"),
-    ("reciprocal must be boolean", _set("/portals/0/reciprocal", "no"), "$.portals[0].reciprocal", "true or false"),
+    ("reciprocal must be boolean", _set("/portals/0/reciprocal", "no"), "$.portals[0].reciprocal",
+     'is not of type "boolean"'),
     ("spawn outside the world", _set("/spawns/0/x", 500), "$.spawns[0]", "outside the 192x128 world"),
     ("malformed slot", _set("/anchors/well/slots/0", "here"), "$.anchors.well.slots[0]", "a slot is"),
-    ("map id with a colon", _set("/id", "a:b"), "$.id", "without ':'"),
+    ("map id with a colon", _set("/id", "a:b"), "$.id", "does not match '^[^:]+$'"),
     ("material colour clash", _set("/material_map/materials/lava/color", "#008000"), "$.material_map.materials",
      "colors must be unique"),
     ("prop footprint without size", _set("/props/tree/footprint", {"shape": "ellipse"}), "$.props.tree.footprint",
      "required property"),
     ("schema enum", _set("/portals/0/activation", "teleport"), "$.portals[0].activation", "is not one of"),
     ("prop image path is absolute", _set("/props/tree/image", "/art/tree.png"), "$.props.tree.image",
-     "is not a relative POSIX path"),
-    ("prop without image", _set("/props/tree", {"anchor_px": [1, 1]}), "$.props.tree", "a prop needs an image"),
-    ("props registry is a list", _set("/props", []), "$.props", "props must be an object"),
-    ("prop anchor is malformed", _set("/props/tree/anchor_px", "bottom"), "$.props.tree.anchor_px", "must be [x, y]"),
-    ("prop solid is not boolean", _set("/props/tree/solid", "yes"), "$.props.tree.solid", "true or false"),
+     "does not match"),
+    ("prop without image", _set("/props/tree", {"anchor_px": [1, 1]}), "$.props.tree",
+     "'image' is a required property"),
+    ("props registry is a list", _set("/props", []), "$.props", 'is not of type "object"'),
+    ("prop anchor is malformed", _set("/props/tree/anchor_px", "bottom"), "$.props.tree.anchor_px",
+     'is not of type "array"'),
+    ("prop solid is not boolean", _set("/props/tree/solid", "yes"), "$.props.tree.solid", 'is not of type "boolean"'),
     ("duplicate tileset id", _set("/tilesets/1/id", "terrain"), "$.tilesets[1].id", "duplicate tileset id"),
     ("zero-area walk region", _set("/collision/walkRegions", [{"polygon": [[0, 0], [10, 0], [20, 0]]}]),
      "$.collision.walkRegions[0].polygon", "zero area"),
     ("material without colour", _set("/material_map/materials/lava", {"class": "hazard"}), "$.material_map.materials",
      "needs a color"),
-    ("image layer offset is malformed", _set("/layers/0/offset", [1]), "$.layers[0].offset", "must be [x, y]"),
+    ("image layer offset is malformed", _set("/layers/0/offset", [1]), "$.layers[0].offset", "needs at least 2 item"),
 ]
 
 

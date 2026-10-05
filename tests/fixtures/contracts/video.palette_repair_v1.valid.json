@@ -1,0 +1,62 @@
+{
+  "schema": "video2dsprite.palette_repair.v1",
+  "status": "needs-visual-review",
+  "method": "register_clip palette-repair v1: inside the regions, opaque pixels (alpha >= min-alpha) whose HSV hue is in the band (with saturation and value floors) take the nearest RGB colour of the palette sampled from the master; alpha and every pixel outside the regions are unchanged",
+  "notProven": [
+    "that the replacement colours read correctly (compare frames before and after)",
+    "pixels of the flash outside the regions or below the alpha floor"
+  ],
+  "checks": [
+    {"id": "alpha-unchanged", "status": "pass", "value": true, "threshold": true},
+    {"id": "changed-fraction", "status": "pass", "value": 0.0, "threshold": 0.6},
+    {"id": "region-limited", "status": "pass", "value": 0, "threshold": 0}
+  ],
+  "inputs": [
+    {
+      "path": "../hero-run-reg/frames/frame_000000.png",
+      "sha256": "c0f9ebacd6fa0143e299d44f8fc3999f4c41045915f5173a870bdf73faac09c0"
+    },
+    {
+      "path": "../hero-run-reg/frames/frame_000001.png",
+      "sha256": "28fcadafadd881c1129732fb27307bbc8e1362b2dee4cdf4b6e7b6b284e1721a"
+    }
+  ],
+  "outputs": [
+    {
+      "path": "frames/frame_000000.png",
+      "sha256": "c0f9ebacd6fa0143e299d44f8fc3999f4c41045915f5173a870bdf73faac09c0"
+    },
+    {
+      "path": "frames/frame_000001.png",
+      "sha256": "28fcadafadd881c1129732fb27307bbc8e1362b2dee4cdf4b6e7b6b284e1721a"
+    }
+  ],
+  "tool": {"name": "register_clip", "version": "1"},
+  "rule": {"hueRange": [280.0, 340.0], "minSaturation": 0.3, "minValue": 0.1, "minAlpha": 200},
+  "regions": [[0, 0, 64, 64]],
+  "paletteSource": {
+    "path": "../../jobs/hero-run/master.png",
+    "sha256": "732d33ff6c099a43da3724e376f78780557e5034a53441f620adc7ecda2383e1",
+    "box": null
+  },
+  "palette": ["#24807e", "#f0c8aa", "#283454", "#6e4628", "#1c243c"],
+  "frames": [
+    {
+      "file": "frames/frame_000000.png",
+      "changedPx": 0,
+      "regionVisiblePx": 0,
+      "beforeSha256": "c0f9ebacd6fa0143e299d44f8fc3999f4c41045915f5173a870bdf73faac09c0",
+      "afterSha256": "c0f9ebacd6fa0143e299d44f8fc3999f4c41045915f5173a870bdf73faac09c0"
+    },
+    {
+      "file": "frames/frame_000001.png",
+      "changedPx": 0,
+      "regionVisiblePx": 0,
+      "beforeSha256": "28fcadafadd881c1129732fb27307bbc8e1362b2dee4cdf4b6e7b6b284e1721a",
+      "afterSha256": "28fcadafadd881c1129732fb27307bbc8e1362b2dee4cdf4b6e7b6b284e1721a"
+    }
+  ],
+  "totalChangedPx": 0,
+  "alphaUnchanged": true,
+  "changedMask": "changed-mask.png"
+}

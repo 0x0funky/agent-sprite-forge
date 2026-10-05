@@ -1,0 +1,4 @@
+{
+  "schema": "forge-crop-boxes/v1",
+  "items": [{"id": "a", "box": [0, 0, 64, 64]}, {"box": [64, 0, 128, 64]}]
+}

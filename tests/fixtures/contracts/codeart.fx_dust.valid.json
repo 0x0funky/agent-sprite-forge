@@ -1,0 +1,11 @@
+{
+  "type": "dust",
+  "colors": ["dust-hi", "dust-mid", "dust-lo"],
+  "origin": [32, 56],
+  "count": 8,
+  "spread": 26,
+  "rise": 10,
+  "drift": 6,
+  "radius": [1.5, 3.5],
+  "lifeMs": 380
+}

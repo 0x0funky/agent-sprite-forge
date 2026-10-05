@@ -18,10 +18,9 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from forge_testutils import SKILLS_DIR, contract_errors, load_script, make_magenta_sheet, real_fixture
+from forge_testutils import contract_errors, load_script, make_magenta_sheet, real_fixture
 
 G = load_script("generate2dsprite", "generate2dsprite")
-SCHEMA_DIR = SKILLS_DIR / "generate2dsprite" / "references" / "schemas"
 BODY = (60, 80, 140, 255)
 
 
@@ -45,25 +44,9 @@ def process_error(*argv: str) -> str:
 
 
 def pipeline_meta_errors(document: dict) -> list[str]:
-    """Validate against pipeline_meta_v2 with handoff/B01 section 5 applied in memory:
-    ``frames[].source_rect`` may be null for an empty frame."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in SCHEMA_DIR.glob("*.schema.json")}
-    sprite = copy.deepcopy(schemas["sprite"])
-    frame = sprite["$defs"]["pipeline_meta_v2"]["properties"]["frames"]["items"]["properties"]
-    frame["source_rect"] = {
-        "description": "Subject box in sheet pixels, [x0, y0, x1, y1); null for an empty frame.",
-        "anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}],
-    }
-    schemas["sprite"] = sprite
-    registry = Registry().with_resources(
-        (schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas.values())
-    validator = Draft202012Validator({"$ref": f"{sprite['$id']}#/$defs/pipeline_meta_v2"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored pipeline_meta_v2 (handoff/B01 section 5 is integrated: an empty
+    frame's ``source_rect`` is null)."""
+    return contract_errors(document, "sprite", "pipeline_meta_v2", skill="generate2dsprite")
 
 
 def fox_args(root: Path, *extra: str) -> list[str]:
@@ -479,9 +462,9 @@ class ContractTests(unittest.TestCase):
                     self.assertEqual({item["path"] for item in meta["qa"]["outputs"]} <= set(
                         path.name for path in (root / name).iterdir()), True)
 
-    def test_empty_frame_source_rect_needs_the_schema_request(self) -> None:
-        """An empty frame has no subject box: ``source_rect`` is null, which the frozen schema refuses;
-        handoff section 5 asks for ``anyOf [box, null]``."""
+    def test_empty_frame_source_rect_is_null(self) -> None:
+        """An empty frame has no subject box: ``source_rect`` is null, which the integrated schema allows
+        (handoff/B01 section 5, ``anyOf [box, null]``; per D33) while a box stays a 4-number array."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             sheet = make_magenta_sheet(2, 2, 64)
@@ -491,9 +474,11 @@ class ContractTests(unittest.TestCase):
                                  "--output-dir", str(root / "out"))
         self.assertEqual(meta["empty_frames"], [[1, 1]])
         self.assertEqual(meta["qa"]["status"], "warn")
-        self.assertEqual(contract_errors(meta, "sprite", "pipeline_meta_v2", skill="generate2dsprite"),
-                         ["$.frames[3].source_rect: None is not of type 'array'"])
+        self.assertIsNone(meta["frames"][3]["source_rect"])
         self.assertEqual(pipeline_meta_errors(meta), [])
+        broken = copy.deepcopy(meta)
+        broken["frames"][3]["source_rect"] = [0, 0, 1]
+        self.assertTrue(pipeline_meta_errors(broken), "a source_rect that is not null must be a box")
 
 
 class SoftRegionTests(unittest.TestCase):

@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {"why": "a chain is two bones", "set": "/bones", "value": ["thigh_f"], "error": "is too short"},
+    {
+      "why": "exactly one of target or gait",
+      "set": "/target",
+      "value": [[0, [35, 60]]],
+      "error": "is valid under each of"
+    },
+    {
+      "why": "one of target or gait is required",
+      "remove": "/gait",
+      "error": "is not valid under any"
+    },
+    {
+      "why": "the gait is an ikGait",
+      "set": "/gait/stance",
+      "value": 0,
+      "error": "0 is less than the minimum of 0.05"
+    }
+  ]
+}

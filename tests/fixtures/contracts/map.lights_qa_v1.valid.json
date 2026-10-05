@@ -1,0 +1,88 @@
+{
+  "schema": "generate2dmap.lights_qa.v1",
+  "status": "needs-visual-review",
+  "method": "extract_scene_lights extract: local contrast (luminance minus a 21 px box mean, 3x3 smoothed); peaks >= 0.12 contrast and 0.7 luminance, 0.012 of the width apart; half-peak region 0.002..0.08 of the width across; contrast-weighted centroid; colour from the halo's added colour; warm hue test.",
+  "notProven": [
+    "The detector proposes compact contrast peaks of the chosen hue; it cannot tell a lantern from a bright flower, sign, window row, wet-floor glint or reflection outside the stage's ground and water, and it misses a lamp no brighter than its surroundings. Look at lights-overlay.png, edit lights.json and re-bake it with the cookie verb.",
+    "Positions are glow centroids: a glow cut by an occluder or the plate edge pulls its centre.",
+    "Colour is the blob's hue at full brightness, radius and strength are presentation defaults; neither measures real emission or falloff.",
+    "The cookie is a screen-space tint texture, not light transport: everything under a pool gets the same tint."
+  ],
+  "checks": [
+    {"id": "lights found", "status": "pass", "value": 2, "threshold": ">= 1"},
+    {
+      "id": "lights clear of the plate edge",
+      "status": "pass",
+      "value": null,
+      "threshold": "a glow cut by the edge pulls its centre inward"
+    },
+    {"id": "plate is opaque", "status": "pass", "value": true, "threshold": null},
+    {"id": "flicker rate", "status": "skipped", "value": "no flicker", "threshold": null}
+  ],
+  "inputs": [
+    {
+      "path": "../src/battle.png",
+      "sha256": "373aefae2516919ae4614b68b02052dfa02dcd78feb42aae52444f777bfd6747",
+      "bytes": 692
+    }
+  ],
+  "outputs": [
+    {
+      "path": "lights.json",
+      "sha256": "73550201d90d64c734f0dfe26e2ffc656ebdc72b2d3c6b8138522460fcae110a",
+      "bytes": 827
+    },
+    {
+      "path": "light-cookie.png",
+      "sha256": "b319744051c2d763a23d1e2b210c7561103bc5f5a230c71c049cfc7e6d9f4a7b",
+      "bytes": 21714
+    },
+    {
+      "path": "lights-overlay.png",
+      "sha256": "19a8a0c6d6ecda0440ec79fe16166d7d478503d1efc6d9d4c5179d9a9eb89b1c",
+      "bytes": 7562
+    }
+  ],
+  "tool": {"name": "extract_scene_lights", "version": "1.0"},
+  "detector": {
+    "backgroundWindowPx": 21,
+    "candidates": 6,
+    "tooSmall": 0,
+    "tooLarge": 0,
+    "offHue": 0,
+    "onGroundOrWater": 0,
+    "merged": 4,
+    "capped": 0,
+    "color": "warm",
+    "minBrightness": 0.7,
+    "minContrast": 0.12,
+    "background": 0.03,
+    "minSize": 0.002,
+    "maxSize": 0.08,
+    "merge": 0.012,
+    "maxLights": 32,
+    "radiusScale": 20.0,
+    "groundAndWaterExcluded": false
+  },
+  "lights": [
+    {
+      "id": "L1",
+      "u": 0.13772,
+      "v": 0.15957,
+      "strength": 0.37521,
+      "corePx": 208,
+      "box": [40, 20, 52, 40],
+      "touchesEdge": false
+    },
+    {
+      "id": "L2",
+      "u": 0.79042,
+      "v": 0.15957,
+      "strength": 0.40904,
+      "corePx": 92,
+      "box": [260, 24, 268, 36],
+      "touchesEdge": false
+    }
+  ],
+  "rejected": []
+}

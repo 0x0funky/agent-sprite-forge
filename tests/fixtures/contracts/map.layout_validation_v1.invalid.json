@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "span kinds are ground or deck",
+      "set": "/spans/0/kind",
+      "value": "air",
+      "error": "'air' is not one of"
+    },
+    {
+      "why": "gap kinds are gap or hazard",
+      "set": "/gaps/0/kind",
+      "value": "pit",
+      "error": "'pit' is not one of"
+    },
+    {
+      "why": "prop statuses are fixed",
+      "set": "/props/0/status",
+      "value": "ok",
+      "error": "'ok' is not one of"
+    },
+    {
+      "why": "physics states the deck and ground limits",
+      "remove": "/physics/groundTolerance",
+      "error": "'groundTolerance' is a required property"
+    }
+  ]
+}

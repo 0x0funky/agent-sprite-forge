@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "why": "registration by construction only",
+      "set": "/mode",
+      "value": "fixed-envelope",
+      "error": "'construction' was expected"
+    },
+    {
+      "why": "the inverse transform is recorded",
+      "remove": "/transform/inverse",
+      "error": "'inverse' is a required property"
+    },
+    {
+      "why": "profiles are actor or fx",
+      "set": "/profile",
+      "value": "prop",
+      "error": "'prop' is not one of"
+    },
+    {
+      "why": "lock shifts are whole pixels",
+      "set": "/frames/0/shift",
+      "value": [0.5, 0],
+      "error": "0.5 is not of type 'integer'"
+    },
+    {
+      "why": "lock modes are feet, x and hip",
+      "set": "/lock/modes",
+      "value": ["feet", "toe"],
+      "error": "'toe' is not one of"
+    },
+    {
+      "why": "the job is bound by sha256",
+      "set": "/jobSha256",
+      "value": "abc",
+      "error": "does not match"
+    }
+  ]
+}

@@ -25,7 +25,7 @@ from unittest import mock
 import numpy as np
 from PIL import Image, ImageFilter
 
-from forge_testutils import SKILLS_DIR, assert_cli_help, load_script, run_cli, script_path
+from forge_testutils import assert_cli_help, contract_errors, load_script, run_cli, script_path
 
 MODULE = load_script("generate2dmap", "extract_platform_strip")
 SCRIPT = script_path("generate2dmap", "extract_platform_strip")
@@ -38,131 +38,15 @@ def zero_hidden_rgb(image: Image.Image) -> Image.Image:
     return Image.fromarray(pixels)
 
 
-# --------------------------------------------------------------------------- proposed contract (handoff section 5)
-
-SEAM = {
-    "description": "Normalised seam of one join or wrap: common seamReport plus seam_ratio, near_median and "
-                   "verdict. seam_ratio is the larger of seam / adjacent_max and the worst 4-row window of the join "
-                   "over the worst window of the interior steps near it: about 1 or less looks like the art, well "
-                   "above 1 is a seam. duplicate_edge is a join much flatter than its neighbourhood (a stutter).",
-    "allOf": [{"$ref": "common.schema.json#/$defs/seamReport"}],
-    "required": ["seam_ratio", "near_median", "verdict"],
-    "properties": {
-        "seam_ratio": {"type": "number", "minimum": 0},
-        "near_median": {"type": "number", "minimum": 0},
-        "verdict": {"enum": ["continuous", "seam", "duplicate_edge"]},
-    },
-}
-_INDEX_LIST = {"type": "array", "items": {"type": "integer", "minimum": 0}}
-PLATFORM_STRIP_V2 = {
-    "description": "platform-strip.json from extract_platform_strip.py: exact rectangular crops of a left cap, one or "
-                   "more interchangeable middle variants and a right cap, published with their sha256. Collision is "
-                   "declared metadata: collision_rect_px is [x, y, width, height] in piece pixels, collision_span_px "
-                   "a half-open column range. surface records the art's top per collision column against the "
-                   "declared surface. Every join is measured (seam: edgeSeam). v1 manifests (schema "
-                   "generate2dmap.platform_strip.v1) stored absolute source paths and had no qa block.",
-    "type": "object",
-    "required": ["schema", "source", "spec", "processing", "surface_y_px", "collision_depth_px", "pieces", "joins",
-                 "preview", "qc", "qa"],
-    "properties": {
-        "schema": {"const": "generate2dmap.platform_strip.v2"},
-        "source": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}], "required": ["size", "mode"],
-                   "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"},
-                                  "mode": {"type": "string", "minLength": 1},
-                                  "bit_depth": {"type": "integer", "minimum": 1},
-                                  "conversion": {"type": "string"}}},
-        "spec": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}], "required": ["content"],
-                 "properties": {"content": {"type": "object"}}},
-        "processing": {"type": "object", "required": ["background_mode", "geometry", "resized"],
-                       "properties": {"background_mode": {"enum": ["chroma_key", "native_alpha", "opaque"]},
-                                      "despill_radius": {"type": "integer", "minimum": 0, "maximum": 3},
-                                      "geometry": {"const": "explicit_native_rectangles"},
-                                      "resized": {"const": False}, "trimmed": {"const": False},
-                                      "aligned": {"const": False}}},
-        "surface_y_px": {"type": "integer", "minimum": 0},
-        "collision_depth_px": {"type": "integer", "minimum": 1},
-        "pieces": {"type": "array", "minItems": 3, "items": {
-            "type": "object",
-            "required": ["id", "role", "source_box", "size", "collision_span_px", "path", "sha256", "anchor_px",
-                         "collision_rect_px", "coverage", "surface"],
-            "properties": {
-                "id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_-]*$"},
-                "role": {"enum": ["left_cap", "middle", "right_cap"]},
-                "source_box": {"$ref": "common.schema.json#/$defs/box"},
-                "size": {"$ref": "common.schema.json#/$defs/size2"},
-                "collision_span_px": {**_INDEX_LIST, "minItems": 2, "maxItems": 2},
-                "path": {"$ref": "common.schema.json#/$defs/relPath"},
-                "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-                "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
-                "collision_rect_px": {"$ref": "common.schema.json#/$defs/rectXYWH"},
-                "surface_y_source_px": {"type": "integer", "minimum": 0},
-                "coverage": {"type": "object",
-                             "required": ["solid_fraction_by_column", "minimum_column_fraction",
-                                          "insufficient_columns", "missing_surface_columns", "non_solid_band_pixels"],
-                             "properties": {
-                                 "solid_fraction_by_column": {"type": "array",
-                                                              "items": {"type": "number", "minimum": 0, "maximum": 1}},
-                                 "minimum_column_fraction": {"type": "number", "minimum": 0, "maximum": 1},
-                                 "insufficient_columns": _INDEX_LIST,
-                                 "missing_surface_columns": _INDEX_LIST,
-                                 "non_solid_band_pixels": {"type": "integer", "minimum": 0}}},
-                "surface": {"type": "object",
-                            "required": ["declared_y_px", "measured", "max_rise_px", "columns_above_tolerance",
-                                         "decoration_band_px"],
-                            "properties": {
-                                "declared_y_px": {"type": "integer", "minimum": 0},
-                                "measured": {"type": "boolean"},
-                                "measured_y_px_by_column": {"type": ["array", "null"],
-                                                            "items": {"type": ["integer", "null"], "minimum": 0}},
-                                "max_rise_px": {"type": "integer", "minimum": 0},
-                                "columns_above_tolerance": _INDEX_LIST,
-                                "decoration_band_px": {"type": "integer", "minimum": 0},
-                                "decoration_px": {"type": "integer", "minimum": 0}}}}}},
-        "joins": {"type": "array", "minItems": 3, "items": {
-            "type": "object", "required": ["join", "left", "right", "full_edge", "contact_band", "seam"],
-            "properties": {"join": {"enum": ["left_cap->middle", "middle->middle", "middle->right_cap"]},
-                           "left": {"type": "string"}, "right": {"type": "string"},
-                           "full_edge": {"type": "object"}, "contact_band": {"type": "object"},
-                           "seam": {"$ref": "#/$defs/edgeSeam"}}}},
-        "preview": {"type": "object", "required": ["path", "size", "sha256", "placements"],
-                    "properties": {"path": {"$ref": "common.schema.json#/$defs/relPath"},
-                                   "size": {"$ref": "common.schema.json#/$defs/size2"},
-                                   "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-                                   "placements": {"type": "array", "minItems": 5}}},
-        "qc": {"type": "object", "required": ["passed", "structural_passed", "issues", "warnings"],
-               "properties": {"passed": {"type": "boolean"}, "structural_passed": {"type": "boolean"},
-                              "issues": {"type": "array", "items": {"type": "string"}},
-                              "warnings": {"type": "array", "items": {"type": "string"}},
-                              "max_seam_ratio": {"type": ["number", "null"], "exclusiveMinimum": 0}}},
-        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-    },
-}
-# Section 5 of handoff/B11-map-terrain-platform.md: map.schema.json $defs added by B11 (the terrain bundle
-# is in tests/test_generate2dmap_terrain.py and imports SEAM from here).
-PROPOSED_PLATFORM_DEFS = {"edgeSeam": SEAM, "platform_strip_v2": PLATFORM_STRIP_V2}
-
+# --------------------------------------------------------------------------- contract (handoff section 5, integrated)
 
 def proposed_map_errors(instance, name: str, extra_defs: dict | None = None) -> list[str]:
-    """Validate against the vendored map.schema.json with B11's proposed $defs applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    directory = SKILLS_DIR / "generate2dmap" / "references" / "schemas"
-    schemas = {path.name: json.loads(path.read_text(encoding="utf-8")) for path in directory.glob("*.schema.json")}
-    patched = copy.deepcopy(schemas["map.schema.json"])
-    additions = {**PROPOSED_PLATFORM_DEFS, **(extra_defs or {})}
-    clash = sorted(set(patched["$defs"]) & set(additions))
-    if clash:
-        raise AssertionError(f"proposed $defs already exist in map.schema.json: {clash}")
-    patched["$defs"].update(copy.deepcopy(additions))
-    Draft202012Validator.check_schema(patched)
-    schemas["map.schema.json"] = patched
-    registry = Registry().with_resources(
-        (schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas.values())
-    validator = Draft202012Validator({"$ref": f"{patched['$id']}#/$defs/{name}"}, registry=registry)
-    errors = sorted(validator.iter_errors(instance), key=lambda error: list(map(str, error.absolute_path)))
-    return [f"{error.json_path}: {error.message}" for error in errors]
+    """Errors against the vendored generate2dmap schemas, which now hold B11's section 5 requests:
+    map platform_strip_v2 and terrain_tile_bundle_v2, and the one seam def common edgeSeam (per D9).
+    ``extra_defs`` is ignored; it is kept for callers that still pass their request."""
+    del extra_defs
+    domain = "common" if name == "edgeSeam" else "map"
+    return contract_errors(instance, domain, name, skill="generate2dmap")
 
 
 # --------------------------------------------------------------------------- the fork's 16 tests

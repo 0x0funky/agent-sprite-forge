@@ -1,0 +1,24 @@
+{
+  "schema": "video2dsprite.validation.v1",
+  "status": "pass",
+  "method": "validate_animation.py: animation_v3 schema, cross-field timing, geometry and event rules, ffprobe container facts and sha256-bound QA of every package",
+  "notProven": [
+    "Visual quality, identity and motion of the art.",
+    "Playback in a browser, Safari, WebGL or on a device."
+  ],
+  "checks": [
+    {"id": "run.schema", "status": "pass", "value": null, "threshold": null},
+    {"id": "run.paths", "status": "pass", "value": null, "threshold": null},
+    {"id": "run.files", "status": "pass", "value": null, "threshold": null},
+    {"id": "run.timing", "status": "pass", "value": null, "threshold": null}
+  ],
+  "inputs": [
+    {
+      "path": "../game/hero/run/animation.json",
+      "sha256": "2700c8363f8b098702cefe1554ee080646ed5b4c1bda7b065aff604a66e5b849",
+      "bytes": 15962
+    }
+  ],
+  "outputs": [],
+  "tool": {"name": "validate_animation.py", "version": "1.0.0"}
+}

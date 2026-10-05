@@ -1,0 +1,17 @@
+{
+  "cases": [
+    {"why": "targets are listed", "remove": "/targets", "error": "'targets' is a required property"},
+    {
+      "why": "statuses are the QA verdicts",
+      "set": "/status",
+      "value": "ok",
+      "error": "'ok' is not one of"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.nav_report.v2",
+      "error": "was expected"
+    }
+  ]
+}

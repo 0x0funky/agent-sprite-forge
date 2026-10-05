@@ -5,13 +5,14 @@
   "description": "Frozen contracts, version 1, for registration by construction, character profiles, frame selection, matte and triage reports, takes, review verdicts and the runtime animation manifest. forge-frame-selection/v1 and animation.json 2.0 stay valid. Video documents use camelCase keys. Objects stay open (additionalProperties true).",
   "$defs": {
     "videoEvent": {
-      "description": "A gameplay event in whole milliseconds from clip start; frame is the 0-based output frame when known.",
+      "description": "A gameplay event in whole milliseconds from clip start; frame is the 0-based output frame when known and tick the tick at the selection's tickHz (retime tick mode). The end edge is allowed (per D19): 0 <= atMs <= the clip duration, so an end event may sit at the last tick edge; such an event names the last frame. impactMs and holdMs stay strictly inside the clip.",
       "type": "object",
       "required": ["name", "atMs"],
       "properties": {
         "name": {"$ref": "common.schema.json#/$defs/eventName"},
         "atMs": {"type": "integer", "minimum": 0},
         "frame": {"type": "integer", "minimum": 0},
+        "tick": {"type": "integer", "minimum": 0},
         "data": true
       }
     },
@@ -26,7 +27,7 @@
       }
     },
     "registration_job_v1": {
-      "description": "Written by prepare_i2v_input.py: where the master sits on the provider canvas, so register_clip.py can invert one fixed transform. workRegion is a half-open box on referenceCanvas; padding is [left, top, right, bottom].",
+      "description": "Written by prepare_i2v_input.py: where the master sits on the provider canvas, so register_clip.py can invert one fixed transform. workRegion is a half-open box on referenceCanvas; padding is [left, top, right, bottom]. sourceSize and sourceAnchor are the padded source canvas the registered frames use (prefer them to master.size/anchor, which differ for a view-box master); master.viewBox is the half-open crop of the master file that was placed. The job also records the action kind, the key choice, the clipped work region, the prompt timeline, the input image and the review guide.",
       "type": "object",
       "required": ["schema", "master", "referenceCanvas", "referenceScale", "referenceOffset", "keyColor", "workRegion", "action", "padding", "prompt"],
       "properties": {
@@ -38,7 +39,9 @@
             "path": {"$ref": "common.schema.json#/$defs/relPath"},
             "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
             "size": {"$ref": "common.schema.json#/$defs/size2"},
-            "anchor": {"$ref": "common.schema.json#/$defs/point2"}
+            "anchor": {"$ref": "common.schema.json#/$defs/point2"},
+            "viewBox": {"$ref": "common.schema.json#/$defs/box"},
+            "sourceName": {"type": "string", "minLength": 1}
           }
         },
         "referenceCanvas": {"$ref": "common.schema.json#/$defs/size2"},
@@ -55,11 +58,44 @@
             "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
             "path": {"$ref": "common.schema.json#/$defs/relPath"}
           }
-        }
+        },
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "actionKind": {"enum": ["loop", "oneshot", "hold", "fx"]},
+        "returnsToRest": {"type": "boolean"},
+        "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "sourceAnchor": {"$ref": "common.schema.json#/$defs/point2"},
+        "anchorMode": {"type": "string", "minLength": 1},
+        "referenceRoot": {"$ref": "common.schema.json#/$defs/point2"},
+        "pixelArt": {"type": "boolean"},
+        "placementResampler": {"enum": ["nearest", "lanczos"]},
+        "keyChoice": {"type": "object"},
+        "workRegionClipped": {"type": "array", "items": {"type": "number", "minimum": 0}, "minItems": 4, "maxItems": 4},
+        "margin": {"type": "number", "minimum": 0},
+        "durationS": {"type": "number", "exclusiveMinimum": 0},
+        "calmSpanS": {"type": "number", "minimum": 0},
+        "timeline": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startS", "endS", "text"],
+            "properties": {
+              "startS": {"type": "number", "minimum": 0},
+              "endS": {"type": "number", "exclusiveMinimum": 0},
+              "text": {"type": "string", "minLength": 1}
+            }
+          }
+        },
+        "input": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"}}
+        },
+        "reviewGuide": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}]},
+        "lint": {"type": "array", "items": {"type": "object", "required": ["rule", "message"]}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
       }
     },
     "character_profile_v1": {
-      "description": "One character's registration and matte settings, inherited by every clip so scale and keying cannot drift between clips.",
+      "description": "One character's registration and matte settings, inherited by every clip so scale and keying cannot drift between clips (register_clip.py profile writes it; process --matte-profile reads the matte block). Each clip records its padded canvas, its registration.json and the job it was registered from; nativeFootBottomRange is the spread of the native foot line over the clips.",
       "type": "object",
       "required": ["schema", "id", "sourceSize", "sourceAnchor", "registration", "matte", "clips"],
       "properties": {
@@ -73,7 +109,13 @@
           "required": ["scale", "anchorMode"],
           "properties": {
             "scale": {"type": "number", "exclusiveMinimum": 0},
-            "anchorMode": {"type": "string", "minLength": 1}
+            "anchorMode": {"type": "string", "minLength": 1},
+            "masterSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "referenceCanvas": {"$ref": "common.schema.json#/$defs/size2"},
+            "fit": {"enum": ["auto", "stretch", "cover", "contain"]},
+            "resampler": {"enum": ["box", "lanczos", "nearest"]},
+            "groundMinRun": {"type": "integer", "minimum": 1},
+            "restFootBottom": {"type": ["number", "null"]}
           }
         },
         "matte": {
@@ -82,8 +124,8 @@
           "properties": {
             "mode": {"enum": ["soft", "dominance", "binary"]},
             "key": {"$ref": "common.schema.json#/$defs/keyColor"},
-            "erode": {"type": "number", "minimum": 0},
-            "unmix": {"type": "boolean"},
+            "erode": {"description": "Matte erosion in whole pixels (per D21).", "type": "integer", "minimum": 0},
+            "unmix": {"description": "Soft matte only: false takes edge colour from the neighbouring subject (KeyParams.unmix_from 1.0). It must be false for dominance and binary; register_clip.py profile defaults it to (mode == soft) per D21.", "type": "boolean"},
             "despill": {"enum": ["off", "edge", "all", "auto"]},
             "params": {"description": "Every forge_matte.KeyParams field the profile pins (KeyParams.to_dict() form), beyond the named key, erode, unmix and despill settings.", "type": "object"}
           }
@@ -96,14 +138,19 @@
             "properties": {
               "padding": {"$ref": "common.schema.json#/$defs/padding4"},
               "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
-              "sourceAnchor": {"$ref": "common.schema.json#/$defs/point2"}
+              "sourceAnchor": {"$ref": "common.schema.json#/$defs/point2"},
+              "registration": {"$ref": "common.schema.json#/$defs/fileRef"},
+              "jobSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "nativeFootBottom": {"type": ["number", "null"]}
             }
           }
-        }
+        },
+        "nativeFootBottomRange": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}]},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"}
       }
     },
     "frame_selection_v2": {
-      "description": "A chosen frame range. forge-frame-selection/v1 (animation_review.py) stays valid and needs fps. v2 adds 0-based sourceIndices into [start, endExclusive) (repeats allow holds), one integer duration per index, the loop policy, events and the selecting method.",
+      "description": "A chosen frame range. forge-frame-selection/v1 (animation_review.py) stays valid and needs fps. v2 adds 0-based sourceIndices into [start, endExclusive) (repeats allow holds), one integer duration per index, the loop policy, events and the selecting method. sourceHashes and sourceFiles cover every frame of [start, endExclusive), as in v1; the range may be wider than the played sourceIndices (a loop whose last frames were held duplicates keeps its window). fps is the source frame rate the indices were sampled at; durations_ms are the playback timing and are authoritative (with ticks, the drift-free tick edges at tickHz). loopPolicy pingpong lists the forward frames only: players and packagers mirror them without duplicating the end frames (indices + indices[-2:0:-1]). v2 sourceDirectory is relative to the selection file, or only the directory name when no relative path exists (another drive), and readers then rely on the per-frame hashes. A status starting with reject, fail or unusable is refused by packagers. Optional speedRef, cycles and terminal are carried into animation.json.",
       "type": "object",
       "required": ["schema", "sourceDirectory", "sourceHashes", "start", "endExclusive", "status"],
       "properties": {
@@ -123,14 +170,54 @@
         "strideWorldUnits": {"type": "number", "exclusiveMinimum": 0},
         "status": {"type": "string", "minLength": 1},
         "reviewReason": {"type": "string"},
-        "method": {"type": "string", "minLength": 1}
+        "method": {"type": "string", "minLength": 1},
+        "sourceFiles": {"description": "File names of the source frames in [start, endExclusive), parallel to sourceHashes.", "type": "array", "items": {"type": "string", "minLength": 1}},
+        "kind": {"enum": ["gait", "walk", "run", "idle", "hover", "attack", "cast", "hurt", "guard", "victory", "defeat", "fx", "other"]},
+        "cycles": {"type": "integer", "minimum": 1},
+        "terminal": {"type": "boolean"},
+        "confidence": {
+          "type": "object",
+          "properties": {
+            "label": {"enum": ["high", "medium", "low"]},
+            "overall": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "seam": {"$ref": "common.schema.json#/$defs/seamReport"},
+        "ticks": {"description": "Ticks per sourceIndex at tickHz; durations_ms are the drift-free tick edges in ms.", "type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+        "tickHz": {"type": "integer", "minimum": 1, "default": 60},
+        "speedRef": {"type": "number", "exclusiveMinimum": 0},
+        "stridePxPerFrame": {"type": "number", "exclusiveMinimum": 0},
+        "entryFrame": {"description": "Position in sourceIndices to start from rest.", "type": "integer", "minimum": 0},
+        "suggestedContact": {
+          "type": "object",
+          "required": ["outputFrame", "sourceIndex", "atMs", "method"],
+          "properties": {
+            "outputFrame": {"type": "integer", "minimum": 0},
+            "sourceIndex": {"type": "integer", "minimum": 0},
+            "atMs": {"type": "integer", "minimum": 0},
+            "score": {"type": "number"},
+            "method": {"type": "string", "minLength": 1}
+          }
+        },
+        "origin": {
+          "description": "Set by animation_review cut: the selection this cut folder came from.",
+          "type": "object",
+          "properties": {
+            "sourceDirectory": {"type": "string", "minLength": 1},
+            "start": {"type": "integer", "minimum": 0},
+            "endExclusive": {"type": "integer", "minimum": 1},
+            "sourceIndices": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "selection": {"$ref": "common.schema.json#/$defs/fileRef"},
+            "transforms": {"type": "string"}
+          }
+        }
       },
       "if": {"properties": {"schema": {"const": "forge-frame-selection/v2"}}, "required": ["schema"]},
       "then": {"required": ["sourceIndices", "durations_ms", "loopPolicy", "events", "method"]},
       "else": {"required": ["fps"]}
     },
     "matte_report_v1": {
-      "description": "The matte block of video2dsprite pipeline-meta.json (forge_matte.matte_qa aggregated over the clip): pixel counts are sums over frames, fractions are the worst frame. key is the key colour the matte used as a name, #rrggbb or whole-number RGB (round forge_matte's float key; key_estimate keeps the floats). key_estimate is forge_matte.estimate_key info (null for an explicit key), interior_despill the forge_matte.auto_interior_despill decision, params the KeyParams.to_dict() used, local_background the local-background radius in px (0 when off) and temporal the alpha hysteresis with its flips per frame pair before and after.",
+      "description": "The matte block of video2dsprite pipeline-meta.json (forge_matte.matte_qa aggregated over the clip), also written as matte-report.json beside the frames, where it is a full QA envelope as well (status, method, notProven, checks, inputs, outputs, tool). Pixel counts are sums over frames, fractions are the worst frame; the residue counts (opaque_key_px, enclosed_key_pockets, key_hued_px) are taken before any despill pass. key is the key colour the matte used as a name, #rrggbb or whole-number RGB (round forge_matte's float key; key_estimate keeps the floats); key_request is --key as given and key_declared the declared key the clip was keyed against. mode none means --key-mode none. key_estimate is forge_matte.estimate_key info (null for an explicit key), interior_despill the forge_matte.auto_interior_despill decision, params the KeyParams.to_dict() used, local_background the local-background radius in px (0 when off) and temporal the alpha hysteresis with its flips per frame pair before and after. profile records a --matte-profile run; report_file appears only in the pipeline-meta block.",
       "type": "object",
       "required": ["schema", "mode", "key", "opaque_key_px", "outer_ring_spill_fraction", "semitransparent_fraction", "enclosed_key_pockets"],
       "properties": {
@@ -145,6 +232,55 @@
         "pockets_removed": {"type": "integer", "minimum": 0},
         "flips_per_frame_pair": {"type": "number", "minimum": 0},
         "key_hued_px": {"type": "integer", "minimum": 0},
+        "key_request": {"description": "--key as given: auto, magenta, green, blue or #rrggbb.", "type": "string"},
+        "key_declared": {"description": "The declared key the clip was keyed against (auto resolved).", "type": "string"},
+        "key_mode": {"enum": ["auto", "always", "magenta", "none"]},
+        "despill_applied": {"enum": ["off", "edge", "all"]},
+        "despill_radius": {"type": "integer", "minimum": 0},
+        "pockets": {"enum": ["remove", "keep"]},
+        "erode": {"type": "integer", "minimum": 0},
+        "unmix": {"type": "boolean"},
+        "frames_total": {"type": "integer", "minimum": 1},
+        "passthrough_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "legacy": {
+          "type": "object",
+          "properties": {
+            "dist": {"type": "number", "minimum": 0},
+            "despill": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "protect": {
+          "type": "object",
+          "properties": {
+            "colors": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+            "tol": {"type": "number", "exclusiveMinimum": 0},
+            "px": {"type": "integer", "minimum": 0}
+          }
+        },
+        "design_colours_at_risk": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "to": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "px": {"type": "integer", "minimum": 0},
+              "delta_e": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "profile": {
+          "type": "object",
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/fileRef"},
+            "id": {"type": "string"},
+            "pinned": {"type": "object"},
+            "params": {"type": "object"},
+            "deviations": {"type": "array", "items": {"type": "object", "required": ["option", "profile", "used"]}}
+          }
+        },
+        "report_file": {"description": "The matte-report.json beside the frames (pipeline-meta block only).", "$ref": "common.schema.json#/$defs/relPath"},
         "key_estimate": {
           "type": ["object", "null"],
           "properties": {
@@ -153,7 +289,13 @@
             "valid": {"type": "boolean"},
             "ring_share": {"type": "number", "minimum": 0, "maximum": 1},
             "coverage": {"type": "number", "minimum": 0, "maximum": 1},
-            "distance_from_declared": {"type": "number", "minimum": 0}
+            "distance_from_declared": {"type": "number", "minimum": 0},
+            "declared": {"type": "string"},
+            "declared_rgb": {"$ref": "common.schema.json#/$defs/rgb"},
+            "spread": {"type": "number", "minimum": 0},
+            "frames_estimated": {"type": "integer", "minimum": 0},
+            "invalid_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "detected": {"type": "object"}
           }
         },
         "interior_despill": {
@@ -165,7 +307,9 @@
             "reference_share": {"type": "number", "minimum": 0, "maximum": 1},
             "clip_sample_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
             "clip_median_share": {"type": "number", "minimum": 0, "maximum": 1},
-            "clip_max_share": {"type": "number", "minimum": 0, "maximum": 1}
+            "clip_max_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "sampled_from": {"enum": ["source clip", "keyed frames"]},
+            "pinned_by_profile": {"type": "boolean"}
           }
         },
         "params": {"type": "object"},
@@ -178,14 +322,36 @@
             "max_step": {"type": "number", "minimum": 0},
             "loop": {"type": "boolean"},
             "flips_before": {"type": "number", "minimum": 0},
-            "flips_after": {"type": "number", "minimum": 0}
+            "flips_after": {"type": "number", "minimum": 0},
+            "requested": {"enum": ["auto", "off", "alpha"]},
+            "active": {"type": "boolean"},
+            "skipped": {"type": "string"}
           }
         },
-        "frames": {"type": "array", "items": {"type": "object"}}
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "key": {"$ref": "common.schema.json#/$defs/rgb"},
+              "passthrough": {"type": "boolean"},
+              "opaque_key_px": {"type": "integer", "minimum": 0},
+              "outer_ring_spill_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+              "semitransparent_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+              "enclosed_key_pockets": {"type": "integer", "minimum": 0},
+              "key_hued_px": {"type": "integer", "minimum": 0},
+              "visible_px": {"type": "integer", "minimum": 0},
+              "pockets_removed": {"type": "integer", "minimum": 0},
+              "protected_px": {"type": "integer", "minimum": 0},
+              "despill_px": {"type": "integer", "minimum": 0}
+            }
+          }
+        }
       }
     },
     "raw_triage_v1": {
-      "description": "triage report on a raw clip before processing. It is a QA envelope. A subject touching the border means regenerate the clip; never pad it.",
+      "description": "triage report on a raw clip before processing. It is a QA envelope. A subject touching the border means regenerate the clip; never pad it. It also records the codec, pixel format, duration, native alpha, attached pictures, the container's frame count, the audio streams, the border check (ring, minimum run and every touching frame with its edges), the overview sheet and the rule applied. keyDrift (omitted for a clip with native alpha) compares the declared key with the per-frame estimates.",
       "type": "object",
       "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
       "required": ["schema", "size", "fps", "frames", "audioStreams", "borderTouchFrames"],
@@ -196,11 +362,77 @@
         "frames": {"type": "integer", "minimum": 1},
         "audioStreams": {"type": "integer", "minimum": 0},
         "borderTouchFrames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-        "keyDrift": {"type": "object"}
+        "keyDrift": {
+          "type": "object",
+          "properties": {
+            "declared": {"$ref": "common.schema.json#/$defs/keyColor"},
+            "declaredRgb": {"$ref": "common.schema.json#/$defs/rgb"},
+            "estimated": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3},
+            "distance": {"type": "number", "minimum": 0},
+            "spread": {"type": "number", "minimum": 0},
+            "framesEstimated": {"type": "integer", "minimum": 0},
+            "invalidFrames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "detected": {"type": "object"}
+          }
+        },
+        "codec": {"type": ["string", "null"]},
+        "pixFmt": {"type": ["string", "null"]},
+        "duration": {"type": ["number", "null"]},
+        "hasAlpha": {"type": "boolean"},
+        "nativeAlphaFrames": {"type": "integer", "minimum": 0},
+        "attachedPics": {"type": "integer", "minimum": 0},
+        "nbFramesContainer": {"type": ["integer", "null"], "minimum": 0},
+        "audio": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "codec": {"type": ["string", "null"]},
+              "channels": {"type": ["integer", "null"], "minimum": 0},
+              "sample_rate": {"type": ["integer", "null"], "minimum": 1},
+              "duration": {"type": ["number", "null"], "minimum": 0}
+            }
+          }
+        },
+        "border": {
+          "type": "object",
+          "properties": {
+            "ringPx": {"type": "integer", "minimum": 0},
+            "minPx": {"type": "integer", "minimum": 0},
+            "touches": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "index": {"type": "integer", "minimum": 0},
+                  "px": {"type": "integer", "minimum": 0},
+                  "edges": {
+                    "type": "object",
+                    "properties": {
+                      "top": {"type": "integer", "minimum": 0},
+                      "bottom": {"type": "integer", "minimum": 0},
+                      "left": {"type": "integer", "minimum": 0},
+                      "right": {"type": "integer", "minimum": 0}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "overview": {
+          "type": "object",
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "rule": {"type": "string"}
       }
     },
     "take_v1": {
-      "description": "One line of takes.jsonl from register_clip.py qc.",
+      "description": "One line of takes.jsonl from register_clip.py qc: the take's verdict, reasons and metrics, plus the job it was registered for, the action, the source (a frame folder or a video), warnings and its QA envelope.",
       "type": "object",
       "required": ["take", "status", "reasons", "metrics"],
       "properties": {
@@ -208,13 +440,28 @@
         "take": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "integer", "minimum": 0}]},
         "status": {"enum": ["kept", "rejected"]},
         "reasons": {"type": "array", "items": {"type": "string", "minLength": 1}},
-        "metrics": {"type": "object"}
+        "metrics": {"type": "object"},
+        "job": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "action": {"type": "string", "minLength": 1},
+        "warnings": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "source": {
+          "type": "object",
+          "required": ["kind", "name", "frames", "size"],
+          "properties": {
+            "kind": {"enum": ["frames", "video"]},
+            "frames": {"type": "integer", "minimum": 1},
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "fps": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
       },
       "if": {"properties": {"status": {"const": "rejected"}}, "required": ["status"]},
       "then": {"properties": {"reasons": {"minItems": 1}}}
     },
     "review_verdict_v1": {
-      "description": "A visual review of exactly the files whose hash is reviewedSha256. Anything other than accepted must name at least one issue; frame is 0-based and box is a half-open pixel box.",
+      "description": "A visual review of exactly the files whose hash is reviewedSha256: the sha256 of the selection file, or a package's inputDigest (the sha256 of the newline-terminated list of frame sha256s in playback order). Anything other than accepted must name at least one issue; frame is 0-based and box is a half-open pixel box.",
       "type": "object",
       "required": ["schema", "status", "issues", "evidence", "reviewedSha256"],
       "properties": {
@@ -242,7 +489,7 @@
       "then": {"properties": {"issues": {"minItems": 1}}}
     },
     "animation_v3": {
-      "description": "animation.json written by engine_export.py package. schemaVersion 2.0 (cfed170) stays valid. 3.0 keeps every 2.0 key and adds selection timing (0-based sourceIndices, one durationsMs entry per frame), events, a registration object instead of the 2.0 string, a QA envelope in qa, and transport records. sourceRect stays [x, y, width, height] in source pixels; file names are relative to the manifest.",
+      "description": "animation.json written by engine_export.py package. schemaVersion 2.0 (cfed170) stays valid. 3.0 keeps every 2.0 key and adds selection timing (0-based sourceIndices, one durationsMs entry per frame), events, a registration object instead of the 2.0 string, a QA envelope in qa, and transport records. sourceRect stays [x, y, width, height] in source pixels; file names are relative to the manifest. fps keeps the 2.0 number and fpsRational is the exact transport rate; fpsCapped says the clip was reduced to at most 60 fps without changing its length (inputFps is the rate before) and pingpongBaked that a pingpong policy was baked into one cycle (0 1 2 3 2 1). registration may also carry legacyMode (the 2.0 string), registrationSha256 (a non-job registration record), sourceSize, sourceAnchor and action. qa carries the 2.0 diagnostics plus keyResidue (the residue gate: key, frames measured, opaque key pixels, ring spill, semitransparency, pockets, key-hued pixels, limits, thresholds and method; per D18 the gate measures a copy with alpha <= 16 zeroed and records that floor in thresholds and method), seamReport (common seamReport), allowKeyResidue and keySource (where the gate's key came from, per D17).",
       "type": "object",
       "required": ["schemaVersion", "name", "sourceSize", "sourceAnchor", "fps", "frameCount", "durationSeconds", "loop", "poster", "fallback", "qa"],
       "properties": {
@@ -287,7 +534,7 @@
         },
         "webm": {"$ref": "#/$defs/mediaFile"},
         "packedAlpha": {
-          "description": "Packed-alpha transport (forge_av.encode_packed_alpha). fps here and in mobilePackedAlpha is a positive number or an exact rational string such as 30000/1001 (forge_av writes num/den). Encoder extras may be copied in: keyint, keyframes, closedGop, crf, fpsCapped, inputFps, encodedSize, bytes.",
+          "description": "Packed-alpha transport (forge_av.encode_packed_alpha). width/height are the logical frame (at most halfWidth/halfHeight, the even physical halves; the video is 2 x halfWidth by halfHeight); 2.0 has no halves and its width/height are the half size. JSON Schema cannot express width <= halfWidth; validate_animation checks it (per D21). fps here and in mobilePackedAlpha is a positive number or an exact rational string such as 30000/1001 (forge_av writes num/den). Encoder extras may be copied in: codec, profile, encodedSize, requiresCompositor, crf, keyint, keyframes, closedGop, frameCount, durationMs, fullDecodePassed, fpsCapped, inputFps, bytes.",
           "allOf": [{"$ref": "#/$defs/mediaFile"}],
           "properties": {
             "layout": {"type": "string", "minLength": 1},
@@ -322,6 +569,7 @@
           "items": {
             "type": "object",
             "required": ["tier", "sourceWidth", "sourceHeight", "width", "height", "fps", "file", "sha256"],
+            "description": "A mobile tier of the packed transport: width/height are the tier's logical frame and halfWidth/halfHeight its physical halves, as in packedAlpha. A tier may also record encodedSize, encodedAnchor (the anchor in tier pixels), maxLongEdge, maxFps, frameCount, durationMs, inputIndices (positions in the main timeline), resampler, bytes, mimeType and the encoder extras.",
             "properties": {
               "tier": {"type": "string", "minLength": 1},
               "sourceWidth": {"type": "integer", "minimum": 1},
@@ -330,12 +578,19 @@
               "height": {"type": "integer", "minimum": 1},
               "fps": {"$ref": "common.schema.json#/$defs/fpsValue"},
               "file": {"$ref": "common.schema.json#/$defs/relPath"},
-              "sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "layout": {"type": "string", "minLength": 1},
+              "halfWidth": {"type": "integer", "minimum": 1},
+              "halfHeight": {"type": "integer", "minimum": 1}
             }
           }
         },
         "budgetClass": {"type": "string", "minLength": 1},
         "provenanceFile": {"$ref": "common.schema.json#/$defs/relPath"},
+        "fpsRational": {"description": "Exact transport rate of the video files, num/den; fps keeps the 2.0 number.", "type": "string", "pattern": "^[1-9][0-9]*/[1-9][0-9]*$"},
+        "fpsCapped": {"description": "The clip was reduced to at most 60 fps without changing its length.", "type": "boolean"},
+        "inputFps": {"$ref": "common.schema.json#/$defs/fpsValue"},
+        "pingpongBaked": {"description": "A pingpong policy was baked into one cycle (0 1 2 3 2 1).", "type": "boolean"},
         "artSource": {"$ref": "common.schema.json#/$defs/artSource"},
         "placeholder": {"type": "boolean"}
       },
@@ -356,6 +611,194 @@
         }
       },
       "else": {"properties": {"registration": {"type": "string", "minLength": 1}}}
+    },
+    "registration_v1": {
+      "description": "registration.json written by register_clip.py apply (registration by construction). One transform maps every frame of the provider video onto the source canvas: output = video * transform.inverse.scale + transform.inverse.offset + the frame's whole-pixel lock shift. sourceSize/sourceAnchor are the padded canvas (animation.json sourceSize/sourceAnchor); baseSize/baseAnchor the master canvas. lock.modes lists each lock mode at most once. hygiene, when present, is the forge_core.alpha_hygiene floor pass on the registered frames (mode floor, floor 4, per D18). Profile fx adds edge fades, a fade-in and a dissolve tail.",
+      "type": "object",
+      "required": ["schema", "mode", "jobSha256", "clip", "action", "profile", "master", "anchorMode", "keyColor", "referenceCanvas", "referenceScale", "referenceOffset", "baseSize", "baseAnchor", "padding", "sourceSize", "sourceAnchor", "video", "transform", "lock", "frames", "qa"],
+      "properties": {
+        "schema": {"const": "video2dsprite.registration.v1"},
+        "mode": {"const": "construction"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "jobSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "job": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "clip": {"type": "string", "minLength": 1},
+        "action": {"type": "string", "minLength": 1},
+        "profile": {"enum": ["actor", "fx"]},
+        "master": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "required": ["size", "anchor"],
+          "properties": {
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "anchor": {"$ref": "common.schema.json#/$defs/point2"},
+            "viewBox": {"$ref": "common.schema.json#/$defs/box"}
+          }
+        },
+        "anchorMode": {"type": "string", "minLength": 1},
+        "keyColor": {"$ref": "common.schema.json#/$defs/keyColor"},
+        "referenceCanvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "referenceScale": {"type": "number", "exclusiveMinimum": 0},
+        "referenceOffset": {"$ref": "common.schema.json#/$defs/point2"},
+        "baseSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "baseAnchor": {"$ref": "common.schema.json#/$defs/point2"},
+        "padding": {"$ref": "common.schema.json#/$defs/padding4"},
+        "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
+        "sourceAnchor": {"$ref": "common.schema.json#/$defs/point2"},
+        "displayScale": {"type": "number", "exclusiveMinimum": 0},
+        "masterGeometry": {"type": "object"},
+        "video": {
+          "type": "object",
+          "required": ["size", "frameCount", "range"],
+          "properties": {
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "frameCount": {"type": "integer", "minimum": 1},
+            "range": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+            "frameDirectory": {"$ref": "common.schema.json#/$defs/relPath"}
+          }
+        },
+        "transform": {
+          "type": "object",
+          "required": ["fit", "fitApplied", "videoScale", "videoOffset", "inverse", "resampler"],
+          "properties": {
+            "fit": {"enum": ["auto", "stretch", "cover", "contain"]},
+            "fitApplied": {"enum": ["uniform", "stretch", "cover", "contain"]},
+            "videoScale": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+            "videoOffset": {"$ref": "common.schema.json#/$defs/point2"},
+            "anchorVideo": {"$ref": "common.schema.json#/$defs/point2"},
+            "anchorOutput": {"$ref": "common.schema.json#/$defs/point2"},
+            "inverse": {
+              "type": "object",
+              "required": ["scale", "offset"],
+              "properties": {
+                "scale": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+                "offset": {"$ref": "common.schema.json#/$defs/point2"}
+              }
+            },
+            "resampler": {"enum": ["box", "lanczos", "nearest"]}
+          }
+        },
+        "lock": {
+          "type": "object",
+          "required": ["modes"],
+          "properties": {
+            "modes": {"type": "array", "items": {"enum": ["feet", "x", "hip"]}, "maxItems": 3},
+            "maxShift": {"type": ["integer", "null"], "minimum": 0},
+            "groundMinRun": {"type": "integer", "minimum": 1},
+            "targets": {"type": "object"}
+          }
+        },
+        "rest": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["frames", "nativeFootBottom", "anchorError"],
+              "properties": {
+                "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+                "nativeFootBottom": {"type": "number"},
+                "anchorError": {"$ref": "common.schema.json#/$defs/point2"},
+                "heightRatio": {"type": "number", "minimum": 0},
+                "areaRatio": {"type": "number", "minimum": 0}
+              }
+            }
+          ]
+        },
+        "nativeFootBottomRange": {"anyOf": [{"type": "null"}, {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}]},
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["file", "sha256", "sourceIndex", "shift"],
+            "properties": {
+              "file": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "sourceIndex": {"type": "integer", "minimum": 0},
+              "sourceFile": {"type": "string", "minLength": 1},
+              "sourceSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "shift": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2},
+              "nativeFootBottom": {"type": ["number", "null"]}
+            }
+          }
+        },
+        "fx": {
+          "type": "object",
+          "properties": {
+            "edgeFadePx": {"type": "number", "minimum": 0},
+            "fadeRect": {"$ref": "common.schema.json#/$defs/box"},
+            "fadeInFrames": {"type": "integer", "minimum": 0},
+            "dissolveTailFrames": {"type": "integer", "minimum": 0}
+          }
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "path": {"$ref": "common.schema.json#/$defs/relPath"},
+            "frames": {"type": "array", "items": {"type": "integer", "minimum": 0}}
+          }
+        },
+        "characterProfile": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}]},
+        "hygiene": {"description": "The forge_core.alpha_hygiene report of the floor pass on the registered frames (per D18).", "type": "object"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "palette_repair_v1": {
+      "description": "palette-repair.json from register_clip.py palette-repair: a QA envelope plus the rule, the regions (half-open boxes), the palette and the per-frame changes. Alpha never changes.",
+      "type": "object",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "rule", "regions", "palette", "frames", "totalChangedPx", "alphaUnchanged"],
+      "properties": {
+        "schema": {"const": "video2dsprite.palette_repair.v1"},
+        "rule": {"type": "object", "required": ["hueRange", "minSaturation", "minValue", "minAlpha"]},
+        "regions": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/box"}},
+        "paletteSource": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}]},
+        "palette": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["file", "changedPx", "beforeSha256", "afterSha256"],
+            "properties": {
+              "file": {"$ref": "common.schema.json#/$defs/relPath"},
+              "changedPx": {"type": "integer", "minimum": 0},
+              "beforeSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "afterSha256": {"$ref": "common.schema.json#/$defs/sha256"}
+            }
+          }
+        },
+        "totalChangedPx": {"type": "integer", "minimum": 0},
+        "alphaUnchanged": {"const": true}
+      }
+    },
+    "package_provenance_v1": {
+      "description": "provenance.json beside animation.json (engine_export.py package): common provenance plus the input digest a review verdict may bind (sha256 of the newline-terminated list of frame sha256s in playback order). inputDirectory appears only when a relative path exists. It may also list the libraries and the selection, registration and review documents; inputs carry a role (frame, selection, registration, review, pipelineMeta).",
+      "allOf": [{"$ref": "common.schema.json#/$defs/provenance"}],
+      "type": "object",
+      "required": ["schema", "inputDigest"],
+      "properties": {
+        "schema": {"const": "video2dsprite.provenance.v1"},
+        "inputDigest": {"$ref": "common.schema.json#/$defs/sha256"},
+        "inputDirectory": {"$ref": "common.schema.json#/$defs/relPath"}
+      }
+    },
+    "verify_report_v1": {
+      "description": "verify-qa.json (engine_export.py verify): a QA envelope over the encoded files of one package, bound to its animation.json by sha256, with per-transport results and the thresholds used.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema", "manifestSha256", "transports"],
+      "properties": {
+        "schema": {"const": "video2dsprite.verify.v1"},
+        "manifestSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "transports": {"type": "object"},
+        "thresholds": {"type": "object"}
+      }
+    },
+    "validation_report_v1": {
+      "description": "validate_animation.py --report: a QA envelope with one check per rule and package; a report whose status is fail makes the tool exit 1 (per D26).",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["schema"],
+      "properties": {"schema": {"const": "video2dsprite.validation.v1"}}
     }
   }
 }

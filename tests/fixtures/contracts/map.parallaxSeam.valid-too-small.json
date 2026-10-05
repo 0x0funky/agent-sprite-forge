@@ -1,0 +1,9 @@
+{
+  "axis": "y",
+  "alpha_mae": 0.0,
+  "visible_rgb_mae": 0.0,
+  "jointly_visible_pixels": 4,
+  "premultiplied_rgb_mae": 0.0,
+  "seamless_verified": false,
+  "verdict": "too_small"
+}

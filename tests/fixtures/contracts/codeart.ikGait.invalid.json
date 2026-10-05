@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "the stance is a fraction of the cycle",
+      "set": "/stance",
+      "value": 1.0,
+      "error": "1.0 is greater than the maximum of 0.95"
+    },
+    {
+      "why": "the lift is not negative",
+      "set": "/lift",
+      "value": -1,
+      "error": "-1 is less than the minimum of 0"
+    },
+    {
+      "why": "the phase is a number",
+      "set": "/phase",
+      "value": "early",
+      "error": "'early' is not of type 'number'"
+    }
+  ]
+}

@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "why": "alpha never changes",
+      "set": "/alphaUnchanged",
+      "value": false,
+      "error": "True was expected"
+    },
+    {
+      "why": "regions are half-open boxes",
+      "set": "/regions/0",
+      "value": [0, 0, 64],
+      "error": "is too short"
+    },
+    {
+      "why": "the palette is #rrggbb colours",
+      "set": "/palette/0",
+      "value": "magenta",
+      "error": "does not match"
+    },
+    {"why": "it is a QA envelope", "remove": "/method", "error": "'method' is a required property"},
+    {
+      "why": "frames record before and after hashes",
+      "remove": "/frames/0/afterSha256",
+      "error": "'afterSha256' is a required property"
+    }
+  ]
+}

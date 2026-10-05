@@ -1,0 +1,115 @@
+{
+  "schema": "codeart2d.ambient_loop.v1",
+  "plate": {
+    "path": "../src/harbour.png",
+    "sha256": "11371e10d9b01866d36b735c4de07e22226caadab32993015700a3af86c6f174",
+    "bytes": 294
+  },
+  "size": [160, 90],
+  "period_ms": 200,
+  "frame_count": 2,
+  "durations_ms": [100, 100],
+  "fps": "10/1",
+  "loop": {"policy": "cycle", "exact": true},
+  "sampling": "bilinear",
+  "frames": [
+    {
+      "path": "frames/frame_000000.png",
+      "sha256": "54f9e44ac5e279513843769fc90c9998202ae0a8a477f3dc5b0c997f77ec037b"
+    },
+    {
+      "path": "frames/frame_000001.png",
+      "sha256": "eea10c9dc1cbe7a30119ba94413bb54b357d25156ca00fbbd2469135e2afeb78"
+    }
+  ],
+  "mask": {
+    "path": "mask.png",
+    "sha256": "1c5e10333e6cfbbf2a11c8a1f4fdf3ee5ab30501c65a02a2b0c758e4106251a2"
+  },
+  "effects": [
+    {
+      "id": "harbour-water",
+      "kind": "ripple",
+      "cycles": 1,
+      "period_ms": 4800,
+      "amplitude": 1.8,
+      "wavelength": 96,
+      "axis": "x",
+      "feather": 8,
+      "opacity": 1,
+      "polygon": [[0, 57.6], [160, 57.6], [160, 90], [0, 90]],
+      "box": [0, 48, 160, 90]
+    },
+    {
+      "id": "reeds",
+      "kind": "sway",
+      "cycles": 2,
+      "period_ms": 2400,
+      "amplitude": 1.5,
+      "wavelength": 40,
+      "axis": "x",
+      "feather": 6,
+      "opacity": 1,
+      "polygon": [[6.4, 45], [32, 45], [35.2, 59.4], [4.8, 59.4]],
+      "box": [0, 38, 43, 67]
+    },
+    {
+      "id": "chimney-haze",
+      "kind": "shimmer",
+      "cycles": 3,
+      "period_ms": 1600,
+      "amplitude": 0.8,
+      "wavelength": 18,
+      "axis": "y",
+      "feather": 6,
+      "opacity": 1,
+      "polygon": [[112, 7.2], [124.8, 7.2], [128, 23.4], [108.8, 23.4]],
+      "box": [101, 0, 135, 31]
+    },
+    {
+      "id": "lantern",
+      "kind": "glow",
+      "cycles": 3,
+      "period_ms": 1600,
+      "amplitude": 0.35,
+      "wavelength": 48,
+      "axis": "x",
+      "feather": 10,
+      "opacity": 1,
+      "polygon": [[83.2, 36], [96, 36], [96, 46.8], [83.2, 46.8]],
+      "box": [72, 25, 107, 58],
+      "color": "#ffd98a"
+    }
+  ],
+  "protected": [
+    {"id": "moored-boat", "polygon": [[67.2, 63], [92.8, 63], [92.8, 75.6], [67.2, 75.6]]}
+  ],
+  "source_schema": "codeart2d.plate_effects.v1",
+  "art_source": "mixed",
+  "plate_art_source": "existing",
+  "motion_source": "code",
+  "disclosure": "motion code-drawn, no image model; plate pixels from existing",
+  "provenance": {
+    "tool": "ambient_bake",
+    "version": "1.0",
+    "params": {
+      "frames": 48,
+      "period_ms": 4800,
+      "sampling": "bilinear",
+      "strict_qc": false,
+      "preview": false
+    },
+    "inputs": [
+      {
+        "path": "plate-effects.json",
+        "sha256": "7871dfc5f4b5443ec665ae97b1b3566c934e8c7aa53700cbb4aa972412b13201",
+        "bytes": 1179
+      },
+      {
+        "path": "../src/harbour.png",
+        "sha256": "11371e10d9b01866d36b735c4de07e22226caadab32993015700a3af86c6f174",
+        "bytes": 294
+      }
+    ]
+  }
+}

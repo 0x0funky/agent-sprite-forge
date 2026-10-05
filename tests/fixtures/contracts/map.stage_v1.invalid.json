@@ -8,6 +8,12 @@
       "set": "/protectedRegions/0/polygon",
       "value": [[0.1, 0.1], [0.2, 0.1], [0.2, 0.2]]
     },
-    {"why": "unknown effect", "set": "/effects/0/kind", "value": "wave"}
+    {"why": "unknown effect", "set": "/effects/0/kind", "value": "wave"},
+    {
+      "why": "objectPosition is a UV point",
+      "set": "/objectPosition",
+      "value": [1.5, 0.5],
+      "error": "1.5 is greater than the maximum of 1"
+    }
   ]
 }

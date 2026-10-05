@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "events have known types",
+      "set": "/events/0/type",
+      "value": "spawn",
+      "error": "'spawn' is not one of"
+    },
+    {
+      "why": "the world states its tick rate",
+      "remove": "/world/tickHz",
+      "error": "'tickHz' is a required property"
+    },
+    {
+      "why": "routes are a routeCheck (or null)",
+      "set": "/routes/results/0/kind",
+      "value": "door",
+      "error": "is not valid under any of the given schemas"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.scene_snapshot.v2",
+      "error": "was expected"
+    }
+  ]
+}

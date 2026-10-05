@@ -134,7 +134,7 @@
       }
     },
     "rigClip": {
-      "description": "One rig clip: frames samples at t = i/frames for loops and t = i/(frames-1) for one-shots. events use normalised t.",
+      "description": "One rig clip: frames samples at t = i/frames for loops and t = i/(frames-1) for one-shots. events use normalised t. ik maps chain names to two-bone IK chains; grounded keeps the rig on its ground line; entry_frame, transitions and role follow the sprite clipSpec.",
       "type": "object",
       "required": ["frames", "loop", "duration_ms"],
       "properties": {
@@ -155,21 +155,56 @@
             }
           }
         },
-        "tracks": {"type": "object", "additionalProperties": {"$ref": "#/$defs/boneTrack"}}
+        "tracks": {"type": "object", "additionalProperties": {"$ref": "#/$defs/boneTrack"}},
+        "ik": {"type": "object", "additionalProperties": {"$ref": "#/$defs/ikChain"}},
+        "grounded": {"type": "boolean"},
+        "entry_frame": {"type": "integer", "minimum": 0},
+        "transitions": {"type": "array", "items": {"$ref": "sprite.schema.json#/$defs/clipTransition"}},
+        "role": {"enum": ["player", "enemy", "npc", "fx", "prop"]}
       }
     },
     "rig_anim_v1": {
-      "description": "Rig animation (roadmap 4.8) for rig_animate.py: clips that pose the bones of an SVG rig (bones are <g id data-pivot>, slots carry data-z).",
+      "description": "Rig animation (roadmap 4.8) for rig_animate.py: clips that pose the bones of an SVG rig (bones are <g id data-pivot>, slots carry data-z). states maps state names to clips; entry_reference names the clip whose first pose is the rest pose for entry frames; pixel sets the pixel route's ramps (five colours, or hi/mid/lo/dark/out with mid required), light direction, inner lines and outline.",
       "type": "object",
       "required": ["schema", "rig", "clips"],
       "properties": {
         "schema": {"const": "codeart2d.rig_anim.v1"},
         "rig": {"$ref": "common.schema.json#/$defs/relPath"},
-        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/rigClip"}}
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/rigClip"}},
+        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "entry_reference": {"type": "string", "minLength": 1},
+        "pixel": {
+          "type": "object",
+          "properties": {
+            "ramps": {
+              "type": "object",
+              "additionalProperties": {
+                "anyOf": [
+                  {"type": "array", "items": {"$ref": "common.schema.json#/$defs/hexColor"}, "minItems": 5, "maxItems": 5},
+                  {
+                    "type": "object",
+                    "required": ["mid"],
+                    "properties": {
+                      "hi": {"$ref": "common.schema.json#/$defs/hexColor"},
+                      "mid": {"$ref": "common.schema.json#/$defs/hexColor"},
+                      "lo": {"$ref": "common.schema.json#/$defs/hexColor"},
+                      "dark": {"$ref": "common.schema.json#/$defs/hexColor"},
+                      "out": {"$ref": "common.schema.json#/$defs/hexColor"}
+                    }
+                  }
+                ]
+              }
+            },
+            "light": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
+            "inner_lines": {"type": "boolean"},
+            "outline": {"type": "string", "minLength": 1},
+            "outline_mode": {"enum": ["solid", "selout", "none"]}
+          }
+        }
       }
     },
     "fx_v1": {
-      "description": "Gameplay-timed effects for fx_build.py and the fx.v1 runtime: a runtime spawns an effect at hitAt - impactMs. seeds make particles deterministic.",
+      "description": "Gameplay-timed effects for fx_build.py and the fx.v1 runtime: a runtime spawns an effect at hitAt - impactMs. seeds make particles deterministic. canvas and origin place the effects; frameMs sets the frame grid an effect is rendered on, outline names its outline colour and events are its own timed events. The six fx_build presets (slash, sparks, ring, flash, dust, projectile) are closed: fx_build refuses unknown parameters. Other primitive types stay open for hand-written runtimes.",
       "type": "object",
       "required": ["schema", "effects", "palette"],
       "properties": {
@@ -188,9 +223,35 @@
               "primitives": {
                 "type": "array",
                 "minItems": 1,
-                "items": {"type": "object", "required": ["type"], "properties": {"type": {"type": "string", "minLength": 1}}}
+                "items": {
+                  "type": "object",
+                  "required": ["type"],
+                  "properties": {"type": {"type": "string", "minLength": 1}},
+                  "allOf": [
+                    {"if": {"properties": {"type": {"const": "slash"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/fx_slash"}},
+                    {"if": {"properties": {"type": {"const": "sparks"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/fx_sparks"}},
+                    {"if": {"properties": {"type": {"const": "ring"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/fx_ring"}},
+                    {"if": {"properties": {"type": {"const": "flash"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/fx_flash"}},
+                    {"if": {"properties": {"type": {"const": "dust"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/fx_dust"}},
+                    {"if": {"properties": {"type": {"const": "projectile"}}, "required": ["type"]}, "then": {"$ref": "#/$defs/fx_projectile"}}
+                  ]
+                }
               },
-              "ramps": {"type": "object"}
+              "ramps": {"type": "object"},
+              "frameMs": {"type": "integer", "minimum": 1},
+              "loop": {"type": "boolean"},
+              "outline": {"type": "string", "minLength": 1},
+              "events": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["atMs", "name"],
+                  "properties": {
+                    "atMs": {"type": "integer", "minimum": 0},
+                    "name": {"$ref": "common.schema.json#/$defs/eventName"}
+                  }
+                }
+              }
             }
           }
         },
@@ -201,11 +262,13 @@
             {"$ref": "common.schema.json#/$defs/relPath"}
           ]
         },
-        "routes": {"type": "array", "items": {"type": "string", "minLength": 1}}
+        "routes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "canvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"}
       }
     },
     "codeart_meta_v1": {
-      "description": "codeart-meta.json beside every codeart2d output. art_source is always code (disclose it as code-drawn, no image model; codeart_core writes that text in disclosure); spec_sha256 binds the outputs to the exact text spec; qa is a QA envelope over the outputs (codeart_core wraps qa_pixels metrics in one). renderer names the tool and version, and for SVG art the codeart_core.rasterize info: backend, engine, zoom and output size. palette is usually {colors, variants} as codeart_core.write_codeart_meta writes it: base colours by name and named variants that override some of them.",
+      "description": "codeart-meta.json beside every codeart2d output. art_source is always code (disclose it as code-drawn, no image model; codeart_core writes that text in disclosure); spec_sha256 binds the outputs to the exact text spec; qa is a QA envelope over the outputs (codeart_core wraps qa_pixels metrics in one). renderer names the tool and version, and for SVG art the codeart_core.rasterize info: backend, engine, zoom and output size. palette is usually {colors, variants} as codeart_core.write_codeart_meta writes it: base colours by name and named variants that override some of them. placeholder is true for stand-in art (layout_build records it honestly). Tool details: pixelspec (render_pixelspec.py: the spec's name, schema id, canvas, anchor_px and outline mode; variants {label: folder}; frames [{index, name, file or null, empty?, reuses?}]; clips {manifest_schema, manifests, bundles, per_clip}; preview {file, scale, layout}), svg (svg_render.py render: mode vector or crisp, lint profile, zoom, canvas, anchor_px, palette_source, variants, images), route with rig and anim (rig_animate.py) or spec (fx_build.py) as fileRefs, renderer.route and for the pixel route renderer.coverage_ss, coverage and finish, and params and tilesets (autotile_build.py).",
       "type": "object",
       "required": ["schema", "art_source", "generator", "spec_sha256", "renderer", "palette", "outputs", "qa"],
       "properties": {
@@ -221,7 +284,8 @@
             "backend": {"enum": ["resvg_py", "resvg_js_cli", "chrome"]},
             "engine": {"type": "string", "minLength": 1},
             "zoom": {"type": "number", "exclusiveMinimum": 0},
-            "size": {"$ref": "common.schema.json#/$defs/size2"}
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "route": {"enum": ["pixel", "vector"]}
           }
         },
         "palette": {
@@ -241,11 +305,19 @@
           ]
         },
         "outputs": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
-        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
+        "pixelspec": {"description": "render_pixelspec.py details.", "type": "object"},
+        "svg": {"description": "svg_render.py render details.", "type": "object"},
+        "route": {"enum": ["pixel", "vector"]},
+        "rig": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "anim": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "spec": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "params": {"type": "object"},
+        "tilesets": {"type": "array", "items": {"type": "string", "minLength": 1}}
       }
     },
     "material_spec_v1": {
-      "description": "Materials for autotile_build.py: colour ramps (dark to light) per material, the tile sets to build (two or three materials for wang_corner and blob47), interior-only variants and a fixed seed.",
+      "description": "Materials for autotile_build.py: colour ramps (dark to light) per material, the tile sets to build (wang_corner takes two or three materials, blob47 exactly two, bevel and flat one), interior-only variants and a fixed seed. A material may be walkable or not (tileset collision at collision_cell resolution), carry edge and shadow bands (materialBandRule), bevel offsets per side and a texture: a base ramp position, periodic noise levels [threshold, amplitude, ramp position], marks of ramp positions ('.' or space is empty) with weights and a count per tile, or an image. A set may carry its id, plateau, wobble and margin.",
       "type": "object",
       "required": ["schema", "tile_size", "materials", "sets", "seed"],
       "properties": {
@@ -259,7 +331,62 @@
             "required": ["ramp"],
             "properties": {
               "ramp": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
-              "texture": {"anyOf": [{"type": "object"}, {"$ref": "common.schema.json#/$defs/relPath"}]}
+              "texture": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "base": {"type": "integer", "minimum": 0},
+                      "noise": {
+                        "type": "object",
+                        "required": ["levels"],
+                        "properties": {
+                          "frequency": {"type": "integer", "minimum": 1, "maximum": 8},
+                          "levels": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                              "type": "array",
+                              "minItems": 3,
+                              "maxItems": 3,
+                              "prefixItems": [{"type": "number", "minimum": 0}, {"type": "number", "minimum": 0}, {"type": "integer", "minimum": 0}]
+                            }
+                          }
+                        }
+                      },
+                      "marks": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["rows"],
+                          "properties": {
+                            "rows": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[0-9. ]*$"}},
+                            "weight": {"type": "number", "exclusiveMinimum": 0}
+                          }
+                        }
+                      },
+                      "marks_per_tile": {
+                        "anyOf": [
+                          {"type": "integer", "minimum": 0},
+                          {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 0}}
+                        ]
+                      },
+                      "mark_margin": {"type": "integer", "minimum": 1},
+                      "image": {"$ref": "common.schema.json#/$defs/relPath"},
+                      "quantize": {"type": "boolean"}
+                    }
+                  },
+                  {"$ref": "common.schema.json#/$defs/relPath"}
+                ]
+              },
+              "walkable": {"type": "boolean"},
+              "edge": {"anyOf": [{"$ref": "#/$defs/materialBandRule"}, {"type": "array", "items": {"$ref": "#/$defs/materialBandRule"}}]},
+              "shadow": {"anyOf": [{"$ref": "#/$defs/materialBandRule"}, {"type": "array", "items": {"$ref": "#/$defs/materialBandRule"}}]},
+              "bevel": {
+                "type": "object",
+                "propertyNames": {"enum": ["top", "bottom", "left", "right"]},
+                "additionalProperties": {"type": "array", "maxItems": 8, "items": {"type": "integer"}}
+              }
             }
           }
         },
@@ -271,14 +398,576 @@
             "required": ["kind", "materials"],
             "properties": {
               "kind": {"enum": ["wang_corner", "blob47", "flat", "bevel"]},
-              "materials": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string", "minLength": 1}}
+              "materials": {"type": "array", "minItems": 1, "maxItems": 3, "items": {"type": "string", "minLength": 1}},
+              "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"},
+              "plateau": {"type": "integer", "minimum": 0},
+              "wobble": {"type": "number", "minimum": 0, "maximum": 0.9},
+              "margin": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}}
             },
             "if": {"properties": {"kind": {"enum": ["wang_corner", "blob47"]}}, "required": ["kind"]},
-            "then": {"properties": {"materials": {"minItems": 2}}}
+            "then": {"properties": {"materials": {"minItems": 2}}},
+            "allOf": [
+              {"if": {"properties": {"kind": {"const": "blob47"}}, "required": ["kind"]}, "then": {"properties": {"materials": {"minItems": 2, "maxItems": 2}}}},
+              {"if": {"properties": {"kind": {"enum": ["bevel", "flat"]}}, "required": ["kind"]}, "then": {"properties": {"materials": {"maxItems": 1}}}}
+            ]
           }
         },
         "variants": {"type": "integer", "minimum": 1},
-        "seed": {"type": "integer", "minimum": 0}
+        "seed": {"type": "integer", "minimum": 0},
+        "collision_cell": {"type": "integer", "minimum": 1}
+      }
+    },
+    "doctor_report_v1": {
+      "description": "svg_render.py doctor --report: codeart_core.run_doctor output (cases, backends, primary, lint, hint?) extended into a common QA envelope, plus the platform. status is pass only when the primary backend passes every case and the portable lint rejects every lint case; deviations of fallback backends are warn checks. svg_render writes no schema key yet; codeart2d.doctor_report.v1 is the id to use when one is added.",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "type": "object",
+      "required": ["primary", "cases", "backends", "lint"],
+      "properties": {
+        "schema": {"const": "codeart2d.doctor_report.v1"},
+        "primary": {"anyOf": [{"enum": ["resvg_py", "resvg_js_cli", "chrome"]}, {"type": "null"}]},
+        "cases": {"type": "array", "items": {"type": "string"}},
+        "backends": {"type": "object"},
+        "lint": {"type": "array"},
+        "hint": {"type": "string"},
+        "platform": {"type": "object", "properties": {"system": {"type": "string"}, "python": {"type": "string"}}}
+      }
+    },
+    "ikGait": {
+      "description": "Planted-foot gait for a loop clip with stride_world_units: the foot is planted for the stance fraction of the cycle and travels stride * stance against the body, so it stays still in the world; during the swing it lifts by lift px and rolls by roll degrees. phase offsets the cycle (0..1) and x the foot's rest x.",
+      "type": "object",
+      "properties": {
+        "phase": {"type": "number"},
+        "stance": {"type": "number", "minimum": 0.05, "maximum": 0.95},
+        "lift": {"type": "number", "minimum": 0},
+        "roll": {"type": "number"},
+        "x": {"type": "number"}
+      }
+    },
+    "ikChain": {
+      "description": "Two-bone IK: bones [root, middle]; end is a child bone of middle (its pivot is the effector) or a rest point [x, y]; pole is the direction the middle joint bends toward; exactly one of target (keyframes of canvas points) or gait; angle keys the end bone's world angle; ground (default true) keeps the end bone's slots on the rig ground line.",
+      "type": "object",
+      "required": ["bones"],
+      "properties": {
+        "bones": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 2, "maxItems": 2},
+        "end": {"anyOf": [{"type": "string", "minLength": 1}, {"$ref": "common.schema.json#/$defs/point2"}]},
+        "pole": {"$ref": "common.schema.json#/$defs/point2"},
+        "target": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "prefixItems": [
+              {"type": "number", "minimum": 0, "maximum": 1},
+              {"$ref": "common.schema.json#/$defs/point2"}
+            ],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "angle": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "number"}],
+            "minItems": 2,
+            "maxItems": 2
+          }
+        },
+        "gait": {"$ref": "#/$defs/ikGait"},
+        "ground": {"type": "boolean"},
+        "ease": {"$ref": "#/$defs/easing"}
+      },
+      "oneOf": [{"required": ["target"]}, {"required": ["gait"]}]
+    },
+    "rig_report_v1": {
+      "description": "rig-report.json written by rig_animate.py: per-clip frame records (QA metrics, ground edge, margin, IK contacts), seam reports, planted-foot drift, entry frame, stride and events, all in output pixels; qa is the envelope of codeart-meta.json.",
+      "type": "object",
+      "required": ["schema", "route", "frame_size", "anchor_px", "clips", "qa"],
+      "properties": {
+        "schema": {"const": "codeart2d.rig_report.v1"},
+        "route": {"enum": ["pixel", "vector"]},
+        "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "ground_px": {"type": "number"},
+        "zoom": {"type": "integer", "minimum": 1},
+        "clips": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["frames", "loop", "duration_ms", "entry_frame", "contact"],
+            "properties": {
+              "frames": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["id", "t", "file", "stored_as", "qa", "ground"],
+                  "properties": {"file": {"$ref": "common.schema.json#/$defs/relPath"}}
+                }
+              },
+              "loop": {"type": "boolean"},
+              "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+              "seam": {"anyOf": [{"$ref": "common.schema.json#/$defs/seamReport"}, {"type": "null"}]},
+              "entry_frame": {"type": "integer", "minimum": 0},
+              "contact": {"type": "object"},
+              "events": {"type": "array", "items": {"$ref": "sprite.schema.json#/$defs/clipEvent"}}
+            }
+          }
+        },
+        "ik_clamps": {"type": "array"},
+        "ground_failures": {"type": "array"},
+        "margin_failures": {"type": "array"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "fx_slash": {
+      "description": "fx_build.py slash preset (closed: fx_build refuses unknown parameters). ramp names a ramp of the spec, colors list palette colours; impact as a time means the effect's impactMs.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"const": "slash"},
+        "ramp": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "center": {"$ref": "common.schema.json#/$defs/point2"},
+        "radius": {"type": "number", "minimum": 0},
+        "from": {"type": "number"},
+        "to": {"type": "number"},
+        "width": {"type": "number", "minimum": 0},
+        "squash": {"type": "number", "minimum": 0},
+        "trail": {"type": "number", "minimum": 0, "maximum": 1},
+        "startMs": {"anyOf": [{"const": "impact"}, {"type": "number", "minimum": 0}]},
+        "endMs": {"anyOf": [{"const": "impact"}, {"type": "number", "minimum": 0}]},
+        "fadeMs": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fx_sparks": {
+      "description": "fx_build.py sparks preset (closed: fx_build refuses unknown parameters). ramp names a ramp of the spec, colors list palette colours; impact as a time means the effect's impactMs.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"const": "sparks"},
+        "ramp": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "atMs": {"anyOf": [{"const": "impact"}, {"type": "number", "minimum": 0}]},
+        "count": {"type": "integer", "minimum": 1, "maximum": 256},
+        "angle": {"type": "number"},
+        "spread": {"type": "number", "minimum": 0},
+        "speed": {"type": "number", "minimum": 0},
+        "lifeMs": {"type": "number", "minimum": 0},
+        "length": {"type": "number", "minimum": 0},
+        "width": {"type": "number", "minimum": 0},
+        "gravity": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "fx_ring": {
+      "description": "fx_build.py ring preset (closed: fx_build refuses unknown parameters). ramp names a ramp of the spec, colors list palette colours; impact as a time means the effect's impactMs.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"const": "ring"},
+        "ramp": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "atMs": {"anyOf": [{"const": "impact"}, {"type": "number", "minimum": 0}]},
+        "lifeMs": {"type": "number", "minimum": 0},
+        "radius": {"$ref": "common.schema.json#/$defs/point2"},
+        "width": {"$ref": "common.schema.json#/$defs/point2"},
+        "squash": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fx_flash": {
+      "description": "fx_build.py flash preset (closed: fx_build refuses unknown parameters). ramp names a ramp of the spec, colors list palette colours; impact as a time means the effect's impactMs.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"const": "flash"},
+        "ramp": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "atMs": {"anyOf": [{"const": "impact"}, {"type": "number", "minimum": 0}]},
+        "lifeMs": {"type": "number", "minimum": 0},
+        "radius": {"type": "number", "minimum": 0},
+        "rays": {"type": "integer", "minimum": 1, "maximum": 16},
+        "rayLength": {"type": "number", "minimum": 0},
+        "rotation": {"type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "fx_dust": {
+      "description": "fx_build.py dust preset (closed: fx_build refuses unknown parameters). ramp names a ramp of the spec, colors list palette colours; impact as a time means the effect's impactMs.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"const": "dust"},
+        "ramp": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "atMs": {"anyOf": [{"const": "impact"}, {"type": "number", "minimum": 0}]},
+        "count": {"type": "integer", "minimum": 1, "maximum": 256},
+        "spread": {"type": "number", "minimum": 0},
+        "rise": {"type": "number", "minimum": 0},
+        "drift": {"type": "number"},
+        "radius": {"$ref": "common.schema.json#/$defs/point2"},
+        "lifeMs": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fx_projectile": {
+      "description": "fx_build.py projectile preset (closed: fx_build refuses unknown parameters). ramp names a ramp of the spec, colors list palette colours; impact as a time means the effect's impactMs.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": {"const": "projectile"},
+        "ramp": {"type": "string", "minLength": 1},
+        "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "angle": {"type": "number"},
+        "radius": {"type": "number", "minimum": 0},
+        "trail": {"type": "number", "minimum": 0},
+        "orbiters": {"type": "integer", "minimum": 0, "maximum": 16},
+        "periodMs": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "fx_report_v1": {
+      "description": "fx-report.json written by fx_build.py: per effect the frames (start, duration and sample ms, QA metrics, margin), durations, hit frame, dropped tail frames, events and loop seam; slash arc progress per frame; the build and runtime records; qa is the envelope of codeart-meta.json. fx-verify.json is a common qaEnvelope plus effects and findings.",
+      "type": "object",
+      "required": ["schema", "route", "canvas", "origin", "effects", "qa"],
+      "properties": {
+        "schema": {"const": "codeart2d.fx_report.v1"},
+        "route": {"enum": ["pixel", "vector"]},
+        "canvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "effects": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["frames", "duration_ms", "hit_frame", "events"],
+            "properties": {
+              "frames": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["id", "start_ms", "duration_ms", "sample_ms", "file", "qa"],
+                  "properties": {"file": {"$ref": "common.schema.json#/$defs/relPath"}}
+                }
+              },
+              "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+              "hit_frame": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+              "events": {"type": "array", "items": {"$ref": "sprite.schema.json#/$defs/clipEvent"}},
+              "seam": {"anyOf": [{"$ref": "common.schema.json#/$defs/seamReport"}, {"type": "null"}]}
+            }
+          }
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "materialBandRule": {
+      "description": "An edge or shadow band of an autotile material: colors are ramp positions (integers) or explicit colours, applied in order from the boundary inward; against and from limit the rule to boundaries with or from the named materials.",
+      "type": "object",
+      "required": ["colors"],
+      "properties": {
+        "colors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 8,
+          "items": {"anyOf": [{"type": "integer", "minimum": 0}, {"$ref": "common.schema.json#/$defs/hexColor"}]}
+        },
+        "against": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "from": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "layout_spec_v1": {
+      "description": "Input of layout_build.py. size is in tiles; terrain shapes use tile (vertex) coordinates and paint in order; objects, spawns, interactions, scatter regions and clearances are world pixels.",
+      "type": "object",
+      "required": ["schema", "size", "materials"],
+      "properties": {
+        "schema": {"const": "codeart2d.layout_spec.v1"},
+        "map_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+        "size": {"$ref": "common.schema.json#/$defs/size2"},
+        "tile_size": {"type": "integer", "minimum": 2},
+        "seed": {"type": "integer", "minimum": 0},
+        "materials": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["color"],
+            "properties": {
+              "color": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "walkable": {"type": "boolean"},
+              "priority": {"type": "number"}
+            }
+          }
+        },
+        "base": {"type": "string", "minLength": 1},
+        "terrain": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["shape", "material"],
+            "properties": {
+              "id": {"type": "string"},
+              "shape": {"enum": ["ellipse", "rect", "polygon", "road"]},
+              "material": {"type": "string"},
+              "center": {"$ref": "common.schema.json#/$defs/point2"},
+              "radius": {
+                "anyOf": [{"type": "number", "exclusiveMinimum": 0}, {"$ref": "common.schema.json#/$defs/point2"}]
+              },
+              "rotate": {"type": "number"},
+              "wobble": {"type": "number", "minimum": 0},
+              "box": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
+              "points": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/point2"}},
+              "width": {"type": "number", "exclusiveMinimum": 0},
+              "smooth": {"type": "boolean"}
+            }
+          }
+        },
+        "hygiene": {"type": "object", "properties": {"saddles": {"type": "boolean"}, "specks": {"type": "boolean"}}},
+        "actor": {
+          "type": "object",
+          "properties": {
+            "radius": {"type": "number", "exclusiveMinimum": 0},
+            "ySquash": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "prop_pack": {"$ref": "common.schema.json#/$defs/relPath"},
+        "props": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "image": {"$ref": "common.schema.json#/$defs/relPath"},
+              "pixelspec": {"anyOf": [{"$ref": "#/$defs/pixelspec_v1"}, {"$ref": "common.schema.json#/$defs/relPath"}]},
+              "pack": {"type": "string"},
+              "variants": {"type": "array", "minItems": 1},
+              "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+              "size": {"$ref": "common.schema.json#/$defs/size2"},
+              "color": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "footprint": {"$ref": "map.schema.json#/$defs/footprint"},
+              "solid": {"type": "boolean"},
+              "occlusion": {"enum": ["low", "tall", "foreground"]},
+              "flip": {"type": "boolean"},
+              "scale": {"type": "number", "exclusiveMinimum": 0},
+              "interactions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["name"],
+                  "properties": {
+                    "name": {"type": "string"},
+                    "offset": {"$ref": "common.schema.json#/$defs/point2"},
+                    "reach": {"type": "number", "exclusiveMinimum": 0}
+                  }
+                }
+              }
+            }
+          }
+        },
+        "objects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "prop", "x", "y"],
+            "properties": {
+              "id": {"type": "string"},
+              "prop": {"type": "string"},
+              "x": {"type": "number"},
+              "y": {"type": "number"},
+              "flip_x": {"type": "boolean"},
+              "scale": {"type": "number", "exclusiveMinimum": 0},
+              "variant": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "scatter": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["kinds", "count", "spacing"],
+            "properties": {
+              "id": {"type": "string"},
+              "kinds": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {"type": "number", "exclusiveMinimum": 0}
+              },
+              "count": {"type": "integer", "minimum": 0},
+              "spacing": {"type": "number", "exclusiveMinimum": 0},
+              "attempts": {"type": "integer", "minimum": 1},
+              "density": {"type": "object"},
+              "clearance": {"type": "object"},
+              "near": {"type": "object"},
+              "region": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}
+            }
+          }
+        },
+        "exits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "edge", "to"],
+            "properties": {
+              "id": {"type": "string"},
+              "edge": {"enum": ["west", "east", "north", "south"]},
+              "road": {"type": "string"},
+              "span": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+              "to": {"type": "string", "minLength": 1},
+              "depth": {"type": "number", "exclusiveMinimum": 0},
+              "radius": {"type": "number", "minimum": 0},
+              "arrival": {"type": "string"}
+            }
+          }
+        },
+        "spawns": {"type": "array", "items": {"type": "object", "required": ["id", "x", "y"]}},
+        "interactions": {"type": "array", "items": {"type": "object", "required": ["id", "x", "y"]}}
+      }
+    },
+    "parallax_spec_v1": {
+      "description": "Input of parallax_build.py: viewport and camera envelope as in parallax_plan, and layers back to front. Generated kinds (sky, ridge, clouds, foreground) are periodic in their period; image layers bring their own PNG.",
+      "type": "object",
+      "required": ["schema", "viewport", "layers"],
+      "properties": {
+        "schema": {"const": "codeart2d.parallax_spec.v1"},
+        "viewport": {"$ref": "common.schema.json#/$defs/size2"},
+        "camera": {
+          "type": "object",
+          "properties": {
+            "x": {"$ref": "common.schema.json#/$defs/point2"},
+            "y": {"$ref": "common.schema.json#/$defs/point2"},
+            "zoom": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "number", "exclusiveMinimum": 0}}
+          }
+        },
+        "seed": {"type": "integer", "minimum": 0},
+        "pixel_art": {"type": "boolean"},
+        "sweep_frames": {"type": "integer", "minimum": 0},
+        "layers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "kind"],
+            "properties": {
+              "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
+              "kind": {"enum": ["sky", "ridge", "clouds", "foreground", "image"]},
+              "role": {"type": "string", "minLength": 1},
+              "scroll": {"anyOf": [{"type": "number"}, {"$ref": "common.schema.json#/$defs/point2"}]},
+              "repeat": {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2},
+              "period": {"type": "integer", "minimum": 8},
+              "seed": {"type": "integer", "minimum": 0},
+              "colors": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+              "fill": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "rim": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "shade": {"$ref": "common.schema.json#/$defs/hexColor"},
+              "image": {"$ref": "common.schema.json#/$defs/relPath"},
+              "alpha": {"enum": ["opaque", "transparent"]}
+            },
+            "if": {"properties": {"kind": {"const": "image"}}, "required": ["kind"]},
+            "then": {"required": ["image", "role", "scroll"]}
+          }
+        }
+      }
+    },
+    "plate_effects_v1": {
+      "description": "Input of ambient_bake.py: effects in feathered polygons of a static plate. Every effect period must divide the loop period_ms (default: their least common multiple).",
+      "type": "object",
+      "required": ["schema", "effects"],
+      "properties": {
+        "schema": {"const": "codeart2d.plate_effects.v1"},
+        "plate": {"$ref": "common.schema.json#/$defs/relPath"},
+        "units": {"enum": ["uv", "px"]},
+        "period_ms": {"type": "integer", "minimum": 1},
+        "frames": {"type": "integer", "minimum": 2},
+        "fps": {"type": "number", "exclusiveMinimum": 0},
+        "sampling": {"enum": ["bilinear", "nearest"]},
+        "effects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "polygon"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "kind": {"enum": ["ripple", "shimmer", "sway", "glow"]},
+              "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
+              "period": {"type": "number", "exclusiveMinimum": 0},
+              "amplitude": {"type": "number", "minimum": 0},
+              "wavelength": {"type": "number", "exclusiveMinimum": 0},
+              "axis": {"enum": ["x", "y"]},
+              "feather": {"type": "number", "minimum": 0},
+              "opacity": {"type": "number", "minimum": 0, "maximum": 1},
+              "color": {"$ref": "common.schema.json#/$defs/hexColor"}
+            }
+          }
+        },
+        "protected": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {"type": "string"},
+              "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
+              "box": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4}
+            },
+            "oneOf": [{"required": ["polygon"]}, {"required": ["box"]}]
+          }
+        }
+      }
+    },
+    "ambient_loop_v1": {
+      "description": "ambient-loop.json from ambient_bake.py: a cycle loop of frame_count PNG frames lasting period_ms; durations_ms sum to period_ms; frame N would equal frame 0. art_source is code only when the plate itself is code art (plate_art_source records the plate's, motion_source the motion's).",
+      "type": "object",
+      "required": [
+        "schema",
+        "plate",
+        "size",
+        "period_ms",
+        "frame_count",
+        "durations_ms",
+        "fps",
+        "frames",
+        "mask",
+        "effects",
+        "art_source"
+      ],
+      "properties": {
+        "schema": {"const": "codeart2d.ambient_loop.v1"},
+        "plate": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "size": {"$ref": "common.schema.json#/$defs/size2"},
+        "period_ms": {"type": "integer", "minimum": 1},
+        "frame_count": {"type": "integer", "minimum": 2},
+        "durations_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+        "fps": {"$ref": "common.schema.json#/$defs/fpsValue"},
+        "loop": {"type": "object", "properties": {"policy": {"const": "cycle"}, "exact": {"type": "boolean"}}},
+        "sampling": {"enum": ["bilinear", "nearest"]},
+        "frames": {"type": "array", "minItems": 2, "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
+        "mask": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "effects": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "kind", "cycles", "polygon"],
+            "properties": {
+              "id": {"type": "string"},
+              "kind": {"enum": ["ripple", "shimmer", "sway", "glow"]},
+              "cycles": {"type": "integer", "minimum": 1},
+              "polygon": {"$ref": "common.schema.json#/$defs/polygon"}
+            }
+          }
+        },
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "plate_art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "motion_source": {"const": "code"},
+        "provenance": {"$ref": "common.schema.json#/$defs/provenance"}
       }
     }
   }

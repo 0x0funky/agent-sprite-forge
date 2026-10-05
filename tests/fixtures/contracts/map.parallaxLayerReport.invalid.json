@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "seams are parallaxSeams",
+      "set": "/repeat_seams/0/axis",
+      "value": "z",
+      "error": "'z' is not one of"
+    },
+    {
+      "why": "the scale is uniform and positive",
+      "set": "/scale",
+      "value": -1,
+      "error": "less than or equal to the minimum of 0"
+    },
+    {
+      "why": "the verdict is recorded",
+      "remove": "/passed",
+      "error": "'passed' is a required property"
+    },
+    {
+      "why": "repeat is two booleans",
+      "set": "/repeat",
+      "value": [true, false, false],
+      "error": "is too long"
+    }
+  ]
+}
