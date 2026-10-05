@@ -292,7 +292,8 @@ class RoundingAndAnchorErrorTests(unittest.TestCase):
         """repro_02 (MAP-21): an odd-width bottom-centre prop moved 1 world px moves 1 canvas px every time."""
         lefts = [COMPOSE.placement_xy({"x": x, "y": 50}, 5, 8)[0] for x in range(10, 16)]
         self.assertEqual(lefts, [8, 9, 10, 11, 12, 13])
-        self.assertEqual([COMPOSE._local_round_half_up(value) for value in (2.5, -2.5, 3.5, -0.5)], [3, -2, 4, 0])
+        self.assertEqual([COMPOSE.forge_core.round_half_up(value) for value in (2.5, -2.5, 3.5, -0.5)], [3, -2, 4, 0])
+        self.assertFalse(hasattr(COMPOSE, "_local_round_half_up"))  # D30: forge_core's rule, no private copy
 
     def test_anchor_world_error_reports_the_rounding(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -674,8 +675,10 @@ class OverlayAndAuditTests(unittest.TestCase):
             self.assertIn("../pack/tree/prop.png", {ref["path"] for ref in audit["inputs"]})
 
     def test_actor_inside_a_solid_or_hole_fails_and_hidden_actor_warns(self):
-        cases = {"inside the tree trunk": ((62, 99), ["t1", "t2"]), "in the hole": ((165, 135), []),
-                 "against the wall": ((52, 60), ["wall"])}
+        """With --bundle, actor feet are judged on the bundle's D2 blocking set (D2, D4), as map_nav does:
+        a solid and a hole fail. The trees are placement footprints, which the bundle does not know, so
+        an actor in their trunks stays valid and is reported by actor_feet_off_placement_footprints."""
+        cases = {"in the hole": ((165, 135), []), "against the wall": ((52, 60), ["wall"])}
         for name, (xy, blockers) in cases.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
@@ -688,6 +691,19 @@ class OverlayAndAuditTests(unittest.TestCase):
                 self.assertEqual(checks["actor_feet_valid"]["value"]["invalid"], ["hero"])
                 row = next(row for row in audit["placements"] if row["id"] == "hero")
                 self.assertEqual(row["blocked_by"], blockers)
+                self.assertEqual(checks["actor_feet_valid"]["value"]["model"], "bundle")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.scene(root, actor_xy=(62, 99))  # inside the tree trunks t1 and t2
+            run = self.run_scene(root, "--audit-out", root / "out" / "audit.json")
+            self.assertEqual(run.returncode, 0, run.stderr)
+            audit = json.loads((root / "out" / "audit.json").read_text(encoding="utf-8"))
+            checks = {check["id"]: check for check in audit["checks"]}
+            self.assertEqual(checks["actor_feet_valid"]["status"], "pass")
+            self.assertEqual(checks["actor_feet_off_placement_footprints"]["status"], "warn")
+            self.assertEqual(checks["actor_feet_off_placement_footprints"]["value"]["actors"], ["hero"])
+            row = next(row for row in audit["placements"] if row["id"] == "hero")
+            self.assertEqual((row["blocked_by"], row["in_placement_footprints"]), ([], ["t1", "t2"]))
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             self.scene(root, actor_xy=(64, 90))
@@ -807,6 +823,186 @@ class OverlayAndAuditTests(unittest.TestCase):
             summary = json.loads(run.stdout)
             self.assertEqual(Path(summary["report"]), (root / "out" / "report.json").resolve())
             self.assertTrue(run.stdout.isascii())
+
+
+
+class IntegrationDecisionTests(unittest.TestCase):
+    """Phase 3 decisions: footprint basis (D7), actor feet through forge_nav (D4, D33), v1 packs through
+    extract_prop_pack.read_manifest (D10), flip_x (D6) and BOM-tolerant JSON (D28)."""
+
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temporary.cleanup)
+        self.root = Path(self.temporary.name)
+        Image.new("RGBA", (120, 120), (200, 200, 200, 255)).save(self.root / "base.png")
+        Image.new("RGBA", (1, 1), (255, 255, 255, 255)).save(self.root / "dot.png")
+
+    def audit(self, placements, *extra, name="audit"):
+        (self.root / f"{name}.json").write_text(json.dumps(placements), encoding="utf-8")
+        run = compose("--base", self.root / "base.png", "--placements", self.root / f"{name}.json", "--output",
+                      self.root / f"{name}.png", "--audit-out", self.root / f"{name}-audit.json", *extra)
+        self.assertEqual(run.returncode, 0, run.stderr)
+        return json.loads((self.root / f"{name}-audit.json").read_text(encoding="utf-8")), run
+
+    def test_footprint_basis_prop_px_is_the_default_and_never_warned(self):
+        """D7: prop_px (B10's value) and its legacy alias image_px scale with the sprite; world_px only with
+        --scale; nothing about the canonical value is warned (review B12, blocking item 1)."""
+        bases = {}
+        for basis in (None, "prop_px", "image_px", "world_px"):
+            footprint = {"shape": "ellipse", "width": 8, "depth": 4, "offset": [2, -1]}
+            if basis:
+                footprint["basis"] = basis
+            placement = {"id": "a", "image": "dot.png", "x": 50, "y": 60, "anchor": "px", "anchorPx": [0, 0],
+                         "scale": 3, "footprint": footprint}
+            item = COMPOSE.prepare_placement(placement, [self.root])
+            self.assertEqual(item.warnings, [])
+            bases[basis] = {key: item.footprint[key] for key in ("cx", "cy", "rx", "ry")}
+        self.assertEqual(bases[None], bases["prop_px"])
+        self.assertEqual(bases["prop_px"], bases["image_px"])
+        self.assertEqual(bases["prop_px"], {"cx": 56.0, "cy": 57.0, "rx": 12.0, "ry": 6.0})
+        self.assertEqual(bases["world_px"], {"cx": 52.0, "cy": 59.0, "rx": 4.0, "ry": 2.0})
+        unknown = COMPOSE.prepare_placement({"image": "dot.png", "x": 5, "y": 5, "footprint": {
+            "shape": "rect", "width": 2, "depth": 2, "basis": "screen_px"}}, [self.root])
+        self.assertTrue(any("basis 'screen_px'" in warning and "read as prop_px" in warning
+                            for warning in unknown.warnings))
+
+    def boundary_bundle(self):
+        """check_b13.py's probe, scaled down: a walk region with a hole, a rect, an ellipse and a polygon
+        solid, actor radius 0."""
+        return {"schema": "generate2dmap.map_bundle.v2", "id": "probe",
+                "world": {"width": 120, "height": 120, "unit": "px"},
+                "layers": [{"name": "ground", "kind": "image", "image": "base.png"}],
+                "collision": {"actorRadius": 0, "walkRegions": [{
+                    "polygon": [[10, 10], [110, 10], [110, 110], [10, 110]],
+                    "holes": [[[70, 70], [90, 70], [90, 90], [70, 90]]]}],
+                    "solids": [{"shape": "rect", "x": 20, "y": 20, "w": 20, "h": 20},
+                               {"shape": "ellipse", "cx": 60, "cy": 40, "rx": 10, "ry": 5},
+                               {"shape": "polygon", "points": [[20, 60], [40, 60], [40, 80], [20, 80]]}]},
+                "spawns": [{"id": "s", "x": 15, "y": 15}]}
+
+    def test_actor_feet_agree_with_map_nav_on_boundary_points(self):
+        """D4 (review B12, blocking item 2, repro B): with --bundle, an actor's feet are valid exactly when
+        map_nav.py query says so, on rect, ellipse and polygon edges, walk-region and hole edges."""
+        (self.root / "probe.json").write_text(json.dumps(self.boundary_bundle()), encoding="utf-8")
+        points = [(40, 30), (20, 30), (30, 20), (30, 40), (70, 40), (60, 45), (10, 50), (110, 50), (50, 10),
+                  (50, 110), (70, 80), (90, 80), (80, 70), (80, 90), (40, 70), (30, 80), (39.99, 30), (40.01, 30)]
+        actors = [{"id": f"a{i}", "image": "dot.png", "x": x, "y": y, "anchor": "px", "anchorPx": [0, 0]}
+                  for i, (x, y) in enumerate(points)]
+        audit, _ = self.audit({"props": [], "actors": actors}, "--bundle", self.root / "probe.json")
+        rows = {row["id"]: row for row in audit["placements"]}
+        compose_valid = [rows[f"a{i}"]["foot_valid"] for i in range(len(points))]
+        nav = run_cli([script_path("generate2dmap", "map_nav"), "query", "--bundle", self.root / "probe.json",
+                       *[part for x, y in points for part in ("--point", f"{x},{y}")]])
+        self.assertEqual(nav.returncode, 0, nav.stderr)
+        self.assertEqual(compose_valid, [point["valid"] for point in json.loads(nav.stdout)["points"]])
+        self.assertEqual(compose_valid[:4], [False] * 4)  # closed rect: its edges block (D1)
+        checks = {check["id"]: check for check in audit["checks"]}
+        self.assertEqual(checks["actor_feet_valid"]["value"]["model"], "bundle")
+
+    def test_actor_on_a_solid_material_pixel_fails_like_map_nav(self):
+        """D2 and D4 (review B12, repro A): material classes block in the audit as in map_nav."""
+        bundle = self.boundary_bundle()
+        materials = np.zeros((120, 120, 4), np.uint8)
+        materials[...] = (0, 0, 0, 255)
+        materials[100:110, 50:60] = (128, 128, 128, 255)  # rock: solid
+        materials[100:110, 70:80] = (0, 0, 255, 255)  # deep water: blocks unless walkable
+        Image.fromarray(materials).save(self.root / "materials.png")
+        bundle["material_map"] = {"image": "materials.png", "materials": {
+            "floor": {"class": "decor", "color": "#000000"}, "rock": {"class": "solid", "color": "#808080"},
+            "deep": {"class": "liquid", "color": "#0000ff"}}}
+        (self.root / "materials-bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
+        actors = [{"id": name, "image": "dot.png", "x": x, "y": 104, "anchor": "px", "anchorPx": [0, 0]}
+                  for name, x in (("on-rock", 55), ("in-water", 75), ("on-floor", 95))]
+        audit, _ = self.audit({"props": [], "actors": actors}, "--bundle", self.root / "materials-bundle.json")
+        rows = {row["id"]: row for row in audit["placements"]}
+        self.assertEqual({name: rows[name]["foot_valid"] for name in rows},
+                         {"on-rock": False, "in-water": False, "on-floor": True})
+        self.assertEqual(rows["on-rock"]["blocked_by"], ["material_map"])
+        nav = run_cli([script_path("generate2dmap", "map_nav"), "query", "--bundle",
+                       self.root / "materials-bundle.json", "--point", "55,104", "--point", "75,104",
+                       "--point", "95,104"])
+        self.assertEqual([p["valid"] for p in json.loads(nav.stdout)["points"]], [False, False, True])
+
+    def test_without_a_bundle_rect_footprints_are_closed(self):
+        """D33: the no-bundle path uses the same closed sets: an actor on a rect footprint's edge is blocked."""
+        props = [{"id": "crate", "image": "dot.png", "x": 60, "y": 60, "anchor": "px", "anchorPx": [0, 0],
+                  "footprint": {"shape": "rect", "width": 10, "depth": 6, "basis": "world_px"}, "solid": True}]
+        actors = [{"id": name, "image": "dot.png", "x": x, "y": 60, "anchor": "px", "anchorPx": [0, 0]}
+                  for name, x in (("on-edge", 65), ("outside", 65.5))]
+        audit, _ = self.audit({"props": props, "actors": actors})
+        rows = {row["id"]: row for row in audit["placements"]}
+        self.assertEqual((rows["on-edge"]["foot_valid"], rows["outside"]["foot_valid"]), (False, True))
+        self.assertEqual(rows["on-edge"]["blocked_by"], ["crate"])
+        checks = {check["id"]: check for check in audit["checks"]}
+        self.assertEqual(checks["actor_feet_valid"]["value"]["model"], "canvas")
+        self.assertEqual(checks["actor_feet_off_placement_footprints"]["status"], "skipped")
+
+    def test_v1_pack_anchors_at_the_art_bottom_through_read_manifest(self):
+        """D10: a cfed170 v1 pack is read with extract_prop_pack.read_manifest, so its padded prop stands on
+        the art's bottom edge (the v1 bottom-centre rule left it floating by its 8 px padding)."""
+        (self.root / "pack" / "tree").mkdir(parents=True)
+        padded_tree().save(self.root / "pack" / "tree" / "prop.png")
+        item = {"label": "tree", "image": "tree/prop.png", "source_box": [0, 0, 40, 60],
+                "padded_crop_bbox": [0, 0, 40, 60], "crop_bbox": [10, 4, 30, 52], "output_size": [40, 60]}
+        (self.root / "pack" / "prop-pack.json").write_text(json.dumps({"accepted": [item], "rejected": []}),
+                                                           encoding="utf-8")
+        (self.root / "placements.json").write_text(json.dumps(
+            {"props": [{"id": "tree", "image": "pack/tree/prop.png", "x": 60, "y": 100}]}), encoding="utf-8")
+        run = compose("--base", self.root / "base.png", "--placements", self.root / "placements.json",
+                      "--output", self.root / "out.png", "--report", self.root / "report.json")
+        self.assertEqual(run.returncode, 0, run.stderr)
+        entry = json.loads((self.root / "report.json").read_text(encoding="utf-8"))["pasted"][0]
+        self.assertEqual((entry["anchor_source"], entry["anchorPx"]), ("manifest", [20, 52]))
+        pixels = rgba(self.root / "out.png")[:, 60, :3].astype(int)
+        self.assertEqual(int(np.flatnonzero(np.abs(pixels - 200).sum(axis=1) > 30).max()), 99)
+        self.assertIn("a v1 prop pack", run.stderr)
+
+    def test_flip_x_mirrors_the_art_and_its_footprint_around_the_anchor(self):
+        """D6: flip_x draws the art mirrored around the anchor x (the anchor still lands on x) and mirrors
+        the footprint with it."""
+        art = np.zeros((10, 6, 4), np.uint8)
+        art[:, :3] = (220, 30, 30, 255)
+        art[:, 3:] = (30, 30, 220, 255)
+        Image.fromarray(art).save(self.root / "post.png")
+        common = {"image": "post.png", "y": 50, "anchor": "px", "anchorPx": [1, 10],
+                  "footprint": {"shape": "rect", "width": 2, "depth": 2, "offset": [2, 0]}}
+        plain = COMPOSE.prepare_placement({**common, "id": "plain", "x": 30}, [self.root])
+        flipped = COMPOSE.prepare_placement({**common, "id": "flipped", "x": 30, "flip_x": True}, [self.root])
+        self.assertEqual((plain.left, flipped.left), (29, 25))  # the mirrored anchor 6 - 1 = 5 lands on x 30
+        self.assertEqual((plain.anchor_canvas, flipped.anchor_canvas), ((30.0, 50.0), (30.0, 50.0)))
+        self.assertEqual((plain.footprint["cx"], flipped.footprint["cx"]), (32.0, 28.0))
+        np.testing.assert_array_equal(np.asarray(flipped.sprite), art[:, ::-1])
+        entry = COMPOSE.report_entry(flipped, (120, 120))
+        self.assertIs(entry["flip_x"], True)
+        self.assertNotIn("flip_x", COMPOSE.report_entry(plain, (120, 120)))
+        with self.assertRaisesRegex(ValueError, "flip_x must be true or false"):
+            COMPOSE.prepare_placement({**common, "x": 30, "flip_x": "yes"}, [self.root])
+
+    def test_placement_footprint_and_solid_follow_the_contract(self):
+        """Review B12 (non-blocking 9): the placement footprint and solid of the integrated schema are what
+        compose reads; a basis outside D7's enum or a non-boolean solid is refused by the contract."""
+        prop = {"id": "crate", "image": "dot.png", "x": 5, "y": 5, "anchor": "px", "anchorPx": [0, 0],
+                "layer": "props", "footprint": {"shape": "rect", "width": 4, "depth": 2, "basis": "world_px"},
+                "solid": True, "flip_x": True}
+        assert_valid_contract({"schema": "generate2dmap.placements.v2", "props": [prop]}, "map", "placements_v2",
+                              skill=SKILL)
+        for broken in ({**prop, "footprint": {**prop["footprint"], "basis": "screen_px"}}, {**prop, "solid": "yes"},
+                       {**prop, "footprint": {"shape": "rect"}}):
+            with self.subTest(broken=broken):
+                self.assertTrue(contract_errors({"schema": "generate2dmap.placements.v2", "props": [broken]},
+                                                "map", "placements_v2", skill=SKILL))
+        item = COMPOSE.prepare_placement(prop, [self.root])
+        self.assertEqual((item.footprint["solid"], item.footprint["cx"], item.flip_x), (True, 5.0, True))
+
+    def test_json_inputs_may_carry_a_bom(self):
+        """D28 (review B12): placements and bundles written with a UTF-8 BOM are read."""
+        (self.root / "bom.json").write_text(json.dumps({"props": [{"image": "dot.png", "x": 5, "y": 5}]}),
+                                            encoding="utf-8-sig")
+        (self.root / "bom-bundle.json").write_text(json.dumps(self.boundary_bundle()), encoding="utf-8-sig")
+        run = compose("--base", self.root / "base.png", "--placements", self.root / "bom.json", "--output",
+                      self.root / "bom.png", "--bundle", self.root / "bom-bundle.json", "--audit-out",
+                      self.root / "bom-audit.json")
+        self.assertEqual(run.returncode, 0, run.stderr)
 
 
 if __name__ == "__main__":

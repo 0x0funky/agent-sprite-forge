@@ -449,7 +449,8 @@ class CoverageDefaultTests(unittest.TestCase):
 
 
 class SeamTests(unittest.TestCase):
-    """B12-T4: normalised repeat seams (MAP-14, repro_16): the wrap step against the layer's own steps."""
+    """B12-T4: normalised repeat seams (MAP-14, repro_16): the wrap step against the art's own steps,
+    measured by forge_core.edge_seam_report, the one seam metric with snake_case verdicts (D9)."""
 
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -474,7 +475,7 @@ class SeamTests(unittest.TestCase):
                             "scroll_factor": [0.5, 0], "repeat": [True, False]}]}
 
     def test_verdicts_separate_a_true_join_from_a_duplicated_edge(self):
-        expected = {"seamless": "continuous", "duplicate": "duplicate-edge", "jump": "seam", "flat": "flat"}
+        expected = {"seamless": "continuous", "duplicate": "duplicate_edge", "jump": "seam", "flat": "flat"}
         for name, verdict in expected.items():
             with self.subTest(layer=name):
                 result = PARALLAX.validate_plan(self.plan(name), self.root)
@@ -483,24 +484,33 @@ class SeamTests(unittest.TestCase):
                 self.assertFalse(seam["seamless_verified"])
                 self.assertTrue(result["passed"])
                 flagged = any("Repeat seam" in warning for warning in result["warnings"])
-                self.assertEqual(flagged, verdict in ("seam", "duplicate-edge"))
+                self.assertEqual(flagged, verdict in ("seam", "duplicate_edge"))
+                self.assertEqual(requested_contract_errors(seam, "parallaxSeam"), [])
+                self.assertEqual(contract_errors(seam, "common", "edgeSeam", skill="generate2dmap"), [])
                 strict = PARALLAX.validate_plan(self.plan(name), self.root, strict_seams=True)
                 self.assertEqual(strict["passed"], verdict in ("continuous", "flat"))
         duplicate = PARALLAX.validate_plan(self.plan("duplicate"), self.root)["layers"][1]["repeat_seams"][0]
         self.assertEqual(duplicate["alpha_mae"], 0)
         self.assertEqual(duplicate["visible_rgb_mae"], 0)  # edge equality calls the stutter perfect
 
-    def test_ratios_are_forge_core_seam_report_over_columns(self):
+    def test_seams_are_forge_core_edge_seam_report(self):
+        """D9: the seam fields and the verdict are forge_core.edge_seam_report of the layer with itself (the
+        transposed image for rows); layer_p95 keeps seam_report's comparison with every step of the layer."""
         with Image.open(self.root / "seamless.png") as image:
             pixels = np.asarray(image.convert("RGBA"))
         seam = PARALLAX.seam_metrics(pixels, "x")
-        reference = FORGE_CORE.seam_report(pixels[:, i:i + 1] for i in range(pixels.shape[1]))
-        for key in ("seam", "adjacent_median", "adjacent_p95", "seam_over_median", "seam_over_p95"):
-            self.assertAlmostEqual(seam[key], reference[key], places=12)
-        self.assertLessEqual(seam["seam_over_p95"], 1.0)
+        reference = FORGE_CORE.edge_seam_report(pixels, pixels)
+        self.assertEqual({key: seam[key] for key in reference}, reference)
+        self.assertLessEqual(seam["seam_ratio"], FORGE_CORE.EDGE_SEAM_NOMINAL_RATIO)
+        layer = FORGE_CORE.seam_report(pixels[:, i:i + 1] for i in range(pixels.shape[1]))
+        self.assertAlmostEqual(seam["layer_p95"]["seam_over_p95"], layer["seam_over_p95"], places=12)
         rows = PARALLAX.seam_metrics(np.ascontiguousarray(pixels.transpose(1, 0, 2)), "y")
-        self.assertAlmostEqual(rows["seam_over_p95"], seam["seam_over_p95"], places=12)
-        self.assertEqual(PARALLAX.seam_metrics(pixels[:, :1], "x")["verdict"], "too-small")
+        self.assertEqual({key: rows[key] for key in reference}, reference)
+        tiny = PARALLAX.seam_metrics(pixels[:, :1], "x")
+        self.assertEqual(tiny["verdict"], "too_small")
+        self.assertNotIn("layer_p95", tiny)
+        self.assertNotIn("frames", tiny)
+        self.assertEqual(requested_contract_errors(tiny, "parallaxSeam"), [])
 
 
 class PixelGridTests(unittest.TestCase):
@@ -594,7 +604,8 @@ class AspectSweepTests(unittest.TestCase):
         self.assertFalse(top_left["aspect_sweep"]["aspects"][0]["passed"])
         for bad in ("wide", "0:9", "-4:3"):
             with self.subTest(aspect=bad), self.assertRaises(ValueError):
-                PARALLAX._local_parse_aspect(bad)
+                PARALLAX.forge_core.parse_aspect(bad)  # D30: the screen-aspect helpers are forge_core's
+        self.assertFalse(hasattr(PARALLAX, "_local_parse_aspect") or hasattr(PARALLAX, "_local_aspect_viewport"))
 
 
 class ParallaxCliTests(unittest.TestCase):
@@ -620,6 +631,18 @@ class ParallaxCliTests(unittest.TestCase):
 
     def test_help_works_under_cp1252(self):
         assert_cli_help(SKILL, "validate_parallax")
+
+    def test_bom_plan_and_absolute_image_paths(self):
+        """D28: a plan saved with a BOM is read; an absolute layer path is reported plan-relative, never
+        absolute (MAP-24, review B12)."""
+        plan = json.loads(json.dumps(self.plan))
+        plan["layers"][1]["image"] = (self.root / "far.png").resolve().as_posix()
+        (self.root / "bom-plan.json").write_text(json.dumps(plan), encoding="utf-8-sig")
+        run = parallax_cli("--spec", self.root / "bom-plan.json", "--report", self.root / "bom-report.json")
+        self.assertEqual(run.returncode, 0, run.stdout)
+        report = json.loads((self.root / "bom-report.json").read_text(encoding="utf-8"))
+        self.assertEqual([layer["image"] for layer in report["layers"]], ["sky.png", "far.png"])
+        self.assertEqual(requested_contract_errors(report), [])
 
     def test_reference_example_plan_passes_as_documented(self):
         """parallax-backgrounds.md section 2: the example plan passes with the stated image sizes."""

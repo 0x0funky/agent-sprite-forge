@@ -12,8 +12,9 @@ camera is the world position at the viewport's top-left at zoom 1; zoom scales
 the picture about P. Coverage is checked at every camera x/y and zoom extreme,
 which is exact for this transform. The sky must cover the viewport; by default
 repeated layers and near/foreground layers must cover it too (--coverage
-sky-only is the old rule). Repeat seams are measured against the layer's own
-column (or row) steps. Pixel-art plans ("pixel_art": true or --pixel-grid) must
+sky-only is the old rule). Repeat seams are the one seam metric of every edge
+tool, forge_core.edge_seam_report (D9): the wrap step against the art's own
+column (or row) steps near it. Pixel-art plans ("pixel_art": true or --pixel-grid) must
 keep whole screen pixels per source pixel. An aspect sweep (16:9, 19.5:9 and
 4:3 by default) re-checks coverage on wider and taller screens; aspects the
 plan lists under "aspects" must pass. The JSON result is printed on one line;
@@ -26,7 +27,6 @@ import itertools
 import json
 import math
 import os
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -45,11 +45,10 @@ SCHEMA = "generate2dmap.parallax_validation.v2"
 COVERAGE_POLICIES = ("auto", "sky-only", "all")
 NEAR_ROLE_PREFIXES = ("near", "foreground")
 DEFAULT_ASPECTS = ("16:9", "19.5:9", "4:3")
-ASPECT_POLICIES = ("expand", "fixed-height", "fixed-width")
+ASPECT_POLICIES = forge_core.ASPECT_POLICIES  # expand, fixed-height, fixed-width
 PIVOT_NAMES = {"top-left": (0.0, 0.0), "center": (0.5, 0.5)}
 EPSILON = 1e-7
 GRID_TOLERANCE = 1e-6
-SEAM_FLOOR = 1e-6
 
 
 def number(value: Any, name: str, positive: bool = False) -> float:
@@ -72,17 +71,6 @@ def boolean(value: Any, name: str) -> bool:
     return value
 
 
-def _local_parse_aspect(text: Any) -> tuple[float, float]:
-    """'16:9', '19.5:9', '16/9' or a plain ratio such as 1.7778, as (width share, height share)."""
-    match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*(?:[:/]\s*([0-9]*\.?[0-9]+))?\s*", str(text))
-    if not match:
-        raise ValueError(f"aspect {text!r} must look like 16:9 or 1.7778.")
-    width, height = float(match.group(1)), float(match.group(2) or 1)
-    if not (math.isfinite(width) and math.isfinite(height)) or width <= 0 or height <= 0:
-        raise ValueError(f"aspect {text!r} must be a positive ratio.")
-    return width, height
-
-
 def is_near_role(role: str) -> bool:
     """near, foreground, foreground_overlay, near_trees, ...: layers at or in front of the action."""
     return role.lower().replace("-", "_").split("_")[0] in NEAR_ROLE_PREFIXES
@@ -103,10 +91,13 @@ def seam_metrics(image: Image.Image | np.ndarray, axis: str) -> dict[str, Any]:
     """Wrap-seam diagnostics for one repeat axis (x: last column -> first, y: last row -> first).
 
     The edge-equality numbers (alpha_mae, visible_rgb_mae, premultiplied_rgb_mae) are kept for
-    readers of v1 reports. The verdict comes from forge_core.seam_report over the columns (or rows)
-    as a sequence (MAP-14): the wrap step compared with the layer's own neighbour steps. A duplicated
-    edge column has a zero step and passes edge equality, which is why equality is not the measure.
-    This is a statistic, not a proof: seamless_verified stays false.
+    readers of v1 reports. The seam fields and the verdict are forge_core.edge_seam_report of the
+    layer with itself (the rows axis on the transposed image), the one seam metric of every tool that
+    judges edges (D9, MAP-14): the wrap step against the art's own steps near it, as a ratio and a
+    snake_case verdict (continuous, seam, duplicate_edge, flat, too_small). A duplicated edge column
+    has a zero step and passes edge equality, which is why equality is not the measure. layer_p95 keeps
+    forge_core.seam_report's comparison with every column (or row) step of the layer. This is a
+    statistic, not a proof: seamless_verified stays false.
     """
     pixels = np.asarray(image.convert("RGBA") if isinstance(image, Image.Image) else image)
     first, last = (pixels[:, 0], pixels[:, -1]) if axis == "x" else (pixels[0], pixels[-1])
@@ -123,35 +114,15 @@ def seam_metrics(image: Image.Image | np.ndarray, axis: str) -> dict[str, Any]:
         "premultiplied_rgb_mae": float(premultiplied / 255 / (count * 3)),
         "seamless_verified": False,
     }
-    steps = pixels.shape[1] if axis == "x" else pixels.shape[0]
-    if steps < 2:
-        report["verdict"] = "too-small"
-        return report
-    slices = (pixels[:, i:i + 1] for i in range(steps)) if axis == "x" else (pixels[i:i + 1] for i in range(steps))
-    normalised = forge_core.seam_report(slices)
-    report.update({key: normalised[key] for key in ("seam", "adjacent_median", "adjacent_p95", "adjacent_max",
-                                                    "seam_over_median", "seam_over_p95", "method")})
-    report["frames"] = normalised["frames"]
-    if normalised["adjacent_p95"] <= SEAM_FLOOR and normalised["seam"] <= SEAM_FLOOR:
-        verdict = "flat"
-    elif normalised["seam"] <= SEAM_FLOOR and normalised["adjacent_median"] > SEAM_FLOOR:
-        verdict = "duplicate-edge"
-    elif normalised["seam_over_p95"] > 1:
-        verdict = "seam"
-    else:
-        verdict = "continuous"
-    report["verdict"] = verdict
+    oriented = pixels if axis == "x" else np.ascontiguousarray(np.swapaxes(pixels, 0, 1))
+    report.update(forge_core.edge_seam_report(oriented, oriented))
+    steps = oriented.shape[1]
+    if steps >= 2:  # one column (or row) has nothing to compare: verdict too_small
+        report["frames"] = steps
+        layer = forge_core.seam_report(oriented[:, i:i + 1] for i in range(steps))
+        report["layer_p95"] = {"adjacent_p95": layer["adjacent_p95"], "seam_over_p95": layer["seam_over_p95"],
+                               "method": "forge_core.seam_report: the wrap step against every step of the layer"}
     return report
-
-
-def _local_aspect_viewport(viewport: list[float], aspect: tuple[float, float], policy: str) -> list[float]:
-    """The viewport a screen of this aspect shows: expand keeps the plan viewport and grows the other side,
-    fixed-height keeps the height, fixed-width keeps the width."""
-    width, height = viewport
-    share_w, share_h = aspect
-    if policy == "fixed-height" or (policy == "expand" and share_w * height >= width * share_h):
-        return [height * share_w / share_h, height]
-    return [width, width * share_h / share_w]
 
 
 class LayerGeometry:
@@ -212,8 +183,8 @@ LIMITS = [
     "Rotations, perspective, animation, shake, renderer rounding and culling are not simulated.",
     "The aspect sweep keeps the pivot's share of the viewport fixed (a centred camera grows both sides); other "
     "runtime stretch rules are not modelled.",
-    "Repeat seam ratios compare the wrap step with the layer's own neighbour steps; they are diagnostics, not a "
-    "seamlessness proof (seamless_verified stays false).",
+    "Repeat seams are forge_core.edge_seam_report ratios (the wrap step against the art's own steps near it, D9); "
+    "they are diagnostics, not a seamlessness proof (seamless_verified stays false).",
     "The pixel grid checks scale x zoom and the rest position at the zoom extremes only; zoom values between them "
     "and the runtime's snapping are not checked.",
 ]
@@ -274,6 +245,8 @@ def _check_layer(layer: Any, base_dir: Path, context: dict[str, Any],
         raise ValueError(f"{identity}: image must be a path string.")
     path = Path(path_value)
     path = (base_dir / path).resolve() if not path.is_absolute() else path.resolve()
+    if Path(path_value).is_absolute():  # reports keep plan-relative paths (MAP-24): never an absolute one
+        path_value = forge_core.manifest_path(path, base_dir)
     image, info = forge_core.load_rgba(path)
     source_size = list(image.size)
     if any(not 0 <= anchor[i] <= source_size[i] for i in range(2)):
@@ -317,9 +290,11 @@ def _check_layer(layer: Any, base_dir: Path, context: dict[str, Any],
 
     seams = [seam_metrics(image, axis) for axis, enabled in zip(("x", "y"), repeat) if enabled]
     for seam in seams:
-        if seam.get("verdict") in ("seam", "duplicate-edge"):
-            detail = (f"Repeat seam on {seam['axis']} is a {seam['verdict']} (wrap step {seam['seam']:.3g} vs "
-                      f"neighbour p95 {seam['adjacent_p95']:.3g}).")
+        if seam["verdict"] in forge_core.EDGE_SEAM_DEFECTS:
+            what = "seam" if seam["verdict"] == "seam" else "duplicated edge"
+            detail = (f"Repeat seam on {seam['axis']} is a {what} ({seam['verdict']}: seam ratio "
+                      f"{seam['seam_ratio']:.3g}, wrap step {seam['seam']:.3g} vs nearby steps up to "
+                      f"{seam['adjacent_max']:.3g}).")
             if context["strict_seams"]:
                 issues.append(detail)
             else:
@@ -355,7 +330,7 @@ def _aspect_sweep(sweep: dict[str, tuple[float, float]], required_aspects: list[
     viewport, share = context["viewport"], context["pivot_share"]
     results = []
     for text, aspect in sweep.items():
-        swept = _local_aspect_viewport(viewport, aspect, policy)
+        swept = forge_core.aspect_viewport(viewport, aspect, policy)
         shift = [share[i] * (swept[i] - viewport[i]) for i in range(2)]
         swept_pivot = (share[0] * swept[0], share[1] * swept[1])
         failing = []
@@ -398,7 +373,7 @@ def validate_plan(plan: Any, base_dir: Path, *, coverage: str = "auto", pixel_gr
     if not isinstance(required_aspects, list):
         raise ValueError('aspects must be a list such as ["16:9", "19.5:9"].')
     required_aspects = [str(text) for text in required_aspects]
-    sweep = {str(text): _local_parse_aspect(text) for text in [*aspects, *required_aspects]}
+    sweep = {str(text): forge_core.parse_aspect(text) for text in [*aspects, *required_aspects]}
     pixel_art = plan.get("pixel_art", False)
     if type(pixel_art) is not bool:
         raise ValueError("pixel_art must be true or false.")
@@ -486,21 +461,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="How a screen of another aspect changes the viewport (default: the plan's "
                              "aspect_policy, else expand).")
     parser.add_argument("--strict-seams", action="store_true",
-                        help="Fail repeat seams whose wrap step exceeds the layer's neighbour p95, or that repeat "
-                             "an edge column.")
+                        help="Fail repeat seams (verdict seam or duplicate_edge of forge_core.edge_seam_report): a "
+                             "wrap step sharper than the art's own steps near it, or a repeated edge column.")
     parser.add_argument("--strict", action="store_true", help="On failure, exit 1 without writing --report.")
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _cli(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     aspects = ([] if args.aspects.strip().lower() == "none"
                else [text for text in args.aspects.split(",") if text.strip()])
     plan = None
     errors: list[str] = []
     try:
-        plan = json.loads(args.spec.read_text(encoding="utf-8"))
+        plan = forge_core.read_json(args.spec)  # D28: UTF-8 with an optional BOM
         result = validate_plan(plan, args.spec.resolve().parent, coverage=args.coverage, pixel_grid=args.pixel_grid,
                                aspects=aspects, aspect_policy=args.aspect_policy, strict_seams=args.strict_seams)
     except (ValueError, OSError, Image.DecompressionBombError) as error:
@@ -528,6 +502,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
     print(json.dumps({**result, "report": str(report.resolve()) if report else None}, ensure_ascii=True))
     return 0 if result["passed"] and not errors else 1
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI under forge_core.run_cli (D26, D27): a failed plan exits 1 with its result printed, usage
+    errors exit 2, and no traceback reaches the user."""
+    return forge_core.run_cli(_cli, argv)
 
 
 if __name__ == "__main__":

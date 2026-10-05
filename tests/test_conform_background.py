@@ -185,7 +185,9 @@ class ConformTests(unittest.TestCase):
         self.assertFalse((self.root / "strict").exists())
         self.assertEqual([path.name for path in self.root.iterdir() if path.name.startswith(".")], [])
         run = conform_cli(*common, "--output-dir", self.root / "lenient")
-        self.assertEqual(run.returncode, 0, run.stderr)
+        self.assertEqual(run.returncode, 1, run.stderr)  # D26: published, and the failed QA still exits 1
+        self.assertIn("published a failed QA report", run.stderr)
+        self.assertNotIn("Traceback", run.stderr)
         summary = json.loads(run.stdout)
         self.assertEqual(summary["qa_status"], "fail")
         record = json.loads((self.root / "lenient" / "conform.json").read_text(encoding="utf-8"))
@@ -246,7 +248,7 @@ class ValidateCropsTests(unittest.TestCase):
                                               ((1000, 1500), (16, 9), (1600, 900), (0.3, 0.7)),
                                               ((900, 400), (19.5, 9), (390, 180), (1.0, 0.0))):
             with self.subTest(size=size, aspect=aspect):
-                window = CONFORM._local_cover_window(size, aspect, 1.0, focus)
+                window = CONFORM.forge_core.cover_window(size, aspect, 1.0, focus)  # D30: forge_core's helper
                 expected = CONFORM.cover_transform(size, out_size, focus).src_rect
                 np.testing.assert_allclose(window, expected, rtol=1e-12, atol=1e-9)
 

@@ -20,7 +20,9 @@ shrunk by --zoom for a plate pan, must keep every subject box inside with
 and exits 1 when a subject is cut.
 
 Both verbs write into a new --output-dir that is published only when
-complete; with --strict a failed subject check publishes nothing.
+complete; with --strict a failed subject check publishes nothing. A published
+report whose QA status is fail still exits 1 (D26): conform with a cut subject,
+validate-crops with a cut window.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ import forge_core  # noqa: E402  (this skill's vendored copy)
 
 CONFORM_SCHEMA = "generate2dmap.conform.v1"
 CROPS_SCHEMA = "generate2dmap.crops_qa.v1"
-TOOL = {"name": "conform_background", "version": "1.0"}
+TOOL = {"name": "conform_background", "version": forge_core.FORGE_PACKAGE_VERSION}  # D29
 MODES = ("cover", "ground-fit")
 RESAMPLERS = {"lanczos": Image.Resampling.LANCZOS, "bicubic": Image.Resampling.BICUBIC,
               "box": Image.Resampling.BOX, "nearest": Image.Resampling.NEAREST}
@@ -84,21 +86,11 @@ def _focus(text: str) -> tuple[float, float]:
     return values
 
 
-def _local_parse_aspect(text: Any) -> tuple[float, float]:
-    """'16:9', '19.5:9', '16/9' or a plain ratio such as 1.7778, as (width share, height share)."""
-    match = re.fullmatch(r"\s*([0-9]*\.?[0-9]+)\s*(?:[:/]\s*([0-9]*\.?[0-9]+))?\s*", str(text))
-    if not match:
-        raise ValueError(f"aspect {text!r} must look like 16:9 or 1.7778.")
-    width, height = float(match.group(1)), float(match.group(2) or 1)
-    if width <= 0 or height <= 0:
-        raise ValueError(f"aspect {text!r} must be a positive ratio.")
-    return width, height
-
-
 def parse_aspects(text: str) -> list[tuple[str, tuple[float, float]]]:
+    """Comma-separated screen aspects as (text, forge_core.parse_aspect shares) (D30); none or empty: no aspects."""
     if not text or text.strip().lower() == "none":
         return []
-    return [(part.strip(), _local_parse_aspect(part)) for part in text.split(",") if part.strip()]
+    return [(part.strip(), forge_core.parse_aspect(part)) for part in text.split(",") if part.strip()]
 
 
 def _box(values: Any, name: str) -> tuple[float, float, float, float]:
@@ -123,7 +115,7 @@ def parse_subjects(pairs: Sequence[str] | None, path: Path | None) -> list[dict[
             raise ValueError(f"--subject {text!r} must look like crest=600,40,680,120.") from error
         subjects.append({"id": ident.strip(), "box": _box(values, f"subject {ident.strip()}")})
     if path is not None:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        data = forge_core.read_json(path)  # D28: UTF-8 with an optional BOM
         entries = data.get("subjects") if isinstance(data, dict) else data
         if not isinstance(entries, list):
             raise ValueError(f"{path} must be a list of {{id, box}} or an object with a subjects list.")
@@ -192,21 +184,6 @@ def ground_fit_transform(src_size: tuple[int, int], out_size: tuple[int, int], g
     return Transform(scale, (left, top, left + crop_w, top + crop_h), tuple(out_size))
 
 
-def _local_cover_window(size: tuple[int, int], aspect: tuple[float, float], zoom: float = 1.0,
-                focus: tuple[float, float] = (0.5, 0.5)) -> tuple[float, float, float, float]:
-    """The part of a ``size`` plate a runtime shows on an ``aspect`` screen when it cover-crops around
-    ``focus``, divided by a plate-pan ``zoom`` (game-opus55 drawCoverR)."""
-    width, height = size
-    share_w, share_h = aspect
-    if share_w * height >= width * share_h:
-        window_w, window_h = float(width), width * share_h / share_w
-    else:
-        window_w, window_h = height * share_w / share_h, float(height)
-    window_w, window_h = window_w / zoom, window_h / zoom
-    left, top = (width - window_w) * focus[0], (height - window_h) * focus[1]
-    return left, top, left + window_w, top + window_h
-
-
 def margins(box: Sequence[float], window: Sequence[float]) -> dict[str, Any]:
     """Distances from the box to each window edge (negative = cut) and the visible share of the box."""
     left, top = box[0] - window[0], box[1] - window[1]
@@ -234,7 +211,7 @@ def window_checks(size: tuple[int, int], subjects: list[dict[str, Any]], aspects
     checks = []
     for name, aspect in aspects:
         for focus in focuses:
-            window = _local_cover_window(size, aspect, zoom, focus)
+            window = forge_core.cover_window(size, aspect, zoom, focus)  # D30
             measured = {subject["id"]: margins(subject["box"], window) for subject in subjects}
             failed = sorted(ident for ident, value in measured.items() if value["min"] < min_margin)
             checks.append({"id": f"crop {name} focus {focus[0]:g},{focus[1]:g}", "status": "fail" if failed else "pass",
@@ -249,14 +226,6 @@ def _envelope(checks: list[dict[str, Any]], method: str, not_proven: list[str], 
     status = "fail" if any(check["status"] == "fail" for check in checks) else "pass"
     return {"status": status, "method": method, "notProven": list(not_proven), "checks": checks,
             "inputs": inputs, "outputs": outputs, "tool": dict(TOOL)}
-
-
-def _local_file_ref(path: Path, base_dir: Path, sha256: str | None = None) -> dict[str, Any]:
-    """Manifest-relative POSIX path, or only the file name when there is no relative route (another drive)."""
-    relative = forge_core.portable_path(path, base_dir)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": sha256 or forge_core.sha256_file(path), "bytes": Path(path).stat().st_size}
 
 
 # --------------------------------------------------------------------------- overlay
@@ -341,8 +310,8 @@ def cmd_conform(args: argparse.Namespace) -> dict[str, Any]:
     final = Path(args.output_dir)
     with forge_core.staged_output(final) as stage:
         forge_core.save_png(background, stage / "background.png")
-        output_ref = _local_file_ref(stage / "background.png", stage)
-        source_ref = _local_file_ref(args.input, final, info["sha256"])
+        output_ref = forge_core.file_ref(stage / "background.png", stage)
+        source_ref = forge_core.file_ref(args.input, final, sha256=info["sha256"])
         record = {
             "schema": CONFORM_SCHEMA, "tool": dict(TOOL), "mode": args.mode,
             "source": {**source_ref, "size": list(source.size), "source_mode": info["source_mode"]},
@@ -397,8 +366,8 @@ def cmd_validate_crops(args: argparse.Namespace) -> dict[str, Any]:
         forge_core.save_png(render_crops_overlay(plate, checks, subjects), stage / "crops-overlay.png")
         report = _envelope(checks, "validate-crops: cover-crop window per aspect and focus (divided by --zoom), "
                                    "subject box margins to each window edge in plate pixels.", CROPS_NOT_PROVEN,
-                           [_local_file_ref(args.input, final, info["sha256"])],
-                           [_local_file_ref(stage / "crops-overlay.png", stage)])
+                           [forge_core.file_ref(args.input, final, sha256=info["sha256"])],
+                           [forge_core.file_ref(stage / "crops-overlay.png", stage)])
         report = {"schema": CROPS_SCHEMA, **report, "plate_size": list(plate.size),
                   "subjects": _round([{"id": subject["id"], "box": list(subject["box"])} for subject in subjects])}
         forge_core.write_json(stage / "crops-qa.json", report)
@@ -457,8 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _cli(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         summary = cmd_conform(args) if args.verb == "conform" else cmd_validate_crops(args)
@@ -468,7 +436,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
-    return 1 if args.verb == "validate-crops" and summary["status"] == "fail" else 0
+    status = summary["qa_status"] if args.verb == "conform" else summary["status"]
+    if status == "fail":  # D26: the report is published, and the failed check still exits 1
+        print(f"error: {args.verb} published a failed QA report: {summary.get('metadata') or summary['report']}",
+              file=sys.stderr)
+        return 1
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI under forge_core.run_cli (D26, D27)."""
+    return forge_core.run_cli(_cli, argv)
 
 
 if __name__ == "__main__":

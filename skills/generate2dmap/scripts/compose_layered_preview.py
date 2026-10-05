@@ -11,15 +11,21 @@ for "center", y + h for "top-left"). --sort raw-y restores the old rule.
 
 A placement without anchor or anchorPx takes anchor_px from the prop-pack
 manifest that lists its image (--prop-pack, or a prop-pack.json beside the
-image or one folder up), else the bottom centre. --anchor px restores the old
-rule. Positions round half up.
+image or one folder up; a v1 pack through extract_prop_pack.read_manifest, so
+its props stand on the art's bottom edge, D10), else the bottom centre.
+--anchor px restores the old rule. Positions round half up. flip_x mirrors a
+placement's art around its anchor x, and its footprint with it (D6).
 
 Optional outputs: --report (draw order, anchors, sortY, anchor_world_error),
 --debug-overlay (walk regions, spawns, exits, approach points, collision,
 footprints and masks from --bundle/--stage/--mask), --audit-out (feet inside
 walkable areas, bounds and overlaps) and --plate-pan (a single-plate pan
-contact sheet). No output may exist already or alias an input, and nothing is
-written unless the whole run, including the --strict audit, succeeds.
+contact sheet). With --bundle, actor feet are judged by the vendored forge_nav
+on the bundle's blocking set (D2, D4), exactly as map_nav.py judges them;
+without one, by the same closed-set rules on the canvas, the stage ground
+polygons and the solid placement footprints. No output may exist already or
+alias an input, and nothing is written unless the whole run, including the
+--strict audit, succeeds.
 """
 
 from __future__ import annotations
@@ -43,11 +49,12 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_nav  # noqa: E402  (the shared collision rule book, D4)
 
 
 REPORT_SCHEMA = "generate2dmap.compose_report.v2"
 AUDIT_SCHEMA = "generate2dmap.compose_audit.v1"
-TOOL = {"name": "compose_layered_preview", "version": "2.0"}
+TOOL = {"name": "compose_layered_preview", "version": forge_core.FORGE_PACKAGE_VERSION}  # D29
 
 GROUPS = ("props", "objects", "actors", "foreground")
 KINDS = {"props": "prop", "objects": "object", "actors": "actor", "foreground": "foreground"}
@@ -61,7 +68,7 @@ BANDS = ("background", "world", "foreground")
 OCCLUSION_CLASSES = ("low", "tall", "foreground")
 OCCUPANT_POLICIES = ("y_sort", "rear_shift_and_fade", "static_front", "static_back")
 FOOTPRINT_SHAPES = ("ellipse", "rect", "none")
-FOOTPRINT_BASES = ("image_px", "world_px")
+FOOTPRINT_BASES = ("prop_px", "world_px", "image_px")  # D7: prop_px is the default, image_px its legacy alias
 PORTAL_ACTIVATIONS = ("crossing", "intent")
 MATERIAL_CLASSES = ("solid", "one_way", "liquid", "hazard", "decor")
 PROP_PACK_NAME = "prop-pack.json"
@@ -83,8 +90,9 @@ MATERIAL_COLORS = {"solid": (231, 76, 60), "one_way": (241, 196, 15), "liquid": 
                    "hazard": (230, 126, 34)}
 
 AUDIT_NOT_PROVEN = [
-    "Feet are tested as points, and actors with the bundle's actorRadius ellipse samples (Appendix C); "
-    "reachability between points is map_nav's job.",
+    "Feet are tested at the placement positions: actors with the forge_nav rules (centre and 8 footprint samples), "
+    "on the bundle's blocking set with --bundle (D2), else on the canvas, stage ground polygons and solid placement "
+    "footprints; props as points. Reachability between points is map_nav's job.",
     "Overlaps are checked only between footprints from prop-pack manifests or placements; "
     "placements without a footprint are counted, not checked.",
     "Occlusion is measured on the flattened preview at alpha > 16; runtime sorting, animation, "
@@ -95,13 +103,9 @@ AUDIT_NOT_PROVEN = [
 
 # --------------------------------------------------------------------------- small helpers
 
-def _local_round_half_up(value: float) -> int:
-    """Nearest integer, halves rounded up (MAP-21): 2.5 -> 3 and -2.5 -> -2."""
-    return int(math.floor(value + 0.5))
-
-
 def read_json(path: Path) -> Any:
-    return json.loads(Path(path).read_text(encoding="utf-8"))
+    """JSON input as UTF-8 with an optional BOM (D28, forge_core.read_json)."""
+    return forge_core.read_json(path)
 
 
 def path_key(path: Path | str) -> str:
@@ -117,23 +121,6 @@ def resolve_path(value: str, roots: list[Path]) -> Path:
         if candidate.exists():
             return candidate
     return roots[0] / path
-
-
-def _local_portable_ref(path: Path, base_dir: Path | None) -> str:
-    """Manifest-relative POSIX path (MAP-24); a file with no relative route (another drive) is named
-    by its file name only, and the sha256 beside it identifies it."""
-    if base_dir is None:
-        return Path(path).resolve().as_posix()
-    relative = forge_core.portable_path(path, base_dir)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        return Path(path).name
-    return relative
-
-
-def _local_file_ref(path: Path, base_dir: Path | None, sha256: str | None = None) -> dict[str, Any]:
-    path = Path(path)
-    return {"path": _local_portable_ref(path, base_dir), "sha256": sha256 or forge_core.sha256_file(path),
-            "bytes": path.stat().st_size}
 
 
 def _number(value: Any, name: str) -> float:
@@ -245,7 +232,7 @@ def placement_xy(prop: dict[str, Any], width: int, height: int,
                  source_size: tuple[int, int] | None = None) -> tuple[int, int]:
     """Integer top-left of a placement, rounded half up (MAP-21)."""
     left, top = placement_origin(prop, width, height, source_size)
-    return _local_round_half_up(left), _local_round_half_up(top)
+    return forge_core.round_half_up(left), forge_core.round_half_up(top)
 
 
 def effective_sort_y(prop: dict[str, Any], ground_y: float | None = None) -> float:
@@ -299,6 +286,12 @@ class PropPackIndex:
         schema = data.get("schema")
         if schema is not None and schema not in PROP_PACK_SCHEMAS:
             self.warnings.append(f"{path.name}: prop-pack schema {schema!r} is unknown; read like v2.")
+        if schema is None:  # a v1 (cfed170) pack: B10's reader derives anchors on the art's bottom edge (D10)
+            data = _v1_pack_view(path)
+            if any("anchor_px" in item for item in data["accepted"] if isinstance(item, dict)):
+                self.warnings.append(f"{path.name}: a v1 prop pack; anchors are the art's bottom centre "
+                                     "(extract_prop_pack.read_manifest). Re-extract it for measured anchors and "
+                                     "footprints.")
         for item in data["accepted"]:
             if not isinstance(item, dict) or not isinstance(item.get("image"), str) or not item["image"]:
                 continue
@@ -332,6 +325,13 @@ class PropPackIndex:
         return self.entries.get(key)
 
 
+def _v1_pack_view(path: Path) -> dict[str, Any]:
+    """A v1 prop-pack manifest as the v2-shaped view of the sibling extract_prop_pack.read_manifest (D10)."""
+    import extract_prop_pack  # the B10 extractor beside this script (same skill)
+
+    return extract_prop_pack.read_manifest(path)
+
+
 # --------------------------------------------------------------------------- one placement
 
 @dataclass
@@ -360,6 +360,7 @@ class Placed:
     canvas_scale: float = 1.0
     warnings: list[str] = field(default_factory=list)
     draw_index: int = -1
+    flip_x: bool = False
 
     @property
     def kind(self) -> str:
@@ -390,8 +391,14 @@ def _resample_filter(name: str) -> Image.Resampling:
 
 
 def _footprint(spec: Any, origin: str, ident: str, ref_anchor: tuple[float, float], left: int, top: int,
-               scale_xy: tuple[float, float], world_scale: float, warnings: list[str]) -> dict[str, Any] | None:
-    """A prop footprint (map.schema footprint) placed on the canvas; None for shape none."""
+               scale_xy: tuple[float, float], world_scale: float, warnings: list[str], *,
+               flip_width: float | None = None) -> dict[str, Any] | None:
+    """A prop footprint (map.schema footprint) placed on the canvas; None for shape none.
+
+    basis prop_px (the default; image_px is its legacy alias, D7) is in prop-image pixels and
+    follows the drawn sprite; world_px is in world pixels and only follows --scale. With
+    ``flip_width`` (the source width of a flip_x placement) the footprint is mirrored with the
+    art around the anchor x: the x offset and the rotation change sign (D6)."""
     if not isinstance(spec, dict):
         raise ValueError(f"{ident}: footprint must be an object.")
     shape = spec.get("shape")
@@ -404,18 +411,21 @@ def _footprint(spec: Any, origin: str, ident: str, ref_anchor: tuple[float, floa
     depth = _number(spec.get("depth"), f"{ident} footprint depth")
     offset = _point(spec.get("offset", [0, 0]), f"{ident} footprint offset")
     rotate = _number(spec.get("rotate", 0), f"{ident} footprint rotate")
-    basis = spec.get("basis", "image_px")
+    basis = spec.get("basis", "prop_px")
     if basis not in FOOTPRINT_BASES:
         warnings.append(f"{ident}: footprint basis {basis!r} is not one of {', '.join(FOOTPRINT_BASES)}; "
-                        f"read as image_px.")
-        basis = "image_px"
+                        f"read as prop_px.")
+        basis = "prop_px"
     if width < 0 or depth < 0:
         raise ValueError(f"{ident}: footprint width and depth must not be negative.")
-    sx, sy = scale_xy if basis == "image_px" else (world_scale, world_scale)
-    if basis == "image_px":
-        cx, cy = left + (ref_anchor[0] + offset[0]) * sx, top + (ref_anchor[1] + offset[1]) * sy
+    anchor_x = ref_anchor[0]
+    if flip_width is not None:  # D6: mirrored with the art around the anchor x
+        anchor_x, offset, rotate = flip_width - anchor_x, (-offset[0], offset[1]), -rotate
+    sx, sy = scale_xy if basis != "world_px" else (world_scale, world_scale)
+    if basis != "world_px":
+        cx, cy = left + (anchor_x + offset[0]) * sx, top + (ref_anchor[1] + offset[1]) * sy
     else:
-        cx = left + ref_anchor[0] * scale_xy[0] + offset[0] * sx
+        cx = left + anchor_x * scale_xy[0] + offset[0] * sx
         cy = top + ref_anchor[1] * scale_xy[1] + offset[1] * sy
     return {"shape": shape, "cx": cx, "cy": cy, "rx": width / 2 * sx, "ry": depth / 2 * sy, "rotate": rotate,
             "source": origin}
@@ -452,14 +462,18 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
     else:
         width_f = _number(prop.get("w", prop.get("width", sw)), f"{ident} w")
         height_f = _number(prop.get("h", prop.get("height", sh)), f"{ident} h")
-    width, height = _local_round_half_up(width_f * scale), _local_round_half_up(height_f * scale)
+    width, height = forge_core.round_half_up(width_f * scale), forge_core.round_half_up(height_f * scale)
     if width <= 0 or height <= 0:
         raise ValueError(f"Invalid prop size for {image_path}: {width}x{height}")
 
     chosen = str(prop.get("resampler", resampler))
     if chosen not in RESAMPLERS:
         raise ValueError(f"Unknown resampler: {chosen}")
-    sprite = source if (width, height) == source.size else source.resize((width, height), _resample_filter(chosen))
+    flip = prop.get("flip_x", False)
+    if not isinstance(flip, bool):
+        raise ValueError(f"{ident}: flip_x must be true or false.")
+    art = source.transpose(Image.Transpose.FLIP_LEFT_RIGHT) if flip else source  # D6: mirrored art
+    sprite = art if (width, height) == art.size else art.resize((width, height), _resample_filter(chosen))
     opacity = prop.get("opacity", 1.0)
     if isinstance(opacity, bool) or not isinstance(opacity, (int, float)) or not math.isfinite(opacity) \
             or not 0 <= opacity <= 1:
@@ -518,9 +532,12 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
     y = _number(prop.get("y", 0), f"{ident} y")
     if anchor_source.startswith("box:"):
         offset_x, offset_y = _box_anchor_offset(anchor_source[4:], width, height)
+        if flip:  # the mirrored art puts the box anchor at the mirrored x
+            offset_x = width - offset_x
     else:
-        offset_x, offset_y = anchor_px[0] * width / sw, anchor_px[1] * height / sh
-    left, top = _local_round_half_up(x * scale - offset_x), _local_round_half_up(y * scale - offset_y)
+        offset_x = (sw - anchor_px[0] if flip else anchor_px[0]) * width / sw
+        offset_y = anchor_px[1] * height / sh
+    left, top = forge_core.round_half_up(x * scale - offset_x), forge_core.round_half_up(y * scale - offset_y)
 
     if "sortY" in prop:
         sort_y, sort_source = effective_sort_y(prop), "explicit"
@@ -541,11 +558,14 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
 
     scale_xy = (width / sw, height / sh)
     footprint = None
+    mirror = sw if flip else None
     if "footprint" in prop:
-        footprint = _footprint(prop["footprint"], "placement", ident, anchor_px, left, top, scale_xy, scale, warnings)
+        footprint = _footprint(prop["footprint"], "placement", ident, anchor_px, left, top, scale_xy, scale, warnings,
+                               flip_width=mirror)
     elif manifest is not None and manifest.footprint is not None:
         reference = manifest.anchor_px if manifest.anchor_px is not None else anchor_px
-        footprint = _footprint(manifest.footprint, "manifest", ident, reference, left, top, scale_xy, scale, warnings)
+        footprint = _footprint(manifest.footprint, "manifest", ident, reference, left, top, scale_xy, scale, warnings,
+                               flip_width=mirror)
     if footprint is not None:
         solid = prop.get("solid", manifest.solid if manifest is not None else None)
         footprint["solid"] = solid is not False
@@ -555,7 +575,7 @@ def prepare_placement(prop: dict[str, Any], roots: list[Path], *, group: str = "
         source_size=(sw, sh), sprite=sprite, left=left, top=top, width=width, height=height, world=(x, y),
         anchor_px=anchor_px, anchor_source=anchor_source, anchor_canvas=(left + offset_x, top + offset_y),
         sort_y=sort_y, sort_source=sort_source, layer=layer, band=band, resampler=chosen,
-        footprint=footprint, canvas_scale=scale, warnings=warnings)
+        footprint=footprint, canvas_scale=scale, warnings=warnings, flip_x=flip)
 
 
 def visible_bounds(item: Placed) -> tuple[int, int, int, int] | None:
@@ -573,7 +593,7 @@ def report_entry(item: Placed, canvas_size: tuple[int, int], report_dir: Path | 
     return _clean({
         "id": item.id, "group": item.group, "kind": item.kind, "layer": item.layer, "band": item.band,
         "draw_index": item.draw_index,
-        "image": _local_portable_ref(item.image_path, report_dir) if report_dir is not None else str(item.image_path),
+        "image": forge_core.manifest_path(item.image_path, report_dir) if report_dir is not None else str(item.image_path),
         "image_sha256": item.image_sha256,
         "left": item.left, "top": item.top, "w": item.width, "h": item.height,
         "source_size": list(item.source_size), "anchorPx": list(item.anchor_px), "anchor_source": item.anchor_source,
@@ -584,6 +604,7 @@ def report_entry(item: Placed, canvas_size: tuple[int, int], report_dir: Path | 
         "visible_bounds": list(bounds) if bounds else None,
         "sortY": item.sort_y, "sort_source": item.sort_source,
         "footprint": item.footprint,
+        **({"flip_x": True} if item.flip_x else {}),
         "warnings": item.warnings,
     })
 
@@ -653,6 +674,10 @@ class Geometry:
     y_squash: float = 1.0
     inputs: list[Path] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    blocking_mask: np.ndarray | None = None  # canvas pixels of blocking material classes (forge_nav rule N8)
+    collision: forge_nav.BlockingSet | None = None  # the bundle's D2 set, when forge_nav can read it (D4)
+    collision_note: str = "no --bundle"
+    base_to_world: tuple[float, float] = (1.0, 1.0)  # placement (base) pixels -> bundle world pixels
 
 
 def _polygon(value: Any, name: str, transform) -> np.ndarray:
@@ -706,6 +731,7 @@ def load_bundle(path: Path, geometry: Geometry, base_size: tuple[int, int], scal
         if world_w <= 0 or world_h <= 0:
             raise ValueError(f"{path.name}: world width and height must be positive.")
         kx, ky = scale * base_size[0] / world_w, scale * base_size[1] / world_h
+        geometry.base_to_world = (world_w / base_size[0], world_h / base_size[1])
         if abs(kx - ky) > 0.01 * kx:
             warnings.append(f"{path.name}: world {world_w:g}x{world_h:g} and base {base_size[0]}x{base_size[1]} "
                             f"differ in aspect; geometry is stretched to the base.")
@@ -806,6 +832,38 @@ def load_bundle(path: Path, geometry: Geometry, base_size: tuple[int, int], scal
         load_stage(path.parent / stage, geometry)
     elif isinstance(stage, dict):
         _add_stage(stage, f"{path.name} stage", geometry)
+    _load_collision(path, geometry, kx, ky)
+
+
+def _load_collision(path: Path, geometry: Geometry, kx: float, ky: float) -> None:
+    """The bundle's D2 blocking set as the vendored forge_nav reads it (D2, D4): actor feet are judged
+    on it, and the overlay draws it (solids, rects, object footprints and tile collision). A bundle
+    forge_nav cannot read keeps compose's own parse of it, with a warning."""
+    try:
+        blocking = forge_nav.read_blocking_set(path)
+    except (forge_nav.NavError, OSError, ValueError) as error:
+        geometry.collision_note = f"compose's own parse of {path.name} (forge_nav cannot read it: {error})"
+        geometry.warnings.append(f"{path.name}: forge_nav cannot read its collision ({error}); actor feet are "
+                                 "checked against compose's own parse of the bundle instead of the D2 blocking set.")
+        return
+    geometry.collision = blocking
+    geometry.collision_note = f"forge_nav D2 blocking set of {path.name}"
+    geometry.solids = [_canvas_solid(solid, kx, ky) for solid in blocking.solids]
+
+
+def _canvas_solid(solid: dict[str, Any], kx: float, ky: float) -> dict[str, Any]:
+    """A forge_nav solid (world px) as an overlay shape in canvas pixels."""
+    ident = str(solid.get("source", ""))
+    if solid["shape"] == "rect":
+        w, h = solid["w"] * kx, solid["h"] * ky
+        return {"id": ident, "shape": "rect", "cx": solid["x"] * kx + w / 2, "cy": solid["y"] * ky + h / 2,
+                "rx": w / 2, "ry": h / 2, "rotate": 0.0, "source": "bundle"}
+    if solid["shape"] == "ellipse":
+        return {"id": ident, "shape": "ellipse", "cx": solid["cx"] * kx, "cy": solid["cy"] * ky,
+                "rx": solid["rx"] * kx, "ry": solid["ry"] * ky, "rotate": float(solid.get("rotate", 0) or 0),
+                "source": "bundle"}
+    points = np.asarray(solid["points"], np.float64) * np.array([kx, ky])
+    return {"id": ident, "shape": "polygon", "points": points, "source": "bundle"}
 
 
 def _load_material_map(path: Path, materials: dict[str, Any], geometry: Geometry) -> None:
@@ -815,6 +873,7 @@ def _load_material_map(path: Path, materials: dict[str, Any], geometry: Geometry
         indices = np.asarray(image) if image.mode == "P" else None
         rgb = None if indices is not None else np.asarray(image.convert("RGB"))
     classes: dict[str, np.ndarray] = {}
+    blocking = None
     for name, material in materials.items():
         if not isinstance(material, dict):
             continue
@@ -822,7 +881,8 @@ def _load_material_map(path: Path, materials: dict[str, Any], geometry: Geometry
         if kind not in MATERIAL_CLASSES:
             geometry.warnings.append(f"material {name}: class {kind!r} is not one of {', '.join(MATERIAL_CLASSES)}.")
             continue
-        if kind == "decor" or material.get("walkable") is True:
+        blocks = kind == "solid" or (kind in ("liquid", "hazard") and material.get("walkable") is not True)  # N8
+        if kind == "decor" or (material.get("walkable") is True and not blocks):
             continue
         if indices is not None and isinstance(material.get("index"), int):
             hit = indices == material["index"]
@@ -831,11 +891,19 @@ def _load_material_map(path: Path, materials: dict[str, Any], geometry: Geometry
         else:
             geometry.warnings.append(f"material {name}: no usable index or color for {path.name}; not drawn.")
             continue
-        classes[kind] = classes.get(kind, np.zeros(hit.shape, bool)) | hit
+        if blocks:
+            blocking = hit if blocking is None else blocking | hit
+        if material.get("walkable") is not True:
+            classes[kind] = classes.get(kind, np.zeros(hit.shape, bool)) | hit
     for kind, hit in classes.items():
-        mask = Image.fromarray(hit.astype(np.uint8) * 255).resize(geometry.canvas_size, Image.Resampling.NEAREST)
-        geometry.masks.append({"id": f"material:{kind}", "mask": np.asarray(mask) > 0,
+        geometry.masks.append({"id": f"material:{kind}", "mask": _canvas_mask(hit, geometry.canvas_size),
                                "color": MATERIAL_COLORS.get(kind, (255, 255, 255))})
+    if blocking is not None:
+        geometry.blocking_mask = _canvas_mask(blocking, geometry.canvas_size)
+
+
+def _canvas_mask(hit: np.ndarray, canvas_size: tuple[int, int]) -> np.ndarray:
+    return np.asarray(Image.fromarray(hit.astype(np.uint8) * 255).resize(canvas_size, Image.Resampling.NEAREST)) > 0
 
 
 def load_stage(path: Path, geometry: Geometry) -> None:
@@ -905,52 +973,93 @@ def load_geometry(args: argparse.Namespace, canvas_size: tuple[int, int], base_s
 
 # --------------------------------------------------------------------------- geometry tests
 
-def _local_points_in_polygon(points: np.ndarray, polygon: np.ndarray) -> np.ndarray:
-    """Even-odd test of (N, 2) points against one polygon, vectorised over points and edges."""
-    px, py = points[:, :1], points[:, 1:2]
-    x0, y0 = polygon[:, 0], polygon[:, 1]
-    x1, y1 = np.roll(x0, -1), np.roll(y0, -1)
-    crosses = (y0 > py) != (y1 > py)
-    with np.errstate(divide="ignore", invalid="ignore"):
-        x_cross = x0 + (py - y0) * (x1 - x0) / (y1 - y0)
-    return np.count_nonzero(crosses & (px < x_cross), axis=1) % 2 == 1
-
-
-def _local_points_in_shape(points: np.ndarray, shape: dict[str, Any]) -> np.ndarray:
-    """Points inside a rect/ellipse (centre, radii, rotation in degrees) or polygon."""
+def nav_solid(shape: dict[str, Any]) -> dict[str, Any]:
+    """A compose shape (canvas pixels: rect or ellipse by centre and radii with a rotation, or a
+    polygon) as a forge_nav solid, a closed set (D1)."""
+    ident = str(shape.get("id", ""))
     if shape["shape"] == "polygon":
-        return _local_points_in_polygon(points, shape["points"])
-    theta = math.radians(shape.get("rotate", 0.0))
-    dx, dy = points[:, 0] - shape["cx"], points[:, 1] - shape["cy"]
-    u = dx * math.cos(theta) + dy * math.sin(theta)
-    v = -dx * math.sin(theta) + dy * math.cos(theta)
-    rx, ry = shape["rx"], shape["ry"]
-    if rx <= 0 or ry <= 0:
-        return np.zeros(len(points), bool)
-    if shape["shape"] == "rect":
-        return (np.abs(u) < rx) & (np.abs(v) < ry)
-    return (u / rx) ** 2 + (v / ry) ** 2 <= 1.0
+        return {"shape": "polygon", "points": np.asarray(shape["points"], np.float64).tolist(), "source": ident}
+    footprint = {"shape": shape["shape"], "width": 2 * shape["rx"], "depth": 2 * shape["ry"],
+                 "rotate": shape.get("rotate", 0.0), "basis": "world_px"}
+    solid = forge_nav.footprint_solid(shape["cx"], shape["cy"], footprint, source=ident)
+    return solid or {"shape": "rect", "x": shape["cx"], "y": shape["cy"], "w": 0.0, "h": 0.0, "source": ident}
 
 
-def _local_walkable(points: np.ndarray, geometry: Geometry) -> np.ndarray:
-    """Inside a walk region and outside its holes; with no walk regions, inside the canvas (Appendix C)."""
-    if not geometry.walk:
-        width, height = geometry.canvas_size
-        return (points[:, 0] >= 0) & (points[:, 0] < width) & (points[:, 1] >= 0) & (points[:, 1] < height)
-    inside = np.zeros(len(points), bool)
-    for polygon, holes in geometry.walk:
-        region = _local_points_in_polygon(points, polygon)
-        for hole in holes:
-            region &= ~_local_points_in_polygon(points, hole)
-        inside |= region
-    return inside
+def _shape_hits(model: forge_nav.CollisionModel, xs: np.ndarray, ys: np.ndarray) -> tuple[list[str], np.ndarray]:
+    """(sources of the model's solids that contain any of the points, which points lie in a solid)."""
+    hits: list[str] = []
+    inside = np.zeros(np.shape(xs), bool)
+    for shape, source in zip(model.solids, model.solid_sources):
+        x0, y0, x1, y1 = shape.bounds
+        near = (xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)
+        if not near.any():
+            continue
+        found = np.zeros(np.shape(xs), bool)
+        found[near] = shape.contains(xs[near], ys[near])
+        if found.any():
+            inside |= found
+            if source not in hits:
+                hits.append(source)
+    return hits, inside
 
 
-def _local_footprint_samples(point: tuple[float, float], radius: float, y_squash: float) -> np.ndarray:
-    """The point plus 8 samples on the actor footprint ellipse (rx = r, ry = r * ySquash)."""
-    angles = np.arange(8) * (math.pi / 4)
-    samples = np.column_stack([point[0] + radius * np.cos(angles), point[1] + radius * y_squash * np.sin(angles)])
-    return np.vstack([np.array([point], np.float64), samples]) if radius > 0 else np.array([point], np.float64)
+@dataclass
+class FeetModel:
+    """What actor feet are judged against: the bundle's D2 set in world pixels (kind "bundle",
+    forge_nav, D4), or the canvas with the stage ground polygons, compose's own parse of a bundle
+    and the solid placement footprints (kind "canvas"), with the same closed-set rules (D1)."""
+    kind: str
+    model: forge_nav.CollisionModel
+    to_model: tuple[float, float]  # multiply a placement position (base pixels) by this
+    note: str
+    mask: np.ndarray | None = None  # canvas blocking material mask (canvas kind only)
+
+    def position(self, item: Placed) -> tuple[float, float]:
+        return item.world[0] * self.to_model[0], item.world[1] * self.to_model[1]
+
+    def samples(self, point: tuple[float, float]) -> tuple[np.ndarray, np.ndarray]:
+        offsets = forge_nav.footprint_offsets(self.model.radius, self.model.y_squash)
+        return point[0] + offsets[:, 0], point[1] + offsets[:, 1]
+
+    def _mask_hit(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
+        hit = np.zeros(np.shape(xs), bool)
+        if self.mask is not None:
+            height, width = self.mask.shape
+            cols, rows = np.floor(xs).astype(np.int64), np.floor(ys).astype(np.int64)
+            inside = (cols >= 0) & (cols < width) & (rows >= 0) & (rows < height)
+            hit[inside] = self.mask[rows[inside], cols[inside]]
+        return hit
+
+    def actor(self, item: Placed) -> tuple[bool, list[str], tuple[float, float]]:
+        """(valid, blocker sources, the position tested) of an actor (forge_nav rule N9); a sample
+        blocked by no solid lies on a blocking material pixel ("material_map")."""
+        point = self.position(item)
+        xs, ys = self.samples(point)
+        mask_hit = self._mask_hit(xs, ys)
+        valid = bool(self.model.valid(point[0], point[1])) and not mask_hit.any()
+        blockers, in_solid = _shape_hits(self.model, xs, ys)
+        if (self.model.blocked(xs, ys) & ~in_solid).any() or mask_hit.any():
+            blockers.append("material_map")
+        return valid, blockers, point
+
+    def walkable(self, item: Placed) -> bool:
+        point = self.position(item)
+        return bool(self.model.area_ok(point[0], point[1]))
+
+
+def feet_model(geometry: Geometry, ordered: Sequence[Placed], scale: float) -> FeetModel:
+    """The bundle's forge_nav model when there is one (D4), else the canvas model (closed sets, D1)."""
+    if geometry.collision is not None:
+        return FeetModel("bundle", geometry.collision.model(), geometry.base_to_world, geometry.collision_note)
+    solids = [nav_solid(shape) for shape in geometry.solids]
+    solids += [nav_solid({**item.footprint, "id": item.id}) for item in ordered
+               if item.footprint and item.footprint["solid"] and item.kind != "actor"]
+    width, height = geometry.canvas_size
+    model = forge_nav.CollisionModel(width, height, geometry.actor_radius, geometry.y_squash,
+                                     [(polygon, holes) for polygon, holes in geometry.walk], solids)
+    note = geometry.collision_note if geometry.collision_note != "no --bundle" else (
+        f"canvas: {geometry.walk_source or 'canvas bounds'}, solid placement footprints")
+    return FeetModel("canvas", model, (scale, scale), note, geometry.blocking_mask)
 
 
 def shape_mask(shape: dict[str, Any]) -> tuple[tuple[int, int, int, int], np.ndarray]:
@@ -967,8 +1076,8 @@ def shape_mask(shape: dict[str, Any]) -> tuple[tuple[int, int, int, int], np.nda
     if width == 0 or height == 0:
         return box, np.zeros((height, width), bool)
     gy, gx = np.mgrid[box[1]:box[3], box[0]:box[2]]
-    points = np.column_stack([gx.ravel() + 0.5, gy.ravel() + 0.5])
-    return box, _local_points_in_shape(points, shape).reshape(height, width)
+    model = forge_nav.CollisionModel(box[2], box[3], 0, solids=[nav_solid(shape)])
+    return box, model.blocked(gx + 0.5, gy + 0.5)
 
 
 def overlap_area(first: tuple[tuple[int, int, int, int], np.ndarray],
@@ -987,30 +1096,40 @@ def _check(identifier: str, status: str, value: Any, threshold: Any = None) -> d
     return {"id": identifier, "status": status, "value": _clean(value), "threshold": threshold}
 
 
-def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Geometry) -> dict[str, Any]:
-    """Feet inside walkable areas, bounds, footprint overlaps, duplicates and actor visibility (no I/O)."""
+def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Geometry,
+                     scale: float = 1.0) -> dict[str, Any]:
+    """Feet inside walkable areas, bounds, footprint overlaps, duplicates and actor visibility (no I/O).
+
+    Actor feet follow forge_nav rule N9 at the placement position: with a bundle on its D2 blocking
+    set (D2, D4: the same answer as map_nav.py query), else on the canvas model (closed sets, D1)."""
     width, height = geometry.canvas_size
     rows: list[dict[str, Any]] = []
     actor_invalid, outside, clipped, off_canvas, empty, hidden = [], [], [], [], [], []
-    blockers = list(geometry.solids)
-    for item in ordered:
-        if item.footprint and item.footprint["solid"] and item.kind != "actor":
-            blockers.append({**item.footprint, "id": item.id})
+    feet = feet_model(geometry, ordered, scale)
+    props = [nav_solid({**item.footprint, "id": item.id}) for item in ordered
+             if item.footprint and item.footprint["solid"] and item.kind != "actor"]
+    prop_model = forge_nav.CollisionModel(width, height, geometry.actor_radius, geometry.y_squash, solids=props)
+    in_props: list[str] = []
     for item in ordered:
         foot = item.anchor_canvas
         bounds = visible_bounds(item)
         row: dict[str, Any] = {"id": item.id, "kind": item.kind, "band": item.band, "draw_index": item.draw_index,
                                "foot": list(foot), "visible_bounds": list(bounds) if bounds else None}
         if item.kind == "actor":
-            samples = _local_footprint_samples(foot, geometry.actor_radius, geometry.y_squash)
-            inside = _local_walkable(samples, geometry)
-            hits = [shape["id"] for shape in blockers if _local_points_in_shape(samples, shape).any()]
-            row["foot_valid"] = bool(inside.all() and not hits)
+            valid, hits, point = feet.actor(item)
+            row["foot_valid"] = valid
             row["blocked_by"] = hits
-            if not row["foot_valid"]:
+            row["foot_checked"] = list(point)
+            if not valid:
                 actor_invalid.append(item.id)
+            if feet.kind == "bundle":
+                canvas_xs, canvas_ys = (item.world[0] * scale + prop_model.offsets[:, 0],
+                                        item.world[1] * scale + prop_model.offsets[:, 1])
+                row["in_placement_footprints"] = _shape_hits(prop_model, canvas_xs, canvas_ys)[0]
+                if valid and row["in_placement_footprints"]:
+                    in_props.append(item.id)
         elif item.band != "foreground":
-            row["foot_walkable"] = bool(_local_walkable(np.array([foot]), geometry)[0])
+            row["foot_walkable"] = feet.walkable(item)
             if not row["foot_walkable"]:
                 outside.append(item.id)
         if bounds is None:
@@ -1054,7 +1173,7 @@ def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Ge
     seen: dict[tuple, str] = {}
     duplicates = []
     for item in ordered:
-        key = (item.image_sha256, _local_round_half_up(item.world[0] * 2), _local_round_half_up(item.world[1] * 2),
+        key = (item.image_sha256, forge_core.round_half_up(item.world[0] * 2), forge_core.round_half_up(item.world[1] * 2),
                item.band)
         if key in seen:
             duplicates.append({"a": seen[key], "b": item.id})
@@ -1065,8 +1184,14 @@ def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Ge
     checks = [
         _check("actor_feet_valid", "skipped" if not actors else ("fail" if actor_invalid else "pass"),
                {"checked": len(actors), "invalid": actor_invalid, "actor_radius_px": geometry.actor_radius,
-                "y_squash": geometry.y_squash},
-               "foot and 8 footprint samples inside a walk area and outside every solid (Appendix C)"),
+                "y_squash": geometry.y_squash, "model": feet.kind, "collision": feet.note},
+               "forge_nav rule N9: the foot and 8 footprint samples in the walk area and off every blocker "
+               "(with --bundle the bundle's D2 blocking set, as map_nav.py judges it)"),
+        _check("actor_feet_off_placement_footprints",
+               "skipped" if not actors or feet.kind != "bundle" or not props else ("warn" if in_props else "pass"),
+               {"checked": len(actors) if feet.kind == "bundle" else 0, "actors": in_props},
+               "placement footprints are compose-only (the bundle's blocking set decides validity, D2); an actor "
+               "standing in one is reported so the prop can be added to the bundle"),
         _check("feet_in_walk_area", "warn" if outside else "pass",
                {"checked": sum(1 for row in rows if "foot_walkable" in row), "outside": outside,
                 "walk_area": geometry.walk_source or "canvas bounds"}, "foot inside a walk area"),
@@ -1084,9 +1209,11 @@ def audit_placements(ordered: Sequence[Placed], owners: np.ndarray, geometry: Ge
     statuses = {check["status"] for check in checks}
     status = "fail" if "fail" in statuses else ("warn" if "warn" in statuses else "pass")
     return {"schema": AUDIT_SCHEMA, "status": status,
-            "method": "compose_layered_preview placement audit on the flattened canvas: feet as anchor points in "
-                      "canvas pixels, walk areas from the bundle, stage or canvas bounds, solid footprints "
-                      "rasterised at pixel centres, occlusion from the draw-index owner map at alpha > 16.",
+            "method": "compose_layered_preview placement audit: actor feet by forge_nav rule N9 at the placement "
+                      "positions (with --bundle on the bundle's D2 blocking set in world pixels, else on the "
+                      "canvas, stage ground polygons and solid placement footprints, closed sets), prop feet as "
+                      "points in the walk area, solid footprints rasterised at pixel centres, occlusion from the "
+                      "draw-index owner map at alpha > 16.",
             "notProven": list(AUDIT_NOT_PROVEN), "checks": checks, "inputs": [], "outputs": [], "tool": dict(TOOL),
             "placements": rows, "overlaps": overlaps, "walk_area": geometry.walk_source or "canvas bounds"}
 
@@ -1414,7 +1541,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     if args.scale == 1:
         scaled = base
     else:
-        size = (_local_round_half_up(base.width * args.scale), _local_round_half_up(base.height * args.scale))
+        size = (forge_core.round_half_up(base.width * args.scale), forge_core.round_half_up(base.height * args.scale))
         scaled = base.resize(size, _resample_filter(args.resampler))
     ordered = draw_order(placed, args.sort)
     canvas, owners = compose_scene(scaled, ordered, track_owners=need_audit)
@@ -1425,7 +1552,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         check_outputs(outputs, inputs + [("geometry input", path) for path in geometry.inputs])
     elif args.bundle or args.stage or args.mask:
         warnings.append("--bundle, --stage and --mask are read only with --debug-overlay, --audit-out or --strict.")
-    audit = audit_placements(ordered, owners, geometry) if need_audit else None
+    audit = audit_placements(ordered, owners, geometry, args.scale) if need_audit else None
     if args.strict and audit["status"] == "fail":
         failed = [check["id"] for check in audit["checks"] if check["status"] == "fail"]
         raise ValueError(f"strict audit failed ({', '.join(failed)}); nothing was written.")
@@ -1451,7 +1578,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             audit_dir = Path(args.audit_out).resolve().parent
             audit_doc = dict(audit)
             audit_doc["inputs"] = _input_refs(args, placed, packs, geometry, audit_dir)
-            audit_doc["outputs"] = [{"path": _local_portable_ref(args.output, audit_dir), "sha256": preview_sha,
+            audit_doc["outputs"] = [{"path": forge_core.manifest_path(args.output, audit_dir), "sha256": preview_sha,
                                      "bytes": preview.stat().st_size}]
             (stage / "audit.json").write_bytes(_json_bytes(audit_doc))
             staged.append((stage / "audit.json", args.audit_out))
@@ -1459,20 +1586,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             report_dir = Path(args.report).resolve().parent
             report = {
                 "schema": REPORT_SCHEMA, "tool": dict(TOOL),
-                "base": _local_portable_ref(args.base, report_dir), "base_sha256": base_info["sha256"],
-                "placements": _local_portable_ref(args.placements, report_dir),
+                "base": forge_core.manifest_path(args.base, report_dir), "base_sha256": base_info["sha256"],
+                "placements": forge_core.manifest_path(args.placements, report_dir),
                 "placements_sha256": forge_core.sha256_file(args.placements),
-                "output": _local_portable_ref(args.output, report_dir), "output_sha256": preview_sha,
+                "output": forge_core.manifest_path(args.output, report_dir), "output_sha256": preview_sha,
                 "canvas_size": list(canvas.size), "scale": args.scale, "resampler": args.resampler,
                 "sort": args.sort, "anchor_policy": args.anchor, "compositing_order": compositing_order(args.sort),
-                "prop_packs": [_local_file_ref(path, report_dir) for path in packs.manifests.values()],
+                "prop_packs": [forge_core.file_ref(path, report_dir) for path in packs.manifests.values()],
                 "pasted": [report_entry(item, canvas.size, report_dir) for item in ordered],
                 "warnings": warnings,
             }
             if audit is not None:
                 report["audit_status"] = audit["status"]
             if pan_windows is not None:
-                report["plate_pan"] = {"file": _local_portable_ref(args.plate_pan, report_dir),
+                report["plate_pan"] = {"file": forge_core.manifest_path(args.plate_pan, report_dir),
                                        "viewport": list(args.pan_viewport), "zoom": args.pan_zoom,
                                        "gap_px": PAN_GAP_PX, "frames": pan_windows}
             (stage / "report.json").write_bytes(_json_bytes(_clean(report)))
@@ -1495,7 +1622,7 @@ def _input_refs(args: argparse.Namespace, placed: Sequence[Placed], packs: PropP
         key = path_key(path)
         if key not in seen:
             seen.add(key)
-            refs.append(_local_file_ref(Path(path), base_dir))
+            refs.append(forge_core.file_ref(Path(path), base_dir))
     return refs
 
 
@@ -1546,8 +1673,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _cli(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         summary = run(args)
@@ -1558,6 +1684,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI under forge_core.run_cli (D26, D27): usage errors exit 2, input errors print 'error: ...'
+    and exit 1, and nothing else ever shows a traceback."""
+    return forge_core.run_cli(_cli, argv)
 
 
 if __name__ == "__main__":
