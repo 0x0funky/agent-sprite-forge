@@ -38,7 +38,7 @@ if str(_HERE) not in sys.path:
 import forge_core  # noqa: E402  (this skill's vendored copy)
 import gait_loop  # noqa: E402  (selection I/O and frame statistics)
 
-RETIME_VERSION = "1"
+RETIME_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 GAIT_KINDS = ("gait", "walk", "run")
 AMBIENT_KINDS = ("idle", "hover")
 STRIKE_KINDS = ("attack", "cast")
@@ -490,17 +490,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        summary = retime(args)
-    except (ValueError, OSError) as error:
-        print(forge_core.ascii_text(f"error: {error}"), file=sys.stderr)
-        return 1
-    print(json.dumps(summary, ensure_ascii=True))
+def _run(argv: Sequence[str] | None = None) -> int:
+    print(json.dumps(retime(build_parser().parse_args(argv)), ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2; refused input and policy violations exit 1 with ``error: ...``; anything
+    unexpected prints ``error: internal error (...)`` (D26, D27; forge_core.run_cli)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

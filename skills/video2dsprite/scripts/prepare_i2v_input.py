@@ -37,7 +37,7 @@ import forge_core  # noqa: E402  (this skill's vendored copy)
 import forge_matte  # noqa: E402
 
 TOOL_NAME = "prepare_i2v_input"
-TOOL_VERSION = "1"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes and jobs record the package version (D29)
 JOB_SCHEMA = "video2dsprite.registration_job.v1"
 JOB_FILE = "registration_job.json"
 
@@ -233,8 +233,7 @@ def parse_scale(text: str) -> float | None:
 
 # --------------------------------------------------------------------------- geometry
 
-def round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
+round_half_up = forge_core.round_half_up  # floor(value + 1/2), never banker's rounding (D30)
 
 
 def default_padding(template: ActionTemplate, size: Sequence[int]) -> tuple[int, int, int, int]:
@@ -762,15 +761,15 @@ def run(argv: Sequence[str] | None = None) -> dict[str, Any]:
     return args.func(args)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    try:
-        summary = run(argv)
-    except Exception as exc:  # noqa: BLE001 - CLI surface: no tracebacks for users
-        print(f"error: {_ascii(exc)}", file=sys.stderr)
-        return 1
-    print(json.dumps(summary))
+def _run(argv: Sequence[str] | None = None) -> int:
+    print(json.dumps(run(argv), ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Usage errors exit 2; refused input and failed placement QC exit 1 with ``error: ...``; anything
+    unexpected prints ``error: internal error (...)`` (D26, D27; forge_core.run_cli)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

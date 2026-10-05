@@ -13,6 +13,7 @@ import math
 import os
 import statistics
 import subprocess
+import threading
 import time
 from collections import deque
 from pathlib import Path
@@ -579,7 +580,8 @@ def _load_keyer_bench():
 def test_bench_ryo_clip_default_matte(tmp_path):
     """B05-T2/T3 bench on FORGE_BENCH_CLIP (the Ryo clip of report v2, 145 frames):
     fringe 0 and leak 0 on frames 57-87 (report v2 metrics), leak 0 and no enclosed pockets on all frames,
-    at most 5.7 flips per frame pair, and the soft keyer at most 0.8 s per 960^2 frame."""
+    at most 5.7 flips per frame pair, the soft keyer at most 0.8 s per 960^2 frame, and the whole keying
+    pass (plan, decode, matte, pockets, hysteresis, QA, PNG write; default threads) at most 0.8 s per frame."""
     clip = os.environ.get("FORGE_BENCH_CLIP")
     if not clip:
         pytest.skip("set FORGE_BENCH_CLIP to the Ryo grok-native.mp4")
@@ -613,8 +615,231 @@ def test_bench_ryo_clip_default_matte(tmp_path):
         seconds.append(time.perf_counter() - start)
     keyer_seconds = statistics.median(seconds)
     summary = {"fringe": fringe, "leak": leak, "flips": round(flips, 3), "keyer_s": round(keyer_seconds, 3),
-               "pipeline_s_per_frame": round(pipeline_seconds, 3), "decision": report["interior_despill"]}
+               "pipeline_s_per_frame": round(pipeline_seconds, 3), "decision": report["interior_despill"],
+               "workers": V.frame_workers(None, (rgb[0].shape[1], rgb[0].shape[0]), len(frames))}
     print(json.dumps(summary))
     assert fringe == 0 and leak == 0, summary
     assert flips <= 5.7, summary
     assert keyer_seconds <= 0.8, summary
+    assert pipeline_seconds <= 0.8, summary  # B05-T2: the whole keying pass, default settings (threads)
+
+
+# --------------------------------------------------------------------------- integration: keying-pass speed (exact)
+
+class _FloatHysteresisOracle:
+    """The B05 streaming hysteresis before integration (float32 planes), verbatim: the integer
+    _LocalAlphaHysteresis must return its bytes."""
+
+    def __init__(self, band=(0.4, 0.6), max_step=0.25):
+        self.lo, self.hi = float(band[0]), float(band[1])
+        self.max_step = math.floor(max_step * 255 + 1e-6) / 255
+        self._previous = None
+        self._state = None
+
+    def push(self, alpha):
+        source = np.asarray(alpha, np.uint8)
+        plane = source.astype(np.float32) / np.float32(255.0)
+        if self._previous is None:
+            self._previous, self._state = plane, plane >= 0.5
+            return source.copy()
+        decided = np.where(plane >= self.hi, True, np.where(plane <= self.lo, False, self._state))
+        held = np.clip(plane, self._previous - self.max_step, self._previous + self.max_step)
+        result = np.where(decided == self._state, held, plane)
+        result = np.where(plane == 0, 0.0, result).astype(np.float32)
+        result = (np.floor(result * 255 + 0.5) / 255).astype(np.float32)
+        self._previous, self._state = result, decided
+        return np.floor(result * 255.0 + 0.5).astype(np.uint8)
+
+
+def test_integer_hysteresis_equals_the_float_one_everywhere():
+    """Every previous value, coverage state and new alpha (256 x 2 x 256): the integer filter equals the
+    float32 one bit for bit, so the library equality of test_streaming_hysteresis_matches_library holds."""
+    previous = np.repeat(np.arange(256, dtype=np.uint8), 512)
+    state = np.tile(np.repeat(np.array([False, True]), 256), 256)
+    alpha = np.tile(np.arange(256, dtype=np.uint8), 512)
+    oracle, fast = _FloatHysteresisOracle(), V._LocalAlphaHysteresis()
+    oracle._previous = (previous.astype(np.float32) / np.float32(255.0))
+    oracle._state = state.copy()
+    fast._previous, fast._state = previous.astype(np.int16), state.copy()
+    assert np.array_equal(oracle.push(alpha), fast.push(alpha))
+    assert np.array_equal(oracle._state, fast._state)
+    rng = np.random.default_rng(9)
+    oracle, fast = _FloatHysteresisOracle(), V._LocalAlphaHysteresis()
+    base = rng.integers(0, 256, (40, 50)).astype(np.int16)
+    for _ in range(30):
+        frame = np.clip(base + rng.integers(-90, 91, base.shape) * (rng.random(base.shape) < 0.4), 0, 255)
+        frame = frame.astype(np.uint8)
+        frame[rng.random(base.shape) < 0.05] = 0
+        assert np.array_equal(oracle.push(frame), fast.push(frame))
+
+
+def test_crop_and_rim_helpers_equal_the_library():
+    """matte_qa and pocket removal on the alpha > 0 crop, and flips counted on the alpha-change rim, give
+    exactly the library's numbers and pixels (edge-touching, blank, noisy and pocketed frames)."""
+    rng = np.random.default_rng(17)
+    key = np.array([255, 0, 255], np.float32)
+    frames = [np.zeros((9, 9, 4), np.uint8)]
+    for _ in range(14):
+        frame = np.zeros((40, 50, 4), np.uint8)
+        y0, x0 = int(rng.integers(0, 12)), int(rng.integers(0, 15))
+        frame[y0:rng.integers(20, 41), x0:rng.integers(30, 51)] = (*rng.integers(0, 256, 3), rng.integers(1, 256))
+        frame[rng.integers(0, 40, 40), rng.integers(0, 50, 40)] = (250, 4, 251, 255)
+        frame[20:26, 20:26] = (255, 0, 255, 255)
+        frame[frame[..., 3] == 0] = 0
+        frames.append(frame)
+    for frame in frames:
+        full, crop = fm.matte_qa(frame, key), V._local_matte_qa(frame, key)
+        assert {k: v for k, v in full.items()} == {k: v for k, v in crop.items()}
+        cleaned, count = fm.remove_enclosed_pockets(frame, key)
+        fast, fast_count = V._local_remove_pockets(frame, key)
+        assert count == fast_count and np.array_equal(cleaned, fast)
+    for _ in range(8):
+        raws = [rng.integers(0, 256, (20, 30, 3), dtype=np.uint8)]
+        raws.append(np.clip(raws[0].astype(np.int16) + rng.integers(-30, 31, (20, 30, 3)), 0, 255).astype(np.uint8))
+        alphas = [rng.integers(0, 256, (20, 30), dtype=np.uint8) for _ in range(4)]
+        still = V._local_still_mask(raws[0], raws[1])
+        expected = (V._local_pair_flips(alphas[0], alphas[1], still), V._local_pair_flips(alphas[2], alphas[3], still))
+        assert V._local_pair_flip_counts(raws[0], raws[1], alphas[0], alphas[1], alphas[2], alphas[3]) == expected
+
+
+def test_threads_give_the_same_bytes(tmp_path, capsys):
+    """The keying pass decodes, estimates and mattes on threads; the frames and matte-report.json are the
+    bytes of a one-thread run (soft and dominance, with hysteresis and pockets)."""
+    frames = body_frames(6)
+    for frame in frames[::2]:
+        frame[40:46, 40:46] = MAGENTA  # an enclosed pocket the matte must remove
+    raw = write_raw(tmp_path / "raw", frames)
+    for matte in ("soft", "dominance"):
+        one, _ = clean(capsys, raw, tmp_path / f"{matte}-1", "--matte", matte, "--workers", "1")
+        many, _ = clean(capsys, raw, tmp_path / f"{matte}-3", "--matte", matte, "--workers", "3")
+        assert one == many
+        for index in range(len(frames)):
+            assert (tmp_path / f"{matte}-1" / f"clean_{index:04d}.png").read_bytes() == \
+                (tmp_path / f"{matte}-3" / f"clean_{index:04d}.png").read_bytes()
+    assert V.frame_workers(1, (960, 960), 145) == 1
+    assert V.frame_workers(None, (960, 960), 145) == min(V.KEY_WORKERS_MAX, os.cpu_count() or 1)
+    assert V.frame_workers(8, (3840, 2160), 145) == 1  # 8.3 Mpx frames key one at a time
+    assert V.frame_workers(4, (960, 960), 2) == 2
+    with pytest.raises(SystemExit) as raised:
+        V.main(["clean", "--raw-dir", str(raw), "--output-dir", str(tmp_path / "bad"), "--workers", "-1"])
+    assert raised.value.code == 2 and "--workers" in capsys.readouterr().err
+
+
+def test_a_failing_frame_stops_the_threads_and_publishes_nothing(tmp_path, capsys, monkeypatch):
+    """An error on one frame stops the keying threads before the stage is removed: no thread is left
+    running, nothing is published and no stage folder remains."""
+    raw = write_raw(tmp_path / "raw", body_frames(8))
+    real, written = V.fc.save_png, []
+
+    def failing(image, path, **kwargs):
+        written.append(path)
+        if len(written) == 3:
+            raise OSError("disk full")
+        return real(image, path, **kwargs)
+
+    monkeypatch.setattr(V.fc, "save_png", failing)
+    code, stdout, stderr = run_main(["clean", "--raw-dir", raw, "--output-dir", tmp_path / "out", "--workers", "3"],
+                                    capsys)
+    assert code == 1 and stdout == "" and stderr.strip() == "error: disk full"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["raw"]
+    assert not [thread for thread in threading.enumerate() if thread.name.startswith("video2dsprite")]
+
+
+# --------------------------------------------------------------------------- integration: key-plan (D33)
+
+def _opaque_master(backdrop, scarf=PURPLE) -> np.ndarray:
+    master = np.empty((96, 96, 4), np.uint8)
+    master[...] = (*backdrop, 255)
+    master[8:88, 16:80] = (*fx.NAVY, 255)
+    master[20:60, 16:44] = (*scarf, 255)
+    return master
+
+
+def test_key_plan_keys_an_opaque_master_first(tmp_path, capsys):
+    """D33: an opaque master is keyed on its own backdrop first (as clean --reference keys an opaque
+    reference), so its design colours at risk are listed and the backdrop never is."""
+    rgba = _master(PURPLE)
+    Image.fromarray(rgba).save(tmp_path / "rgba.png")
+    code, stdout, _ = run_main(["key-plan", "--master", tmp_path / "rgba.png", "--candidates", "magenta"], capsys)
+    reference = json.loads(stdout)["design_colours_at_risk"]
+    assert code == 0 and reference[0]["from"] == "#b43cc8"
+    for name, backdrop, method in (("on-magenta", MAGENTA, "soft matte (forge_matte.key_still)"),
+                                   ("on-green", (0, 255, 0), "soft matte (forge_matte.key_still)"),
+                                   ("on-white", (255, 255, 255), "backdrop distance")):
+        Image.fromarray(_opaque_master(backdrop)).save(tmp_path / f"{name}.png")
+        code, stdout, _ = run_main(["key-plan", "--master", tmp_path / f"{name}.png", "--candidates", "magenta"],
+                                   capsys)
+        plan = json.loads(stdout)
+        risky = {row["from"]: row["px"] for row in plan["design_colours_at_risk"]}
+        assert code == 0 and plan["master_keying"]["method"] == method, plan["master_keying"]
+        # the scarf touches the backdrop: keying un-mixes (soft) or trims (distance, 2 px) its outer column
+        assert "#b43cc8" in risky and 0.9 * reference[0]["px"] <= risky["#b43cc8"] <= reference[0]["px"], risky
+        assert "#ff00ff" not in risky and "#00ff00" not in risky and "note" not in plan
+    noisy = np.random.default_rng(3).integers(0, 256, (64, 64, 4), dtype=np.uint8)
+    noisy[..., 3] = 255
+    Image.fromarray(noisy).save(tmp_path / "scene.png")
+    code, stdout, _ = run_main(["key-plan", "--master", tmp_path / "scene.png"], capsys)
+    plan = json.loads(stdout)
+    assert code == 0 and plan["design_colours_at_risk"] is None and "no uniform backdrop" in plan["note"]
+
+
+# --------------------------------------------------------------------------- integration: package and verify (D20)
+
+def _keyed_walk(folder: Path, pocket: bool = False) -> Path:
+    folder.mkdir(parents=True)
+    for index in range(4):
+        frame = np.zeros((48, 48, 4), np.uint8)
+        frame[10:40, 14 + index:34 + index] = (20, 30, 40, 255)
+        frame[11:39, 15 + index:33 + index] = (40, 160, 210, 255)
+        if pocket:
+            frame[20:26, 20:26] = (255, 0, 255, 255)
+        Image.fromarray(frame).save(folder / f"clean_{index:04d}.png")
+    return folder
+
+
+def test_package_verb_is_engine_export_package(tmp_path, capsys):
+    """D20: video2dsprite.py package takes every engine_export 3.0 flag (the --allow-key-residue legacy
+    switch of Appendix H included) and prints the output folder and the metadata file."""
+    clean_dir = _keyed_walk(tmp_path / "pocket", pocket=True)
+    code, stdout, stderr = run_main(["package", "--clean-dir", clean_dir, "--out-dir", tmp_path / "refused",
+                                     "--fps", "12"], capsys)
+    assert code == 1 and stdout == "" and stderr.startswith("error: key residue:") and "--allow-key-residue" in stderr
+    assert not (tmp_path / "refused").exists()
+    code, stdout, stderr = run_main(["package", "--clean-dir", clean_dir, "--out-dir", tmp_path / "pkg", "--fps", "12",
+                                     "--allow-key-residue", "--loop-policy", "pingpong", "--name", "walk"], capsys)
+    summary = json.loads(stdout)
+    assert code == 0, stderr
+    assert summary["output"] == str((tmp_path / "pkg").resolve())
+    assert summary["metadata"] == str((tmp_path / "pkg" / "animation.json").resolve()) and summary["status"] == "warn"
+    manifest = json.loads((tmp_path / "pkg" / "animation.json").read_text(encoding="utf-8"))
+    assert manifest["schemaVersion"] == "3.0" and manifest["qa"]["allowKeyResidue"] is True
+    assert manifest["pingpongBaked"] is True and manifest["name"] == "walk"
+    code, _, stderr = run_main(["verify", "--package", tmp_path / "pkg"], capsys)
+    assert code == 1 and "verify needs an encoded transport" in stderr
+
+
+@pytest.mark.ffmpeg
+def test_verify_verb_decodes_the_package(tmp_path, capsys):
+    """D20: video2dsprite.py verify is engine_export verify."""
+    require_ffmpeg()
+    export = load_script(SKILL, "engine_export")
+    caps = export.capabilities()
+    if not caps["webm"]:
+        pytest.skip(f"ffmpeg lacks a working VP9-alpha path: {caps['errors']}")
+    clean_dir = _keyed_walk(tmp_path / "walk")
+    code, _, stderr = run_main(["package", "--clean-dir", clean_dir, "--output-dir", tmp_path / "pkg", "--fps", "12",
+                                "--formats", "png,webm", "--loop"], capsys)
+    assert code == 0, stderr
+    code, stdout, stderr = run_main(["verify", "--package", tmp_path / "pkg"], capsys)
+    summary = json.loads(stdout)
+    assert code == 0, stderr
+    assert summary["output"] == summary["metadata"] == str((tmp_path / "pkg" / "verify-qa.json").resolve())
+    assert summary["status"] in ("pass", "warn") and summary["transports"] == ["webm"]  # a walk's wrap may warn
+    assert (tmp_path / "pkg" / "verify-qa.json").is_file()
+
+
+def test_cli_internal_error_is_one_line(tmp_path, capsys, monkeypatch):
+    """D27: an unexpected exception prints 'error: internal error (<Type>: <msg>)' and exits 1."""
+    monkeypatch.setattr(V, "cmd_doctor", lambda args: {}["boom"])
+    code, stdout, stderr = run_main(["doctor"], capsys)
+    assert code == 1 and stdout == "" and stderr.strip() == "error: internal error (KeyError: 'boom')"

@@ -1,0 +1,37 @@
+{
+  "rule": "timing",
+  "why": "a tickExpansion's repeated authored frames must be exactly sourceIndices (D21)",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/tickExpansion",
+      "value": {
+        "rate": "60/1",
+        "ticks": [
+          6,
+          6,
+          6,
+          6,
+          6
+        ],
+        "authoredSourceIndices": [
+          0,
+          1,
+          2,
+          3,
+          3
+        ],
+        "authoredDurationsMs": [
+          100,
+          100,
+          100,
+          100,
+          100
+        ]
+      }
+    }
+  ],
+  "alsoFails": []
+}

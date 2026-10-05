@@ -4,18 +4,21 @@
 Pass package folders, animation.json files or a parent folder whose subfolders hold packages.
 Every failure names its rule:
 
-  schema           animation_v3 JSON Schema (needs jsonschema; skipped without it)
+  schema           animation_v3 JSON Schema (the skill's vendored forge_schema evaluator; never skipped)
   paths            no absolute path or URL anywhere; packaged files stay inside the package
   files            every packaged file exists with the recorded sha256 and size
-  timing           frameCount, sourceIndices, durationsMs, durationSeconds, fps and atlas pages agree
+  timing           frameCount, sourceIndices, durationsMs, durationSeconds, fps, atlas pages and a
+                   tickExpansion (repeated frames for uneven whole-tick durations) agree
   anchor           sourceAnchor lies inside sourceSize
-  impact-hold      impactMs and holdMs lie inside the clip
-  events           event times lie inside the clip and name the frame shown at that time
+  impact-hold      impactMs and holdMs lie inside the clip (0 <= ms < duration)
+  events           event times lie inside the clip, the end edge included (0 <= atMs <= duration),
+                   and name the frame shown at that time (the last frame at the end edge)
   loop-flag        loop is an explicit boolean that matches loopPolicy
   states           --require-states names exist among the packages
   poster           the poster has the encoded size and equals the first atlas frame
   padding-embed    action padding embeds the unscaled base canvas at a whole-pixel offset
-  packed-geometry  packed halves are the logical size padded right/bottom to even pixels
+  packed-geometry  packed halves are the logical size padded right/bottom to even pixels: the
+                   logical width and height never exceed halfWidth and halfHeight
   tiers            mobile tiers scale the content without upscaling, at most 60 fps
   static-sprite    --static-sprite/--static-size and --static-anchor match sourceSize/sourceAnchor
   ffprobe-dimensions, ffprobe-timestamps, ffprobe-duration (2 ms), ffprobe-packets, vp9-alpha
@@ -49,8 +52,9 @@ if _HERE not in sys.path:
 import engine_export  # noqa: E402  (same skill)
 import forge_av  # noqa: E402  (the skill's vendored copies)
 import forge_core  # noqa: E402
+import forge_schema  # noqa: E402
 
-VALIDATOR_VERSION = "1.0.0"
+VALIDATOR_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 VALIDATION_SCHEMA = "video2dsprite.validation.v1"
 SCHEMA_DIR = Path(__file__).resolve().parents[1] / "references" / "schemas"
 RULES = ("schema", "paths", "files", "timing", "anchor", "impact-hold", "events", "loop-flag", "states", "poster",
@@ -161,24 +165,24 @@ def _frame_at(durations: Sequence[int], at_ms: int) -> int:
 
 def _label(path: Path) -> str:
     try:
-        name = json.loads(path.read_text(encoding="utf-8")).get("name")
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+        name = forge_core.read_json(path).get("name")
+    except (OSError, ValueError, AttributeError):
         name = None
     return str(name) if isinstance(name, str) and name else path.parent.name
 
 
-def schema_validator():
-    """Draft 2020-12 validator of video.schema.json#/$defs/animation_v3, or None without jsonschema."""
-    try:
-        from jsonschema import Draft202012Validator
-        from referencing import Registry
-        from referencing.jsonschema import DRAFT202012
-    except ImportError:
-        return None
-    schemas = [json.loads(p.read_text(encoding="utf-8")) for p in sorted(SCHEMA_DIR.glob("*.schema.json"))]
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in schemas)
-    video = next(s for s in schemas if s["$id"].endswith("/video.schema.json"))
-    return Draft202012Validator({"$ref": f"{video['$id']}#/$defs/animation_v3"}, registry=registry)
+class _SchemaCheck(NamedTuple):
+    """animation_v3 errors from the vendored schemas through forge_schema (D31): no optional dependency,
+    so the schema rule always runs."""
+    schemas: Any
+
+    def iter_errors(self, manifest: Any) -> list[str]:
+        return self.schemas.contract_errors(manifest, "video", "animation_v3")
+
+
+def schema_validator() -> _SchemaCheck:
+    """The animation_v3 check of the skill's vendored references/schemas (forge_schema evaluator)."""
+    return _SchemaCheck(forge_schema.schema_set(SCHEMA_DIR))
 
 
 def qa_errors(qa: Any, *, expected_outputs: Mapping[str, str], current: Mapping[str, str | None],
@@ -276,11 +280,8 @@ class _Context:
 
 
 def _check_schema(ctx: _Context, validator: Any) -> None:
-    if validator is None:
-        ctx.fail("schema", "jsonschema is not installed (python -m pip install -r requirements-dev.txt)", "skipped")
-        return
-    for error in sorted(validator.iter_errors(ctx.manifest), key=lambda e: list(map(str, e.absolute_path)))[:12]:
-        ctx.fail("schema", f"{error.json_path}: {error.message}")
+    for error in (validator or schema_validator()).iter_errors(ctx.manifest)[:12]:
+        ctx.fail("schema", error)
 
 
 def _check_paths(ctx: _Context) -> None:
@@ -346,6 +347,40 @@ def _check_timing(ctx: _Context) -> None:
         covered += page["frameCount"]
     if covered != count:
         ctx.fail("timing", f"atlas pages hold {covered} frames, frameCount is {count}")
+    if "tickExpansion" in m:
+        _check_tick_expansion(ctx, m["tickExpansion"])
+
+
+def _check_tick_expansion(ctx: _Context, expansion: Any) -> None:
+    """A tickExpansion (engine_export, D21) repeats each authored frame ``ticks`` times at ``rate``: the
+    repeats must be exactly sourceIndices and the authored edges must stay within 1 ms of the timeline."""
+    m = ctx.manifest
+    try:
+        ticks, authored = expansion["ticks"], expansion["authoredSourceIndices"]
+        authored_ms = expansion["authoredDurationsMs"]
+        engine_export.parse_rate(expansion["rate"], "tickExpansion rate", engine_export.MAX_FPS)
+        if not (isinstance(ticks, list) and isinstance(authored, list) and isinstance(authored_ms, list)
+                and len(ticks) == len(authored) == len(authored_ms) and ticks
+                and all(_whole(t) and t >= 1 for t in ticks) and all(_whole(d) and d >= 1 for d in authored_ms)):
+            raise ValueError("ticks, authoredSourceIndices and authoredDurationsMs need one whole entry per "
+                             "authored frame")
+    except (KeyError, TypeError, ValueError) as exc:
+        ctx.fail("timing", f"tickExpansion is malformed: {exc}")
+        return
+    expanded = [index for index, count in zip(authored, ticks) for _ in range(count)]
+    if expanded != m.get("sourceIndices"):
+        ctx.fail("timing", "tickExpansion repeats do not give sourceIndices")
+        return
+    durations = _durations(m)
+    if durations is None or len(durations) != len(expanded):
+        return  # the durationsMs check above reports it
+    grid = np.cumsum([0, *durations]).tolist()
+    authored_edges = np.cumsum([0, *authored_ms]).tolist()
+    marks = np.cumsum([0, *ticks]).tolist()
+    worst = max(abs(grid[mark] - edge) for mark, edge in zip(marks, authored_edges))
+    if worst > engine_export.TICK_EDGE_TOLERANCE_MS:
+        ctx.fail("timing", f"tickExpansion moves an authored frame edge by {worst} ms (limit "
+                           f"{engine_export.TICK_EDGE_TOLERANCE_MS} ms)")
 
 
 def _check_anchor(ctx: _Context) -> None:
@@ -376,7 +411,7 @@ def _check_events(ctx: _Context) -> None:
     total, durations = _duration_ms(ctx.manifest), _durations(ctx.manifest)
     for index, event in enumerate(events):
         at = event.get("atMs") if isinstance(event, dict) else None
-        if not _whole(at) or total is None or not 0 <= at < total:
+        if not _whole(at) or total is None or not 0 <= at <= total:  # the end edge is allowed (D19)
             ctx.fail("events", f"event {index} at {at} ms lies outside the {_ms(total)} clip")
         elif durations is not None and "frame" in event and event["frame"] != _frame_at(durations, at):
             ctx.fail("events", f"event {index} at {at} ms names frame {event['frame']}, but frame "
@@ -445,8 +480,14 @@ def _halves(record: Mapping, label: str, ctx: _Context, rule: str) -> bool:
         ctx.fail(rule, f"{label} width and height must be whole pixels")
         return False
     half_w, half_h = record.get("halfWidth", width), record.get("halfHeight", height)
-    for name, half, logical in (("halfWidth", half_w, width), ("halfHeight", half_h, height)):
-        if not _whole(half) or half % 2 or not logical <= half <= logical + 1:
+    for name, half, logical, side in (("halfWidth", half_w, width, "width"), ("halfHeight", half_h, height, "height")):
+        if not _whole(half):
+            ctx.fail(rule, f"{label} {name} {half!r} must be whole pixels")
+            return False
+        if logical > half:  # D21: the logical frame never exceeds its encoded half
+            ctx.fail(rule, f"{label} {side} {logical} exceeds {name} {half}: the logical frame must fit its half")
+            return False
+        if half % 2 or half > logical + 1:
             ctx.fail(rule, f"{label} {name} {half} must be {logical} padded right/bottom to an even size")
             return False
     if "encodedSize" in record and record["encodedSize"] != [2 * half_w, half_h]:
@@ -575,8 +616,8 @@ def _check_qa(ctx: _Context, options: Options) -> None:
             ctx.fail("verify", f"no {engine_export.VERIFY_FILE}; run engine_export.py verify --package <folder>")
         return
     try:
-        report = json.loads(report_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        report = forge_core.read_json(report_path, strict=True)
+    except ValueError as exc:
         ctx.fail("qa-incomplete", f"{engine_export.VERIFY_FILE} is not valid JSON: {exc}")
         return
     if not isinstance(report, Mapping) or report.get("schema") != engine_export.VERIFY_SCHEMA:
@@ -593,8 +634,8 @@ def validate_manifest(path: Path, options: Options = Options(), *, validator: An
                       ffprobe: bool | None = None) -> list[Finding]:
     """Every per-package rule for one animation.json (``states`` is checked across packages)."""
     try:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        manifest = forge_core.read_json(path, strict=True)  # BOM-tolerant (D28)
+    except (OSError, ValueError) as exc:
         return [Finding("schema", path.parent.name, forge_core.ascii_text(f"unreadable animation.json: {exc}"))]
     if not isinstance(manifest, dict) or manifest.get("schemaVersion") not in ("2.0", "3.0"):
         return [Finding("schema", path.parent.name, "animation.json must be an object with schemaVersion 3.0 or 2.0")]
@@ -689,33 +730,35 @@ def options_from_args(args: argparse.Namespace) -> Options:
                    args.require_verify, args.require_review)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        report_path = Path(args.report) if args.report else None
-        if report_path is not None and os.path.lexists(report_path):
-            raise ValueError(f"report already exists: {report_path.name}")
-        result = validate([Path(p) for p in args.paths], options_from_args(args))
-        if result["failed"]:
-            for finding in result["failed"]:
-                print(f"error: {finding.rule}: {finding.package}: {finding.message}", file=sys.stderr)
-            return 1
-        if report_path is not None:
-            stage = report_path.with_name(f".{report_path.name}.{os.getpid()}.tmp")
-            try:
-                forge_core.write_json(stage, validation_report(result, report_path))
-                forge_core.publish_file_no_replace(stage, report_path)
-            finally:
-                stage.unlink(missing_ok=True)
-        print(json.dumps({"status": "pass", "packages": result["labels"],
-                          "manifests": [str(p) for p in result["manifests"]],
-                          "skipped": sorted({f.rule for f in result["findings"] if f.status == "skipped"}),
-                          "report": str(report_path.resolve()) if report_path else None}))
-        return 0
-    except Exception as exc:  # noqa: BLE001 - CLI surface: tracebacks are never user-facing
-        print("error: " + forge_core.ascii_text(str(exc)), file=sys.stderr)
+    report_path = Path(args.report) if args.report else None
+    if report_path is not None and os.path.lexists(report_path):
+        raise ValueError(f"report already exists: {report_path.name}")
+    result = validate([Path(p) for p in args.paths], options_from_args(args))
+    if result["failed"]:
+        for finding in result["failed"]:
+            print(f"error: {finding.rule}: {finding.package}: {finding.message}", file=sys.stderr)
         return 1
+    if report_path is not None:
+        stage = report_path.with_name(f".{report_path.name}.{os.getpid()}.tmp")
+        try:
+            forge_core.write_json(stage, validation_report(result, report_path))
+            forge_core.publish_file_no_replace(stage, report_path)
+        finally:
+            stage.unlink(missing_ok=True)
+    written = str(report_path.resolve()) if report_path else None
+    print(json.dumps({"status": "pass", "output": written, "metadata": written, "packages": result["labels"],
+                      "manifests": [str(p) for p in result["manifests"]],
+                      "skipped": sorted({f.rule for f in result["findings"] if f.status == "skipped"}),
+                      "report": written}, ensure_ascii=True))
+    return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """A failed rule prints its findings and exits 1 with no report written; usage errors exit 2; anything
+    unexpected prints ``error: internal error (...)`` (D26, D27; forge_core.run_cli)."""
+    return forge_core.run_cli(_run, argv, expected=engine_export.CLI_ERRORS)
 
 
 if __name__ == "__main__":

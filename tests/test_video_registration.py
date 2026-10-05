@@ -379,7 +379,8 @@ def test_profile_mismatch_fails(tmp_path):
     assert_valid_contract(profile, "video", "character_profile_v1", skill=SKILL)
     assert_requested(profile, "character_profile_v1")
     assert profile["registration"]["scale"] == a["referenceScale"] and summary["clips"] == ["idle"]
-    assert profile["matte"] == {"mode": "soft", "key": "magenta", "erode": 0.0, "unmix": True, "despill": "auto"}
+    assert profile["matte"] == {"mode": "soft", "key": "magenta", "erode": 0, "unmix": True, "despill": "auto"}
+    assert isinstance(profile["matte"]["erode"], int)  # D21: whole px, as --matte-profile requires
 
     # a clip prepared at another scale cannot inherit the profile, and nothing is published
     job_b, _ = prepare(tmp_path, "attack-small", "--action", "attack", "--scale", str(a["referenceScale"] * 0.8))
@@ -615,3 +616,99 @@ def test_cli_no_partial_output_on_qc_failure(tmp_path):
     hint = result.stderr.split("--action-padding ")[1].split(" ")[0]
     document, _ = register(tmp_path, job_path, frames, "reg-grown", "--action-padding", hint)
     assert {check["id"]: check["status"] for check in document["qa"]["checks"]}["canvas-overflow"] == "pass"
+
+
+# --------------------------------------------------------------------------- integration fixes (D18, D21, D26, D27)
+
+def test_registered_frames_lose_the_invisible_halo(tmp_path):
+    """D18: lanczos registration rings just outside edges and unpremultiplying alpha 1-4 invents saturated,
+    key-leaning colours; apply clears alpha <= 4 (forge_core.alpha_hygiene floor 4), records it in
+    registration.json, and B08's residue gate passes the frames."""
+    job_path, _ = prepare(tmp_path, "halo")
+    frames = write_frames(tmp_path / "halo-frames", [placed(job_path, dy) for dy in (0.0, 0.5, 1.0)])
+    document, registered = register(tmp_path, job_path, frames, "halo-reg")
+    hygiene = document["hygiene"]
+    assert (hygiene["mode"], hygiene["floor"]) == ("floor", 4) and hygiene["floor_px"] > 0
+    assert 1 <= hygiene["max_removed_alpha"] <= 4 and hygiene["frames_changed"] >= 1
+    for frame in registered:
+        alpha = frame[..., 3]
+        assert not ((alpha > 0) & (alpha <= 4)).any()
+        assert not frame[alpha == 0, :3].any()
+    assert "alpha hygiene floor" in document["qa"]["method"]
+    assert_requested(document, "registration_v1")
+    export = load_script(SKILL, "engine_export")
+    residue = export.key_residue([frame for frame in registered], (255, 0, 255))
+    assert residue["opaqueKeyPx"] == 0 and residue["maxOuterRingSpillFraction"] <= 0.01
+
+
+def test_profile_matte_follows_the_mode(tmp_path):
+    """D21: profile pins unmix only for the soft matte (default on for soft, off for dominance and binary)
+    and erode as whole px, so video2dsprite --matte-profile accepts every mode it writes."""
+    job_path, _ = prepare(tmp_path, "pidle")
+    register(tmp_path, job_path, write_frames(tmp_path / "pidle-frames", [placed(job_path)] * 2), "pidle-reg")
+    registration = str(tmp_path / "pidle-reg" / "registration.json")
+    v2s = load_script(SKILL, "video2dsprite")
+    for mode, unmix in (("soft", True), ("dominance", False), ("binary", False)):
+        path = tmp_path / f"{mode}.profile.json"
+        RC.run(["profile", "--registration", registration, "--id", "hero", "--output", str(path), "--matte-mode", mode])
+        matte = json.loads(path.read_text(encoding="utf-8"))["matte"]
+        assert matte["unmix"] is unmix and matte["erode"] == 0 and isinstance(matte["erode"], int), (mode, matte)
+        pinned = v2s.load_matte_profile(path)["pinned"]
+        v2s.MatteSettings(matte=pinned["matte"], key=pinned["key"], erode=pinned["erode"], unmix=pinned["unmix"],
+                          despill_mode=pinned["despill_mode"]).validate()
+    RC.run(["profile", "--registration", registration, "--id", "hero", "--output", str(tmp_path / "e2.json"),
+            "--erode", "2", "--no-unmix"])
+    matte = json.loads((tmp_path / "e2.json").read_text(encoding="utf-8"))["matte"]
+    assert (matte["erode"], matte["unmix"]) == (2, False)
+    with pytest.raises(ValueError, match="--unmix belongs to the soft matte"):
+        RC.run(["profile", "--registration", registration, "--id", "hero", "--output", str(tmp_path / "bad.json"),
+                "--matte-mode", "dominance", "--unmix"])
+    assert not (tmp_path / "bad.json").exists()
+    result = run_cli([script_path(SKILL, "register_clip"), "profile", "--registration", registration, "--id", "hero",
+                      "--output", tmp_path / "frac.json", "--erode", "1.5"])
+    assert result.returncode == 2 and "usage:" in result.stderr and not (tmp_path / "frac.json").exists()
+
+
+def test_rejected_take_is_recorded_and_strict_exits_1(tmp_path):
+    """qc is an append-only verdict log (B06-T4): a rejected take is recorded and exits 0, and --strict
+    turns a rejection into exit 1 with the line still written. D26's exit-1 rule covers verify, validate
+    and conform tools (whose published report says fail); a take verdict is neither."""
+    job_path, _ = prepare(tmp_path, "qc-exit")
+    input_rgb = read_png(job_path.parent / "input.png")[..., :3]
+    locked = write_frames(tmp_path / "exit-locked", _qc_frames(input_rgb, 30))
+    push = write_frames(tmp_path / "exit-push", _qc_frames(input_rgb, 30, zoom=0.12))
+    script = script_path(SKILL, "register_clip")
+    kept = run_cli([script, "qc", "--job", job_path, "--frames", locked, "--take", "ok"])
+    assert kept.returncode == 0 and json.loads(kept.stdout)["status"] == "kept", kept.stderr
+    rejected = run_cli([script, "qc", "--job", job_path, "--frames", push, "--take", "zoom"])
+    assert rejected.returncode == 0 and json.loads(rejected.stdout)["status"] == "rejected", rejected.stderr
+    strict = run_cli([script, "qc", "--job", job_path, "--frames", push, "--take", "zoom-strict", "--strict"])
+    assert strict.returncode == 1 and json.loads(strict.stdout)["status"] == "rejected"
+    assert strict.stderr.startswith("error: take zoom-strict rejected:") and "push-in" in strict.stderr
+    for take in ("zoom", "zoom-strict"):
+        line = _take_line(job_path.parent / "takes.jsonl", take)
+        assert line["status"] == "rejected" and line["qa"]["status"] == "fail"
+
+
+def test_cli_internal_error_is_one_line(tmp_path, monkeypatch, capsys):
+    """D27: an unexpected exception prints 'error: internal error (<Type>: <msg>)', never a traceback."""
+    monkeypatch.setattr(RC, "build_parser", _parser_with(RC.build_parser, "profile", lambda args: [][1]))
+    code = RC.main(["profile", "--registration", str(tmp_path / "r.json"), "--id", "x", "--output",
+                    str(tmp_path / "p.json")])
+    assert code == 1 and capsys.readouterr().err.strip() == "error: internal error (IndexError: list index out of range)"
+
+
+def test_prepare_internal_error_is_one_line(monkeypatch, capsys):
+    """D27: prepare_i2v_input prints 'error: internal error (<Type>: <msg>)' for an unexpected exception."""
+    monkeypatch.setattr(PREP, "cmd_lint", lambda args: {}["boom"])
+    assert PREP.main(["lint", "--text", "hold still"]) == 1
+    assert capsys.readouterr().err.strip() == "error: internal error (KeyError: 'boom')"
+
+
+def _parser_with(build, verb, func):
+    def patched():
+        parser = build()
+        for action in parser._subparsers._group_actions:  # noqa: SLF001 - test seam
+            action.choices[verb].set_defaults(func=func)
+        return parser
+    return patched

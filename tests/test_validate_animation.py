@@ -5,9 +5,11 @@ Negative fixtures live in tests/fixtures/animation/negative/<name>.json:
 package built here with engine_export (``base`` "png", or "video" with webm, packed and one tier,
 which needs ffmpeg) and must fail exactly on ``rule`` plus the rules in ``alsoFails``. Ops:
 ``set``/``remove``/``append`` (a JSON pointer into animation.json), ``png`` (write a transparent
-PNG of ``size``), ``touch`` (append a byte) and ``encode`` (replace a video: ``kind`` packed or
-opaque-webm with ``size``, ``frames`` and ``fps``). Replaced files are re-hashed in the manifest
-and its QA, so only the named rule sees them.
+PNG of ``size``), ``touch`` (append a byte), ``encode`` (replace a video: ``kind`` packed or
+opaque-webm with ``size``, ``frames`` and ``fps``) and ``duplicate-timestamp`` (remux a video so
+packet ``packet`` repeats the previous packet's timestamp, with ffmpeg's setts filter). Replaced
+files are re-hashed in the manifest and its QA, so only the named rule sees them. Every rule has a
+negative fixture, ``schema`` and ``ffprobe-timestamps`` included (D21).
 """
 from __future__ import annotations
 
@@ -23,7 +25,6 @@ from PIL import Image
 
 from forge_testutils import (FIXTURES_DIR, assert_cli_help, assert_valid_contract, load_script, require_ffmpeg,
                              run_cli, script_path)
-from test_engine_export_v3 import proposed_errors
 
 E = load_script("video2dsprite", "engine_export")
 V = load_script("video2dsprite", "validate_animation")
@@ -138,6 +139,15 @@ def _rehash(manifest: dict, folder: Path, name: str) -> None:
             record["sha256"], record["bytes"] = sha(folder / name), (folder / name).stat().st_size
 
 
+def _duplicate_timestamp(target: Path, packet: int) -> None:
+    """Remux ``target`` so packet ``packet`` carries the previous packet's timestamp (non-increasing DTS)."""
+    original = target.with_name(f"original-{target.name}")
+    target.rename(original)
+    AV.run([require_ffmpeg(), "-hide_banner", "-loglevel", "error", "-nostdin", "-i", str(original), "-map", "0:v:0",
+            "-c", "copy", "-bsf:v", rf"setts=ts=if(eq(N\,{packet})\,PREV_OUTPTS\,TS)", str(target)])
+    original.unlink()
+
+
 def _encode(target: Path, op: dict) -> None:
     width, height = op["size"]
     target.unlink()
@@ -171,6 +181,9 @@ def apply_ops(folder: Path, ops: list[dict]) -> None:
         elif kind == "encode":
             _encode(folder / op["file"], op)
             _rehash(manifest, folder, op["file"])
+        elif kind == "duplicate-timestamp":
+            _duplicate_timestamp(folder / op["file"], op["packet"])
+            _rehash(manifest, folder, op["file"])
         else:
             raise AssertionError(f"unknown fixture op {kind}")
     write(folder / "animation.json", manifest)
@@ -195,9 +208,10 @@ def test_negative_fixture_fails_on_its_rule(fixture, request, tmp_path):
 
 
 def test_negative_fixtures_cover_the_rules():
+    """D21: every rule, schema and ffprobe-timestamps included, has a negative fixture."""
     covered = {read(path)["rule"] for path in NEGATIVE}
-    assert covered >= set(V.RULES) - {"schema", "ffprobe-timestamps"}
-    assert len(NEGATIVE) == len({path.stem for path in NEGATIVE}) >= 30
+    assert covered >= set(V.RULES)
+    assert len(NEGATIVE) == len({path.stem for path in NEGATIVE}) >= 39
 
 
 # --------------------------------------------------------------------------- positive cases
@@ -213,7 +227,8 @@ def test_valid_package_passes_and_reports(png_base, tmp_path):
     assert summary["status"] == "pass" and summary["packages"] == ["idle"] and result.stdout.isascii()
     data = read(report)
     assert_valid_contract(data, "common", "qaEnvelope", skill="video2dsprite")
-    assert proposed_errors(data, "validation_report_v1") == []
+    assert_valid_contract(data, "video", "validation_report_v1", skill="video2dsprite")
+    assert summary["output"] == summary["metadata"] == summary["report"] == str(report.resolve())
     assert data["inputs"][0]["path"] == "pkg/idle/animation.json"
     assert {c["id"] for c in data["checks"]} >= {"idle.anchor", "idle.qa-stale", "idle.poster"}
 

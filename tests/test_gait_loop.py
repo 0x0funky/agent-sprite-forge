@@ -564,3 +564,20 @@ def test_select_cli_prints_one_ascii_json_line(small_runner, tmp_path):
     summary = json.loads(lines[0])
     assert Path(summary["selection"]).is_file() and Path(summary["metadata"]).is_file()
     assert summary["frames"] == summary["endExclusive"] - summary["start"]
+
+
+def test_internal_errors_are_one_line(monkeypatch, capsys):
+    """D27: an exception that is not a refused input prints 'error: internal error (<Type>: <msg>)', no traceback."""
+    monkeypatch.setattr(G, "cmd_select", lambda args: {}["boom"])
+    assert G.main(["select", "--frames-dir", "frames", "--fps", "24", "--output-dir", "out"]) == 1
+    assert capsys.readouterr().err.strip() == "error: internal error (KeyError: 'boom')"
+
+
+def test_file_refs_are_forge_core_file_refs(tmp_path):
+    """D30: gait_loop's fileRef and directory reference are forge_core.file_ref and manifest_path."""
+    target = tmp_path / "a" / "frame.png"
+    target.parent.mkdir()
+    target.write_bytes(b"png")
+    assert G.file_ref(target, tmp_path) == G.forge_core.file_ref(target, tmp_path)
+    assert G.file_ref(target, tmp_path)["path"] == "a/frame.png" and G.file_ref(target, tmp_path)["bytes"] == 3
+    assert G.directory_ref(target.parent, tmp_path) == "a" and G.round_half_up is G.forge_core.round_half_up
