@@ -1,27 +1,18 @@
 """Behavioral regression tests for map composition (compose_layered_preview)."""
 from __future__ import annotations
 
-import importlib.util
-import sys
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
 from PIL import Image
 
-
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/generate2dmap/scripts"
-
-
-def load(name):
-    spec = importlib.util.spec_from_file_location(f"map_test_{name}", SCRIPTS / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
+from forge_testutils import load_script, run_cli, script_path
 
 
-COMPOSE = load("compose_layered_preview")
+COMPOSE = load_script("generate2dmap", "compose_layered_preview")
+SCRIPT = script_path("generate2dmap", "compose_layered_preview")
 
 
 class CompositionTests(unittest.TestCase):
@@ -56,6 +47,63 @@ class CompositionTests(unittest.TestCase):
             Image.new("RGBA", (2, 2)).save(root / "p.png")
             with self.assertRaises(ValueError):
                 COMPOSE.paste_prop(Image.new("RGBA", (4, 4)), {"image": "p.png", "opacity": float("nan")}, [root])
+
+
+class ForkLayeredPreviewTests(unittest.TestCase):
+    """The improved fork's five compose tests (B12-T1), bodies unchanged except module loading."""
+
+    def test_all_render_arrays_reach_output_and_foreground_wins(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            Image.new('RGBA', (8, 8), 'black').save(root / 'base.png')
+            for name, color in [('tree', 'green'), ('actor', 'red'), ('roof', 'blue')]:
+                Image.new('RGBA', (2, 2), color).save(root / f'{name}.png')
+            data = {'props': [{'image': 'tree.png', 'x': 2, 'y': 2}],
+                    'actors': [{'image': 'actor.png', 'x': 2, 'y': 2}],
+                    'objects': [{'image': 'actor.png', 'x': 5, 'y': 5}],
+                    'foreground': [{'image': 'roof.png', 'x': 2, 'y': 2, 'sortY': -20}]}
+            (root / 'scene.json').write_text(json.dumps(data))
+            run = run_cli([SCRIPT, '--base', str(root / 'base.png'),
+                           '--placements', str(root / 'scene.json'), '--output', str(root / 'out.png'),
+                           '--report', str(root / 'report.json')])
+            self.assertEqual(run.returncode, 0, run.stderr)
+            with Image.open(root / 'out.png') as image:
+                self.assertEqual(image.getpixel((1, 1)), (0, 0, 255, 255))
+                self.assertEqual(image.getpixel((4, 4)), (255, 0, 0, 255))
+            self.assertEqual(len(json.loads((root / 'report.json').read_text())['pasted']), 4)
+
+    def test_native_alpha_is_composited_once_and_nearest_preserves_palette(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = Image.new('RGBA', (2, 1))
+            source.putdata([(200, 100, 50, 128), (0, 0, 255, 255)])
+            source.save(root / 'prop.png')
+            canvas = Image.new('RGBA', (4, 2), (0, 0, 0, 0))
+            COMPOSE.paste_prop(canvas, {'image': 'prop.png', 'anchor': 'top-left', 'w': 4, 'h': 2},
+                               [root], 'nearest')
+            colors = lambda image: {image.getpixel((x, y)) for x in range(image.width) for y in range(image.height)}
+            self.assertEqual(colors(canvas), colors(source))
+
+    def test_source_contact_anchor_survives_scaling(self):
+        self.assertEqual(COMPOSE.placement_xy({'x': 100, 'y': 80, 'anchorPx': [25, 40]},
+                                              100, 100, (50, 50)), (50, 0))
+        with self.assertRaises(ValueError):
+            COMPOSE.placement_xy({'anchorPx': [51, 40]}, 100, 100, (50, 50))
+        with self.assertRaises(ValueError):
+            COMPOSE.placement_xy({'anchor': 'typo'}, 10, 10)
+
+    def test_invalid_array_does_not_silently_drop_objects(self):
+        with self.assertRaises(ValueError):
+            COMPOSE.load_props({'props': [], 'foreground': {}})
+
+    def test_report_sort_baseline_matches_sorting_when_y_is_omitted(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            Image.new('RGBA', (10, 10), 'red').save(root / 'prop.png')
+            prop = {'image': 'prop.png', 'anchor': 'center'}
+            report = COMPOSE.paste_prop(Image.new('RGBA', (20, 20)), prop, [root])
+            self.assertEqual(report['sortY'], COMPOSE.effective_sort_y(prop))
+            self.assertEqual(report['sortY'], 0)
 
 
 if __name__ == "__main__":
