@@ -83,11 +83,30 @@ def test_parallax_strict_qc_failure_publishes_nothing(tmp_path):
     result = parallax(spec_path, tmp_path / "bg", "--strict-qc")
     assert result.returncode == 1 and "loop_step:ramp" in result.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == ["ramp.png", "spec.json"]
+    # Without --strict-qc the layers are published for inspection, and the failed QA still exits 1 (D26)
     result = parallax(spec_path, tmp_path / "bg")
-    assert result.returncode == 0 and json.loads(result.stdout)["status"] == "fail"
+    summary = json.loads(result.stdout)
+    assert result.returncode == 1 and summary["status"] == "fail" and "loop_step:ramp" in summary["failed_checks"]
+    assert result.stderr.startswith("error: published with QA status fail: ") and "loop_step:ramp" in result.stderr
+    assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
     qa = json.loads((tmp_path / "bg" / "parallax-qa.json").read_text(encoding="utf-8"))
     check = next(c for c in qa["checks"] if c["id"] == "loop_step:ramp")
     assert check["status"] == "fail" and check["value"] > 1.0
+
+
+def test_parallax_layer_ids_that_differ_only_in_case_are_refused(tmp_path):
+    """r2-conventions F2 (casecollide3.py): layers far and FAR both wrote far.png on Windows and macOS, so the
+    plan listed far.png and FAR.png with the same sha256 and the far layer's art was lost. Layer ids must
+    differ in more than letter case; nothing is published."""
+    spec = json.loads((EXAMPLES / "parallax-gen.json").read_text(encoding="utf-8"))
+    far = next(layer for layer in spec["layers"] if layer["id"] == "far")
+    spec["layers"].insert(spec["layers"].index(far) + 1, dict(far, id="FAR"))
+    out = tmp_path / "bg"
+    result = parallax(write_json(tmp_path / "spec.json", spec), out)
+    assert result.returncode == 1, result.stdout
+    assert "'FAR' differs from layer id 'far' only in letter case" in result.stderr
+    assert result.stderr.startswith("error:") and len(result.stderr.strip().splitlines()) == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["spec.json"]
 
 
 def test_parallax_example_validates_loops_and_sweeps(backdrop):
@@ -256,6 +275,13 @@ def test_ambient_strict_qc_failure_publishes_nothing(tmp_path):
     result = ambient(tmp_path / "flat.png", EXAMPLES / "plate-effects.json", tmp_path / "out", "--strict-qc")
     assert result.returncode == 1 and "motion_present" in result.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == ["flat.png"]
+    # Without --strict-qc the loop is published for inspection, and the failed QA still exits 1 (D26)
+    result = ambient(tmp_path / "flat.png", EXAMPLES / "plate-effects.json", tmp_path / "loose")
+    summary = json.loads(result.stdout)
+    assert result.returncode == 1 and summary["status"] == "fail" and summary["failed_checks"] == ["motion_present"]
+    assert result.stderr.startswith("error: published with QA status fail: motion_present (see ")
+    assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
+    assert json.loads((tmp_path / "loose" / "ambient-qa.json").read_text(encoding="utf-8"))["status"] == "fail"
 
 
 def test_ambient_loop_has_an_exact_period(harbour):

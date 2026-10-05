@@ -397,10 +397,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("error: interrupted; nothing was written", file=sys.stderr)
         return 130
+    except SystemExit:
+        raise
     except (QAFailure, codeart_core.CodeArtError, ValueError, OSError) as error:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
-    except Exception as error:  # never a traceback for the user
+    except BaseException as error:  # noqa: BLE001  D27: never a traceback for the user, not even for a
+        # BaseException such as a Rust panic from an extension
         print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
     message = summary.pop("error", None)

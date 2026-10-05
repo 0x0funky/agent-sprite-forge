@@ -90,6 +90,48 @@ def test_strict_qc_failure_publishes_nothing(tmp_path):
     assert result.returncode == 1, result.stdout
     assert result.stderr.startswith("error: strict QC failed (margins)") and "nothing was published" in result.stderr
     assert not output.exists() and not [path for path in tmp_path.iterdir() if path.name.startswith(".out.stage-")]
+    # Without --strict-qc the frames are published for inspection, and the failed QA still exits 1 (D26)
+    loose = tmp_path / "loose"
+    result = run_fx(write_spec(tmp_path / "case", escaping), loose)
+    assert result.returncode == 1, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["qa"] == "fail" and summary["failed_checks"] == ["margins"]
+    assert result.stderr.startswith("error: published with QA status fail: margins (see ") and result.stderr.isascii()
+    assert read_json(loose / "fx-report.json")["qa"]["status"] == "fail"
+
+
+def test_effect_ids_that_differ_only_in_case_are_refused(tmp_path):
+    """r2-conventions F2 (casecollide.py): effects slash and SLASH both wrote frames/slash-NN.png on Windows and
+    macOS, so SLASH's pixels replaced slash's while clips.json listed both and QA passed. Effect ids must differ
+    in more than letter case; the spec is refused before anything is drawn."""
+    data = read_json(EXAMPLE)
+    twin = copy.deepcopy(data["effects"][0])
+    twin["id"] = "SLASH"
+    data["effects"].append(twin)
+    output = tmp_path / "out"
+    result = run_fx(write_spec(tmp_path / "case", data), output)
+    assert result.returncode == 1, result.stdout
+    assert result.stderr.startswith("error: case.fx.json: effect ids 'slash' and 'SLASH' differ only in letter case")
+    assert not output.exists()
+    with pytest.raises(core.CodeArtError, match="'orb' and 'Orb' differ only in letter case"):
+        normalised(spec(effect("orb", {"type": "ring", "ramp": "hot"}), effect("Orb", {"type": "ring", "ramp": "hot"})))
+
+
+@pytest.mark.resvg
+def test_a_resvg_panic_on_a_huge_radius_is_one_error_line(tmp_path):
+    """r2-conventions F1 repro (repro/panic/fx-1e10.json): the example with the orb's radius at 1e10 panics
+    inside resvg; through forge_core.run_cli that was a PanicException traceback. Now: one 'error:' line, exit 1,
+    nothing published."""
+    require_resvg()
+    data = read_json(EXAMPLE)
+    data["effects"][3]["primitives"][0]["radius"] = 1e10
+    output = tmp_path / "out"
+    result = run_fx(write_spec(tmp_path / "case", data), output, "--route", "pixel")
+    if result.returncode == 0:
+        pytest.skip("this resvg-py renders a radius of 1e10 without panicking")
+    assert result.returncode == 1 and "Traceback" not in result.stderr, result.stderr
+    assert result.stderr.strip().splitlines()[-1].startswith("error: resvg_py failed: PanicException: ")
+    assert not output.exists() and not [path for path in tmp_path.iterdir() if ".stage-" in path.name]
 
 
 # ----------------------------------------------------------------------------- plan acceptance

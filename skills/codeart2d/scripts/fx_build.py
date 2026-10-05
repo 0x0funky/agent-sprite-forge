@@ -315,6 +315,10 @@ class FxSpec:
         ids = [effect["id"] for effect in self.effects]
         if len(set(ids)) != len(ids):
             raise CodeArtError(f"{label}: effect ids must be unique")
+        clash = core.case_clash(ids)
+        if clash:  # ids name files (frames/<id>-NN.png, review/<id>.png), one file on Windows and macOS
+            raise CodeArtError(f"{label}: effect ids {clash[0]!r} and {clash[1]!r} differ only in letter case; "
+                               "they name files, so ids must differ in more than case")
 
     def _palette(self, raw: Any, base: Path, label: str) -> dict[str, str]:
         if raw is None:
@@ -841,7 +845,8 @@ def build(args: argparse.Namespace) -> dict:
     return {"status": "ok", "qa": meta["qa"]["status"], "output": str(final),
             "metadata": str(final / "codeart-meta.json"), "report": str(final / "fx-report.json"),
             "effects": [effect["id"] for effect in effects], "frames": len(unique), "route": args.route,
-            "runtime": str(final / "fx-runtime.mjs") if runtime_record else None}
+            "runtime": str(final / "fx-runtime.mjs") if runtime_record else None,
+            "failed_checks": [item["id"] for item in envelope["checks"] if item["status"] == "fail"]}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -887,7 +892,7 @@ def _run(argv: Sequence[str] | None = None) -> int:
         print(forge_core.ascii_text(f"error: {rig.describe_error(exc)}"), file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
-    return 0
+    return rig.published_fail_status(summary)  # D26: a published fail report exits 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:

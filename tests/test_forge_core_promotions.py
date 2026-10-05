@@ -155,6 +155,44 @@ def test_run_cli_debug_reraises(monkeypatch):
         fc.run_cli(lambda argv=None: int("x"))
 
 
+class PanicException(BaseException):
+    """Stands in for pyo3_runtime.PanicException (a Rust panic in a PyO3 extension such as resvg_py), which
+    derives from BaseException, not Exception."""
+
+
+def test_run_cli_reports_any_other_base_exception_as_an_internal_error(capsys, monkeypatch):
+    """r2-conventions F1, defence in depth (D27): a PanicException passed the `except Exception` catch-all and
+    reached the user as a traceback. Any BaseException but SystemExit and KeyboardInterrupt is one internal
+    error line with exit 1 now; FORGE_DEBUG=1 still re-raises it."""
+    monkeypatch.delenv("FORGE_DEBUG", raising=False)
+
+    def panics(argv=None):
+        raise PanicException("called `Option::unwrap()` on a `None` value")
+
+    assert fc.run_cli(panics) == 1
+    assert capsys.readouterr().err == ("error: internal error (PanicException: called `Option::unwrap()` on a "
+                                       "`None` value)\n")
+
+    def generator_exit(argv=None):
+        raise GeneratorExit("stray")
+
+    assert fc.run_cli(generator_exit) == 1
+    assert capsys.readouterr().err == "error: internal error (GeneratorExit: stray)\n"
+    assert fc.run_cli(panics, expected=(PanicException,)) == 1  # an expected BaseException reads as a plain error
+    assert capsys.readouterr().err == "error: called `Option::unwrap()` on a `None` value\n"
+    with pytest.raises(SystemExit) as explicit:  # unchanged: SystemExit passes, Ctrl+C is 130
+        fc.run_cli(lambda argv=None: sys.exit(4))
+    assert explicit.value.code == 4
+
+    def interrupted(argv=None):
+        raise KeyboardInterrupt
+
+    assert fc.run_cli(interrupted) == 130 and capsys.readouterr().err == "error: interrupted\n"
+    monkeypatch.setenv("FORGE_DEBUG", "1")
+    with pytest.raises(PanicException):
+        fc.run_cli(panics)
+
+
 def test_run_cli_in_a_real_process_prints_one_ascii_line_and_no_traceback(tmp_path):
     """D27 end to end: a CLI built on run_cli never shows a traceback, whatever fails."""
     script = tmp_path / "tool.py"
@@ -162,18 +200,24 @@ def test_run_cli_in_a_real_process_prints_one_ascii_line_and_no_traceback(tmp_pa
         "import sys\n"
         f"sys.path.insert(0, {str(REPO_ROOT / 'shared')!r})\n"
         "import forge_core\n"
+        "class PanicException(BaseException):\n"
+        "    pass\n"
         "def main(argv=None):\n"
         "    mode = sys.argv[1]\n"
         "    if mode == 'bug':\n"
         "        return [][1]\n"
         "    if mode == 'input':\n"
         "        raise ValueError('bad \\u00d7 value')\n"
+        "    if mode == 'panic':\n"
+        "        raise PanicException('called `Option::unwrap()` on a `None` value')\n"
         "    return 0\n"
         "raise SystemExit(forge_core.run_cli(main))\n", encoding="utf-8")
     environment = {**os.environ, "PYTHONIOENCODING": "cp1252"}
     environment.pop("FORGE_DEBUG", None)
     for mode, status, message in (("ok", 0, ""), ("input", 1, "error: bad x value\n"),
-                                  ("bug", 1, "error: internal error (IndexError: list index out of range)\n")):
+                                  ("bug", 1, "error: internal error (IndexError: list index out of range)\n"),
+                                  ("panic", 1, "error: internal error (PanicException: called `Option::unwrap()` "
+                                               "on a `None` value)\n")):
         done = subprocess.run([sys.executable, str(script), mode], capture_output=True, env=environment)
         assert done.returncode == status, (mode, done.stderr)
         assert done.stderr.decode("ascii").replace("\r\n", "\n") == message

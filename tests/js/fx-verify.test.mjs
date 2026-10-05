@@ -10,7 +10,9 @@ import path from 'node:path';
 import { after, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { RecordingContext, scanSource, stripComments, verifyFxModule } from '../../skills/codeart2d/scripts/fx_verify.mjs';
+import {
+  RecordingContext, TOOL, asciiText, scanSource, stripComments, verifyFxModule,
+} from '../../skills/codeart2d/scripts/fx_verify.mjs';
 
 const TEMPLATE = fileURLToPath(new URL('../../skills/codeart2d/references/runtime/fx-template.mjs', import.meta.url));
 // Mutants match multi-line snippets of the template: normalise CRLF first, so a checkout with
@@ -119,4 +121,18 @@ test('the recording context tracks transforms and paint boxes', () => {
   ctx.restore();
   assert.deepEqual(ctx.ops[0].box, [16, 26, 24, 34]);
   assert.deepEqual(ctx.state.transform.map((v) => Math.round(v * 1e9) / 1e9), [0, 3, -2, 0, 10, 5]);
+});
+
+test('console lines are ASCII: non-ASCII becomes JSON \\u escapes that decode back (Appendix D)', () => {
+  const summary = JSON.stringify({ module: 'C:\\Users\\\u6797\\fx \u6e2c\u8a66\\fx-runtime.mjs', effects: ['\u00fc', '\u{1F525}'] });
+  const line = asciiText(summary);
+  assert.match(line, /^[\x20-\x7e]*$/);
+  assert.ok(line.includes('\\u6797') && line.includes('\\u6e2c\\u8a66') && line.includes('\\ud83d\\udd25'));
+  assert.deepEqual(JSON.parse(line), JSON.parse(summary));
+  assert.equal(asciiText('plain ASCII, kept as is'), 'plain ASCII, kept as is');
+  assert.equal(asciiText('two\nlines\u007f'), 'two\\u000alines\\u007f');  // an error message stays one line
+});
+
+test('the QA envelope names the package version (D29)', () => {
+  assert.deepEqual(TOOL, { name: 'codeart2d/fx_verify.mjs', version: '0.4.0' });
 });

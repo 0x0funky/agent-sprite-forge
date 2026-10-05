@@ -544,7 +544,8 @@ def build(args: argparse.Namespace) -> dict:
     final = Path(args.output_dir).resolve()
     return {"status": status, "output": final.as_posix(), "metadata": (final / "ambient-loop.json").as_posix(),
             "qa": (final / "ambient-qa.json").as_posix(), "frames": loop.frames, "period_ms": loop.period_ms,
-            "fps": forge_core.rational_fps(loop.frames, loop.period_ms)}
+            "fps": forge_core.rational_fps(loop.frames, loop.period_ms),
+            "failed_checks": [check["id"] for check in checks if check["status"] == "fail"]}
 
 
 def _frames_arg(text: str) -> int:
@@ -603,6 +604,10 @@ def _run(argv: Sequence[str] | None = None) -> int:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
+    if summary["status"] == "fail":  # D26: published for inspection, and the failed QA still exits 1
+        print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
+                                    f"(see {summary['qa']})"), file=sys.stderr)
+        return 1
     return 0
 
 

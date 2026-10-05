@@ -124,9 +124,11 @@ def test_render_pixelspec_strict_qc_failure_publishes_nothing(tmp_path, capsys):
     assert code == 1 and stdout == ""
     assert "strict QC failed" in stderr and "partial_alpha" in stderr and "Traceback" not in stderr
     assert not (tmp_path / "out").exists() and stage_leftovers(tmp_path) == []
-    # Without --strict-qc the same spec publishes, records the failure and warns.
+    # Without --strict-qc the same spec publishes and records the failure, and the failed QA exits 1 (D26).
     code, stdout, stderr = render(capsys, "--spec", path, "--output-dir", tmp_path / "loose")
-    assert code == 0 and summary_of(stdout)["qa"] == "fail" and "warning: QA status fail" in stderr
+    summary = summary_of(stdout)
+    assert code == 1 and summary["qa"] == "fail" and summary["failed_checks"] == ["partial_alpha"]
+    assert stderr.startswith("error: published with QA status fail: partial_alpha (see ") and stderr.isascii()
     meta = read_json(tmp_path / "loose" / "codeart-meta.json")
     assert meta["qa"]["status"] == "fail"
     assert {check["id"]: check["status"] for check in meta["qa"]["checks"]}["partial_alpha"] == "fail"
@@ -136,6 +138,37 @@ def test_render_pixelspec_refuses_outputs_inside_the_skill(capsys):
     code, _, stderr = render(capsys, "--spec", SLIME, "--output-dir", EXAMPLES / "never-created")
     assert code == 1 and "not inside the codeart2d skill folder" in stderr
     assert not (EXAMPLES / "never-created").exists()
+
+
+@pytest.mark.parametrize("tool", ["render_pixelspec", "pixel_qa"])
+def test_main_reports_any_base_exception_as_one_internal_error_line(tmp_path, capsys, monkeypatch, tool):
+    """r2-conventions F1, defence in depth: the hand-written mains turn any BaseException (a Rust panic from an
+    extension, which derives from BaseException) into one 'internal error' line with exit 1; SystemExit still
+    passes through."""
+    module, call = (RENDER, render) if tool == "render_pixelspec" else (QA, pixel_qa)
+    argv = (["--spec", SLIME, "--output-dir", tmp_path / "out"] if tool == "render_pixelspec"
+            else ["--input", tmp_path / "frame.png"])
+
+    class PanicException(BaseException):
+        pass
+
+    def panics(args):
+        raise PanicException("range start index 2048 out of range for slice of length 256")
+
+    monkeypatch.setattr(module, "run", panics)
+    code, stdout, stderr = call(capsys, *argv)
+    assert (code, stdout) == (1, "")
+    assert stderr == ("error: internal error (PanicException: range start index 2048 out of range for slice of "
+                      "length 256)\n")
+
+    def exits(args):
+        raise SystemExit(5)
+
+    monkeypatch.setattr(module, "run", exits)
+    with pytest.raises(SystemExit) as exited:
+        module.main([str(item) for item in argv])
+    assert exited.value.code == 5
+    assert not (tmp_path / "out").exists()
 
 
 # ----------------------------------------------------------------------------- B18-T1 acceptance

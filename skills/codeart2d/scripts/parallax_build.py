@@ -218,6 +218,10 @@ def load_spec(path: Path, sweep_override: int | None) -> Spec:
         if not isinstance(identity, str) or not identity or not all(c.isalnum() or c in "-_." for c in identity) \
                 or identity in ids:
             raise ParallaxError(f"{label}.id must be a unique id of letters, digits, '-', '_' or '.'")
+        clash = codeart_core.case_clash([*ids, identity])
+        if clash:  # the id names <id>.png: one file on Windows and macOS
+            raise ParallaxError(f"{label}.id {clash[1]!r} differs from layer id {clash[0]!r} only in letter case; "
+                                "layer ids name the layer PNGs, so they must differ in more than case")
         ids.add(identity)
         kind = item.get("kind")
         if kind not in KINDS:
@@ -820,7 +824,8 @@ def build(args: argparse.Namespace) -> dict:
     final = Path(args.output_dir).resolve()
     return {"status": status, "output": final.as_posix(), "plan": (final / "parallax-plan.json").as_posix(),
             "metadata": (final / "codeart-meta.json").as_posix(), "qa": (final / "parallax-qa.json").as_posix(),
-            "layers": len(spec.layers), "sweep_frames": spec.sweep_frames, "validated": use_validator}
+            "layers": len(spec.layers), "sweep_frames": spec.sweep_frames, "validated": use_validator,
+            "failed_checks": [check["id"] for check in checks if check["status"] == "fail"]}
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -867,6 +872,10 @@ def _run(argv: Sequence[str] | None = None) -> int:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
+    if summary["status"] == "fail":  # D26: published for inspection, and the failed QA still exits 1
+        print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
+                                    f"(see {summary['qa']})"), file=sys.stderr)
+        return 1
     return 0
 
 

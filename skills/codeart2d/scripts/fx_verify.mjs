@@ -10,15 +10,17 @@
 // Checks (references/fx-runtime-contract.md): forbidden_apis, exports, timing, spawn_at,
 // no_randomness_or_clocks, no_global_writes, render_errors, finite_arguments, balanced_state,
 // context_contract, transparent_outside, within_box, deterministic, visible_at_impact,
-// fullscreen_flash; warnings: thin_strokes, reach, op_budget. Exit 0 when nothing fails (warnings allowed), 1 otherwise; one JSON line on stdout.
+// fullscreen_flash; warnings: thin_strokes, reach, op_budget. Exit 0 when nothing fails (warnings allowed), 1 when a
+// check fails or the module cannot be checked, 2 on a usage error (argparse style: the usage line, then
+// "fx_verify.mjs: error: ..."). One ASCII JSON line on stdout; non-ASCII characters are \uXXXX escapes.
 // The report (--report) is a common qaEnvelope.
 
 import { createHash } from 'node:crypto';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const TOOL = { name: 'codeart2d/fx_verify.mjs', version: '1' };
+export const TOOL = { name: 'codeart2d/fx_verify.mjs', version: '0.4.0' };  // the package version (D29)
 export const FX_SCHEMA = 'codeart2d.fx.v1';
 const TICK_MS = 1000 / 60;
 const DEFAULTS = { width: 1280, height: 720, scale: 3, maxFullscreenTicks: 10, minStroke: 1, maxReach: 300,
@@ -609,13 +611,24 @@ export async function verifyFxModule(file, options = {}) {
 
 // ----------------------------------------------------------------------------- CLI
 
-const HELP = `usage: node fx_verify.mjs MODULE [--report FILE] [--scale N] [--width W] [--height H]
+const USAGE = 'usage: node fx_verify.mjs MODULE [--report FILE] [--scale N] [--width W] [--height H]';
+const HELP = `${USAGE}
 
 Check an fx.v1 effect runtime (codeart2d): no randomness, clocks or forbidden APIs; finite
 arguments; balanced save/restore; nothing drawn outside the effect lifetime or canvas box;
 deterministic; visible at impact; readability (full-screen flashes, thin strokes, reach).
-Exit 0 when nothing fails, 1 otherwise. Prints one JSON line; --report writes a QA envelope.
+Exit 0 when nothing fails, 1 when a check fails or the module cannot be checked, 2 on a
+usage error. Prints one ASCII JSON line; --report writes a QA envelope.
 `;
+
+/**
+ * Console text is ASCII (plan Appendix D): every character outside printable ASCII becomes a \uXXXX escape, the
+ * way Python's json.dumps(ensure_ascii=True) writes non-ASCII text. A JSON line stays valid JSON that decodes to
+ * the same strings (a project folder named in Chinese, say), and an error message stays on one line.
+ */
+export function asciiText(text) {
+  return String(text).replace(/[^\x20-\x7e]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
 
 function parseArgs(argv) {
   const options = {};
@@ -650,8 +663,9 @@ async function main(argv) {
   try {
     parsed = parseArgs(argv);
   } catch (exc) {
-    process.stderr.write(`error: ${exc.message}\n`);
-    return 1;
+    // D26: an argument error is a usage error, as argparse reports it: the usage line, "<prog>: error: ...", exit 2
+    process.stderr.write(`${USAGE}\nfx_verify.mjs: error: ${asciiText(exc.message)}\n`);
+    return 2;
   }
   if (parsed.help) {
     process.stdout.write(HELP);
@@ -663,16 +677,17 @@ async function main(argv) {
     report = await verifyFxModule(module, { ...options, reportDir: options.report ? path.dirname(options.report) : undefined });
     if (options.report) writeFileSync(options.report, `${JSON.stringify(report, null, 2)}\n`, { encoding: 'utf8', flag: 'wx' });
   } catch (exc) {
-    process.stderr.write(`error: ${exc && exc.message ? exc.message : exc}\n`);
+    process.stderr.write(`error: ${asciiText(exc && exc.message ? exc.message : exc)}\n`);
     return 1;
   }
   const failed = report.checks.filter((item) => item.status === 'fail').map((item) => item.id);
   const warned = report.checks.filter((item) => item.status === 'warn').map((item) => item.id);
-  process.stdout.write(`${JSON.stringify({ status: report.status, module: path.resolve(module),
+  const summary = JSON.stringify({ status: report.status, module: path.resolve(module),
     report: options.report ? path.resolve(options.report) : null, effects: report.effects.map((e) => e.id),
-    failed, warned })}\n`);
+    failed, warned });
+  process.stdout.write(`${asciiText(summary)}\n`);
   if (failed.length) {
-    process.stderr.write(`error: fx.v1 verification failed: ${failed.join(', ')}\n`);
+    process.stderr.write(`error: fx.v1 verification failed: ${asciiText(failed.join(', '))}\n`);
     return 1;
   }
   return 0;
@@ -680,8 +695,11 @@ async function main(argv) {
 
 function invokedDirectly() {
   if (!process.argv[1]) return false;
+  // Compare real paths: node resolves symlinks and junctions for import.meta.url but not for argv[1], so a skills
+  // checkout linked into ~/.claude/skills or ~/.codex/skills would otherwise never run main() (a silent exit 0).
+  const real = (value) => { try { return realpathSync.native(value); } catch { return path.resolve(value); } };
   const fold = (value) => (process.platform === 'win32' ? value.toLowerCase() : value);
-  return fold(path.resolve(process.argv[1])) === fold(fileURLToPath(import.meta.url));
+  return fold(real(process.argv[1])) === fold(real(fileURLToPath(import.meta.url)));
 }
 
 if (invokedDirectly()) {

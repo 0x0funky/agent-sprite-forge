@@ -15,7 +15,8 @@ render  Compiles the SVG with the palette (literal-hex class rules; a variant ap
         shape-rendering="crispEdges" when it has none, the art renders at 1 unit = 1 px,
         and --zoom N adds <name>@Nx.png by integer nearest upscaling; QA then requires
         0 partial-alpha and 0 off-palette pixels, and --strict-qc publishes nothing
-        otherwise. Without --palette, the palette is the #hex colours the SVG writes.
+        otherwise (without it a failing render is published and exits 1). Without
+        --palette, the palette is the #hex colours the SVG writes.
         Variants: all (default: every palette variant, or the base palette), base, or names.
 lint    Lists constructs that render differently across resvg and Chrome, one
         "<code>: <message>" line each; exit 1 when any is found. --compile lints what
@@ -301,12 +302,10 @@ def cmd_render(args: argparse.Namespace) -> dict:
             stage / META_NAME, generator=TOOL_NAME, spec_sha256=forge_core.sha256_bytes(raw), renderer=renderer,
             palette=palette, outputs=outputs, qa=qa, extra={"svg": details})
     final = final.parent.resolve() / final.name
-    if qa["status"] != "pass":
-        failing = ", ".join(check["id"] for check in qa["checks"] if check["status"] == "fail")
-        _warn(f"QA status {qa['status']} ({failing}); published because --strict-qc was not given")
     return {"output": str(final), "metadata": str(final / META_NAME), "qa": qa["status"],
             "mode": details["mode"], "variants": [label for label, _ in variants], "files": len(outputs),
-            "renderer": f"{renderer['name']} {renderer['version']}"}
+            "renderer": f"{renderer['name']} {renderer['version']}",
+            "failed_checks": [check["id"] for check in qa["checks"] if check["status"] == "fail"]}
 
 
 def render_envelope(images: list[dict], profile: str, crisp: bool, inputs: list, outputs: list) -> dict:
@@ -434,10 +433,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _warn(message: str) -> None:
-    print(f"warning: {forge_core.ascii_text(message)}", file=sys.stderr)
-
-
 def _local_dependency_problem() -> str | None:
     """The pip command for missing numpy/Pillow, or why the skill's own modules did not import."""
     if _MISSING is None:
@@ -464,7 +459,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     try:
         if args.command == "render":
-            summary, failure = cmd_render(args), None
+            summary = cmd_render(args)
+            failure = None if summary["qa"] != "fail" else (  # D26: published without --strict-qc, still exit 1
+                f"published with QA status fail: {', '.join(summary['failed_checks'])} (see {summary['metadata']})")
         elif args.command == "lint":
             summary, failure = cmd_lint(args)
         else:
@@ -472,10 +469,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("error: interrupted; nothing was published", file=sys.stderr)
         return 130
+    except SystemExit:
+        raise
     except (QAFailure, codeart_core.CodeArtError, codeart_core.RasterError, ValueError, OSError) as error:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
-    except Exception as error:  # never a traceback for the user; a render stage is already removed
+    except BaseException as error:  # noqa: BLE001  D27: never a traceback, not even for a BaseException such
+        # as a Rust panic from an extension; a render stage is already removed
         print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))

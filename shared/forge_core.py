@@ -162,10 +162,12 @@ def run_cli(main: Callable[..., Any], argv: Sequence[str] | None = None, *,
     includes JSONDecodeError and UnicodeError, and Pillow's
     DecompressionBombError) prints ``error: <message>`` and returns 1. Any
     other exception prints ``error: internal error (<Type>: <message>)`` and
-    returns 1 (D27); Ctrl+C prints ``error: interrupted`` and returns 130.
-    Messages go to stderr as ASCII, and tracebacks never reach the user unless
-    ``FORGE_DEBUG=1``, which re-raises for developers. A CLI whose published
-    report has status ``fail`` returns 1 from ``main`` itself (D26).
+    returns 1 (D27), and so does any other BaseException, such as the
+    pyo3_runtime.PanicException a Rust extension raises when it panics; Ctrl+C
+    prints ``error: interrupted`` and returns 130. Messages go to stderr as
+    ASCII, and tracebacks never reach the user unless ``FORGE_DEBUG=1``, which
+    re-raises for developers. A CLI whose published report has status ``fail``
+    returns 1 from ``main`` itself (D26).
 
     Use: ``if __name__ == "__main__": raise SystemExit(forge_core.run_cli(main))``.
     """
@@ -180,7 +182,7 @@ def run_cli(main: Callable[..., Any], argv: Sequence[str] | None = None, *,
             raise
         print("error: interrupted", file=sys.stderr)
         return 130
-    except Exception as error:  # the catch-all of D27: a bug still reads as one clean line
+    except BaseException as error:  # noqa: BLE001  the catch-all of D27: a bug still reads as one clean line
         if _debugging():
             raise
         if isinstance(error, expected):

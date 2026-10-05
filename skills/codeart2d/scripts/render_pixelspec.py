@@ -28,6 +28,7 @@ needs visible and transparent pixels in every frame); an empty frame anywhere el
 an error. Code art goes to build_animation_clips, never to generate2dsprite.py process.
 With --strict-qc nothing is published unless every frame has 0 partial-alpha and
 0 off-palette pixels and, with an outline, 0 outline gaps and at most 10 L-corners.
+Without it a failing result is still published for inspection, and the tool exits 1.
 """
 
 from __future__ import annotations
@@ -594,16 +595,14 @@ def run(args: argparse.Namespace) -> dict:
             extra={"pixelspec": details})
     final = final.parent.resolve() / final.name
     summary = {"output": str(final), "metadata": str(final / META_NAME), "qa": qa["status"],
-               "variants": [label for label, _ in variants], "frames": len(written), "files": len(outputs)}
+               "variants": [label for label, _ in variants], "frames": len(written), "files": len(outputs),
+               "failed_checks": [check["id"] for check in qa["checks"] if check["status"] == "fail"]}
     if bundles:
         summary["bundles"] = [str(final / path) for path in bundles.values()]
     dropped = [frames[position]["stem"] for position in range(len(frames)) if empty[position]]
     if dropped:
         _warn(f"{len(dropped)} frame(s) render no pixel and were not written: {', '.join(dropped[:6])}")
-    if qa["status"] != "pass":
-        failing = ", ".join(check["id"] for check in qa["checks"] if check["status"] == "fail")
-        _warn(f"QA status {qa['status']} ({failing}); published because --strict-qc was not given")
-    return summary
+    return summary  # a QA status fail (published because --strict-qc was not given) exits 1 in main (D26)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -661,13 +660,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     except KeyboardInterrupt:
         print("error: interrupted; nothing was published", file=sys.stderr)
         return 130
+    except SystemExit:
+        raise
     except (QAFailure, codeart_core.CodeArtError, ValueError, OSError) as error:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
-    except Exception as error:  # D27: never a traceback for the user; the stage is already removed
+    except BaseException as error:  # noqa: BLE001  D27: never a traceback for the user, not even for a
+        # BaseException such as a Rust panic from an extension; the stage is already removed
         print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
+    if summary["qa"] == "fail":  # D26: published because --strict-qc was not given; the failed QA still exits 1
+        print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
+                                    f"(see {summary['metadata']})"), file=sys.stderr)
+        return 1
     return 0
 
 
