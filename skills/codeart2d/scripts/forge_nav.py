@@ -72,7 +72,8 @@ N4  The blocking set (D2) is identical for every consumer. It is the union of:
     A shape without area blocks nothing and is dropped, wherever it comes from: a rect with
     w <= 0 or h <= 0, an ellipse with rx <= 0 or ry <= 0, a polygon whose shoelace sum
     sum(x[i] * y[i + 1]) - sum(y[i] * x[i + 1]) is exactly 0 (map_bundle.py refuses such a
-    collision polygon outright). A point is blocked when it lies in any member. Walk regions
+    polygon outright in collision.solids and in a tileset's tiles[].collision, where it also
+    refuses a self-intersecting ring). A point is blocked when it lies in any member. Walk regions
     (N3) bound the walk area; they are not blockers.
 
 N5  Solids are closed sets (D1); a point on a solid's boundary is blocked.

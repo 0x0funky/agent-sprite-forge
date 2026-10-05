@@ -308,7 +308,7 @@ def _local_layer_grid(bundle_dir: Path, layer: dict[str, Any], shape: tuple[int,
     if isinstance(data, str):
         path = _local_rel_path(bundle_dir, data, f"layer {name} data")
         _local_check_sha(path, layer.get("sha256"), f"layer {name} data")
-        text = path.read_text(encoding="utf-8")
+        text = path.read_text(encoding="utf-8-sig")  # D28: a BOM (Excel "CSV UTF-8", PowerShell 5.1) is tolerated
         if path.suffix.lower() == ".csv":
             values: Any = [[cell.strip() for cell in line.split(",") if cell.strip() != ""]
                            for line in text.splitlines() if line.strip()]
@@ -1205,9 +1205,12 @@ def build_scene(bundle: BundleInfo, name: str, plans: dict[str, TilesetPlan], ti
         for number, rect in enumerate(collision.get("rects") or []):
             x, y, w, h = (_number(v, f"collision.rects[{number}]") for v in rect)
             shapes.append((f"rect_{number}", {"shape": "rect", "x": x, "y": y, "w": w, "h": h}))
+        # D2, N4: the collision.solids and collision.rects members of the blocking set, exactly as forge_nav keeps
+        # them: a rect with w or h <= 0, an ellipse with rx or ry <= 0 or a zero-area polygon blocks nothing and is
+        # dropped by forge_nav, the runtime and export_tiled, so Godot gets no zero-area shape for it either
         for ident, solid in shapes:
-            if solid.get("shape") == "rect" and (float(solid.get("w", 0)) <= 0 or float(solid.get("h", 0)) <= 0):
-                bundle.warnings.append(f"collision {ident} has zero size and was skipped")
+            if not forge_nav.has_area(solid):
+                bundle.warnings.append(f"collision {ident} has no area and was skipped (it blocks nothing, N4)")
                 continue
             kind, properties, expected = _shape_node(writer, solid, f"collision {ident}")
             child = _node_name(ident, taken)

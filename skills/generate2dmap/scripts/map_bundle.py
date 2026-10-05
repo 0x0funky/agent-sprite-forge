@@ -744,9 +744,19 @@ class _Loader:
                 self.warn(f"{at}", f"tile {index} repeats the topology and variant of tile {keys[key]}")
             keys.setdefault(key, index)
             for s, shape in enumerate(entry.get("collision") or []):
+                where_shape = f"{at}.collision[{s}]"
+                if shape["shape"] == "polygon":  # as for collision.solids: forge_nav would drop it (N4), engines differ
+                    if self.polygon(where_shape, shape["points"]) is None:
+                        continue
+                    if ring_self_intersects(shape["points"]):
+                        self.error(where_shape, "polygon edges cross or touch each other (a self-intersecting ring); "
+                                                "split it into simple polygons")
+                        continue
                 box = _solid_bounds(shape)
-                if box and (box[0] < 0 or box[1] < 0 or box[2] > tw or box[3] > th):
-                    self.warn(f"{at}.collision[{s}]", "collision shape extends outside the tile")
+                if box is None:
+                    self.warn(where_shape, "zero-size collision shape blocks nothing")
+                elif box[0] < 0 or box[1] < 0 or box[2] > tw or box[3] > th:
+                    self.warn(where_shape, "collision shape extends outside the tile")
         self.b.tilesets[tileset_id] = Tileset(
             id=tileset_id, doc=doc, image=image, image_size=size, tile_w=tw, tile_h=th, columns=columns,
             rows=rows, kind=doc["kind"], materials=materials, tiles=tiles, manifest=manifest)
@@ -1350,6 +1360,47 @@ def _solid_bounds(shape: dict) -> tuple[float, float, float, float] | None:
         return shape["cx"] - half_w, shape["cy"] - half_h, shape["cx"] + half_w, shape["cy"] + half_h
     points = np.asarray(shape["points"], np.float64)
     return float(points[:, 0].min()), float(points[:, 1].min()), float(points[:, 0].max()), float(points[:, 1].max())
+
+
+def _orient(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> float:
+    """Twice the signed area of the triangle p, q, r: > 0 counter-clockwise (y up), 0 collinear."""
+    return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+
+
+def _on_segment(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> bool:
+    """r, collinear with p -> q, lies within the segment's bounding box."""
+    return min(p[0], q[0]) <= r[0] <= max(p[0], q[0]) and min(p[1], q[1]) <= r[1] <= max(p[1], q[1])
+
+
+def _segments_meet(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float],
+                   d: tuple[float, float]) -> bool:
+    """The closed segments a -> b and c -> d cross or touch."""
+    d1, d2, d3, d4 = _orient(c, d, a), _orient(c, d, b), _orient(a, b, c), _orient(a, b, d)
+    if ((d1 > 0 > d2) or (d1 < 0 < d2)) and ((d3 > 0 > d4) or (d3 < 0 < d4)):
+        return True
+    return ((d1 == 0 and _on_segment(c, d, a)) or (d2 == 0 and _on_segment(c, d, b))
+            or (d3 == 0 and _on_segment(a, b, c)) or (d4 == 0 and _on_segment(a, b, d)))
+
+
+def ring_self_intersects(points: Any) -> bool:
+    """True when two edges of a closed polygon ring cross or touch anywhere but at the vertex two neighbouring
+    edges share (a bow tie, a figure eight, a ring that pinches itself or runs back along an edge). Repeated
+    consecutive points, including a closing copy of the first point, are ignored."""
+    ring = [(float(x), float(y)) for x, y in points]
+    ring = [point for k, point in enumerate(ring) if point != ring[k - 1]]
+    count = len(ring)
+    edges = [(ring[k], ring[(k + 1) % count]) for k in range(count)]
+    for i in range(count):
+        for j in range(i + 1, count):
+            (a, b), (c, d) = edges[i], edges[j]
+            if j == i + 1 or (i == 0 and j == count - 1):  # neighbours: they share one vertex
+                shared, p, q = (b, a, d) if j == i + 1 else (a, b, c)
+                back = (p[0] - shared[0]) * (q[0] - shared[0]) + (p[1] - shared[1]) * (q[1] - shared[1]) > 0
+                if _orient(p, shared, q) == 0 and back:  # collinear and running back along each other
+                    return True
+            elif _segments_meet(a, b, c, d):
+                return True
+    return False
 
 
 def bundle_from_document(raw: Any, path: str | os.PathLike, *, check_hashes: bool = True,

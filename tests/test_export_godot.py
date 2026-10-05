@@ -407,6 +407,30 @@ class ExportGodotTests(unittest.TestCase):
         self.assertEqual(checks["collision_shapes_roundtrip"]["threshold"]["shapes"], 5 + len(expected), "4 solids, 1 rect")
         self.assertEqual(report["counts"]["footprints"], len(expected))
 
+    def test_collision_shapes_are_the_blocking_sets_without_zero_area_shapes(self):
+        """D2, N4 (review r2, finding 8): an ellipse with rx 0 and a rect with w 0 block nothing; forge_nav, the
+        runtime and export_tiled drop them, and so does export_godot now (it wrote the ellipse as a 32-point
+        CollisionPolygon2D of zero area). The collision body holds exactly forge_nav's collision.solids and rects."""
+        data = json.loads(self.bundle.read_text(encoding="utf-8"))
+        data["collision"]["solids"].append({"shape": "ellipse", "cx": 48, "cy": 16, "rx": 0, "ry": 5, "id": "sliver"})
+        data["collision"]["rects"].append([10, 10, 0, 4])
+        self.bundle.write_text(json.dumps(data), encoding="utf-8")
+        result = export(self.bundle, self.out)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("warning: collision sliver has no area and was skipped", result.stderr)
+        self.assertIn("warning: collision rect_1 has no area and was skipped", result.stderr)
+        nodes, subs = self.scene_nodes(self.out)
+        shapes = {name: node for (parent, name), node in nodes.items()
+                  if parent == "collision" and not name.startswith("footprint_")}
+        blocking = NAV.read_blocking_set(self.bundle)
+        self.assertEqual(sorted(shapes), ["rect_0", "solid_0", "solid_1", "solid_2", "solid_3"])
+        self.assertEqual(len(shapes), len(blocking.collision_solids) + len(blocking.rects))
+        for node in shapes.values():
+            if node.fields["type"] == "CollisionPolygon2D":
+                points = np.array(node.properties["polygon"].args, float).reshape(-1, 2)
+                area = np.dot(points[:, 0], np.roll(points[:, 1], -1)) - np.dot(points[:, 1], np.roll(points[:, 0], -1))
+                self.assertGreater(abs(area), 0, node.fields["name"])
+
     def test_collision_qa_catches_a_shape_that_does_not_round_trip(self):
         self.run_export()
         report = json.loads((self.out / "godot-export.json").read_text(encoding="utf-8"))
@@ -500,6 +524,20 @@ class ExportGodotTests(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("usage:", result.stderr)
         self.assertFalse(self.out.exists())
+
+    def test_a_tile_csv_with_a_utf8_bom_is_read(self):
+        """D28 (review r1, finding 2): a tiles layer CSV saved with a UTF-8 BOM (Excel "CSV UTF-8", PowerShell 5.1
+        Out-File) exports exactly like the plain file, as map_bundle, map_nav, export_tiled and the preview read it."""
+        plain = self.run_export()
+        csv = self.root / "map" / "layers" / "ground.csv"
+        csv.write_bytes(b"\xef\xbb\xbf" + csv.read_bytes())
+        data = json.loads(self.bundle.read_text(encoding="utf-8"))
+        data["layers"][1]["sha256"] = _sha(csv)
+        self.bundle.write_text(json.dumps(data), encoding="utf-8")
+        bom = self.run_export(out=self.root / "godot-bom")
+        self.assertEqual(bom["status"], plain["status"])
+        self.assertEqual(tile_layer_cells((self.root / "godot-bom" / "town.tscn").read_text(encoding="utf-8"), "ground"),
+                         tile_layer_cells((self.out / "town.tscn").read_text(encoding="utf-8"), "ground"))
 
     def test_help_works_under_cp1252_and_cp950(self):
         assert_cli_help(SKILL, "export_godot")  # cp1252 and cp950

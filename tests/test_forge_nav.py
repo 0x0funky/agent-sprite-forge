@@ -502,7 +502,9 @@ def test_v1_footprint_forms():
 # --------------------------------------------------------------------------- the randomized differential test
 
 def _polygon(rng, cx: float, cy: float, radius: float, count: int, integer: bool) -> list[list[float]]:
-    """A star-shaped polygon with non-zero area: whole numbers in the integer family, generic doubles otherwise."""
+    """A simple polygon with non-zero area, drawn as a star around (cx, cy): whole numbers in the integer family,
+    generic doubles otherwise. Rounding (or a wide angular gap) can make such a star cross or touch itself, which
+    map_bundle.py refuses for tile collision (review r2, finding 7), so those draws are repeated."""
     while True:
         angles = np.sort(rng.uniform(0, 2 * np.pi, count))
         radii = rng.uniform(0.35, 1.0, count) * radius
@@ -510,7 +512,8 @@ def _polygon(rng, cx: float, cy: float, radius: float, count: int, integer: bool
         if integer:
             points = np.round(points)
         x, y = points[:, 0], points[:, 1]
-        if abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))) > 1.0:
+        if abs(float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))) > 1.0 \
+                and not mb.ring_self_intersects(points.tolist()):
             return [[int(a), int(b)] if integer else [float(a), float(b)] for a, b in points]
 
 

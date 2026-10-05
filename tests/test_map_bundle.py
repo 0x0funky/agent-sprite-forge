@@ -851,6 +851,44 @@ def test_tile_collision_shapes_are_translated(tmp_path):
     assert merged == [{"shape": "rect", "x": 28, "y": 28, "w": 4, "h": 4, "source": "tiles:ground"}]
 
 
+def test_tile_collision_polygons_need_area_and_a_simple_ring(tmp_path):
+    """D2, N4 (review r2, finding 7): a tileset's tiles[].collision polygon with zero shoelace area (the bow tie
+    [[2, 2], [14, 14], [14, 2], [2, 14]]) is refused like a zero-area collision.solids polygon: forge_nav, the
+    preview and export_godot dropped it while export_tiled kept it as a solid. A self-intersecting ring with area
+    is refused too (engines cannot decompose it); a zero-size rect or ellipse warns that it blocks nothing."""
+    root = tmp_path / "tiles"
+    save(wang_atlas(), root / "atlas.png")
+
+    def check(collision):
+        tileset = {"schema": "generate2dmap.tileset.v1", "image": "atlas.png", "tile_size": 16, "columns": 4,
+                   "kind": "flat", "materials": ["stone"], "seamless_verified": False,
+                   "tiles": [{"index": 0}, {"index": 1, "collision": collision}]}
+        (root / "set.json").write_text(json.dumps(tileset), encoding="utf-8")
+        doc = {"schema": "generate2dmap.map_bundle.v2", "tile_size": 16,
+               "world": {"width": 32, "height": 16, "unit": "px"}, "tilesets": [{"id": "stone", "manifest": "set.json"}],
+               "collision": {"actorRadius": 1}, "layers": [{"name": "ground", "kind": "tiles", "data": [[1, 0]]}]}
+        bundle = mb.bundle_from_document(doc, root / "bundle.json")
+        return errors_of(bundle), [f"{p.path}: {p.message}" for p in bundle.warnings]
+
+    where = "$.tilesets[0] (set.json).tiles[1].collision[0]"
+    errors, _ = check([{"shape": "polygon", "points": [[2, 2], [14, 14], [14, 2], [2, 14]]}])
+    assert errors == [f"{where}: polygon has zero area"]
+    errors, _ = check([{"shape": "polygon", "points": [[0, 0], [10, 10], [10, 0], [0, 4]]}])  # crosses, area 30
+    assert errors == [f"{where}: polygon edges cross or touch each other (a self-intersecting ring); split it into "
+                      "simple polygons"]
+    errors, _ = check([{"shape": "polygon", "points": [[0, 0], [8, 0], [8, 8], [4, 0], [0, 8]]}])  # pinched at (4, 0)
+    assert errors and "self-intersecting" in errors[0]
+    errors, warnings = check([{"shape": "rect", "x": 2, "y": 2, "w": 0, "h": 4},
+                              {"shape": "ellipse", "cx": 8, "cy": 8, "rx": 3, "ry": 0}])
+    assert errors == [] and [m for m in warnings if "blocks nothing" in m] == [
+        f"{where}: zero-size collision shape blocks nothing",
+        "$.tilesets[0] (set.json).tiles[1].collision[1]: zero-size collision shape blocks nothing"]
+    simple = [[0, 0], [16, 0], [16, 16], [8, 8], [0, 16], [0, 0]]  # concave, closed with a repeat of the first point
+    assert check([{"shape": "polygon", "points": simple}])[0] == []
+    assert not mb.ring_self_intersects(simple) and not mb.ring_self_intersects([[0, 0], [4, 0], [2, 3]])
+    assert mb.ring_self_intersects([[0, 0], [4, 0], [8, 0], [6, 0], [4, 4]])  # runs back along its own edge
+
+
 def test_v1_world_from_an_image_layer(tmp_path):
     save(np.full((30, 50, 4), 255, np.uint8), tmp_path / "plate.png")
     doc = {"schema": "generate2dmap.map_bundle.v1",

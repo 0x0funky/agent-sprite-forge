@@ -264,6 +264,20 @@ class ExportLdtkTests(unittest.TestCase):
         self.assertIn("error:", result.stderr)
         self.assertFalse((self.root / "wide").exists())
 
+    def test_a_tile_csv_with_a_utf8_bom_is_read(self):
+        """D28 (review r1, finding 2): export_ldtk reads tile data with export_godot's reader; a CSV with a UTF-8 BOM
+        gives the same grid instead of 'invalid literal for int() ... \\ufeff0'."""
+        csv = self.root / "map" / "layers" / "ground.csv"
+        csv.write_bytes(b"\xef\xbb\xbf" + csv.read_bytes())
+        self.data["layers"][1]["sha256"] = _sha(csv)
+        self.bundle.write_text(json.dumps(self.data), encoding="utf-8")
+        self.run_export()
+        layer = next(item for item in self.project()["levels"][0]["layerInstances"] if item["__type"] == "Tiles")
+        got = np.full(self.grid.shape, -1)
+        for tile in layer["gridTiles"]:
+            got[tile["px"][1] // T, tile["px"][0] // T] = tile["src"][1] // T * 4 + tile["src"][0] // T
+        self.assertTrue(np.array_equal(got, self.grid))
+
     def test_help_works_under_cp1252_and_cp950(self):
         assert_cli_help(SKILL, "export_ldtk")  # cp1252 and cp950
 
