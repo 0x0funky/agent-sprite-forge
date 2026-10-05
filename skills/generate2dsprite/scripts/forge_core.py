@@ -1,8 +1,22 @@
-"""Shared core for the Agent Sprite Forge skills (API version 1).
+"""Shared core for the Agent Sprite Forge skills (API version 1.1).
 
 Canonical home of the helpers every skill needs: no-replace publication, image
 I/O, connected components, alpha hygiene, anchors and grids, premultiplied
 resampling, and timing/seam metrics.
+
+API 1.1 (Phase 3 integration, D30) adds, without changing any 1.0 name or
+behaviour:
+
+* CLI and time: ``run_cli`` (D26/D27 error convention), ``utc_timestamp``,
+  ``FORGE_PACKAGE_VERSION`` (D29).
+* Paths and JSON: ``manifest_path`` and ``file_ref`` (one relPath rule for
+  every manifest writer), ``parse_json`` and ``read_json`` (UTF-8 with an
+  optional BOM, D28; opt-in strict mode).
+* Rounding and screens: ``round_half_up``, ``parse_aspect``,
+  ``aspect_viewport`` and ``cover_window``.
+* Masks: ``dilate_square``, ``distance_to`` (capped Chebyshev) and
+  ``merge_rects``.
+* Sheets and seams: ``ownership_slice`` (D14) and ``edge_seam_report`` (D9).
 
 This file is vendored byte-for-byte into each skill's ``scripts/`` directory as
 listed in ``shared/VENDORED.json``. Edit only ``shared/forge_core.py``, then run
@@ -29,6 +43,7 @@ from __future__ import annotations
 
 import contextlib
 import ctypes
+import decimal
 import errno
 import functools
 import hashlib
@@ -36,26 +51,36 @@ import importlib
 import io
 import json
 import math
+import numbers
 import operator
 import os
+import re
 import secrets
 import shutil
 import sys
+from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 import numpy as np
 from PIL import Image
 
 
-FORGE_CORE_API_VERSION = "1"
+FORGE_CORE_API_VERSION = "1.1"
+FORGE_PACKAGE_VERSION = "0.4.0"  # the integrated release; QA envelopes record it as tool.version (D29)
 ALPHA_GEOMETRY_THRESHOLD = 16
 BODY_ALPHA_THRESHOLD = 32
 
 HYGIENE_MODES = ("none", "floor", "detached", "both")
 ANCHOR_MODES = ("feet", "stance", "bbox", "centroid", "center")
 RESAMPLERS = ("box", "lanczos", "nearest")
+ASPECT_POLICIES = ("expand", "fixed-height", "fixed-width")
+HAZE_POLICIES = ("keep", "drop")
+EDGE_SEAM_VERDICTS = ("continuous", "seam", "duplicate_edge", "flat", "too_small")
+EDGE_SEAM_DEFECTS = ("seam", "duplicate_edge")  # the verdicts a seam gate fails; flat and too_small are not seams
+EDGE_SEAM_NOMINAL_RATIO = 1.25  # verdict gate when the caller sets none (B11's NOMINAL_SEAM_RATIO)
+CLI_EXPECTED_ERRORS: tuple[type[BaseException], ...] = (OSError, ValueError, Image.DecompressionBombError)
 
 _CHUNK = 1 << 20
 
@@ -121,6 +146,65 @@ def require_modules(names: Sequence[str]) -> None:
     raise SystemExit(1)
 
 
+def _debugging() -> bool:
+    return os.environ.get("FORGE_DEBUG", "") not in ("", "0")
+
+
+def run_cli(main: Callable[..., Any], argv: Sequence[str] | None = None, *,
+            expected: tuple[type[BaseException], ...] = CLI_EXPECTED_ERRORS) -> int:
+    """Run a CLI ``main`` with the forge error convention and return its exit status (D26, D27).
+
+    utf8_stdio() runs first. ``main()`` is called, or ``main(argv)`` when
+    ``argv`` is given; its return value is the exit status (None means 0).
+    SystemExit passes through untouched, so argparse usage errors keep their
+    exit 2 with ``usage: ... error: ...`` (D26) and ``--help`` exits 0. An
+    ``expected`` error (default CLI_EXPECTED_ERRORS: OSError, ValueError, which
+    includes JSONDecodeError and UnicodeError, and Pillow's
+    DecompressionBombError) prints ``error: <message>`` and returns 1. Any
+    other exception prints ``error: internal error (<Type>: <message>)`` and
+    returns 1 (D27); Ctrl+C prints ``error: interrupted`` and returns 130.
+    Messages go to stderr as ASCII, and tracebacks never reach the user unless
+    ``FORGE_DEBUG=1``, which re-raises for developers. A CLI whose published
+    report has status ``fail`` returns 1 from ``main`` itself (D26).
+
+    Use: ``if __name__ == "__main__": raise SystemExit(forge_core.run_cli(main))``.
+    """
+    utf8_stdio()
+    try:
+        status = main() if argv is None else main(argv)
+        return 0 if status is None else int(status)
+    except SystemExit:
+        raise
+    except KeyboardInterrupt:
+        if _debugging():
+            raise
+        print("error: interrupted", file=sys.stderr)
+        return 130
+    except Exception as error:  # the catch-all of D27: a bug still reads as one clean line
+        if _debugging():
+            raise
+        if isinstance(error, expected):
+            message = str(error) or type(error).__name__
+        else:
+            message = f"internal error ({type(error).__name__}: {error})"
+        print(ascii_text(f"error: {message}"), file=sys.stderr)
+        return 1
+
+
+def utc_timestamp(moment: datetime | None = None) -> str:
+    """RFC 3339 UTC time with milliseconds, such as ``2026-10-05T12:00:00.000Z`` (common timestamp).
+
+    ``moment`` defaults to now. An aware datetime is converted to UTC; a naive
+    one is taken to be UTC already, as media_ledger.utc_timestamp does.
+    """
+    if moment is None:
+        moment = datetime.now(timezone.utc)
+    elif moment.utcoffset() is not None:
+        moment = moment.astimezone(timezone.utc)
+    return (f"{moment.year:04d}-{moment.month:02d}-{moment.day:02d}T{moment.hour:02d}:{moment.minute:02d}:"
+            f"{moment.second:02d}.{moment.microsecond // 1000:03d}Z")
+
+
 # --------------------------------------------------------------------------- hashing, paths and JSON
 
 def sha256_bytes(data: bytes) -> str:
@@ -148,6 +232,112 @@ def portable_path(path: str | os.PathLike, base: str | os.PathLike) -> str:
         return Path(os.path.relpath(target, Path(base).resolve())).as_posix()
     except ValueError:
         return target.as_posix()
+
+
+# common.schema.json relPath: no leading slash, no drive letter or URL scheme, no backslash.
+_REL_PATH = re.compile(r"^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\]+$")
+_SHA256_HEX = re.compile(r"^[0-9a-f]{64}$")
+
+
+def manifest_path(path: str | os.PathLike, base: str | os.PathLike) -> str:
+    """``path`` as a common relPath for a manifest in the directory ``base`` (MAP-24, D30).
+
+    portable_path() when its answer is a relPath; otherwise (another drive or
+    UNC share, where portable_path returns an absolute path) only the file
+    name, bound to the content by the sha256 the caller records beside it.
+    Manifests never store absolute paths. One rule replaces the writers'
+    regexes (``^[A-Za-z]:``, ``^[A-Za-z][A-Za-z0-9+.-]*:``, PureWindowsPath
+    drives, map_bundle's relPath pattern): the result always matches
+    common.schema.json's relPath pattern. A name that is empty, ``.`` or
+    ``..`` is taken from the resolved path; a name that is still not a relPath
+    (a POSIX name such as ``a:b`` or ``a\\b``) raises ValueError.
+    """
+    relative = portable_path(path, base)
+    if _REL_PATH.match(relative):
+        return relative
+    name = Path(path).name
+    if name in ("", ".", ".."):
+        name = Path(path).resolve().name
+    if name in ("", ".", "..") or not _REL_PATH.match(name):
+        raise ValueError(f"{Path(path).as_posix()} has no relative route from {Path(base).as_posix()} and its "
+                         "name cannot be stored as a manifest-relative path; rename or move the file.")
+    return name
+
+
+def file_ref(path: str | os.PathLike, base: str | os.PathLike, *, sha256: str | None = None,
+             size: int | None = None) -> dict[str, Any]:
+    """A common fileRef ``{"path", "sha256", "bytes"}`` of ``path`` for a manifest in the directory ``base``.
+
+    ``path`` follows manifest_path(). ``sha256`` and ``size`` default to the
+    file's own; pass the values you already hold (for example of bytes you
+    just read or wrote) to bind the reference to exactly that content. A
+    passed digest is lower-cased and must be 64 hex digits.
+    """
+    path = Path(path)
+    if sha256:
+        digest = str(sha256).lower()
+        if not _SHA256_HEX.match(digest):
+            raise ValueError(f"sha256 must be 64 hexadecimal digits; got {sha256!r}.")
+    else:
+        digest = sha256_file(path)
+    if size is None:
+        length = path.stat().st_size
+    else:
+        length = operator.index(size)
+        if length < 0:
+            raise ValueError(f"size must be >= 0; got {size!r}.")
+    return {"path": manifest_path(path, base), "sha256": digest, "bytes": length}
+
+
+def _unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate key {key!r}")
+        result[key] = value
+    return result
+
+
+def _no_constant(name: str) -> Any:
+    raise ValueError(f"{name} is not valid JSON")
+
+
+def _finite_float(text: str) -> float:
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError(f"{text} is not a finite JSON number")
+    return value
+
+
+def parse_json(data: bytes | bytearray | memoryview | str, *, strict: bool = False) -> Any:
+    """Parse a JSON document; bytes are UTF-8 with or without a BOM (``utf-8-sig``, D28).
+
+    A str may also start with a BOM (U+FEFF). ``strict`` additionally refuses
+    what JSON forbids but Python's json module accepts: duplicate object keys,
+    ``NaN``/``Infinity``/``-Infinity`` and number literals that overflow to
+    infinity (``1e999``), so a strict document always survives write_json.
+    Errors are ValueError (json.JSONDecodeError and UnicodeDecodeError are
+    subclasses) without the file name; the caller adds it.
+    """
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        text = bytes(data).decode("utf-8-sig")
+    elif isinstance(data, str):
+        text = data[1:] if data.startswith("﻿") else data
+    else:
+        raise TypeError(f"parse_json needs bytes or str; got {type(data).__name__}.")
+    if not strict:
+        return json.loads(text)
+    return json.loads(text, object_pairs_hook=_unique_pairs, parse_constant=_no_constant,
+                      parse_float=_finite_float)
+
+
+def read_json(path: str | os.PathLike, *, strict: bool = False) -> Any:
+    """Read a JSON file as UTF-8 with an optional BOM (D28: PowerShell 5.1 writes one); see parse_json.
+
+    OSError (a missing or unreadable file) propagates unchanged; decoding and
+    syntax problems raise ValueError without the file name.
+    """
+    return parse_json(Path(path).read_bytes(), strict=strict)
 
 
 def _json_default(value: Any) -> Any:
@@ -644,14 +834,108 @@ def connected_components(alpha_or_rgba: Any, *, threshold: int = 0, min_area: in
     return components
 
 
-def _dilate_square(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Chebyshev dilation by ``radius`` px via a summed-area table."""
-    if radius <= 0:
+def _mask2d(mask: Any, name: str) -> np.ndarray:
+    array = np.asarray(mask, dtype=bool)
+    if array.ndim != 2:
+        raise ValueError(f"{name} needs a 2-D mask; got shape {array.shape}.")
+    return array
+
+
+def dilate_square(mask: Any, radius: int) -> np.ndarray:
+    """Chebyshev (square) dilation of a mask by ``radius`` px, from a summed-area table (D30).
+
+    A pixel is True when a True pixel lies within ``radius`` px in x and in y.
+    Windows are clipped at the canvas, so the exterior never counts: on a mask
+    this equals Pillow's MaxFilter(2 * radius + 1). ``radius`` <= 0 returns a
+    copy. One pass for any radius; a radius beyond the image is clamped, which
+    changes nothing. Non-boolean masks mean ``!= 0``.
+    """
+    mask = _mask2d(mask, "dilate_square")
+    radius = min(operator.index(radius), max(mask.shape, default=0))
+    if radius <= 0 or mask.size == 0:
         return mask.copy()
     size = 2 * radius + 1
-    table = np.pad(np.pad(mask, radius).astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
+    accumulator = np.int32 if mask.size < 2 ** 31 else np.int64  # the table never exceeds the True count
+    table = np.pad(np.pad(mask, radius).astype(accumulator).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
     window = table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]
     return window > 0
+
+
+_dilate_square = dilate_square  # the 1.0 private name, used by alpha_hygiene
+
+
+def _grow8(mask: np.ndarray) -> np.ndarray:
+    """One 3 x 3 (8-neighbour) dilation step; the canvas exterior never counts."""
+    grown = mask.copy()
+    grown[:, 1:] |= mask[:, :-1]
+    grown[:, :-1] |= mask[:, 1:]
+    result = grown.copy()
+    result[1:] |= grown[:-1]
+    result[:-1] |= grown[1:]
+    return result
+
+
+def distance_to(mask: Any, cap: int) -> np.ndarray:
+    """Chebyshev (8-neighbour) distance from every pixel to the nearest True pixel of ``mask``, capped (D30).
+
+    Pixels farther than ``cap``, and every pixel of an empty mask, get
+    ``cap + 1``; the canvas exterior is not part of the mask. The dtype is
+    uint8 while ``cap + 1`` fits (cap <= 254), then uint16, then int32. For
+    every ``r <= cap``, ``distance_to(mask, cap) <= r`` equals
+    ``dilate_square(mask, r)``. Ring by ring, so the cost grows with ``cap``
+    (it stops early once nothing new is reached): meant for small caps such as
+    forge_matte's alpha and colour bands.
+    """
+    mask = _mask2d(mask, "distance_to")
+    cap = operator.index(cap)
+    if cap < 0:
+        raise ValueError(f"cap must be >= 0; got {cap}.")
+    dtype = np.uint8 if cap < 255 else (np.uint16 if cap < 65535 else np.int32)
+    distance = np.full(mask.shape, cap + 1, dtype)
+    distance[mask] = 0
+    reached = mask.copy()
+    for step in range(1, cap + 1):
+        grown = _grow8(reached)
+        new = grown & ~reached
+        if not new.any():
+            break  # nothing left to reach (all reached, or an empty mask): the rest keep cap + 1
+        distance[new] = step
+        reached = grown
+    return distance
+
+
+def merge_rects(mask: Any) -> list[tuple[int, int, int, int]]:
+    """Cover the True cells of a 2-D grid with disjoint rectangles ``(x, y, w, h)``; their union is exact (D30).
+
+    The greedy cover of B13's map_bundle.merge_rects, rectangle for rectangle:
+    rows are scanned top to bottom, and each maximal run of uncovered True
+    cells in a row starts a rectangle that grows downward while every cell
+    under the run stays True. Rectangles are listed by their top row, then
+    left to right. Vectorised per row: a run grows by the shortest downward
+    run of True cells beneath it (cells below a run can never be covered yet,
+    because an earlier rectangle reaching them would also cover the run).
+    """
+    blocked = _mask2d(mask, "merge_rects")
+    rows, cols = blocked.shape
+    if not blocked.any():
+        return []
+    index = np.arange(rows, dtype=np.int32)[:, None]
+    first_false = np.minimum.accumulate(np.where(blocked, np.int32(rows), index)[::-1], axis=0)[::-1]
+    down = np.append(first_false - index, np.zeros((rows, 1), np.int32), axis=1)  # True cells from (y, x) down
+    covered_until = np.zeros(cols, np.int64)  # column x is covered on rows below covered_until[x]
+    padded = np.zeros(cols + 2, np.int8)
+    rects: list[tuple[int, int, int, int]] = []
+    for y in range(rows):
+        free = blocked[y] & (covered_until <= y)
+        if not free.any():
+            continue
+        padded[1:-1] = free
+        edges = np.flatnonzero(np.diff(padded))
+        starts, ends = edges[0::2], edges[1::2]
+        heights = np.minimum.reduceat(down[y], edges)[0::2]  # the sentinel column keeps every index valid
+        covered_until[free] = np.repeat(y + heights, ends - starts)
+        rects.extend(zip(starts.tolist(), [y] * len(starts), (ends - starts).tolist(), heights.tolist()))
+    return rects
 
 
 def _rgba_array(source: Any) -> np.ndarray:
@@ -711,10 +995,90 @@ def alpha_hygiene(rgba: Any, mode: str = "both", floor: int = 4, solid_min: int 
     return Image.fromarray(pixels), report
 
 
-# --------------------------------------------------------------------------- anchors and grids
+# --------------------------------------------------------------------------- rounding and screen aspect
 
-def _round_half_up(value: float) -> int:
+_HALF = Fraction(1, 2)
+_DECIMAL_HALF = decimal.Decimal("0.5")
+_ASPECT = re.compile(r"\s*([0-9]*\.?[0-9]+)\s*(?:[:/]\s*([0-9]*\.?[0-9]+))?\s*")
+
+
+def round_half_up(value: Any) -> int:
+    """Nearest integer with halves rounded up, ``floor(value + 1/2)``: 2.5 -> 3, -2.5 -> -2 (MAP-21, D30).
+
+    Never banker's rounding. Integers come back unchanged; Fractions (any
+    exact rational) and Decimals round exactly. Floats, numpy floats
+    included, compute ``floor(value + 0.5)`` in floating point exactly as the
+    private copies did, so the one float below a half that the addition
+    rounds up (0.49999999999999994) gives 1; pass a Fraction for exact
+    rational timing. NaN raises ValueError and infinity OverflowError.
+    """
+    if isinstance(value, numbers.Integral):
+        return int(value)
+    if isinstance(value, numbers.Rational):
+        return int(math.floor(value + _HALF))
+    if isinstance(value, decimal.Decimal):
+        return int(math.floor(value + _DECIMAL_HALF))
     return int(math.floor(value + 0.5))
+
+
+_round_half_up = round_half_up  # the 1.0 private name
+
+
+def parse_aspect(text: Any) -> tuple[float, float]:
+    """A screen aspect as ``(width share, height share)``: ``16:9``, ``19.5:9``, ``16/9`` or a ratio such as ``1.7778``.
+
+    Shares are kept, not divided, so ``19.5:9`` on 540 rows is exactly 1170
+    columns. Anything else, or a share that is zero or not finite, raises
+    ValueError.
+    """
+    match = _ASPECT.fullmatch(str(text))
+    if not match:
+        raise ValueError(f"aspect {text!r} must look like 16:9 or 1.7778.")
+    width, height = float(match.group(1)), float(match.group(2) or 1)
+    if not (math.isfinite(width) and math.isfinite(height)) or width <= 0 or height <= 0:
+        raise ValueError(f"aspect {text!r} must be a positive ratio.")
+    return width, height
+
+
+def aspect_viewport(viewport: Sequence[float], aspect: Sequence[float], policy: str) -> list[float]:
+    """``[width, height]`` a screen of ``aspect`` shows for a ``viewport`` designed at another aspect.
+
+    ``expand`` keeps the whole designed viewport and grows the other side,
+    ``fixed-height`` keeps the height and ``fixed-width`` the width (see
+    ASPECT_POLICIES). ``aspect`` is a parse_aspect() pair.
+    """
+    if policy not in ASPECT_POLICIES:
+        raise ValueError(f"Unknown aspect policy {policy!r}; use one of {', '.join(ASPECT_POLICIES)}.")
+    width, height = viewport
+    share_w, share_h = aspect
+    if policy == "fixed-height" or (policy == "expand" and share_w * height >= width * share_h):
+        return [height * share_w / share_h, height]
+    return [width, width * share_h / share_w]
+
+
+def cover_window(size: Sequence[float], aspect: Sequence[float], zoom: float = 1.0,
+                 focus: Sequence[float] = (0.5, 0.5)) -> tuple[float, float, float, float]:
+    """The part ``(x0, y0, x1, y1)`` of a ``size`` plate that a cover-cropping runtime shows on an ``aspect`` screen.
+
+    The largest window of the screen's aspect that fits the plate, divided by
+    a plate-pan ``zoom`` (> 0), placed at ``focus`` (0..1 in x and y; 0.5, 0.5
+    centres it, as ImageOps.fit does) (game-opus55 drawCoverR).
+    """
+    zoom = float(zoom)
+    if not math.isfinite(zoom) or zoom <= 0:
+        raise ValueError(f"zoom must be a positive finite number; got {zoom!r}.")
+    width, height = size
+    share_w, share_h = aspect
+    if share_w * height >= width * share_h:
+        window_w, window_h = float(width), width * share_h / share_w
+    else:
+        window_w, window_h = height * share_w / share_h, float(height)
+    window_w, window_h = window_w / zoom, window_h / zoom
+    left, top = (width - window_w) * focus[0], (height - window_h) * focus[1]
+    return left, top, left + window_w, top + window_h
+
+
+# --------------------------------------------------------------------------- anchors and grids
 
 
 def ground_row(mask: Any, *, min_run: int = 1) -> int:
@@ -816,6 +1180,173 @@ def integer_scale(scale: float, tol: float = 1e-6) -> int:
     return int(nearest)
 
 
+# --------------------------------------------------------------------------- sheets
+
+# The neighbour order of the report v2 prototype (sheet_checks.py): left, right, above, below, then the diagonals.
+_ATTACH_DIRECTIONS = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))
+
+
+def _slice_boxes(width: int, height: int, rows: Any, cols: Any, boxes: Any) -> list[tuple[int, int, int, int]]:
+    if boxes is None:
+        if rows is None or cols is None:
+            raise ValueError("ownership_slice needs rows and cols, or boxes=.")
+        return rounded_grid_boxes(width, height, operator.index(rows), operator.index(cols))
+    if rows is not None or cols is not None:
+        raise ValueError("Pass rows and cols, or boxes=, not both.")
+    cells = []
+    for box in boxes:
+        x0, y0, x1, y1 = (operator.index(value) for value in box)
+        if not (0 <= x0 < x1 <= width and 0 <= y0 < y1 <= height):
+            raise ValueError(f"Box {[x0, y0, x1, y1]} must lie inside the {width}x{height} image with x0 < x1 "
+                             "and y0 < y1.")
+        cells.append((x0, y0, x1, y1))
+    if not cells:
+        raise ValueError("ownership_slice needs at least one box.")
+    return cells
+
+
+def _attach_soft(owner: np.ndarray, soft: np.ndarray, radius: int) -> tuple[np.ndarray, int]:
+    """Give ``soft`` pixels the owner they reach within ``radius`` 8-steps through soft pixels.
+
+    Breadth-first and synchronous: each step reads the owners of the step
+    before, and the first neighbour in _ATTACH_DIRECTIONS order that is owned
+    wins. Only soft pixels within ``radius`` px of an owned pixel can be
+    reached, so only those are visited. Returns ``(owner, attached_px)``.
+    """
+    height, width = owner.shape
+    owner = owner.copy()
+    ys, xs = np.nonzero(soft & dilate_square(owner >= 0, radius))
+    attached = 0
+    for _ in range(radius):
+        if ys.size == 0:
+            break
+        found = np.full(ys.size, -1, owner.dtype)
+        for dy, dx in _ATTACH_DIRECTIONS:
+            open_ = found < 0
+            sy, sx = ys[open_] - dy, xs[open_] - dx
+            inside = (sy >= 0) & (sy < height) & (sx >= 0) & (sx < width)
+            values = np.full(sy.size, -1, owner.dtype)
+            values[inside] = owner[sy[inside], sx[inside]]
+            found[np.flatnonzero(open_)[values >= 0]] = values[values >= 0]
+        reached = found >= 0
+        owner[ys[reached], xs[reached]] = found[reached]
+        attached += int(reached.sum())
+        ys, xs = ys[~reached], xs[~reached]
+    return owner, attached
+
+
+def ownership_slice(rgba: Any, rows: int | None = None, cols: int | None = None, *,
+                    boxes: Sequence[Sequence[int]] | None = None, alpha_threshold: int, min_area: int, haze: str,
+                    attach_radius: int = 6, count: int | None = None) -> tuple[list[np.ndarray], dict[str, Any]]:
+    """Slice a sheet so no subject is cut: each frame keeps its cell origin plus one shared padding (D14).
+
+    Cells are ``rounded_grid_boxes(width, height, rows, cols)``, or explicit
+    ``boxes`` ``(x0, y0, x1, y1)`` (crop boxes may leave gaps or overlap).
+    8-connected components of ``alpha > alpha_threshold`` with at least
+    ``min_area`` px go whole to the cell holding most of their pixels (ties:
+    the lower cell index); a component outside every cell has no owner.
+    Fainter visible pixels join the owner they reach within ``attach_radius``
+    8-steps through visible unowned pixels (report v2 prototype order:
+    left, right, above, below, diagonals). ``haze`` decides what stays
+    unowned after that: ``keep`` gives it to the first cell containing it
+    (only pixels outside every cell are dropped), ``drop`` drops it. Every
+    frame is placed on one canvas at its cell origin minus one shared
+    ``padding``, so the frames keep the sheet's registration, and only the
+    owned pixels are copied (RGB elsewhere is zero). Only the first ``count``
+    cells (default all) are returned and padded for; the rest may be empty.
+
+    The two policies of D14: frame assembly (B02) keeps haze with
+    ``alpha_threshold=16, min_area=4``; spill QC (B03) drops it with
+    ``alpha_threshold=127, min_area=64``.
+
+    Returns ``(frames, report)``. The report holds ``mode``, ``method``,
+    ``haze``, ``threshold``, ``min_area``, ``attach_radius``,
+    ``connectivity``, ``cells``, ``cells_used``, ``canvas`` [w, h],
+    ``padding`` [left, top, right, bottom], ``registration``,
+    ``frame_origins_in_sheet``, ``attached_px``, ``cell_fallback_px``,
+    ``dropped_px``, ``dropped_max_alpha``, ``unused_cells_px``,
+    ``empty_cells`` (returned cells without pixels) and ``frames`` (per frame:
+    ``box``, ``sheet_origin``, ``owned_components``, ``owned_px`` and
+    ``pixels_from_outside_cell``).
+    """
+    pixels = _rgba_array(rgba)
+    height, width = pixels.shape[:2]
+    cells = _slice_boxes(width, height, rows, cols, boxes)
+    if haze not in HAZE_POLICIES:
+        raise ValueError(f"Unknown haze policy {haze!r}; use one of {', '.join(HAZE_POLICIES)}.")
+    threshold, min_area, attach_radius = (operator.index(value) for value in (alpha_threshold, min_area, attach_radius))
+    if not 0 <= threshold <= 254 or min_area < 0 or attach_radius < 0:
+        raise ValueError("ownership_slice needs 0 <= alpha_threshold <= 254, min_area >= 0 and attach_radius >= 0.")
+    used = len(cells) if count is None else operator.index(count)
+    if not 1 <= used <= len(cells):
+        raise ValueError(f"count must be between 1 and {len(cells)}; got {used}.")
+    alpha = pixels[..., 3]
+    labels, total = label_components(alpha > threshold, 8)
+    areas = np.bincount(labels.ravel(), minlength=total + 1)
+    counts = np.stack([np.bincount(labels[y0:y1, x0:x1].ravel(), minlength=total + 1) for x0, y0, x1, y1 in cells])
+    owner_of = counts.argmax(axis=0).astype(np.int32)
+    owner_of[(counts.max(axis=0) == 0) | (areas < min_area)] = -1
+    owner_of[0] = -1
+    visible = alpha > 0
+    owners = owner_of[labels]
+    owners, attached = _attach_soft(owners, visible & (owners < 0), attach_radius)
+    fallback = 0
+    if haze == "keep":
+        for index, (x0, y0, x1, y1) in enumerate(cells):
+            region = owners[y0:y1, x0:x1]
+            unassigned = visible[y0:y1, x0:x1] & (region < 0)
+            fallback += int(unassigned.sum())
+            region[unassigned] = index
+    dropped = visible & (owners < 0)
+
+    ys, xs = np.nonzero(owners >= 0)
+    assigned = owners[ys, xs]
+    order = np.argsort(assigned, kind="stable")
+    ys, xs, assigned = ys[order], xs[order], assigned[order]
+    splits = np.searchsorted(assigned, np.arange(len(cells) + 1))
+    cell_w = max(x1 - x0 for x0, _y0, x1, _y1 in cells[:used])
+    cell_h = max(y1 - y0 for _x0, y0, _x1, y1 in cells[:used])
+    extents = [(int(xs[lo:hi].min()) - x0, int(ys[lo:hi].min()) - y0,
+                int(xs[lo:hi].max()) + 1 - x0, int(ys[lo:hi].max()) + 1 - y0)
+               for (x0, y0, _x1, _y1), lo, hi in zip(cells[:used], splits[:used], splits[1:used + 1]) if lo < hi]
+    pad_l = max([0] + [-extent[0] for extent in extents])
+    pad_t = max([0] + [-extent[1] for extent in extents])
+    pad_r = max([0] + [extent[2] - cell_w for extent in extents])
+    pad_b = max([0] + [extent[3] - cell_h for extent in extents])
+    canvas = (cell_w + pad_l + pad_r, cell_h + pad_t + pad_b)
+    owned_components = np.bincount(owner_of[owner_of >= 0], minlength=len(cells))
+    frames, records, empty = [], [], []
+    for index, (x0, y0, x1, y1) in enumerate(cells[:used]):
+        lo, hi = splits[index], splits[index + 1]
+        fy, fx = ys[lo:hi], xs[lo:hi]
+        frame = np.zeros((canvas[1], canvas[0], 4), np.uint8)
+        frame[fy - y0 + pad_t, fx - x0 + pad_l] = pixels[fy, fx]
+        frames.append(frame)
+        if lo == hi:
+            empty.append(index)
+        records.append({"box": [x0, y0, x1, y1], "sheet_origin": [x0 - pad_l, y0 - pad_t],
+                        "owned_components": int(owned_components[index]), "owned_px": int(hi - lo),
+                        "pixels_from_outside_cell": int((~((fx >= x0) & (fx < x1) & (fy >= y0) & (fy < y1))).sum())})
+    report = {
+        "mode": "ownership",
+        "method": ("8-connected components of alpha > threshold with at least min_area px go whole to the cell "
+                   "holding most of their pixels; fainter visible pixels join the owner they reach within "
+                   "attach_radius steps; haze keep/drop decides the rest; one shared padding keeps registration"),
+        "haze": haze, "threshold": threshold, "min_area": min_area, "attach_radius": attach_radius,
+        "connectivity": 8, "cells": len(cells), "cells_used": used,
+        "canvas": [int(canvas[0]), int(canvas[1])],
+        "padding": [int(pad_l), int(pad_t), int(pad_r), int(pad_b)],
+        "registration": "frame pixel (u, v) = sheet pixel (u - padding[0] + cell x0, v - padding[1] + cell y0)",
+        "frame_origins_in_sheet": [record["sheet_origin"] for record in records],
+        "attached_px": attached, "cell_fallback_px": fallback, "dropped_px": int(dropped.sum()),
+        "dropped_max_alpha": int(alpha[dropped].max()) if dropped.any() else 0,
+        "unused_cells_px": int(((owners >= used) & visible).sum()),
+        "empty_cells": empty,
+        "frames": records,
+    }
+    return frames, report
+
+
 # --------------------------------------------------------------------------- resampling
 
 _FILTERS = {"box": (Image.Resampling.BOX, 0.5), "lanczos": (Image.Resampling.LANCZOS, 3.0)}
@@ -890,6 +1421,16 @@ def resample_rgba(img: Any, scale: float, resampler: str = "lanczos", *,
     placed differently (image and ``anchor_src`` shifted by whole pixels, same
     ``anchor_dst``) gives byte-identical output, so a rest pose shared by two
     clips stays identical.
+
+    Caveat (D18): ``lanczos`` rings just outside an edge, and dividing that
+    tiny premultiplied ringing by an alpha of 1-4 (out of 255) invents
+    saturated colours there, often key-leaning ones such as (255, 222, 247).
+    They are invisible (under 2% opacity) but fool colour-based QA: B06's
+    registered frames carried 1.2-5.9% outer-ring "spill" from them, and a
+    clean frame resampled to 0.9x showed 6.5% (``box`` showed none). Run
+    ``alpha_hygiene(result, mode="floor")`` (floor 4) on resampled frames
+    that will be published or gated, or measure colour QA on a copy with
+    alpha <= ALPHA_GEOMETRY_THRESHOLD zeroed, as the residue gate does.
     """
     if resampler not in RESAMPLERS:
         raise ValueError(f"Unknown resampler {resampler!r}; use one of {', '.join(RESAMPLERS)}.")
@@ -1047,4 +1588,98 @@ def seam_report(frames: Iterable[Any], *, mask: Any = None) -> dict[str, Any]:
         "seam_over_median": seam / max(median, _SEAM_EPSILON),
         "seam_over_p95": seam / max(p95, _SEAM_EPSILON),
         "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first",
+    }
+
+
+# B11's calibration (extract_platform_strip.py / extract_terrain_tiles.py, section 8 of its handoff).
+_EDGE_LOCAL_STEPS = 8      # interior steps per side that describe the art around a join
+_EDGE_WINDOW_ROWS = 4      # a partial seam must show along this many consecutive rows
+_EDGE_NEAR_STEPS = 3       # steps per side that define a join's immediate neighbourhood
+_EDGE_SEAM_FLOOR = 1.0     # joins below this step are continuous whatever the ratio
+_EDGE_DUPLICATE_RATIO = 0.25  # a join step below this share of the neighbourhood duplicates an edge
+_EDGE_DUPLICATE_FLOOR = 2.0   # flatter neighbourhoods cannot show a duplicated edge
+_EDGE_FLAT_STEP = 1e-6     # a join and neighbourhood this still are flat: nothing to compare
+
+
+def _window_max(values: np.ndarray, window: int) -> float:
+    """Largest mean over ``window`` consecutive rows of any column of ``values`` (rows x columns)."""
+    if values.size == 0:
+        return 0.0
+    window = min(window, values.shape[0])
+    sums = np.cumsum(np.pad(values, ((1, 0), (0, 0))), axis=0)
+    return float(((sums[window:] - sums[:-window]) / window).max())
+
+
+def edge_seam_report(left: Any, right: Any, *, left_start: int = 0, right_stop: int | None = None,
+                     gate: float | None = None) -> dict[str, Any]:
+    """Normalised seam of the join ``left[:, -1] | right[:, 0]`` of two images (MAP-14; D9).
+
+    The spatial twin of seam_report, ported exactly from B11's
+    ``_local_edge_seam_report``. ``seam`` is the premultiplied RGBA step
+    (0-255) across the join; ``adjacent_*`` describe the interior column steps
+    within 8 columns of it on both sides, never using columns of ``left``
+    before ``left_start`` or of ``right`` from ``right_stop`` on (outer cap
+    padding). ``seam_ratio`` is the larger of seam / adjacent_max and the
+    worst 4-row window of the join over the worst 4-row window of those
+    steps: about 1 or less looks like the art, well above 1 is a seam. Test a
+    vertical join (top/bottom) by passing the images transposed
+    (``np.swapaxes(image, 0, 1)``); a wrap is ``edge_seam_report(image, image)``.
+
+    ``verdict`` (EDGE_SEAM_VERDICTS, D9): ``too_small`` when neither side
+    has an interior step to compare with (each side one column wide; the
+    ratios are then 0); ``flat`` when the join and every interior step are at
+    most 1e-6 (a flat colour: nothing to judge, and nothing wrong);
+    ``duplicate_edge`` when the join is much flatter than its immediate
+    neighbourhood (near_median >= 2 and seam < 0.25 * near_median: the edge
+    column repeats, a stutter); ``seam`` when seam > 1 and seam_ratio exceeds
+    ``gate`` (default EDGE_SEAM_NOMINAL_RATIO, 1.25); else ``continuous``.
+    B11's three verdicts are unchanged wherever its metric applies; gates
+    should fail EDGE_SEAM_DEFECTS only. Images are 8-bit RGBA or RGB arrays
+    or Pillow images with the same height. The result is common seamReport
+    plus ``seam_ratio``, ``near_median``, ``verdict`` and ``method``; numbers
+    are rounded to 6 decimals.
+    """
+    left_pixels, right_pixels = _rgba_array(left), _rgba_array(right)
+    if left_pixels.shape[0] != right_pixels.shape[0] or left_pixels.shape[0] == 0:
+        raise ValueError(f"A join needs two images of the same non-zero height; got {left_pixels.shape[0]} and "
+                         f"{right_pixels.shape[0]} rows.")
+    if gate is not None and not (math.isfinite(gate) and gate >= 0):
+        raise ValueError(f"gate must be a finite number >= 0; got {gate!r}.")
+    left_part = left_pixels[:, operator.index(left_start):][:, -(_EDGE_LOCAL_STEPS + 1):]
+    right_part = right_pixels[:, :right_stop][:, :_EDGE_LOCAL_STEPS + 1]
+    if left_part.shape[1] == 0 or right_part.shape[1] == 0:
+        raise ValueError("left_start and right_stop leave no column on one side of the join.")
+    a = _premultiplied(left_part)  # only the columns near the join
+    b = _premultiplied(right_part)
+    join_rows = np.abs(a[:, -1] - b[:, 0]).mean(axis=1)
+    left_steps = np.abs(np.diff(a, axis=1)).mean(axis=2)
+    right_steps = np.abs(np.diff(b, axis=1)).mean(axis=2)
+    local = np.concatenate([left_steps, right_steps], axis=1)
+    means = local.mean(axis=0) if local.size else np.zeros(1)
+    near = np.concatenate([left_steps[:, -_EDGE_NEAR_STEPS:].mean(axis=0) if left_steps.size else np.zeros(0),
+                           right_steps[:, :_EDGE_NEAR_STEPS].mean(axis=0) if right_steps.size else np.zeros(0)])
+    seam = float(join_rows.mean())
+    median, p95, peak = float(np.median(means)), float(np.percentile(means, 95)), float(means.max())
+    near_median = float(np.median(near)) if near.size else 0.0
+    ratio = max(seam / max(peak, _SEAM_EPSILON),
+                _window_max(join_rows[:, None], _EDGE_WINDOW_ROWS)
+                / max(_window_max(local, _EDGE_WINDOW_ROWS), _SEAM_EPSILON))
+    over_median, over_p95 = seam / max(median, _SEAM_EPSILON), seam / max(p95, _SEAM_EPSILON)
+    if not local.size:
+        verdict, ratio, over_median, over_p95 = "too_small", 0.0, 0.0, 0.0
+    elif seam <= _EDGE_FLAT_STEP and peak <= _EDGE_FLAT_STEP:
+        verdict = "flat"
+    elif near_median >= _EDGE_DUPLICATE_FLOOR and seam < _EDGE_DUPLICATE_RATIO * near_median:
+        verdict = "duplicate_edge"
+    elif seam > _EDGE_SEAM_FLOOR and ratio > (gate if gate is not None else EDGE_SEAM_NOMINAL_RATIO):
+        verdict = "seam"
+    else:
+        verdict = "continuous"
+    return {
+        "seam": round(seam, 6), "adjacent_median": round(median, 6), "adjacent_p95": round(p95, 6),
+        "adjacent_max": round(peak, 6), "seam_over_median": round(over_median, 6),
+        "seam_over_p95": round(over_p95, 6), "seam_ratio": round(ratio, 6),
+        "near_median": round(near_median, 6), "verdict": verdict,
+        "method": (f"premultiplied RGBA column steps (0-255); join vs interior steps within {_EDGE_LOCAL_STEPS} "
+                   f"columns per side, whole edge and worst {_EDGE_WINDOW_ROWS}-row window"),
     }

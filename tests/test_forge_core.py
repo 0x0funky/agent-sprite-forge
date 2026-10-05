@@ -542,7 +542,8 @@ def test_subject_mask_and_bbox_threshold_semantics():
     boolean = np.zeros((3, 3), bool)
     boolean[1, 1] = True
     assert fc.subject_bbox(boolean) == (1, 1, 2, 2)
-    assert (fc.ALPHA_GEOMETRY_THRESHOLD, fc.BODY_ALPHA_THRESHOLD, fc.FORGE_CORE_API_VERSION) == (16, 32, "1")
+    # API 1.1 is additive (D30): the 1.0 constants keep their values.
+    assert (fc.ALPHA_GEOMETRY_THRESHOLD, fc.BODY_ALPHA_THRESHOLD, fc.FORGE_CORE_API_VERSION) == (16, 32, "1.1")
 
 
 # --------------------------------------------------------------------------- A1-T4 hygiene

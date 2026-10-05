@@ -60,8 +60,10 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (the sibling copy: shared/ or the skill's scripts/)
 
-if getattr(forge_core, "FORGE_CORE_API_VERSION", None) != "1":
-    raise ImportError("forge_palette needs forge_core API version 1 next to it; run tools/vendor_sync.py --write.")
+_CORE_API = str(getattr(forge_core, "FORGE_CORE_API_VERSION", "")).split(".")
+if _CORE_API[0] != "1" or len(_CORE_API) < 2 or not _CORE_API[1].isdigit() or int(_CORE_API[1]) < 1:
+    raise ImportError("forge_palette needs forge_core API version 1.1 or a later 1.x next to it; "
+                      "run tools/vendor_sync.py --write.")
 
 
 FORGE_PALETTE_API_VERSION = "1"
@@ -1079,19 +1081,11 @@ def fit_report(asset: Any, palette: Any, *, alpha_threshold: int = 1) -> dict[st
     return report
 
 
-def manifest_path(path: str | os.PathLike, base: str | os.PathLike) -> str:
-    """``path`` as a POSIX path relative to the directory ``base``, or its file name where no
-    relative path exists (another drive): absolute paths never enter a manifest."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", relative):
-        return Path(path).name
-    return relative
-
-
-def file_ref(path: str | os.PathLike, base: str | os.PathLike) -> dict[str, Any]:
-    """A common fileRef ``{path, sha256, bytes}``, ``path`` as manifest_path() gives it."""
-    path = Path(path)
-    return {"path": manifest_path(path, base), "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+# Promoted to forge_core 1.1 (D30); these public names stay as aliases. manifest_path gives ``path``
+# relative to the directory ``base``, or its file name where no relative path exists (another drive), so
+# absolute paths never enter a manifest; file_ref gives the common fileRef ``{path, sha256, bytes}``.
+manifest_path = forge_core.manifest_path
+file_ref = forge_core.file_ref
 
 
 def lock_palette(palette: str | os.PathLike, sources: Iterable[str | os.PathLike], *,

@@ -455,6 +455,16 @@ def test_file_ref_on_another_drive_records_the_file_name(tmp_path, monkeypatch):
     assert fp.file_ref(target, tmp_path)["path"] == "x.png"
 
 
+def test_manifest_path_and_file_ref_are_the_forge_core_promotions(tmp_path):
+    """B04 request 1 (D30): the helpers moved to forge_core 1.1; the public forge_palette names stay as aliases."""
+    assert fp.manifest_path is fp.forge_core.manifest_path and fp.file_ref is fp.forge_core.file_ref
+    (tmp_path / "sub").mkdir()
+    target = tmp_path / "sub" / "x.png"
+    target.write_bytes(b"abc")
+    assert fp.manifest_path(target, tmp_path) == "sub/x.png"
+    assert fp.file_ref(target, tmp_path) == {"path": "sub/x.png", "sha256": fc.sha256_bytes(b"abc"), "bytes": 3}
+
+
 # --------------------------------------------------------------------------- sequences (B04-T2)
 
 def _plain(frames, palette):

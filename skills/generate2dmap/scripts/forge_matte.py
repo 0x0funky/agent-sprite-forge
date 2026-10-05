@@ -45,8 +45,10 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (the sibling copy: shared/ or the skill's scripts/)
 
-if getattr(forge_core, "FORGE_CORE_API_VERSION", None) != "1":
-    raise ImportError("forge_matte needs forge_core API version 1 next to it; run tools/vendor_sync.py --write.")
+_CORE_API = str(getattr(forge_core, "FORGE_CORE_API_VERSION", "")).split(".")
+if _CORE_API[0] != "1" or len(_CORE_API) < 2 or not _CORE_API[1].isdigit() or int(_CORE_API[1]) < 1:
+    raise ImportError("forge_matte needs forge_core API version 1.1 or a later 1.x next to it; "
+                      "run tools/vendor_sync.py --write.")
 
 
 FORGE_MATTE_API_VERSION = "1"
