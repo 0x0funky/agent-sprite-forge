@@ -50,7 +50,7 @@ import forge_matte  # noqa: E402
 
 
 TOOL_NAME = "generate2dsprite.py"
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 PIPELINE_META_SCHEMA = "generate2dsprite.pipeline_meta.v2"
 
 BACKGROUND_MODES = ("chroma_key", "native_alpha", "opaque")
@@ -65,6 +65,7 @@ GRID_ROUNDINGS = ("exact", "nearest")
 DIRECTION_NAMES = ("down", "down-left", "left", "up-left", "up", "up-right", "right", "down-right")
 DEFAULT_DIRECTION_ORDER = ("down", "left", "right", "up")
 DESPILL_MARGIN = 12
+KEY_RING_SPILL_MAX = 0.01    # outer-ring key share that warns (video residue gate, report v2 P0-3)
 ANCHOR_BAND_FRACTION = 0.12  # support band of the feet/stance anchor, as a share of the subject height
 FAINT_ATTACH_RADIUS = 2      # px: faint pixels this close to a kept component stay with it
 LOCOMOTION_MODES = frozenset({"walk", "run", "player_walk", "npc_walk", "player_sheet"})
@@ -584,102 +585,30 @@ def resolve_key_quality(quality: str, key: str, resampler: str) -> str:
     return quality
 
 
-# BT.601 YCbCr rows of forge_matte's matting space; squared norms bound |M (C - K)| by |C - K|.
-_LUMA_ROW_SQ = 0.299 ** 2 + 0.587 ** 2 + 0.114 ** 2
-_CHROMA_ROWS_SQ = 0.168736 ** 2 + 0.331264 ** 2 + 0.5 ** 2 + 0.5 ** 2 + 0.418688 ** 2 + 0.081312 ** 2
-_REGION_TILE = 16
-_REGION_MARGIN = 32
-_REGION_MAX_GROUPS = 64  # more groups (a noisy backdrop) cost more in per-call overhead than they save
-
-
-def _local_soft_matte_regions(pixels: np.ndarray, params: forge_matte.KeyParams, key_rgb: np.ndarray) -> np.ndarray:
-    """forge_matte.soft_matte, run only where a sheet holds non-key content; same bytes as one call.
-
-    Every soft-matte step is local (capped distance 7 px, candidate radius 4,
-    colour reference box 10, speck growth 3: at most about 20 px), and a pixel
-    within ``t_bg / ||M||_F`` (RGB distance) of the key is background in the
-    matting space. So content is found on a 16 px tile grid, each 8-connected
-    group of content tiles is matted inside its box plus a 32 px margin, and
-    only that group's own tiles are copied back. Every other pixel is
-    background, (0, 0, 0, 0), exactly as a whole-sheet matte leaves it. Falls
-    back to one whole-sheet call when the groups cover most of the sheet or
-    are too many (a noisy backdrop).
-    """
-    height, width = pixels.shape[:2]
-    # Conservative: pixels a little inside the safe distance also count as content.
-    safe = 0.999 * params.t_bg / math.sqrt(_LUMA_ROW_SQ + params.w_chroma * _CHROMA_ROWS_SQ)
-    offset = pixels[..., :3].astype(np.float32) - np.asarray(key_rgb, np.float32)
-    content = (offset * offset).sum(-1) > np.float32(safe * safe)
-    if pixels.shape[2] == 4:
-        content &= pixels[..., 3] > 0
-    tile = _REGION_TILE
-    tiles_y, tiles_x = -(-height // tile), -(-width // tile)
-    padded = np.zeros((tiles_y * tile, tiles_x * tile), bool)
-    padded[:height, :width] = content
-    tile_mask = padded.reshape(tiles_y, tile, tiles_x, tile).any(axis=(1, 3))
-    out = np.zeros((height, width, 4), np.uint8)
-    if not tile_mask.any():
-        return out
-    labels, count = forge_core.label_components(tile_mask, 8)
-    if count > _REGION_MAX_GROUPS:
-        return forge_matte.soft_matte(pixels, params, key_rgb)
-    groups = []
-    for label in range(1, count + 1):
-        rows, cols = np.nonzero(labels == label)
-        tile_box = (int(cols.min()), int(rows.min()), int(cols.max()) + 1, int(rows.max()) + 1)
-        box = (max(0, tile_box[0] * tile - _REGION_MARGIN), max(0, tile_box[1] * tile - _REGION_MARGIN),
-               min(width, tile_box[2] * tile + _REGION_MARGIN), min(height, tile_box[3] * tile + _REGION_MARGIN))
-        groups.append((label, tile_box, box))
-    if sum((x1 - x0) * (y1 - y0) for _label, _tiles, (x0, y0, x1, y1) in groups) >= 0.75 * height * width:
-        return forge_matte.soft_matte(pixels, params, key_rgb)
-    for label, (tx0, ty0, tx1, ty1), (x0, y0, x1, y1) in groups:
-        keyed = forge_matte.soft_matte(pixels[y0:y1, x0:x1], params, key_rgb)
-        own = np.repeat(np.repeat(labels[ty0:ty1, tx0:tx1] == label, tile, axis=0), tile, axis=1)
-        top, left = ty0 * tile, tx0 * tile
-        own = own[:height - top, :width - left]
-        region = out[top:top + own.shape[0], left:left + own.shape[1]]
-        source = keyed[top - y0:top - y0 + own.shape[0], left - x0:left - x0 + own.shape[1]]
-        region[own] = source[own]
-    return out
-
-
 def key_sheet(img: Image.Image, *, quality: str = "auto", key: str = "magenta", threshold: int = 100,
               edge_threshold: int = 150, resampler: str = "lanczos") -> tuple[Image.Image, dict[str, Any]]:
-    """Key a chroma sheet with the shared keyer and measure its residue (S24, report v2 P2-2).
+    """Key a chroma sheet with forge_matte.key_still and measure its residue (S24, report v2 P2-2, D15).
 
-    ``hard`` is the legacy binary magenta key with the given thresholds (bit
-    exact). ``soft`` is the still-image soft matte (forge_matte.STILL_KEY_PARAMS)
-    against the backdrop key estimated from the border, with interior despill
-    when the subject owns no key-coloured material; ``dominance`` is the fast
-    dominance key; ``auto`` resolves as resolve_key_quality. An image with real
-    transparency and no key backdrop is returned unchanged (quality
-    ``native_alpha``). The info dict follows forge_matte.key_still plus ``qa``
-    (forge_matte.matte_qa of the result).
+    ``quality`` resolves as resolve_key_quality (``auto`` is the binary key for
+    nearest/pixel art on magenta, soft otherwise). ``hard`` is the legacy
+    binary #FF00FF key with the given thresholds (bit exact, S03): it never
+    estimates a backdrop, so the key and the QA key are #FF00FF. ``soft`` is
+    the still-image soft matte (forge_matte.STILL_KEY_PARAMS) against the
+    backdrop key estimated from the border, with interior despill when the
+    subject owns no key-coloured material; key_still mattes only the parts of
+    the sheet that hold content, byte for byte the whole-sheet result (D15).
+    ``dominance`` is the fast dominance key. An image with real transparency
+    and no key backdrop is returned unchanged (quality ``native_alpha``). The
+    info dict is key_still's: ``quality``, ``requested_quality`` (as given
+    here), ``key``, ``key_estimate``, the soft ``params``, ``thresholds``
+    (hard) and ``qa`` (forge_matte.matte_qa of the result).
     """
     resolved = resolve_key_quality(quality, key, resampler)
-    pixels = np.asarray(img.convert("RGBA"))
-    info: dict[str, Any] = {"quality": resolved, "requested_quality": quality, "resampler_hint": resampler}
-    if resolved == "hard":
-        keyed = np.asarray(remove_bg_magenta(img, threshold, edge_threshold))
-        key_rgb = np.array(forge_matte.DECLARED_KEYS["magenta"], np.float32)
-        info.update(key=[float(v) for v in key_rgb], key_estimate=None,
-                    thresholds={"threshold": threshold, "edge_threshold": edge_threshold})
-    else:
-        key_rgb, estimate = forge_matte.estimate_key(pixels, key)
-        info.update(key=[round(float(v), 2) for v in key_rgb], key_estimate=estimate)
-        if estimate["use_native_alpha"]:
-            info["quality"] = "native_alpha"
-            keyed = pixels.copy()
-        elif resolved == "dominance":
-            keyed = forge_matte.dominance_matte(pixels, key_rgb)
-        else:
-            share = forge_matte.key_material_share(pixels, key_rgb)
-            params = forge_matte.KeyParams(**{**forge_matte.STILL_KEY_PARAMS.to_dict(),
-                                              "interior_despill": share <= forge_matte.KEY_MATERIAL_SHARE_MAX})
-            keyed = _local_soft_matte_regions(pixels, params, key_rgb)
-            info.update(params=params.to_dict(), interior_despill=params.interior_despill, key_material_share=share)
-    info["qa"] = forge_matte.matte_qa(keyed, key_rgb)
-    return Image.fromarray(keyed), info
+    backdrop = forge_matte.DECLARED_KEYS["magenta"] if resolved == "hard" else key
+    keyed, info = forge_matte.key_still(img, resolved, backdrop, resampler, threshold=threshold,
+                                        edge_threshold=edge_threshold)
+    info["requested_quality"] = quality
+    return keyed, info
 
 
 # --------------------------------------------------------------------------- grid options
@@ -824,10 +753,6 @@ class SheetResult:
 
 # --------------------------------------------------------------------------- small helpers
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
-
-
 def resampling_filter(resampler: str) -> Image.Resampling:
     if resampler not in RESAMPLERS:
         raise ValueError(f"Unknown resampler: {resampler}")
@@ -882,15 +807,6 @@ def alpha_core_area(alpha: np.ndarray, horizontal_fraction: float = 0.5) -> int:
     half_width = max(1, int(round(width * horizontal_fraction / 2)))
     center_x = width // 2
     return int(np.count_nonzero(alpha[:, max(0, center_x - half_width):min(width, center_x + half_width)]))
-
-
-def _local_dilate(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Chebyshev dilation by ``radius`` px via a summed-area table; the canvas exterior never counts."""
-    if radius <= 0:
-        return mask.copy()
-    size = 2 * radius + 1
-    table = np.pad(np.pad(mask, radius).astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
-    return (table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]) > 0
 
 
 def _mask_bbox(mask: np.ndarray) -> tuple[int, int, int, int] | None:
@@ -961,6 +877,8 @@ def prepare_sheet(img: Image.Image, options: GridOptions) -> tuple[Image.Image, 
                                                          key=options.key)
             cleaned = Image.fromarray(pixels)
             matte["despill"] = despill_report
+            # The residue checks judge the published sheet: measure it again after the despill.
+            matte["qa_after_despill"] = forge_matte.matte_qa(pixels, matte["key"])
         report["matte"] = matte
     else:
         _validate_alpha_mode(rgba, options.background_mode)
@@ -1016,7 +934,7 @@ def _measure_cell(cell: Image.Image, options: GridOptions) -> dict[str, Any]:
         # the component they fringe.
         keep = kept_mask.copy()
         if options.alpha_geometry_threshold > 0:
-            keep |= (alpha > 0) & ~geometry & _local_dilate(kept_mask, FAINT_ATTACH_RADIUS)
+            keep |= (alpha > 0) & ~geometry & forge_core.dilate_square(kept_mask, FAINT_ATTACH_RADIUS)
         pixels[~keep] = 0
     main = kept[0] if kept else None
     subject_box = _mask_bbox(kept_mask)
@@ -1039,7 +957,7 @@ def _measure_cell(cell: Image.Image, options: GridOptions) -> dict[str, Any]:
         anchor_box = main_box if options.component_mode == "largest" else subject_box
         anchor = _legacy_p98_anchor(kept_mask, anchor_box, options.align)
     elif mode in ("feet", "stance"):
-        band = max(1, _round_half_up(ANCHOR_BAND_FRACTION * (main_box[3] - main_box[1])))
+        band = max(1, forge_core.round_half_up(ANCHOR_BAND_FRACTION * (main_box[3] - main_box[1])))
         anchor = forge_core.anchor_from_mask(main_mask, mode, band, subject_bbox=main_box)
     else:
         anchor = forge_core.anchor_from_mask(kept_mask, mode, subject_bbox=subject_box)
@@ -1173,9 +1091,11 @@ def _place_fit(measured: list[dict[str, Any]], infos: list[dict[str, Any]], opti
             position = (paste_x, paste_y)
         else:
             sx, sy = new_width / crop_w, new_height / crop_h
-            size = (max(1, _round_half_up((ex1 - ex0) * sx)), max(1, _round_half_up((ey1 - ey0) * sy)))
+            size = (max(1, forge_core.round_half_up((ex1 - ex0) * sx)),
+                    max(1, forge_core.round_half_up((ey1 - ey0) * sy)))
             piece = frame_image.crop((ex0, ey0, ex1, ey1)).resize(size, resize_filter)
-            position = (paste_x - _round_half_up((cx0 - ex0) * sx), paste_y - _round_half_up((cy0 - ey0) * sy))
+            position = (paste_x - forge_core.round_half_up((cx0 - ex0) * sx),
+                        paste_y - forge_core.round_half_up((cy0 - ey0) * sy))
         canvas.paste(piece, position)
         anchor_x, anchor_y = m["anchor"]
         info.update(
@@ -1221,7 +1141,8 @@ def _registration_anchor(measured: list[dict[str, Any]], options: GridOptions) -
 
 
 def _offset(target: Sequence[float], anchor: Sequence[float], scale: float) -> tuple[int, int]:
-    return _round_half_up(target[0] - anchor[0] * scale), _round_half_up(target[1] - anchor[1] * scale)
+    return (forge_core.round_half_up(target[0] - anchor[0] * scale),
+            forge_core.round_half_up(target[1] - anchor[1] * scale))
 
 
 def _clamp_offset(offset: tuple[int, int], box: Sequence[float], scale: float, cell: int) -> tuple[int, int]:
@@ -1296,7 +1217,8 @@ def _place_common_grid(measured: list[dict[str, Any]], infos: list[dict[str, Any
         frame = _resample_cell(_cell_canvas(m, cell_size), scale, ratio, offset, options)
         info.update(
             offset_px=list(offset),
-            output_size=[_round_half_up((box[2] - box[0]) * scale), _round_half_up((box[3] - box[1]) * scale)],
+            output_size=[forge_core.round_half_up((box[2] - box[0]) * scale),
+                         forge_core.round_half_up((box[3] - box[1]) * scale)],
             paste_position=[math.floor(box[0] * scale + offset[0] + _EPSILON),
                             math.floor(box[1] * scale + offset[1] + _EPSILON)],
             unclamped_paste_position=[math.floor(box[0] * scale + unclamped[0] + _EPSILON),
@@ -1609,7 +1531,12 @@ def cmd_build_godot_bundle(args: argparse.Namespace) -> dict[str, Any]:
         contract_path = Path(raw_path.strip()).resolve()
         if not contract_path.is_file():
             raise ValueError(f"Action contract does not exist: {contract_path}")
-        contract = json.loads(contract_path.read_text(encoding="utf-8"))
+        try:
+            contract = forge_core.read_json(contract_path)  # UTF-8 with or without a BOM (D28)
+        except ValueError as error:
+            raise ValueError(f"Action contract '{action}' is not valid JSON ({contract_path.name}): {error}") from None
+        if not isinstance(contract, dict):
+            raise ValueError(f"Action contract '{action}' must be a JSON object: {contract_path.name}")
         missing = [frame for frame in contract.get("frames") or []
                    if not (contract_path.parent / frame).is_file()]
         if missing:
@@ -1727,7 +1654,12 @@ def build_scale_profile(
 
 def load_scale_profile(path: Path) -> dict[str, Any]:
     """Read a version 1 or 2 profile; version 1 keeps its cfed170 contract and drift metric."""
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        payload = forge_core.read_json(path)  # UTF-8 with or without a BOM (D28)
+    except ValueError as error:
+        raise ValueError(f"Scale profile {Path(path).name} is not valid JSON: {error}") from None
+    if not isinstance(payload, dict):
+        raise ValueError(f"Scale profile {Path(path).name} must be a JSON object.")
     version = payload.get("version")
     if version not in (1, 2):
         raise ValueError(f"Unsupported scale profile version {version!r}; expected 1 or 2.")
@@ -1859,16 +1791,6 @@ def gif_decoded_durations(path: Path) -> list[int]:
 def sanitize_slug(text: str) -> str:
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", text.strip().lower()).strip("-")
     return slug or "sprite"
-
-
-def _file_ref(path: Path, base: Path, sha256: str | None = None) -> dict[str, Any]:
-    """A common fileRef: the POSIX path relative to ``base``, or only the file name when no
-    relative route exists (another drive), bound to its content by sha256."""
-    try:
-        relative = Path(os.path.relpath(path, base)).as_posix()
-    except ValueError:
-        relative = path.name
-    return {"path": relative, "sha256": sha256 or forge_core.sha256_file(path)}
 
 
 # --------------------------------------------------------------------------- list-options and build-prompt
@@ -2143,7 +2065,8 @@ def plan_process(args: argparse.Namespace) -> ProcessPlan:
     if args.prompt_file is not None:
         if not Path(args.prompt_file).is_file():
             raise ValueError(f"--prompt-file not found: {args.prompt_file}")
-        prompt_text, prompt_source = Path(args.prompt_file).read_text(encoding="utf-8"), "file"
+        # UTF-8 with or without a BOM (PowerShell 5.1 writes one, D28); the BOM is not prompt text.
+        prompt_text, prompt_source = Path(args.prompt_file).read_text(encoding="utf-8-sig"), "file"
     elif args.prompt:
         prompt_text, prompt_source = args.prompt, "argument"
 
@@ -2221,8 +2144,14 @@ def _qc_errors_and_checks(metadata: dict[str, Any], args: argparse.Namespace,
               f"{off_grid} colour edges fall off the integer pixel grid")
     matte = metadata.get("matte")
     if matte:
-        opaque_key = int(matte["qa"]["opaque_key_px"])
+        residue = matte.get("qa_after_despill") or matte["qa"]  # what is published
+        opaque_key = int(residue["opaque_key_px"])
         check("key_residue", opaque_key > 0, opaque_key, 0, False, f"{opaque_key} opaque key-coloured pixels remain")
+        # A binary key (hard, or auto for nearest) leaves a key-coloured fringe on anti-aliased edges: warn
+        # like the video residue gate does (report v2 P0-3); --despill-radius or --key-quality soft fix it.
+        ring = round(float(residue["outer_ring_spill_fraction"]), 6)
+        check("key_ring_spill", ring > KEY_RING_SPILL_MAX, ring, KEY_RING_SPILL_MAX, False,
+              f"{ring:.3f} of the outer edge ring is key-coloured")
     return errors, checks
 
 
@@ -2416,7 +2345,7 @@ def cmd_process(args: argparse.Namespace) -> dict[str, Any]:
         metadata["qc_summary"]["profile_body_scale_drift"] = drift
         if effective_profile_limit is None:
             effective_profile_limit = float(dict(scale_profile.get("qc") or {}).get("max_body_scale_drift", 0.10))
-        profile_ref = _file_ref(Path(args.scale_profile).resolve(), destination)
+        profile_ref = forge_core.file_ref(Path(args.scale_profile), destination)
         plan.profile_report["path"] = profile_ref
         metadata["profile_applied"] = plan.profile_report
         metadata["scale_profile"] = {
@@ -2480,11 +2409,12 @@ def cmd_process(args: argparse.Namespace) -> dict[str, Any]:
                           else Path(side) / final.name)
                 staged.parent.mkdir(parents=True, exist_ok=True)
                 forge_core.write_json(staged, payload, no_clobber=True)
-                metadata[key] = _file_ref(final, destination, forge_core.sha256_file(staged))
+                metadata[key] = forge_core.file_ref(final, destination, sha256=forge_core.sha256_file(staged),
+                                                     size=staged.stat().st_size)
                 if not final.is_relative_to(destination):
                     external.append((staged, final))
             inputs = [{"path": raw_name, "sha256": source_info["sha256"], "bytes": source_info["bytes"]}]
-            outputs = [_file_ref(path, stage) for path in written]
+            outputs = [forge_core.file_ref(path, stage) for path in written]
             metadata["qa"] = _qa_envelope(checks, inputs, outputs)
             forge_core.write_json(stage / "pipeline-meta.json", metadata, no_clobber=True)
             for staged, final in external:
@@ -2778,22 +2708,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        if args.command == "list-options":
-            cmd_list_options()
-        elif args.command == "build-prompt":
-            cmd_build_prompt(args)
-        elif args.command == "build-godot-bundle":
-            cmd_build_godot_bundle(args)
-        else:
-            cmd_process(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+    if args.command == "list-options":
+        cmd_list_options()
+    elif args.command == "build-prompt":
+        cmd_build_prompt(args)
+    elif args.command == "build-godot-bundle":
+        cmd_build_godot_bundle(args)
+    else:
+        cmd_process(args)
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """CLI entry (D26, D27): usage errors exit 2 (argparse); every other failure prints one
+    ``error: ...`` line and exits 1, an unexpected one as ``error: internal error (...)``."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":
