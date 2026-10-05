@@ -447,7 +447,7 @@
           }
         },
         "matte": {
-          "description": "forge_matte.key_still info for a keyed sheet: the quality used and requested, the key as floats, key_estimate (forge_matte.estimate_key info, null for an explicit key), the soft-matte params (KeyParams.to_dict()), interior_despill, key_material_share, qa (forge_matte.matte_qa metrics of the result, not a QA envelope), resampler_hint, thresholds (the hard key's) and despill (the forge_matte.despill report).",
+          "description": "forge_matte.key_still info for a keyed sheet: the quality used and requested, the key as floats, key_estimate (forge_matte.estimate_key info, null for an explicit key), the soft-matte params (KeyParams.to_dict()), interior_despill, key_material_share, qa (forge_matte.matte_qa metrics of the result, not a QA envelope), resampler_hint, thresholds (the hard key's), despill (the forge_matte.despill report) and, only when a despill ran (--despill-radius), qa_after_despill: the same matte_qa metrics measured again on the despilled sheet. The process QA checks key_residue and key_ring_spill (outer-ring key share, warn above 0.01) judge what is published: qa_after_despill when present, else qa.",
           "type": "object",
           "properties": {
             "quality": {"enum": ["hard", "soft", "dominance", "native_alpha"]},
@@ -460,7 +460,8 @@
             "qa": {"type": "object"},
             "resampler_hint": {"type": "string", "minLength": 1},
             "thresholds": {"type": "object"},
-            "despill": {"type": "object"}
+            "despill": {"type": "object"},
+            "qa_after_despill": {"type": "object"}
           }
         },
         "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
@@ -1032,9 +1033,9 @@
       "then": {"required": ["loop_seam", "key", "slicing", "spill_check", "qa"]}
     },
     "exportedClip": {
-      "description": "A clip in engine-export.json (export_engine.py): source frame indices, integer durations, events and the per-target placement (Aseprite tag range, Godot speed and relative durations, Sprite3D contract). events_ms[].at_ms is authoritative; at is the position the built clip gives (per D12 the authored position) and position, when present, the index into frames. transition_hints holds the transition hints (per D13); a transitions list of hint items {to, entry_frame, dissolve_ms, mode} is what export_engine wrote before D13, and readers still accept it.",
+      "description": "A clip in engine-export.json (export_engine.py): source frame indices, integer durations, events and the per-target placement (Aseprite tag range, Godot speed and relative durations, Sprite3D contract). Per D12, events_ms[].at_ms is authoritative, position is the index into frames (the played frame shown at at_ms; an event at the end edge names the last frame) and at is the authored position the built clip gives. page is the clip's atlas page; it is absent when no atlas target was exported (atlas.pages is then empty, a godot-sprite3d-only export). transition_hints holds the transition hints (per D13); a transitions list of hint items {to, entry_frame, dissolve_ms, mode} is what export_engine wrote before D13, and readers still accept it.",
       "type": "object",
-      "required": ["frames", "duration_ms", "total_duration_ms", "loop", "loop_policy", "events_ms", "page"],
+      "required": ["frames", "duration_ms", "total_duration_ms", "loop", "loop_policy", "events_ms"],
       "properties": {
         "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
         "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
@@ -1045,7 +1046,7 @@
           "type": "array",
           "items": {
             "type": "object",
-            "required": ["name", "at_ms", "at"],
+            "required": ["name", "at_ms", "at", "position"],
             "properties": {
               "name": {"$ref": "common.schema.json#/$defs/eventName"},
               "at_ms": {"type": "integer", "minimum": 0},

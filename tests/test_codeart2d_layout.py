@@ -516,9 +516,10 @@ def write_wang_tileset(folder: Path, materials, tile: int = 16, variants: int = 
     name = "-".join(materials)
     folder.mkdir(parents=True, exist_ok=True)
     Image.fromarray(atlas).save(folder / f"{name}.png")
+    # qa is a fileRef (D5) to a QA file that was never written: the copy must drop it either way.
     manifest = {"schema": "generate2dmap.tileset.v1", "image": f"{name}.png", "tile_size": tile, "columns": columns,
                 "kind": "wang_corner", "materials": list(materials), "tiles": tiles, "seamless_verified": False,
-                "qa": "missing-qa.json"}
+                "qa": {"path": "missing-qa.json", "sha256": "0" * 64}}
     assert_valid_contract(manifest, "map", "tileset_v1", skill=SKILL)
     path = folder / f"{name}.tileset.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")

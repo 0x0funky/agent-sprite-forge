@@ -591,6 +591,12 @@
         "fpsCapped": {"description": "The clip was reduced to at most 60 fps without changing its length.", "type": "boolean"},
         "inputFps": {"$ref": "common.schema.json#/$defs/fpsValue"},
         "pingpongBaked": {"description": "A pingpong policy was baked into one cycle (0 1 2 3 2 1).", "type": "boolean"},
+        "tickExpansion": {"description": "Uneven whole-tick durations expanded for video transports (engine_export, D21): each authored frame is repeated ticks[i] times at rate; sourceIndices and durationsMs are the expanded timeline.",
+                          "type": "object", "required": ["rate", "ticks", "authoredSourceIndices", "authoredDurationsMs"],
+                          "properties": {"rate": {"$ref": "common.schema.json#/$defs/fpsValue"},
+                                         "ticks": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+                                         "authoredSourceIndices": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                                         "authoredDurationsMs": {"$ref": "common.schema.json#/$defs/durationsMs"}}},
         "artSource": {"$ref": "common.schema.json#/$defs/artSource"},
         "placeholder": {"type": "boolean"}
       },
@@ -681,7 +687,7 @@
           "type": "object",
           "required": ["modes"],
           "properties": {
-            "modes": {"type": "array", "items": {"enum": ["feet", "x", "hip"]}, "maxItems": 3},
+            "modes": {"type": "array", "items": {"enum": ["feet", "x", "hip"]}, "maxItems": 3, "uniqueItems": true},
             "maxShift": {"type": ["integer", "null"], "minimum": 0},
             "groundMinRun": {"type": "integer", "minimum": 1},
             "targets": {"type": "object"}

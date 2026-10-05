@@ -22,9 +22,9 @@
   },
   "plateau": 3,
   "art_source": "code",
-  "generator": {"name": "codeart2d/autotile_build", "version": "1.0.0"},
+  "generator": {"name": "codeart2d/autotile_build", "version": "0.4.0"},
   "spec_sha256": "2e84e8fb179d9de472561253de9732316dec7deda5fe1ada788ec1fe0d12a108",
-  "qa": "autotile-qa.json",
+  "qa": {"path": "autotile-qa.json", "sha256": "eeeb6588212fa0b2027781354f6397bbd54ee4541a26a47d01129fbc20f2ae99", "bytes": 5934},
   "tiles": [
     {
       "index": 0,

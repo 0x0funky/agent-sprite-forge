@@ -100,7 +100,7 @@
       }
     },
     "placement": {
-      "description": "One placed sprite. anchor manifest takes anchor_px from the prop-pack manifest; px uses anchorPx in source pixels; the other names are the cfed170 box anchors. path is the v1 alias of image; v1 readers default a missing x or y to 0. footprint and solid give the placement its own ground collision for the compose audit (the same footprint as a prop's).",
+      "description": "One placed sprite. anchor manifest takes anchor_px from the prop-pack manifest; px uses anchorPx in source pixels; the other names are the cfed170 box anchors. path is the v1 alias of image; v1 readers default a missing x or y to 0. footprint and solid give the placement its own ground collision for the compose audit (the same footprint as a prop's). flip_x mirrors the art around the anchor x and the footprint with it (D6: offset[0] and rotate change sign).",
       "type": "object",
       "properties": {
         "id": {"type": "string", "minLength": 1},
@@ -118,7 +118,8 @@
         "resampler": {"enum": ["nearest", "lanczos"]},
         "opacity": {"type": "number", "minimum": 0, "maximum": 1},
         "footprint": {"$ref": "#/$defs/footprint"},
-        "solid": {"type": "boolean"}
+        "solid": {"type": "boolean"},
+        "flip_x": {"type": "boolean"}
       },
       "anyOf": [{"required": ["image"]}, {"required": ["path"]}],
       "if": {"properties": {"anchor": {"const": "px"}}, "required": ["anchor"]},
@@ -255,7 +256,7 @@
       ]
     },
     "mapObject": {
-      "description": "A placed prop instance in world pixels: (x, y) is where anchor_px (the unmirrored image anchor) lands; sortY orders drawing; layer names its objects layer. Art lookup order for every reader (per D6): objects[].image, then the bundle's props[prop], then prop_packs by label, then occluder.source. flip_x mirrors the art around the anchor x, and the footprint with it (D6): a footprint taken from the prop is mirrored by the reader, while an object's own footprint is written as placed (layout_build writes it already mirrored). The object's footprint, when absent, is the prop's; either is scaled once by scale (basis world_px is not scaled) and blocks unless solid is false. kind and group name the scatter kind and group that placed it (layout_build).",
+      "description": "A placed prop instance in world pixels: (x, y) is where anchor_px (the unmirrored image anchor) lands; sortY orders drawing; layer names its objects layer. Art lookup order for every reader (per D6): objects[].image, then the bundle's props[prop], then prop_packs by label, then occluder.source. flip_x mirrors the art around the anchor x, and the footprint with it (D6, forge_nav rule N6): every reader mirrors the footprint of a flip_x object, whether it is the object's own or taken from the prop, so a writer stores footprints unmirrored, as the unflipped art has them (layout_build does). The object's footprint, when absent, is the prop's; either is scaled once by scale (basis world_px is not scaled) and blocks unless solid is false. kind and group name the scatter kind and group that placed it (layout_build).",
       "type": "object",
       "required": ["id", "prop", "x", "y", "anchor_px"],
       "properties": {
@@ -483,7 +484,7 @@
       }
     },
     "tileset_v1": {
-      "description": "A tileset manifest. seamless_verified true requires a seam_proof with zero mismatches over a nonzero pixel count (for example a tiled map compared with the global render). For blob47, blob_inside is the material that is the blob's inside (default: the last material). Code-generated tilesets (autotile_build) also record their id, tile count, variants per key, the plateau (px around each tile edge that depend only on that edge's two corners), the Tiled wangset, art_source, the generator, the spec's sha256 and their QA file. qa is a fileRef (per D5); a bare relPath is the form written before D5 and is still read, and a consumer that copies the manifest must rewrite qa relative to the copy or drop it.",
+      "description": "A tileset manifest. seamless_verified true requires a seam_proof with zero mismatches over a nonzero pixel count (for example a tiled map compared with the global render). For blob47, blob_inside is the material that is the blob's inside (default: the last material). Code-generated tilesets (autotile_build) also record their id, tile count, variants per key, the plateau (px around each tile edge that depend only on that edge's two corners), the Tiled wangset, art_source, the generator, the spec's sha256 and their QA file. qa is a fileRef (per D5: the QA file relative to the manifest, bound by its sha256); a consumer that copies the manifest must rewrite qa relative to the copy or drop it (layout_build drops it and lists the QA file among its provenance inputs).",
       "type": "object",
       "required": ["schema", "image", "tile_size", "columns", "kind", "materials", "tiles", "seamless_verified"],
       "properties": {
@@ -523,7 +524,7 @@
         "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
         "generator": {"$ref": "common.schema.json#/$defs/toolInfo"},
         "spec_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-        "qa": {"anyOf": [{"$ref": "common.schema.json#/$defs/fileRef"}, {"$ref": "common.schema.json#/$defs/relPath"}]},
+        "qa": {"$ref": "common.schema.json#/$defs/fileRef"},
         "seam_proof": {
           "type": "object",
           "required": ["method", "pixels_compared", "mismatches"],
@@ -2100,7 +2101,7 @@
       }
     },
     "composedPlacement": {
-      "description": "One placement as compose_layered_preview.py drew it: the canvas rectangle, the effective anchor in source pixels (and where it came from) and where it landed in the world and on the canvas, the sortY and how it was chosen, the visible bounds and the footprint the audit used.",
+      "description": "One placement as compose_layered_preview.py drew it: the canvas rectangle, the effective anchor in source pixels (and where it came from) and where it landed in the world and on the canvas, the sortY and how it was chosen, the visible bounds and the footprint the audit used. flip_x is true when the art was drawn mirrored around its anchor x, the footprint with it (D6).",
       "type": "object",
       "required": [
         "id",
@@ -2132,6 +2133,7 @@
         "draw_index": {"type": "integer", "minimum": 0},
         "image": {"$ref": "common.schema.json#/$defs/relPath"},
         "image_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "flip_x": {"type": "boolean"},
         "left": {"type": "integer"},
         "top": {"type": "integer"},
         "w": {"type": "integer", "minimum": 1},

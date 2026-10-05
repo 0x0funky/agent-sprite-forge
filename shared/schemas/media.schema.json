@@ -16,7 +16,22 @@
         "apiBase": {"type": "string", "pattern": "^https://"},
         "endpoint": {"type": "string"},
         "requestedModel": {"type": "string", "minLength": 1},
-        "options": {"type": "object"},
+        "options": {"description": "The request options that enter the fingerprint. A cli_media --verify-route run adds verifies, the installed CLI version it verifies (per D23, so re-verifying after a CLI update is a new request).", "type": "object"},
+        "routeChoice": {
+          "description": "How cli_media --route auto chose the route (per D22, local agent first): route and its user-facing label, the order tried, why earlier routes were skipped, and the installed CLI version the VERIFIED proof matched (null on a dry run, which then records verifiedFor, the proof's version, and a note).",
+          "type": "object",
+          "required": ["requested", "route", "label", "order", "skipped"],
+          "properties": {
+            "requested": {"const": "auto"},
+            "route": {"enum": ["codex-cli", "grok-cli", "grok-acp"]},
+            "label": {"type": "string", "minLength": 1},
+            "order": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "skipped": {"type": "array", "items": {"type": "string"}},
+            "version": {"type": ["string", "null"]},
+            "verifiedFor": {"type": ["string", "null"]},
+            "note": {"type": "string"}
+          }
+        },
         "promptSha256": {"$ref": "common.schema.json#/$defs/sha256"},
         "references": {"type": "array", "items": {"type": "object", "required": ["sha256"], "properties": {"sha256": {"$ref": "common.schema.json#/$defs/sha256"}}}},
         "execution": {"enum": ["dry-run", "execute"]},
@@ -198,12 +213,12 @@
       }
     },
     "batch_progress_v1": {
-      "description": "<jobs stem>.progress.json written by generate_media.py batch --execute and cli_media.py batch after every dispatch and result. results hold one entry per finished job (generated, reused, left-for-human or failed, with its outcomeCode); inFlight and remaining are job ids. stopped means an account-level, unknown or possibly charged outcome stopped dispatching (nothing is retried) and stopReason says which; complete means no job is left or in flight. jobsFile and results[].jobDir are relative to the progress file's folder (per D25, no absolute paths); files written before D25 hold the absolute paths the tool resolved, so the type stays a plain string. No tool reads a progress file back.",
+      "description": "<jobs stem>.progress.json written by generate_media.py batch --execute and cli_media.py batch after every dispatch and result. results hold one entry per finished job (generated, reused, left-for-human or failed, with its outcomeCode); inFlight and remaining are job ids. stopped means an account-level, unknown or possibly charged outcome stopped dispatching (nothing is retried) and stopReason says which; complete means no job is left or in flight. jobsFile and results[].jobDir are POSIX paths relative to the progress file's folder (per D25, never absolute; '..' segments are allowed). No tool reads a progress file back.",
       "type": "object",
       "required": ["schema", "jobsFile", "execution", "workers", "startedAt", "updatedAt", "results", "inFlight", "remaining", "stopped", "stopReason", "complete"],
       "properties": {
         "schema": {"const": "generate2dmedia.batch_progress.v1"},
-        "jobsFile": {"type": "string", "minLength": 1},
+        "jobsFile": {"$ref": "common.schema.json#/$defs/relPath"},
         "execution": {"enum": ["dry-run", "execute"]},
         "workers": {"type": "integer", "minimum": 1},
         "startedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
@@ -217,7 +232,7 @@
               "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]{1,80}$"},
               "status": {"enum": ["generated", "reused", "left-for-human", "failed"]},
               "outcomeCode": {"type": "string", "minLength": 1},
-              "jobDir": {"type": "string", "minLength": 1},
+              "jobDir": {"$ref": "common.schema.json#/$defs/relPath"},
               "priorStatus": {"type": ["string", "null"]},
               "artifact": {"$ref": "common.schema.json#/$defs/relPath"},
               "estimateUsd": {"type": ["number", "null"], "minimum": 0},
@@ -239,7 +254,7 @@
       ]
     },
     "doctor_v1": {
-      "description": "forge_doctor.py --json. Each check climbs the readiness ladder; FAIL and MISSING always carry a remedy. routes says which art routes are usable: keys image, image_edit, video, clip and code_art, each {route, status (ready, consent, unverified, limited, unknown or none), detail, options?}, where route is host_image, host_image_edit, host_video, codex-cli, grok-cli, grok-acp, api, ffmpeg, png-frames, codeart2d or none; the order is local agent first (per D22: images use the host tool, then codex-cli, then grok-cli, then REST with consent; video uses grok-acp, then REST with consent), and local routes count only when VERIFIED. proofs holds the version-keyed verification records {level, version, recipe, verifiedAt, matchesInstalled} by <route>:<tool>. The report also has the tool, createdAt, the overall verdict, the declared host tools, the per-capability ladder of every CLI route in cli and elapsedMs; saved appears on stdout only.",
+      "description": "forge_doctor.py --json. Each check climbs the readiness ladder; FAIL and MISSING always carry a remedy. routes says which art routes are usable: keys image, image_edit, video, clip and code_art, each {route, status (ready, consent, unverified, limited, unknown or none), detail, options?}, where route is host_image, host_image_edit, host_video, codex-cli, grok-cli, grok-acp, api, ffmpeg, png-frames, codeart2d or none; the order is local agent first (per D22: images use the host tool, then codex-cli, then grok-cli, then REST with consent; video uses grok-acp, then REST with consent), and local routes count only when VERIFIED. options lists every candidate as {route, status, detail, consent? (quota or paid), level?, label?, providers?}, where label is the user-facing route name (Codex (local CLI); Grok (local CLI) in one-shot image or ACP video mode); a VERIFIED local route has status ready (it runs without a per-call question within the session cap), an unverified one unverified, and consent is left for the paid REST API. proofs holds the version-keyed verification records {level, version, recipe, verifiedAt, matchesInstalled} by <route>:<tool>. The report also has the tool, createdAt, the overall verdict, the declared host tools, the per-capability ladder of every CLI route in cli and elapsedMs; saved appears on stdout only.",
       "type": "object",
       "required": ["schema", "checks", "routes"],
       "properties": {

@@ -418,10 +418,10 @@
       }
     },
     "doctor_report_v1": {
-      "description": "svg_render.py doctor --report: codeart_core.run_doctor output (cases, backends, primary, lint, hint?) extended into a common QA envelope, plus the platform. status is pass only when the primary backend passes every case and the portable lint rejects every lint case; deviations of fallback backends are warn checks. svg_render writes no schema key yet; codeart2d.doctor_report.v1 is the id to use when one is added.",
+      "description": "svg_render.py doctor --report: codeart_core.run_doctor output (cases, backends, primary, lint, hint?) extended into a common QA envelope, plus the platform. status is pass only when the primary backend passes every case and the portable lint rejects every lint case; deviations of fallback backends are warn checks. The report names its contract in schema (codeart2d.doctor_report.v1), which svg_render always writes.",
       "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
       "type": "object",
-      "required": ["primary", "cases", "backends", "lint"],
+      "required": ["schema", "primary", "cases", "backends", "lint"],
       "properties": {
         "schema": {"const": "codeart2d.doctor_report.v1"},
         "primary": {"anyOf": [{"enum": ["resvg_py", "resvg_js_cli", "chrome"]}, {"type": "null"}]},

@@ -642,7 +642,8 @@ def test_sprite3d_only_export_needs_no_atlas(tmp_path):
     output, summary = export(tmp_path, clips_path, "--target", "godot-sprite3d", "--max-atlas-size", "128",
                              "--name", "hero", out="s3d")
     record = json.loads((output / "engine-export.json").read_text(encoding="utf-8"))
-    assert summary["pages"] == 0 and record["atlas"]["pages"] == [] and record["clips"]["long"]["page"] == 0
+    # No atlas page exists, so the clip names none (sprite.schema exportedClip: page is absent then).
+    assert summary["pages"] == 0 and record["atlas"]["pages"] == [] and "page" not in record["clips"]["long"]
     assert next(c for c in record["qa"]["checks"] if c["id"] == "atlas_max_side_px")["status"] == "skipped"
     assert not (output / "aseprite").exists() and not (output / "godot").exists()
     assert_valid_sprite(record, "engine_export_v1")

@@ -4,10 +4,31 @@
   "total_duration_ms": 360,
   "loop": false,
   "loop_policy": "oneshot",
-  "events_ms": [{"name": "tell", "at_ms": 80, "at": 1}, {"name": "hit", "at_ms": 140, "at": 2}],
+  "events_ms": [
+    {"name": "tell", "at_ms": 80, "at": 1, "position": 1},
+    {
+      "name": "hit",
+      "at_ms": 140,
+      "at": 2,
+      "position": 2,
+      "data": {"damage": 2}
+    }
+  ],
   "page": 0,
+  "transition_hints": [
+    {
+      "to": "idle",
+      "entry_frame": 0,
+      "entry_ms": 0,
+      "dissolve_ms": 60,
+      "dissolve_ticks": 4,
+      "mode": "dither"
+    }
+  ],
   "keys": {"wind_start": 0, "strike": 2, "end": 3},
+  "keys_ms": {"wind_start": 0, "strike": 140, "end": 260},
   "hitstop_ticks": 3,
+  "hitstop_ms": 50,
   "role": "enemy",
   "tick_grid": {
     "hz": 60,

@@ -1,4 +1,5 @@
 {
+  "schema": "codeart2d.doctor_report.v1",
   "cases": ["t01", "t03", "t06A", "t07", "t09", "t10", "t13", "t16", "t17", "t06B", "t06C", "t13B"],
   "backends": {
     "resvg_py": {

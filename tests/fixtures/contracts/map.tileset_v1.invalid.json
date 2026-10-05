@@ -11,10 +11,16 @@
       "error": "is too short"
     },
     {
-      "why": "qa is a fileRef (per D5) or the legacy relPath",
+      "why": "qa is a fileRef (per D5), never a bare path",
       "set": "/qa",
-      "value": "C:/out/autotile-qa.json",
-      "error": "is not valid under any"
+      "value": "autotile-qa.json",
+      "error": "is not of type 'object'"
+    },
+    {
+      "why": "the qa fileRef binds the QA file by its sha256",
+      "set": "/qa",
+      "value": {"path": "autotile-qa.json"},
+      "error": "'sha256' is a required property"
     }
   ]
 }

@@ -4,7 +4,10 @@
   "total_duration_ms": 600,
   "loop": true,
   "loop_policy": "pingpong",
-  "events_ms": [{"name": "sfx", "at_ms": 100, "at": 1}, {"name": "sfx", "at_ms": 500, "at": 1}],
+  "events_ms": [
+    {"name": "sfx", "at_ms": 100, "at": 1, "position": 1},
+    {"name": "sfx", "at_ms": 500, "at": 1, "position": 5}
+  ],
   "page": 0,
   "tick_grid": {
     "hz": 60,
@@ -18,16 +21,12 @@
   },
   "ticks": [6, 6, 6, 6],
   "tick_hz": 60,
+  "authored_frames": [0, 1, 2, 3],
   "aseprite": {"file": "hero.json", "from": 0, "to": 5},
   "godot": {
-    "speed": 10.0,
-    "basis": "shortest frame = 1.0",
-    "relative_durations": [1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    "speed": 60.0,
+    "basis": "ticks at 60 Hz",
+    "relative_durations": [6.0, 6.0, 6.0, 6.0, 6.0, 6.0]
   },
-  "sprite3d": {
-    "action": "idle",
-    "contract": "action-idle.json",
-    "speed": 10.0,
-    "basis": "shortest frame = 1.0"
-  }
+  "sprite3d": {"action": "idle", "contract": "action-idle.json", "speed": 60.0, "basis": "ticks at 60 Hz"}
 }

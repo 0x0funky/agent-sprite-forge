@@ -11,7 +11,12 @@
       "value": 80.5,
       "error": "80.5 is not of type 'integer'"
     },
-    {"why": "the atlas page is named", "remove": "/page", "error": "'page' is a required property"},
+    {
+      "why": "events name the played frame (per D12)",
+      "remove": "/events_ms/0/position",
+      "error": "'position' is a required property"
+    },
+    {"why": "an atlas page index is a whole number", "set": "/page", "value": -1, "error": "-1 is less than the minimum of 0"},
     {
       "why": "the loop policy is cycle, pingpong or oneshot",
       "set": "/loop_policy",

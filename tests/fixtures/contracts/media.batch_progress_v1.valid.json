@@ -1,6 +1,6 @@
 {
   "schema": "generate2dmedia.batch_progress.v1",
-  "jobsFile": "D:\\games\\hero\\batches\\props.json",
+  "jobsFile": "props.json",
   "execution": "execute",
   "workers": 1,
   "startedAt": "2026-10-05T05:24:32.648Z",
@@ -10,7 +10,7 @@
       "id": "k0",
       "status": "generated",
       "outcomeCode": "ok",
-      "jobDir": "D:/games/hero/batches/out/k0",
+      "jobDir": "out/k0",
       "artifact": "generated.png",
       "estimateUsd": null
     },
@@ -18,7 +18,7 @@
       "id": "k1",
       "status": "failed",
       "outcomeCode": "quota",
-      "jobDir": "D:/games/hero/batches/out/k1",
+      "jobDir": "out/k1",
       "error": "API HTTP 429 insufficient_quota: You exceeded your current quota; request was not retried"
     }
   ],

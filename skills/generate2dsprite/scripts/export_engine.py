@@ -1064,10 +1064,13 @@ def export_document(job: Job, final: Path, args: argparse.Namespace) -> dict:
     sprite = job.sprite
     clips = {}
     for clip in sprite.clips:
-        # page: the clip's atlas page; 0 when no atlas target was exported (atlas.pages is then empty).
         entry = {"frames": clip.frames, "duration_ms": clip.durations, "total_duration_ms": clip.total_ms,
-                 "loop": clip.loop, "loop_policy": clip.loop_policy, "events_ms": clip.events,
-                 "page": next((page.index for page in job.pages if clip in page.clips), 0)}
+                 "loop": clip.loop, "loop_policy": clip.loop_policy, "events_ms": clip.events}
+        # page: the clip's atlas page. Absent when no atlas target was exported (atlas.pages is then empty):
+        # a godot-sprite3d-only export has per-frame textures and no page to name.
+        page = next((page.index for page in job.pages if clip in page.clips), None)
+        if page is not None:
+            entry["page"] = page
         if clip.hints:
             entry["transition_hints"] = clip.hints
         entry.update(clip.extras)

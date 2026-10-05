@@ -12,6 +12,11 @@
       "error": "'cases' is a required property"
     },
     {
+      "why": "the report names its contract",
+      "remove": "/schema",
+      "error": "'schema' is a required property"
+    },
+    {
       "why": "it is a QA envelope",
       "remove": "/notProven",
       "error": "'notProven' is a required property"
