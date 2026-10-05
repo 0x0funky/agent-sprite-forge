@@ -1,0 +1,17 @@
+{
+  "schema": "generate2dmedia.prices.v1",
+  "version": "2026-10-05",
+  "currency": "USD",
+  "notes": "List prices transcribed from provider-survey.md (provider pages checked 2026-10-05). Excludes tax, rejected or regenerated attempts and subscription quotas. A request whose provider, model, unit and qualifiers (resolution, quality) have no row is reported as unpriced; nothing is extrapolated. Re-verify before batches and update verifiedAt.",
+  "rows": [
+    {"provider": "xai", "model": "grok-imagine-video-1.5", "unit": "output_second", "resolution": "720p", "usd": 0.14, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-video-1.5", "unit": "input_image", "usd": 0.01, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-video-1.5-lite", "unit": "output_second", "resolution": "720p", "usd": 0.03, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-video-1.5-lite", "unit": "input_image", "usd": 0.01, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-video", "unit": "output_second", "resolution": "720p", "usd": 0.07, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-video", "unit": "input_image", "usd": 0.002, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-image-2.0", "unit": "output_image", "resolution": "1k", "quality": "low", "usd": 0.04, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-image-2.0", "unit": "output_image", "resolution": "2k", "quality": "medium", "usd": 0.08, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"},
+    {"provider": "xai", "model": "grok-imagine-image-2.0", "unit": "input_image", "usd": 0.01, "source": "https://docs.x.ai/developers/pricing", "verifiedAt": "2026-10-05"}
+  ]
+}
