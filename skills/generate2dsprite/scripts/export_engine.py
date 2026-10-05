@@ -23,6 +23,16 @@ the integer durations, loops, events and the shared anchor before the
 directory is published; a failed round trip leaves nothing behind. Imports
 into Aseprite, Godot, Phaser, PixiJS or Unity are NOT verified by this tool.
 
+Positions follow sprite.schema.json builtClip (D12): frames and duration_ms are
+the played timeline (a pingpong clip arrives expanded, its authored order in
+authored_frames); events_ms[].at_ms is authoritative, position is the index
+into the played frames (taken when given, otherwise found from at_ms on the
+duration edges, and checked against at_ms) and at is the authored position.
+ticks, keys and entry_frame stay authored positions; Godot plays the authored
+ticks mapped onto the played frames. Transition hints are read from
+transition_hints, falling back to legacy transitions items that name a target
+clip with to (D13), and are written as transition_hints.
+
 Usage (from the project root):
   python export_engine.py --clips out/hero/animation-clips.json --target all --output-dir out/hero-engine
 """
@@ -43,12 +53,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
 
 TOOL_NAME = "export_engine.py"
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
 SOURCE_SCHEMAS = ("generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2")
 EXPORT_SCHEMA = "generate2dsprite.engine_export.v1"
 SPRITE3D_SCHEMA = "generate2dsprite.godot_sprite3d.v1"
 SPRITE3D_BUNDLE_SCHEMA = "generate2dsprite.godot_sprite3d_bundle.v1"
 TARGETS = ("aseprite-json", "godot-spriteframes", "godot-sprite3d")
+ATLAS_TARGETS = ("aseprite-json", "godot-spriteframes")  # godot-sprite3d uses per-frame textures
 TARGET_DIRS = {"aseprite-json": "aseprite", "godot-spriteframes": "godot", "godot-sprite3d": "godot-sprite3d"}
 MAX_ATLAS_SIZE = 4096
 GODOT_DEFAULT_PIXEL_SIZE = 0.01
@@ -56,9 +67,16 @@ GODOT_DEFAULT_PIXEL_SIZE = 0.01
 GODOT_FILTER_2D = {"nearest": 1, "linear": 2}
 GODOT_FILTER_3D = {"nearest": 0, "linear": 3}
 GODOT_BILLBOARD = {"disabled": 0, "enabled": 1, "fixed-y": 2}
-CLIP_EXTRAS = ("keys", "entry_frame", "stride_world_units", "stride_px_per_frame", "cadence_ms", "speed_ref",
-               "hitstop_ticks", "role", "tick_grid", "ticks", "tick_hz")
+# Passed through to engine-export.json as the builder wrote them. ticks, keys and entry_frame are
+# authored positions (D12), indices into authored_frames; keys_ms, entry_ms and hitstop_ms are their times.
+CLIP_EXTRAS = ("keys", "keys_ms", "entry_frame", "entry_ms", "stride_world_units", "stride_px_per_frame",
+               "cadence_ms", "speed_ref", "hitstop_ticks", "hitstop_ms", "role", "tick_grid", "ticks", "tick_hz",
+               "authored_frames")
 TOP_LEVEL_EXTRAS = ("sampling", "pixel_art", "body_height_px", "art_source", "placeholder", "shadow")
+# common.schema.json eventName.
+EVENT_NAMES = ("in", "tell", "hit", "active_end", "cancel", "chain", "impact", "hold", "end", "sfx", "step_l", "step_r")
+CUSTOM_EVENT = re.compile(r"custom:\S+")
+TRANSITION_MODES = ("dither", "premultiplied")
 ROUND_TRIP_MS_TOLERANCE = 1e-6
 TICK_MS_TOLERANCE = 1.0
 NAME_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -69,17 +87,21 @@ class ExportError(ValueError):
     """A user-facing failure: bad input, an impossible layout or a failed round trip."""
 
 
+class NoVisibleSubject(ExportError):
+    """The reference clip has no pixel above BODY_ALPHA_THRESHOLD (faint FX), so no subject height."""
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise ExportError(message)
 
 
-def _local_round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
-
-
 def _is_int(value: object, minimum: int = 0) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= minimum
+
+
+def _event_name(value: object) -> bool:
+    return isinstance(value, str) and (value in EVENT_NAMES or CUSTOM_EVENT.fullmatch(value) is not None)
 
 
 # --------------------------------------------------------------------------- source model
@@ -96,17 +118,26 @@ class Frame:
 @dataclass
 class Clip:
     name: str
-    frames: list[int]             # source frame index per position (pingpong arrives expanded)
-    durations: list[int]          # integer ms per position
+    frames: list[int]             # source frame index per played position (pingpong arrives expanded)
+    durations: list[int]          # integer ms per played position
     loop: bool
     loop_policy: str
-    events: list[dict]            # {name, at_ms, at, data?}
-    extras: dict                  # keys, entry_frame, stride..., hitstop_ticks, role, ticks, tick_hz
-    hints: list[dict]             # transition hints {to, entry_frame?, dissolve_ms?, mode?}
+    events: list[dict]            # {name, at_ms, at (authored), position (played), data?}
+    extras: dict                  # keys, entry_frame, stride..., hitstop_ticks, role, ticks, tick_hz, ...
+    hints: list[dict]             # transition hints {to, entry_frame?, dissolve_ms?, mode?, ...}
+    order: list[int] = field(default_factory=list)  # authored position per played position (D12)
+
+    def __post_init__(self) -> None:
+        if not self.order:
+            self.order = list(range(len(self.frames)))
 
     @property
     def total_ms(self) -> int:
         return sum(self.durations)
+
+    @property
+    def authored_count(self) -> int:
+        return max(self.order) + 1
 
 
 @dataclass
@@ -126,10 +157,6 @@ class Sprite:
         """The idle state's clip when there is one, else the first clip (Godot autoplay, bundle default)."""
         idle = self.states.get("idle")
         return idle if idle in {clip.name for clip in self.clips} else self.clips[0].name
-
-
-def _reject_constant(value: str) -> None:
-    raise ExportError(f"animation-clips.json contains {value}; engines need finite JSON numbers")
 
 
 def _manifest_file(manifest_dir: Path, text: object, label: str) -> Path:
@@ -157,7 +184,32 @@ def _load_frame(manifest_dir: Path, record: dict, size: tuple[int, int]) -> Fram
     return Frame(position, path, pixels, forge_core.sha256_bytes(pixels.tobytes()), expected is not None)
 
 
-def _clip_events(name: str, value: object, durations: list[int]) -> list[dict]:
+def played_order(policy: str, count: int) -> list[int]:
+    """Authored positions in playback order: pingpong mirrors without repeating either end frame
+    (build_animation_clips.playback_order)."""
+    if policy == "pingpong" and count > 2:
+        return list(range(count)) + list(range(count - 2, 0, -1))
+    return list(range(count))
+
+
+def _clip_order(name: str, value: dict, frames: list[int], policy: str) -> list[int]:
+    """The authored position of every played position (D12). A built pingpong clip lists its played
+    frames and keeps the authored ones in authored_frames; every other clip plays its authored order."""
+    authored = value.get("authored_frames")
+    if authored is None:
+        return list(range(len(frames)))
+    require(isinstance(authored, list) and len(authored) > 0 and all(_is_int(i) for i in authored),
+            f"clip {name} authored_frames must list frame indices")
+    order = played_order(policy, len(authored))
+    require([authored[position] for position in order] == frames,
+            f"clip {name} frames are not the {policy} playback of its authored_frames")
+    return order
+
+
+def _clip_events(name: str, value: object, durations: list[int], order: list[int]) -> list[dict]:
+    """events_ms per D12: at_ms is authoritative; position, the index into the played frames, is taken
+    when given and otherwise found from at_ms on the duration edges (an event at the end edge names the
+    last frame); at is the authored position. A given position or at must agree with at_ms."""
     if value is None:
         return []
     require(isinstance(value, list), f"clip {name} events_ms must be a list")
@@ -165,21 +217,48 @@ def _clip_events(name: str, value: object, durations: list[int]) -> list[dict]:
     total = int(edges[-1])
     events = []
     for index, event in enumerate(value):
-        require(isinstance(event, dict) and isinstance(event.get("name"), str) and event["name"] != "",
-                f"clip {name} event {index} needs a name")
+        require(isinstance(event, dict) and _event_name(event.get("name")),
+                f"clip {name} event {index} needs a name from common/eventName "
+                f"({', '.join(EVENT_NAMES)} or custom:<name>)")
+        label = event["name"]
         at_ms = event.get("at_ms")
         require(_is_int(at_ms) and at_ms <= total,
-                f"clip {name} event {event['name']} needs integer at_ms inside the clip (0..{total})")
+                f"clip {name} event {label} needs integer at_ms inside the clip (0..{total})")
+        position = min(len(durations) - 1, int(np.searchsorted(edges, at_ms, side="right")) - 1)
+        given = event.get("position")
+        require(given is None or (_is_int(given) and given == position),
+                f"clip {name} event {label}: position {given!r} disagrees with at_ms {at_ms}, which falls in "
+                f"played frame {position}")
         at = event.get("at")
-        if at is None:
-            at = min(len(durations) - 1, int(np.searchsorted(edges, at_ms, side="right")) - 1)
-        require(_is_int(at) and at < len(durations),
-                f"clip {name} event {event['name']} names a position outside the clip")
-        item = {"name": event["name"], "at_ms": at_ms, "at": at}
+        require(at is None or (_is_int(at) and at == order[position]),
+                f"clip {name} event {label}: at {at!r} disagrees with at_ms {at_ms}, which shows authored "
+                f"position {order[position]} (at is the authored position, position the played one)")
+        item = {"name": label, "at_ms": at_ms, "at": order[position], "position": position}
         if "data" in event:
             item["data"] = event["data"]
         events.append(item)
-    return sorted(events, key=lambda item: item["at_ms"])
+    return sorted(events, key=lambda item: (item["at_ms"], item["position"]))
+
+
+def _clip_hints(name: str, value: dict) -> list[dict]:
+    """Transition hints (D13): transition_hints when present, else the legacy transitions items that
+    name a target clip with to (built clips keep transitions for the frame-to-frame metrics)."""
+    raw = value.get("transition_hints")
+    if raw is None:
+        raw = [item for item in value.get("transitions") or [] if isinstance(item, dict)
+               and isinstance(item.get("to"), str)]
+    require(isinstance(raw, list), f"clip {name} transition_hints must be a list")
+    hints = []
+    for index, hint in enumerate(raw):
+        require(isinstance(hint, dict) and isinstance(hint.get("to"), str) and hint["to"] != "",
+                f"clip {name} transition hint {index} must name its target clip in to")
+        for key in ("entry_frame", "dissolve_ms"):
+            require(key not in hint or _is_int(hint[key]),
+                    f"clip {name} transition hint {index}: {key} must be a whole number >= 0")
+        require(hint.get("mode", "dither") in TRANSITION_MODES,
+                f"clip {name} transition hint {index}: mode must be dither or premultiplied")
+        hints.append(dict(hint))
+    return hints
 
 
 def _load_clip(name: str, value: object, frame_count: int) -> Clip:
@@ -194,20 +273,41 @@ def _load_clip(name: str, value: object, frame_count: int) -> Clip:
     require(isinstance(value.get("loop"), bool), f"clip {name} must declare loop")
     policy = value.get("loop_policy") or ("cycle" if value["loop"] else "oneshot")
     require(policy in ("cycle", "pingpong", "oneshot"), f"clip {name} has unknown loop_policy {policy!r}")
-    hints = [dict(hint) for hint in value.get("transitions") or []
-             if isinstance(hint, dict) and isinstance(hint.get("to"), str)]
+    order = _clip_order(name, value, list(frames), policy)
     extras = {key: value[key] for key in CLIP_EXTRAS if key in value}
-    return Clip(name, list(frames), list(durations), value["loop"], policy,
-                _clip_events(name, value.get("events_ms"), durations), extras, hints)
+    events = _clip_events(name, value.get("events_ms"), durations, order)
+    return Clip(name, list(frames), list(durations), value["loop"], policy, events, extras, _clip_hints(name, value),
+                order)
+
+
+def _check_references(clips: list[Clip], states: object) -> dict:
+    """states map names to clips of this manifest; hints name a clip and enter it at one of its authored
+    positions (entry_frame is authored, D12)."""
+    by_name = {clip.name: clip for clip in clips}
+    if states is None:
+        states = {}
+    require(isinstance(states, dict) and all(isinstance(state, str) and state != "" and isinstance(target, str)
+                                             and target in by_name for state, target in states.items()),
+            "states must map state names to clip names of this manifest")
+    for clip in clips:
+        for hint in clip.hints:
+            target = by_name.get(hint["to"])
+            require(target is not None,
+                    f"clip {clip.name} has a transition hint to {hint['to']!r}, which is not a clip")
+            entry = hint.get("entry_frame", 0)
+            require(entry < target.authored_count,
+                    f"clip {clip.name} transition hint to {target.name}: entry_frame {entry} is not one of its "
+                    f"{target.authored_count} authored positions")
+    return dict(states)
 
 
 def load_clips(path: Path) -> Sprite:
     """Read and verify a built animation-clips.json and every frame its clips use."""
     require(path.is_file(), f"clips manifest not found: {path}")
     try:
-        data = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
-    except json.JSONDecodeError as error:
-        raise ExportError(f"{path.name} is not valid JSON: {error}") from None
+        data = forge_core.read_json(path, strict=True)  # BOM-tolerant (D28); no NaN, Infinity or duplicate keys
+    except ValueError as error:
+        raise ExportError(f"{path.name} is not usable JSON: {error}") from None
     require(isinstance(data, dict), "the clips manifest must be a JSON object")
     require(data.get("schema") in SOURCE_SCHEMAS,
             f"unsupported schema {data.get('schema')!r}; expected animation-clips.json v1 or v2")
@@ -229,9 +329,9 @@ def load_clips(path: Path) -> Sprite:
     raw_clips = data.get("clips")
     require(isinstance(raw_clips, dict) and len(raw_clips) > 0, "clips must be a non-empty object")
     clips = [_load_clip(name, value, len(records)) for name, value in raw_clips.items()]
+    states = _check_references(clips, data.get("states"))
     used = sorted({index for clip in clips for index in clip.frames})
     frames = {index: _load_frame(path.parent, records[index], (size[0], size[1])) for index in used}
-    states = data.get("states") if isinstance(data.get("states"), dict) else {}
     top = {key: data[key] for key in TOP_LEVEL_EXTRAS if key in data}
     return Sprite(path, data["schema"], (size[0], size[1]), (float(anchor[0]), float(anchor[1])), len(records),
                   frames, clips, states, top)
@@ -291,23 +391,31 @@ def plan_pages(sprite: Sprite, max_size: int, padding: int, extrude: int) -> lis
 
 # --------------------------------------------------------------------------- timing, scale and mapping
 
+def played_ticks(clip: Clip) -> list[int] | None:
+    """The clip's ticks per played frame, or None. Built clips keep ticks per authored position (D12): a
+    pingpong clip of 3 authored poses has 3 ticks and 4 played frames, mapped through the playback order."""
+    ticks = clip.extras.get("ticks")
+    if _is_int(ticks, 1):
+        return [ticks] * len(clip.durations)
+    if isinstance(ticks, list) and len(ticks) == clip.authored_count and all(_is_int(t, 1) for t in ticks):
+        return [ticks[position] for position in clip.order]
+    return None
+
+
 def godot_timing(clip: Clip, fixed_fps: float | None) -> dict:
     """Godot speed (fps) and per-frame relative durations, with relative_duration = ms x speed / 1000.
 
     A fixed --godot-fps applies to every clip. Otherwise a clip that carries
     exact integer ticks at tick_hz (consistent with its ms) plays at the tick
-    rate with relative durations = ticks; every other clip uses its shortest
-    frame as 1.0.
+    rate with relative durations = its ticks mapped onto the played frames;
+    every other clip uses its shortest frame as 1.0.
     """
     if fixed_fps:
         return {"speed": fixed_fps, "relative_durations": [d * fixed_fps / 1000 for d in clip.durations],
                 "basis": "fixed fps"}
-    ticks, hz = clip.extras.get("ticks"), clip.extras.get("tick_hz", 60)
-    if _is_int(ticks, 1):
-        ticks = [ticks] * len(clip.durations)
-    if (isinstance(ticks, list) and len(ticks) == len(clip.durations) and _is_int(hz, 1)
-            and all(_is_int(t, 1) and abs(t * 1000 / hz - d) <= TICK_MS_TOLERANCE
-                    for t, d in zip(ticks, clip.durations))):
+    ticks, hz = played_ticks(clip), clip.extras.get("tick_hz", 60)
+    if (ticks is not None and _is_int(hz, 1)
+            and all(abs(t * 1000 / hz - d) <= TICK_MS_TOLERANCE for t, d in zip(ticks, clip.durations))):
         return {"speed": float(hz), "relative_durations": [float(t) for t in ticks], "basis": f"ticks at {hz} Hz"}
     base = min(clip.durations)
     return {"speed": 1000 / base, "relative_durations": [d / base for d in clip.durations],
@@ -336,7 +444,8 @@ def reference_subject_height(sprite: Sprite, clip_name: str | None, override: fl
     reference = clips[clip_name or sprite.default_clip]
     heights = [box[3] - box[1] for index in dict.fromkeys(reference.frames)
                if (box := forge_core.subject_bbox(sprite.frames[index].pixels, forge_core.BODY_ALPHA_THRESHOLD))]
-    require(len(heights) > 0, f"clip {reference.name} has no visible subject to measure; pass --subject-height-px")
+    if not heights:
+        raise NoVisibleSubject(f"clip {reference.name} has no visible subject to measure; pass --subject-height-px")
     return float(np.median(heights)), f"median visible height of clip {reference.name}"
 
 
@@ -516,7 +625,7 @@ class Job:
     sampling: str
     fixed_fps: float | None
     billboard: str
-    scale: dict                   # pixel_size, subject_height_px, world_height, source, subject_height_source
+    scale: dict | None            # pixel_size, subject_height_px, world_height, source, subject_height_source
     files: list[Path] = field(default_factory=list)
     clip_info: dict[str, dict] = field(default_factory=dict)
     checks: list[dict] = field(default_factory=list)
@@ -565,7 +674,7 @@ def write_aseprite(job: Job) -> list[Path]:
     """One JSON + PNG per page. Frames are the clips' timelines in clip order, named "0", "1", ... ({frame})."""
     sprite, folder = job.sprite, job.stage / TARGET_DIRS["aseprite-json"]
     width, height = sprite.frame_size
-    pivot = {"x": _local_round_half_up(sprite.anchor[0]), "y": _local_round_half_up(sprite.anchor[1])}
+    pivot = {"x": forge_core.round_half_up(sprite.anchor[0]), "y": forge_core.round_half_up(sprite.anchor[1])}
     written = []
     for page in job.pages:
         image_name, json_name = job.page_file(page, ".png"), job.page_file(page, ".json")
@@ -584,8 +693,8 @@ def write_aseprite(job: Job) -> list[Path]:
             if not clip.loop:
                 tag["repeat"] = "1"
             data = {}
-            if clip.events:
-                data["events"] = [{"name": e["name"], "frame": start + e["at"], "at_ms": e["at_ms"]}
+            if clip.events:  # an Aseprite frame index is a played position (D12)
+                data["events"] = [{"name": e["name"], "frame": start + e["position"], "at_ms": e["at_ms"]}
                                   for e in clip.events]
             if clip.loop_policy != ("cycle" if clip.loop else "oneshot"):
                 data["loop_policy"] = clip.loop_policy
@@ -687,7 +796,8 @@ def write_godot_sprite3d(job: Job) -> Path:
             "billboard": job.billboard,
             "texture_filter": job.sampling,
             # v1 readers know one duration; durations_ms is exact per frame.
-            "duration_ms": clip.durations[0] if uniform else _local_round_half_up(clip.total_ms / len(clip.durations)),
+            "duration_ms": (clip.durations[0] if uniform
+                            else forge_core.round_half_up(clip.total_ms / len(clip.durations))),
             "fps": len(clip.durations) * 1000 / clip.total_ms,
             "frames": [files[i] for i in clip.frames],
             "frame_sha256": [digests[i] for i in clip.frames],
@@ -753,8 +863,15 @@ def verify_aseprite(job: Job, json_paths: list[Path]) -> None:
                     f"{json_path.name}: tag {tag['name']} does not match clip {clip.name}")
             events = json.loads(tag["data"]).get("events", []) if "data" in tag else []
             require([(e["name"], e["frame"] - start, e["at_ms"]) for e in events]
-                    == [(e["name"], e["at"], e["at_ms"]) for e in clip.events],
+                    == [(e["name"], e["position"], e["at_ms"]) for e in clip.events],
                     f"{json_path.name}: events of {clip.name} differ")
+            # Independent of the writer: each event's frame is the one shown at its at_ms.
+            edges = np.cumsum([0, *[entry["duration"] for entry in frames[start:start + len(clip.frames)]]])
+            for event in events:
+                shown = min(len(clip.frames) - 1, int(np.searchsorted(edges, event["at_ms"], side="right")) - 1)
+                require(event["frame"] - start == shown,
+                        f"{json_path.name}: event {event['name']} of {clip.name} sits on frame {event['frame']}, "
+                        f"but frame {start + shown} is shown at {event['at_ms']} ms")
             require(document["animations"][clip.name] == [str(i) for i in range(start, tag["to"] + 1)],
                     f"{json_path.name}: animations.{clip.name} differs")
             start += len(clip.frames)
@@ -868,20 +985,22 @@ def verify_sprite3d(job: Job, folder: Path) -> None:
 
 # --------------------------------------------------------------------------- export
 
-def _local_file_ref(path: Path, base: Path) -> dict:
-    """A fileRef relative to base; a file on another drive records only its name, never an absolute path."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = path.name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
-
-
 def _default_name(output_dir: Path) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "-", Path(output_dir).name).strip("-_") or "sprite"
 
 
-def _scale(args: argparse.Namespace, sprite: Sprite) -> dict:
-    subject, subject_source = reference_subject_height(sprite, args.reference_clip, args.subject_height_px)
+def _scale(args: argparse.Namespace, sprite: Sprite, sprite3d: bool) -> dict | None:
+    """The Sprite3D pixel size and the subject height it comes from.
+
+    Only the godot-sprite3d target and --world-height need the subject height. Without them, art with no
+    pixel above BODY_ALPHA_THRESHOLD (faint FX) gets no scale block, and the mapping table uses
+    --pixel-size or Godot's default pixel size."""
+    try:
+        subject, subject_source = reference_subject_height(sprite, args.reference_clip, args.subject_height_px)
+    except NoVisibleSubject:
+        if sprite3d or args.world_height is not None:
+            raise
+        return None
     if args.pixel_size is not None:
         pixel_size, source = args.pixel_size, "--pixel-size"
     elif args.world_height is not None:
@@ -899,11 +1018,13 @@ def export(args: argparse.Namespace) -> dict:
     require(NAME_PATTERN.match(name) is not None, "--name may use only letters, digits, hyphens and underscores")
     targets = list(TARGETS) if args.target == "all" else [args.target]
     sampling = resolve_sampling(args.sampling, sprite.top)
-    scale = _scale(args, sprite)
+    scale = _scale(args, sprite, "godot-sprite3d" in targets)
+    # Atlas pages exist only for the atlas targets; godot-sprite3d draws per-frame textures.
+    atlas = any(target in ATLAS_TARGETS for target in targets)
+    pages = plan_pages(sprite, args.max_atlas_size, args.padding, args.extrude) if atlas else []
     final = Path(args.output_dir)
     with forge_core.staged_output(final) as stage:
-        job = Job(sprite, stage, name, targets, plan_pages(sprite, args.max_atlas_size, args.padding, args.extrude),
-                  sampling, args.godot_fps, args.billboard, scale)
+        job = Job(sprite, stage, name, targets, pages, sampling, args.godot_fps, args.billboard, scale)
         width, height = sprite.frame_size
         (ax, ay), default = sprite.anchor, sprite.default_clip
         if "aseprite-json" in targets:
@@ -922,9 +1043,12 @@ def export(args: argparse.Namespace) -> dict:
                 "pixel_size": scale["pixel_size"], "offset": ("Vector2", [width / 2 - ax, ay - height / 2]),
                 "animation": ("StringName", default)})
             verify_sprite3d(job, tres.parent)
-        max_side = max(max(page.size) for page in job.pages)
-        require(max_side <= args.max_atlas_size, f"atlas side {max_side} exceeds {args.max_atlas_size}")
-        job.check("atlas_max_side_px", "pass", max_side, args.max_atlas_size)
+        if job.pages:
+            max_side = max(max(page.size) for page in job.pages)
+            require(max_side <= args.max_atlas_size, f"atlas side {max_side} exceeds {args.max_atlas_size}")
+            job.check("atlas_max_side_px", "pass", max_side, args.max_atlas_size)
+        else:
+            job.check("atlas_max_side_px", "skipped", None, args.max_atlas_size)
         verified = sum(frame.hash_verified for frame in sprite.frames.values())
         job.check("source_frame_hashes", "pass" if verified == len(sprite.frames) else "skipped",
                   {"verified": verified, "frames": len(sprite.frames)})
@@ -940,20 +1064,23 @@ def export_document(job: Job, final: Path, args: argparse.Namespace) -> dict:
     sprite = job.sprite
     clips = {}
     for clip in sprite.clips:
+        # page: the clip's atlas page; 0 when no atlas target was exported (atlas.pages is then empty).
         entry = {"frames": clip.frames, "duration_ms": clip.durations, "total_duration_ms": clip.total_ms,
                  "loop": clip.loop, "loop_policy": clip.loop_policy, "events_ms": clip.events,
-                 "page": next(page.index for page in job.pages if clip in page.clips)}
+                 "page": next((page.index for page in job.pages if clip in page.clips), 0)}
         if clip.hints:
-            entry["transitions"] = clip.hints
+            entry["transition_hints"] = clip.hints
         entry.update(clip.extras)
         entry.update(job.clip_info.get(clip.name, {}))
         clips[clip.name] = entry
     outputs = [{"path": path.relative_to(job.stage).as_posix(), "sha256": forge_core.sha256_file(path),
                 "bytes": path.stat().st_size} for path in job.files]
-    inputs = [_local_file_ref(sprite.manifest, final)]
-    inputs += [_local_file_ref(sprite.frames[i].path, final) for i in sorted(sprite.frames)]
+    # A file on another drive records only its name (forge_core.file_ref): never an absolute path.
+    inputs = [forge_core.file_ref(sprite.manifest, final)]
+    inputs += [forge_core.file_ref(sprite.frames[i].path, final) for i in sorted(sprite.frames)]
     warned = any(check["status"] == "warn" for check in job.checks)
-    ppu = args.ppu if args.ppu is not None else 1 / job.scale["pixel_size"]
+    pixel_size = job.scale["pixel_size"] if job.scale else (args.pixel_size or GODOT_DEFAULT_PIXEL_SIZE)
+    ppu = args.ppu if args.ppu is not None else 1 / pixel_size
     return {
         "schema": EXPORT_SCHEMA,
         "name": job.name,
@@ -968,11 +1095,11 @@ def export_document(job: Job, final: Path, args: argparse.Namespace) -> dict:
         "atlas": {"max_size": args.max_atlas_size, "padding": args.padding, "extrude": args.extrude,
                   "pages": [{"index": page.index, "size": list(page.size), "cells": len(page.cells),
                              "clips": [clip.name for clip in page.clips]} for page in job.pages]},
-        "scale": job.scale,
+        **({"scale": job.scale} if job.scale else {}),
         "clips": clips,
         "states": sprite.states,
         "unused_frames": sorted(set(range(sprite.frame_count)) - set(sprite.frames)),
-        "mapping": engine_mapping(sprite, job.sampling, job.scale["pixel_size"], ppu, args.camera_pitch_deg),
+        "mapping": engine_mapping(sprite, job.sampling, pixel_size, ppu, args.camera_pitch_deg),
         "files": outputs,
         "qa": {
             "status": "warn" if warned else "pass",
@@ -1066,16 +1193,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = export(args)
-    except (ValueError, OSError) as error:
-        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
-    print(json.dumps(summary, ensure_ascii=True))
+    print(json.dumps(export(args), ensure_ascii=True))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Usage errors exit 2 (argparse); bad input, an impossible layout or a failed round trip print
+    ``error: <message>`` and exit 1; anything unexpected prints ``error: internal error (...)`` (D26, D27)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":
