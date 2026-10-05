@@ -1,4 +1,4 @@
 interface:
   display_name: "Generate 2D Sprite"
-  short_description: "Game-ready art, animation clips, and image-to-video handoffs."
-  default_prompt: "Use $generate2dsprite to plan game-size artwork and motion, use the available image tool or selected API, preserve alpha and shared roots, and deliver reviewed per-action frames or hand off fluid motion to video2dsprite."
+  short_description: "Game-ready sprites, animation clips, code art and engine exports."
+  default_prompt: "Use $generate2dsprite to plan game-size art and motion, pick the art source (code art via codeart2d for small pixel sprites and FX, otherwise the image tool or a verified local route), then deliver reviewed frames, clips and engine exports, handing fluid motion to video2dsprite."
