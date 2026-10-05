@@ -31,7 +31,7 @@ import forge_matte  # noqa: E402
 
 SCHEMA = "generate2dmap.terrain_tile_bundle.v2"
 TOOL_NAME = "extract_terrain_tiles.py"
-TOOL_VERSION = "2.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29: QA envelopes carry the package version
 MANIFEST_NAME = "terrain-bundle.json"
 SHAPES = ("square", "rect", "iso-diamond", "hex-pointy", "hex-flat")
 LAYERS = ("base", "overlay")
@@ -46,15 +46,9 @@ BORDER_REFERENCE = 3       # inner lines each band is compared with
 BORDER_LINE_SHARE = 0.8    # share of the edge that must differ before it counts as a line
 FILL_FLAT_SHARE = 0.9      # share of corner pixels near the fill colour for shape_fill
 
-# Normalised seam ratio (MAP-14); same definition as extract_platform_strip.py.
-SEAM_LOCAL_STEPS = 8
-SEAM_WINDOW_ROWS = 4
-SEAM_NEAR_STEPS = 3
-SEAM_FLOOR = 1.0
-DUPLICATE_RATIO = 0.25
-DUPLICATE_FLOOR = 2.0
-NOMINAL_SEAM_RATIO = 1.25
-EPSILON = 1e-6
+# The normalised seam ratio (MAP-14) is forge_core.edge_seam_report, the one seam metric (D9); a seam
+# gate fails its defect verdicts (seam, duplicate_edge), never flat or too_small.
+SEAM_DEFECTS = forge_core.EDGE_SEAM_DEFECTS
 
 
 # --------------------------------------------------------------------------- arguments
@@ -426,63 +420,6 @@ def shape_qc(pixels: np.ndarray, footprint: np.ndarray) -> dict[str, Any]:
             "spill_px": spill, "spill_fraction": round(spill / area, 6)}
 
 
-def _premultiplied(pixels: np.ndarray) -> np.ndarray:
-    values = pixels.astype(np.float64)
-    values[..., :3] *= values[..., 3:] / 255.0
-    return values
-
-
-def _window_max(values: np.ndarray, window: int) -> float:
-    """Largest mean over ``window`` consecutive rows of any column of ``values`` (rows x columns)."""
-    if values.size == 0:
-        return 0.0
-    window = min(window, values.shape[0])
-    sums = np.cumsum(np.pad(values, ((1, 0), (0, 0))), axis=0)
-    return float(((sums[window:] - sums[:-window]) / window).max())
-
-
-def _local_edge_seam_report(left: np.ndarray, right: np.ndarray, *, left_start: int = 0,
-                            right_stop: int | None = None, gate: float | None = None) -> dict[str, Any]:
-    """Normalised seam of the join ``left[:, -1] | right[:, 0]`` (MAP-14).
-
-    ``seam`` is the premultiplied RGBA step across the join; ``adjacent_*`` describe the interior
-    steps within SEAM_LOCAL_STEPS columns of it, on both sides, never using columns of ``left``
-    before ``left_start`` or of ``right`` from ``right_stop`` on (outer cap padding).
-    ``seam_ratio`` is the larger of seam / adjacent_max and worst SEAM_WINDOW_ROWS-row window of
-    the join / worst window of any of those steps: about 1 or less for a join that looks like the
-    art, well above 1 for a seam. A join much flatter than its neighbourhood is a duplicated edge.
-    The output follows common seamReport plus ``seam_ratio``, ``near_median`` and ``verdict``.
-    """
-    a = _premultiplied(left[:, left_start:][:, -(SEAM_LOCAL_STEPS + 1):])  # only the columns near the join
-    b = _premultiplied(right[:, :right_stop][:, :SEAM_LOCAL_STEPS + 1])
-    join_rows = np.abs(a[:, -1] - b[:, 0]).mean(axis=1)
-    left_steps = np.abs(np.diff(a, axis=1)).mean(axis=2)
-    right_steps = np.abs(np.diff(b, axis=1)).mean(axis=2)
-    local = np.concatenate([left_steps, right_steps], axis=1)
-    means = local.mean(axis=0) if local.size else np.zeros(1)
-    near = np.concatenate([left_steps[:, -SEAM_NEAR_STEPS:].mean(axis=0) if left_steps.size else np.zeros(0),
-                           right_steps[:, :SEAM_NEAR_STEPS].mean(axis=0) if right_steps.size else np.zeros(0)])
-    seam = float(join_rows.mean())
-    median, p95, peak = float(np.median(means)), float(np.percentile(means, 95)), float(means.max())
-    near_median = float(np.median(near)) if near.size else 0.0
-    ratio = max(seam / max(peak, EPSILON),
-                _window_max(join_rows[:, None], SEAM_WINDOW_ROWS) / max(_window_max(local, SEAM_WINDOW_ROWS), EPSILON))
-    if near_median >= DUPLICATE_FLOOR and seam < DUPLICATE_RATIO * near_median:
-        verdict = "duplicate_edge"
-    elif seam > SEAM_FLOOR and ratio > (gate if gate is not None else NOMINAL_SEAM_RATIO):
-        verdict = "seam"
-    else:
-        verdict = "continuous"
-    return {
-        "seam": round(seam, 6), "adjacent_median": round(median, 6), "adjacent_p95": round(p95, 6),
-        "adjacent_max": round(peak, 6), "seam_over_median": round(seam / max(median, EPSILON), 6),
-        "seam_over_p95": round(seam / max(p95, EPSILON), 6), "seam_ratio": round(ratio, 6),
-        "near_median": round(near_median, 6), "verdict": verdict,
-        "method": (f"premultiplied RGBA column steps (0-255); join vs interior steps within {SEAM_LOCAL_STEPS} "
-                   f"columns per side, whole edge and worst {SEAM_WINDOW_ROWS}-row window"),
-    }
-
-
 def _transposed(pixels: np.ndarray) -> np.ndarray:
     return pixels.transpose(1, 0, 2)
 
@@ -495,14 +432,6 @@ def wang_legal(left: tuple[int, ...], right: tuple[int, ...], axis: str) -> bool
 
 
 # --------------------------------------------------------------------------- QA helpers
-
-def _local_file_ref(path: Path, base: Path, sha256: str, size: int) -> dict[str, Any]:
-    """fileRef with a manifest-relative POSIX path; another drive records the file name only."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": sha256, "bytes": size}
-
 
 def _check(identifier: str, status: str, value: Any, threshold: Any) -> dict[str, Any]:
     return {"id": identifier, "status": status, "value": value, "threshold": threshold}
@@ -631,7 +560,7 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
         if values:
             entry["material"] = values
 
-    source_ref = _local_file_ref(Path(args.input), manifest_dir, info["sha256"], info["bytes"])
+    source_ref = forge_core.file_ref(args.input, manifest_dir, sha256=info["sha256"], size=info["bytes"])
     payload: dict[str, Any] = {
         "schema": SCHEMA,
         "source": {**source_ref, "size": info["size"], "mode": info["source_mode"], "bit_depth": info["bit_depth"],
@@ -640,8 +569,8 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
     prompt_ref = None
     if args.prompt:
         prompt_bytes = Path(args.prompt).read_bytes()
-        prompt_ref = _local_file_ref(Path(args.prompt), manifest_dir, forge_core.sha256_bytes(prompt_bytes),
-                                     len(prompt_bytes))
+        prompt_ref = forge_core.file_ref(args.prompt, manifest_dir, sha256=forge_core.sha256_bytes(prompt_bytes),
+                                         size=len(prompt_bytes))
         payload["prompt"] = prompt_ref
     widths = sorted({box[2] - box[0] for box in cells.values()})
     heights = sorted({box[3] - box[1] for box in cells.values()})
@@ -672,7 +601,7 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
         "seamless_verified": False,
     }
 
-    sidecar_published = False
+    sidecar: tuple[int, int] | None = None  # (st_dev, st_ino) of the published --manifest sidecar
     try:
         with forge_core.staged_output(output) as stage:
             outputs = []
@@ -694,11 +623,14 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
                 temporary = stage / ".terrain-bundle.sidecar"
                 forge_core.write_json(temporary, payload)
                 forge_core.publish_file_no_replace(temporary, manifest_path)
-                sidecar_published = True
+                identity = manifest_path.stat()
+                sidecar = (identity.st_dev, identity.st_ino)
                 temporary.unlink()
     except BaseException:
-        if sidecar_published:
-            manifest_path.unlink(missing_ok=True)
+        if sidecar is not None and manifest_path.exists():
+            current = manifest_path.stat()
+            if (current.st_dev, current.st_ino) == sidecar:  # never remove a file that replaced ours
+                manifest_path.unlink()
         raise
     return payload
 
@@ -733,7 +665,7 @@ def _seam_checks(terrains: list[dict[str, Any]], wang: dict[str, dict[str, Any]]
     warnings: list[str] = []
 
     def failed(report: dict[str, Any]) -> bool:
-        return report["verdict"] != "continuous"
+        return report["verdict"] in SEAM_DEFECTS  # a flat fill (verdict flat) has no seam
 
     def describe(report: dict[str, Any]) -> str:
         if report["verdict"] == "duplicate_edge":
@@ -746,8 +678,8 @@ def _seam_checks(terrains: list[dict[str, Any]], wang: dict[str, dict[str, Any]]
             continue
         row_tiles, cross = tiles[identity], []
         for col, (variant, pixels) in enumerate(zip(payload[identity]["variants"], row_tiles)):
-            variant["wrap"] = {"x": _local_edge_seam_report(pixels, pixels, gate=gate),
-                               "y": _local_edge_seam_report(_transposed(pixels), _transposed(pixels), gate=gate)}
+            variant["wrap"] = {"x": forge_core.edge_seam_report(pixels, pixels, gate=gate),
+                               "y": forge_core.edge_seam_report(_transposed(pixels), _transposed(pixels), gate=gate)}
             for axis, report in variant["wrap"].items():
                 if failed(report):
                     edges = "left/right" if axis == "x" else "top/bottom"
@@ -757,13 +689,13 @@ def _seam_checks(terrains: list[dict[str, Any]], wang: dict[str, dict[str, Any]]
                 if first != second:
                     for axis, (a, b) in (("x", (row_tiles[first], row_tiles[second])),
                                          ("y", (_transposed(row_tiles[first]), _transposed(row_tiles[second])))):
-                        report = _local_edge_seam_report(a, b, gate=gate)
+                        report = forge_core.edge_seam_report(a, b, gate=gate)
                         cross.append({"left": first + 1, "right": second + 1, "axis": axis,
                                       "seam_ratio": report["seam_ratio"], "verdict": report["verdict"]})
         if cross:
             payload[identity]["cross_variant_seams"] = {
                 "pairs": len(cross), "max_seam_ratio": max(item["seam_ratio"] for item in cross),
-                "not_continuous": [item for item in cross if item["verdict"] != "continuous"],
+                "not_continuous": [item for item in cross if item["verdict"] in SEAM_DEFECTS],
                 "note": "diagnostic only: variants are verified to wrap with themselves, not with each other"}
 
     for identity, transition in wang.items():
@@ -784,7 +716,7 @@ def _seam_checks(terrains: list[dict[str, Any]], wang: dict[str, dict[str, Any]]
                         continue
                     a, b = (left_pixels, right_pixels) if axis == "x" else (_transposed(left_pixels),
                                                                            _transposed(right_pixels))
-                    report = _local_edge_seam_report(a, b, gate=gate)
+                    report = forge_core.edge_seam_report(a, b, gate=gate)
                     checked += 1
                     if failed(report):
                         failures.append({"left": left_name, "right": right_name, "axis": axis,
@@ -850,7 +782,7 @@ def _qa_envelope(args: argparse.Namespace, terrains: dict[str, dict[str, Any]], 
         checks.append(_check("shape_spill", "skipped", None, args.max_shape_spill))
     wraps = [report for variant in variants for report in variant.get("wrap", {}).values()]
     if wraps:
-        bad = sum(report["verdict"] != "continuous" for report in wraps)
+        bad = sum(report["verdict"] in SEAM_DEFECTS for report in wraps)
         checks.append(_check("wrap_seams", "fail" if bad else "pass", max(r["seam_ratio"] for r in wraps),
                              args.max_seam_ratio))
     else:
@@ -967,8 +899,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _cli(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         payload = extract(args)
@@ -983,6 +914,12 @@ def main(argv: list[str] | None = None) -> int:
                "qc": {"passed": payload["qc"]["passed"], "warnings": payload["qc"]["warnings"]}}
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """The CLI under forge_core.run_cli (D26, D27): usage errors exit 2, runtime errors print
+    'error: <message>' and exit 1, and no traceback reaches the user."""
+    return forge_core.run_cli(_cli, argv)
 
 
 if __name__ == "__main__":

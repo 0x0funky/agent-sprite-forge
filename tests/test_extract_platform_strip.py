@@ -531,7 +531,7 @@ class SeamRatioTests(StripCase):
         self.write(np.concatenate([left, middle, right], axis=1), spec, "padded")
         result = MODULE.extract(self.options("padded", "kit", "--background-mode", "native_alpha"))
         self.assertEqual(result["joins"][0]["seam"]["verdict"], "seam")
-        unguarded = MODULE._local_edge_seam_report(left, middle)  # measuring the padding would hide it
+        unguarded = MODULE.forge_core.edge_seam_report(left, middle)  # measuring the padding would hide it
         self.assertEqual(unguarded["verdict"], "continuous")
 
     def test_seam_ratio_must_be_positive(self):
@@ -760,12 +760,28 @@ class ContractTests(StripCase):
         self.assertTrue(qa["method"])
 
     def test_input_on_another_drive_records_the_file_name(self):
-        """forge_core.portable_path returns an absolute path when no relative route exists (A1)."""
+        """forge_core.portable_path returns an absolute path when no relative route exists (A1); the
+        fileRef the tool writes (forge_core.file_ref, D30) then records the file name."""
         for absolute in ("Z:/art/strip.png", "/mnt/art/strip.png"):
             with self.subTest(absolute=absolute), \
                     mock.patch.object(MODULE.forge_core, "portable_path", return_value=absolute):
-                reference = MODULE._local_file_ref(Path("strip.png"), self.root, "0" * 64, 1)
+                reference = MODULE.forge_core.file_ref(Path("strip.png"), self.root, sha256="0" * 64, size=1)
                 self.assertEqual(reference, {"path": "strip.png", "sha256": "0" * 64, "bytes": 1})
+        self.assertFalse(hasattr(MODULE, "_local_file_ref") or hasattr(MODULE, "_local_edge_seam_report"))
+
+    def test_flat_middles_are_not_seams(self):
+        """D9: a flat colour join reports verdict flat (forge_core.edge_seam_report), which no seam gate
+        fails; only seam and duplicate_edge are defects."""
+        pixels = np.zeros((8, 24, 4), np.uint8)
+        pixels[2:] = (110, 80, 60, 255)
+        self.write(pixels, three_pieces(8, 8, 2, 4), "flat")
+        result = MODULE.extract(self.options("flat", "kit", "--background-mode", "native_alpha",
+                                             "--max-seam-ratio", "1.25", "--strict-qc"))
+        self.assertEqual({join["seam"]["verdict"] for join in result["joins"]}, {"flat"})
+        self.assertTrue(result["qc"]["passed"])
+        checks = {check["id"]: check["status"] for check in result["qa"]["checks"]}
+        self.assertEqual((checks["seam_ratio"], checks["duplicate_edges"]), ("pass", "pass"))
+        self.assertEqual(result["qa"]["tool"], {"name": "extract_platform_strip.py", "version": "0.4.0"})
 
     def test_output_is_deterministic(self):
         first = self.produce()

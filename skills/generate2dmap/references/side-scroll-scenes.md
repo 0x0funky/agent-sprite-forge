@@ -21,9 +21,11 @@ render bands:    sky, far, mid, rear decor, structure, actors and FX, foreground
 scenery layers:  file, source size, display scale, scroll factor, repeat interval
 ```
 
-The `segments` and `physics` part is the map contract `layout_v1` in [map.schema.json](schemas/map.schema.json): `segments [[x0, x1, kind]]`, `physics {jumpHeight, jumpDistance, maxSlopeDeg, stepUp}` and `viewports`. The side-scroll layout validator (`validate_layout.py`, when present in this skill's `scripts/`) reads that file and checks floating props, deck thickness, slope and step limits, gaps against the jump arc, arena width at 16:9 and 19.5:9, and reachability. Use the real controller for anything it cannot judge.
+The `segments` and `physics` part is the map contract `layout_v1` in [map.schema.json](schemas/map.schema.json): `segments [[x0, x1, kind]]`, `physics {jumpHeight, jumpDistance, maxSlopeDeg, stepUp}` and `viewports`. The side-scroll layout validator reads that file and checks floating props, deck thickness, slope and step limits, gaps against the jump arc, arena width at 16:9 and 19.5:9, and reachability ([engine-maps.md](engine-maps.md) lists what it does not verify). Use the real controller for anything it cannot judge.
 
-Choose stage length from the task: one screen for a room or an asset test, two connected viewport widths for a scrolling sample. A brawler uses the engine's walkable belt and depth rules instead of platform jumps.
+    python "<skill-dir>/scripts/validate_layout.py" --layout stage/layout.json --output-dir stage/qa/layout-v1
+
+Choose stage length from the task: one screen for a room or an asset test, two connected viewport widths for a scrolling sample. A brawler uses the engine's walkable belt and depth rules instead of platform jumps. Map-bundle starting values for a platformer or a brawler belt are in [map-presets.md](map-presets.md).
 
 ## 2. Viewport versus source pixels
 
@@ -95,7 +97,7 @@ The input may be RGB(A), a palette PNG with transparency, grey or grey+alpha. Th
 | `--min-column-coverage` | 1.0 | Solid share of each collision-band column. Relaxing it never relaxes the solid surface row. |
 | `--surface-tolerance-px` | 0 | How far the art's top may rise above `surface_y_px` in a collision column. More is a defect: actors would sink into the art. |
 | `--decoration-band-px` | 0 | Rows directly above the surface that may hold non-structural tips (grass blades); ignored by the surface measurement. |
-| `--max-seam-ratio` | off | Gates every join: a join step sharper than the art's own steps near it (ratio above the value; try 1.25), or a duplicated edge that stutters on every repeat, is a QC issue. Without it the verdicts are diagnostics. |
+| `--max-seam-ratio` | off | Gates every join: a join step sharper than the art's own steps near it (ratio above the value; try 1.25), or a duplicated edge that stutters on every repeat, is a QC issue. The verdicts are `continuous`, `seam`, `duplicate_edge`, `flat` (a plain-colour join) and `too_small`; only `seam` and `duplicate_edge` fail (the shared seam metric, `forge_core.edge_seam_report`). Without the flag the verdicts are diagnostics. |
 | `--max-seam-rgb-mae`, `--max-seam-alpha-mae` | off | Legacy raw-equality gates; they fail true seamless joins and pass duplicated edges, so prefer `--max-seam-ratio`. |
 | `--strict-qc` | off | Publish nothing when any issue remains. |
 
@@ -122,7 +124,7 @@ Platformers draw in stable bands, back to front. Do not reuse top-down dynamic y
 | actors and FX | player, enemies, pickups, projectiles, hit effects | spawn or z order | runtime bodies |
 | foreground | occluders in front of the play plane (posts, leaves) | authored order | never |
 
-With the generic composer, give each band explicit stable `sortY` values and put foreground items in its `foreground` array; that is preview ordering, not physics. An isolated prop's image rectangle, support point, collision shape and interaction reach are separate data: measure the support point in source pixels and use `anchorPx` for padded art. Floating decor uses a mounting anchor. A brawler with depth movement may sort by its ground line instead.
+In a map bundle a one-way deck is a `one_way` material: it blocks only moves that drop onto it from above, so actors jump up through it and stand on it (the forge_nav rules in [layered-map-contract.md](layered-map-contract.md)); `map_nav.py` does not model jump arcs. With the generic composer, give each band explicit stable `sortY` values and put foreground items in its `foreground` array; that is preview ordering, not physics. An isolated prop's image rectangle, support point, collision shape and interaction reach are separate data: measure the support point in source pixels and use `anchorPx` for padded art. Floating decor uses a mounting anchor. A brawler with depth movement may sort by its ground line instead.
 
 ## 7. Camera notes
 
@@ -141,7 +143,7 @@ Patterns from a shipped side-view prototype; tune them against the real controll
 - Scale: important objects read at gameplay zoom next to the actor, not only on a contact sheet.
 - Alpha: no key-colour fringe, fake checkerboard or eroded art; inspect over light and dark scenery.
 - Contact: the kit passes `--strict-qc` (solid surface row, no art rising above the surface beyond the declared tolerance and decoration band); props sit on their supports; crops did not shift anchors.
-- Joins: the strip preview shows no gap, doubled edge, phase jump or height step; with `--max-seam-ratio`, every join is continuous.
+- Joins: the strip preview shows no gap, doubled edge, phase jump or height step; with `--max-seam-ratio`, no join is a `seam` or `duplicate_edge`.
 - Coverage: no exposed canvas at the camera start, middle, end and zoom limits; layered scenes really move at distinct speeds.
 - Readability: hazards, pickups and exits stand out; decor does not look like a platform or hide the actor.
 - Gameplay: with a runtime, actually cross every join, jump every gap, land on every platform and reach every exit. Static previews and JSON checks do not prove playability.
