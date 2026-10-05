@@ -29,13 +29,14 @@ from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SKILLS_DIR = REPO_ROOT / "skills"
-SHARED_SCHEMAS_DIR = REPO_ROOT / "shared" / "schemas"
+SHARED_DIR = REPO_ROOT / "shared"
+SHARED_SCHEMAS_DIR = SHARED_DIR / "schemas"
 FIXTURES_DIR = REPO_ROOT / "tests" / "fixtures"
 REAL_FIXTURES_DIR = FIXTURES_DIR / "real"
 
 __all__ = [
-    "REPO_ROOT", "SKILLS_DIR", "SHARED_SCHEMAS_DIR", "FIXTURES_DIR", "REAL_FIXTURES_DIR",
-    "script_path", "load_script", "run_cli", "assert_cli_help", "make_magenta_sheet",
+    "REPO_ROOT", "SKILLS_DIR", "SHARED_DIR", "SHARED_SCHEMAS_DIR", "FIXTURES_DIR", "REAL_FIXTURES_DIR",
+    "script_path", "load_script", "load_shared", "run_cli", "assert_cli_help", "make_magenta_sheet",
     "require_ffmpeg", "require_node", "require_resvg", "real_fixture",
     "contract_validator", "contract_errors", "assert_valid_contract",
 ]
@@ -56,26 +57,56 @@ def load_script(skill: str, name: str, *, fresh: bool = False) -> ModuleType:
     """Import a skill script by path, the way the skills import their own siblings.
 
     The module is registered in ``sys.modules`` as ``forge_<skill>_<name>`` and reused
-    by later calls, like a normal import. ``fresh=True`` executes a new, unregistered
-    copy, for tests that depend on import-time state such as environment variables.
+    by later calls, like a normal import. ``fresh=True`` executes a new copy, for tests
+    that depend on import-time state such as environment variables; it is registered
+    only while it executes (dataclasses need that) and the cached module keeps the name.
     """
-    path = script_path(skill, name)
-    module_name = f"forge_{skill}_{path.stem}"
-    if not fresh and module_name in sys.modules:
-        return sys.modules[module_name]
+    return _load_module(script_path(skill, name), f"forge_{skill}_", fresh)
+
+
+def load_shared(name: str, *, fresh: bool = False) -> ModuleType:
+    """Import a canonical shared module, ``shared/<name>.py``, by path (``name`` may end in ``.py``).
+
+    Use it to test the canonical copy (forge_core, forge_matte, forge_av, ...) rather than a
+    skill's vendored copy. Like ``load_script``, the module is registered in ``sys.modules``
+    as ``forge_shared_<name>`` and reused by later calls; ``fresh=True`` executes a new copy
+    that is registered only while it executes. Modules it imports itself (forge_matte
+    imports the forge_core beside it) are ordinary imports, shared with the whole process.
+    """
+    filename = name if name.endswith(".py") else f"{name}.py"
+    path = SHARED_DIR / filename
+    if not path.is_file():
+        raise FileNotFoundError(f"No shared module {filename}: {path}")
+    return _load_module(path, "forge_shared_", fresh)
+
+
+def _load_module(path: Path, prefix: str, fresh: bool) -> ModuleType:
+    module_name = f"{prefix}{path.stem}"
+    cached = sys.modules.get(module_name)
+    if cached is not None and not fresh:
+        return cached
     spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load {path}")
     module = importlib.util.module_from_spec(spec)
-    if not fresh:
-        sys.modules[module_name] = module
+    # Registered while it executes, like a normal import: dataclasses and typing look the
+    # module up by name. A fresh copy then gives the name back to the cached module, if any.
+    sys.modules[module_name] = module
     try:
         spec.loader.exec_module(module)
     except BaseException:
-        if not fresh:
-            sys.modules.pop(module_name, None)
+        _restore_module(module_name, cached)
         raise
+    if fresh:
+        _restore_module(module_name, cached)
     return module
+
+
+def _restore_module(name: str, previous: ModuleType | None) -> None:
+    if previous is None:
+        sys.modules.pop(name, None)
+    else:
+        sys.modules[name] = previous
 
 
 def run_cli(argv: Sequence[str | os.PathLike], encoding: str | None = None, *,

@@ -191,7 +191,7 @@
       "then": {"properties": {"clips": {"additionalProperties": {"required": ["events_ms", "tick_grid"]}}}}
     },
     "pipeline_meta_v2": {
-      "description": "pipeline-meta.json written by generate2dsprite.py process. v1 files carry no schema key and stay valid. v2 (schema generate2dsprite.pipeline_meta.v2) adds the geometry, hygiene and provenance blocks, and every frame record gains trim_offset and source_rect.",
+      "description": "pipeline-meta.json written by generate2dsprite.py process. v1 files carry no schema key and stay valid. v2 (schema generate2dsprite.pipeline_meta.v2) adds the geometry, hygiene and provenance blocks, and every frame record gains trim_offset and source_rect. A keyed sheet may also record the forge_matte.key_still info in matte.",
       "type": "object",
       "required": ["target", "mode"],
       "properties": {
@@ -229,24 +229,46 @@
           }
         },
         "hygiene": {
+          "description": "The forge_core.alpha_hygiene report: the settings used (mode, floor, solid_min, attach_radius, connectivity) and what was removed (floor_px, detached_px, detached_components, max_removed_alpha).",
           "type": "object",
           "required": ["mode"],
           "properties": {
             "mode": {"enum": ["none", "floor", "detached", "both"]},
-            "floor": {"type": "integer", "minimum": 0, "maximum": 254},
+            "floor": {"type": "integer", "minimum": 0, "maximum": 255},
+            "solid_min": {"type": "integer", "minimum": 1, "maximum": 255},
+            "attach_radius": {"type": "integer", "minimum": 0},
+            "connectivity": {"enum": [4, 8]},
             "floor_px": {"type": "integer", "minimum": 0},
             "detached_px": {"type": "integer", "minimum": 0},
-            "detached_components": {"type": "integer", "minimum": 0}
+            "detached_components": {"type": "integer", "minimum": 0},
+            "max_removed_alpha": {"type": "integer", "minimum": 0, "maximum": 255}
           }
         },
         "profile_applied": {"type": "object"},
         "provenance": {
+          "description": "The input as forge_core.load_rgba read it (sha256, Pillow mode, bit depth, conversion to 8-bit RGBA); raw_copy names the copied original, or null.",
           "type": "object",
           "required": ["input_sha256", "source_mode"],
           "properties": {
             "input_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
             "source_mode": {"type": "string", "minLength": 1},
+            "bit_depth": {"enum": [1, 2, 4, 8, 16]},
+            "conversion": {"type": "string", "minLength": 1},
             "raw_copy": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"type": "null"}]}
+          }
+        },
+        "matte": {
+          "description": "forge_matte.key_still info for a keyed sheet: the quality used and requested, the key as floats, key_estimate (forge_matte.estimate_key info, null for an explicit key), the soft-matte params (KeyParams.to_dict()), interior_despill, key_material_share and qa (forge_matte.matte_qa metrics of the result, not a QA envelope).",
+          "type": "object",
+          "properties": {
+            "quality": {"enum": ["hard", "soft", "dominance", "native_alpha"]},
+            "requested_quality": {"enum": ["hard", "soft", "dominance", "auto"]},
+            "key": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3},
+            "key_estimate": {"type": ["object", "null"]},
+            "params": {"type": "object"},
+            "interior_despill": {"type": "boolean"},
+            "key_material_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "qa": {"type": "object"}
           }
         },
         "art_source": {"$ref": "common.schema.json#/$defs/artSource"},

@@ -1,6 +1,8 @@
 {
   "cases": [
-    {"why": "rows or segments are mandatory", "remove": "/rows"},
-    {"why": "integer origin", "set": "/origin", "value": [0.5, 1]}
+    {"why": "the layer name is mandatory", "remove": "/name", "error": "'name' is a required property"},
+    {"why": "integer origin", "set": "/origin", "value": [0.5, 1]},
+    {"why": "z is a number", "set": "/z", "value": "front", "error": "$.z:"},
+    {"why": "segments are run-length rows", "set": "/segments", "value": ["13.6"], "error": "$.segments[0]:"}
   ]
 }

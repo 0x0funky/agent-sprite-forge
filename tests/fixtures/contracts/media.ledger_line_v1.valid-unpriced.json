@@ -1,0 +1,13 @@
+{
+  "ts": "2026-10-05T05:24:32.158Z",
+  "reservationId": "97359024d5664f9aa7e02ab8886655f3",
+  "status": "reserved",
+  "jobDir": "jobs/potion-02",
+  "fingerprint": "6d8d3b2456dac20d359874cea03d6f1f34e3d8c39abe0c2b867591e47b2597f9",
+  "provider": "openai",
+  "model": "gpt-image-2.5-sunburst",
+  "kind": "image",
+  "route": "rest",
+  "reservedUsd": null,
+  "quotaCall": false
+}

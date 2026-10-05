@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "the seam is mandatory", "remove": "/seam", "error": "'seam' is a required property"},
+    {"why": "a loop has at least two frames", "set": "/frames", "value": 1, "error": "$.frames:"},
+    {"why": "differences are never negative", "set": "/adjacent_p95", "value": -0.5, "error": "$.adjacent_p95:"}
+  ]
+}

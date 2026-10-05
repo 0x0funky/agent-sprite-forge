@@ -1,0 +1,62 @@
+{
+  "schemaVersion": 2,
+  "provider": "openai",
+  "kind": "image",
+  "route": "rest",
+  "apiBase": "https://api.openai.com/v1",
+  "endpoint": "https://api.openai.com/v1/images/generations",
+  "requestedModel": "gpt-image-2.5-sunburst",
+  "options": {"model": "gpt-image-2.5-sunburst", "n": 1, "output_format": "png"},
+  "promptSha256": "17fc4886124f201a84e6622702340e0e316d4ad8cd0256cba730b30c94a4f63c",
+  "references": [],
+  "lastFrame": null,
+  "keyEnv": "OPENAI_API_KEY",
+  "paidRequests": 1,
+  "automaticPostRetries": 0,
+  "outDir": "D:\\games\\hero\\jobs\\potion-02",
+  "execution": "execute",
+  "fingerprint": "6d8d3b2456dac20d359874cea03d6f1f34e3d8c39abe0c2b867591e47b2597f9",
+  "estimate": {
+    "usd": null,
+    "currency": "USD",
+    "basis": "unpriced: no verified price row for openai/gpt-image-2.5-sunburst output_image",
+    "pricesVersion": "2026-10-05",
+    "items": []
+  },
+  "consent": {
+    "provider": "openai",
+    "model": "gpt-image-2.5-sunburst",
+    "calls": 1,
+    "estimateUsd": null,
+    "apiHost": "api.openai.com"
+  },
+  "status": "done",
+  "clientRequestId": "99cfeb71358746ed96d2b3c86e42c22f",
+  "receipt": {
+    "startedAt": "2026-10-05T05:24:32.157Z",
+    "submittedAt": "2026-10-05T05:24:32.162Z",
+    "completedAt": "2026-10-05T05:24:32.167Z",
+    "wallMs": 11,
+    "providerMs": 0,
+    "attempt": 1,
+    "purpose": null,
+    "toolVersion": "generate_media/2.0",
+    "outcomeCode": "ok"
+  },
+  "ledger": {
+    "projectDir": "D:\\games\\hero\\project",
+    "reservationId": "97359024d5664f9aa7e02ab8886655f3",
+    "status": "done"
+  },
+  "providerRequestId": "req_abc123",
+  "returnedModel": "gpt-image-2.5-sunburst",
+  "providerUsage": {"input_tokens": 120, "output_tokens": 4160, "total_tokens": 4280},
+  "artifact": {
+    "path": "generated.png",
+    "bytes": 123,
+    "sha256": "746ced7f9247b7505c1549e5c53a720f25df609750d5ec40f3d83157e8f281e6",
+    "size": [32, 48],
+    "format": "PNG",
+    "hasAlphaChannel": true
+  }
+}

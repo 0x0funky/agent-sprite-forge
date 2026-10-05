@@ -1,11 +1,22 @@
 """Frozen JSON-schema contracts (plan Appendix B), their fixtures, the shared test
-helpers, and the provenance of the real-art fixtures."""
+helpers, and the provenance of the real-art fixtures.
+
+Fixtures in tests/fixtures/contracts are named <domain>.<def>.<kind>.json:
+- valid: the one valid document of the def (negative cases mutate it);
+- invalid: {"cases": [...]}; each case sets or removes one JSON pointer of the valid
+  document ({"set": ptr, "value": ...} or {"remove": ptr}) or replaces it ({"document": ...}),
+  says why it is invalid, and may name the error it must produce ("error": a substring of
+  one "$.path: message" line);
+- valid-<variant>: more valid documents, such as real producer output;
+- legacy-<variant>: documents of older writers that must stay valid.
+"""
 from __future__ import annotations
 
 import copy
 import hashlib
 import json
 import re
+import sys
 
 import numpy as np
 import pytest
@@ -14,9 +25,10 @@ from PIL import Image
 from referencing import Registry
 from referencing.jsonschema import DRAFT202012
 
+import forge_testutils
 from forge_testutils import (
-    FIXTURES_DIR, REAL_FIXTURES_DIR, REPO_ROOT, SHARED_SCHEMAS_DIR, SKILLS_DIR,
-    contract_errors, load_script, make_magenta_sheet, real_fixture, run_cli,
+    FIXTURES_DIR, REAL_FIXTURES_DIR, REPO_ROOT, SHARED_DIR, SHARED_SCHEMAS_DIR, SKILLS_DIR,
+    contract_errors, load_script, load_shared, make_magenta_sheet, real_fixture, run_cli,
 )
 
 CONTRACTS_DIR = FIXTURES_DIR / "contracts"
@@ -29,7 +41,7 @@ DOCUMENT_ID_PREFIXES = {
     "sprite": ("generate2dsprite.",),
     "video": ("video2dsprite.", "forge-"),
     "map": ("generate2dmap.",),
-    "codeart": ("codeart2d.", "codeart."),  # codeart. is the read-only prototype PixelSpec spelling
+    "codeart": ("codeart2d.", "codeart."),  # codeart.pixelspec.v1 is the legacy PixelSpec alias
     "media": ("generate2dmedia.",),
 }
 REQUIRED_LEGACY = ("video.frame_selection_v2.legacy-v1.json", "video.animation_v3.legacy-2.0.json")
@@ -128,7 +140,7 @@ def test_vendored_schemas_are_self_contained(schema_dir):
 # --------------------------------------------------------------------------- fixtures
 
 def test_every_contract_fixture_names_a_contract():
-    pattern = re.compile(r"^(\w+)\.(\w+)\.(valid|invalid|legacy-[A-Za-z0-9.-]+)\.json$")
+    pattern = re.compile(r"^(\w+)\.(\w+)\.(valid|invalid|valid-[A-Za-z0-9.-]+|legacy-[A-Za-z0-9.-]+)\.json$")
     for path in sorted(CONTRACTS_DIR.iterdir()):
         match = pattern.match(path.name)
         assert match, f"unexpected fixture name {path.name}"
@@ -142,19 +154,33 @@ def test_examples_validate(contract):
     assert not errors, "\n".join(errors)
 
 
+@pytest.mark.parametrize("path", sorted(CONTRACTS_DIR.glob("*.valid-*.json")), ids=lambda p: p.name)
+def test_variant_examples_validate(path):
+    """Further valid documents of one def, such as real Wave A producer output (unpriced
+    jobs, null receipt purposes, codeart-meta palettes, segment poses, rational fps)."""
+    domain, name, _ = path.name.split(".", 2)
+    errors = contract_errors(read_json(path), domain, name)
+    assert not errors, "\n".join(errors)
+
+
 @pytest.mark.parametrize("contract", CONTRACTS, ids=contract_id)
 def test_invalid_examples_fail(contract):
     domain, name = contract
     valid = read_json(CONTRACTS_DIR / f"{domain}.{name}.valid.json")
     cases = read_json(CONTRACTS_DIR / f"{domain}.{name}.invalid.json")["cases"]
     assert cases, "every contract needs at least one negative case"
-    accepted = []
+    accepted, wrong_reason = [], []
     for case in cases:
+        assert case.get("why"), f"case {case} does not say why it is invalid"
         document = mutate(valid, case)
         assert document != valid, f"case {case['why']!r} does not change the document"
-        if not contract_errors(document, domain, name):
+        errors = contract_errors(document, domain, name)
+        if not errors:
             accepted.append(case["why"])
+        elif "error" in case and not any(case["error"] in error for error in errors):
+            wrong_reason.append(f"{case['why']!r}: expected {case['error']!r} in {errors}")
     assert not accepted, f"invalid documents accepted: {accepted}"
+    assert not wrong_reason, "invalid documents rejected for another reason:\n" + "\n".join(wrong_reason)
 
 
 @pytest.mark.parametrize("path", sorted(CONTRACTS_DIR.glob("*.legacy-*.json")), ids=lambda p: p.name)
@@ -220,6 +246,66 @@ def test_load_script_reuses_one_module_unless_fresh():
     module = load_script("generate2dmap", "validate_parallax")
     assert load_script("generate2dmap", "validate_parallax") is module
     assert load_script("generate2dmap", "validate_parallax", fresh=True) is not module
+    assert sys.modules["forge_generate2dmap_validate_parallax"] is module, "a fresh copy leaves the cache alone"
+
+
+def _drop_modules_from(directory, before):
+    """Forget modules imported from `directory` since `before` (a set of module names)."""
+    for name, module in list(sys.modules.items()):
+        origin = getattr(module, "__file__", None) or ""
+        if name not in before and origin.startswith(str(directory)):
+            del sys.modules[name]
+
+
+def test_load_shared_imports_a_shared_module_by_path(tmp_path, monkeypatch):
+    assert SHARED_DIR == REPO_ROOT / "shared"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "forge_probe.py").write_text(  # imports its sibling and defines a dataclass, like forge_matte
+        "from __future__ import annotations\n"
+        "import sys\nfrom dataclasses import dataclass\nfrom pathlib import Path\n"
+        "sys.path.insert(0, str(Path(__file__).resolve().parent))\n"
+        "import forge_probe_sibling\n\n\n"
+        "@dataclass(frozen=True)\nclass Params:\n    value: int = forge_probe_sibling.VALUE + 1\n\n\n"
+        "VALUE = Params().value\n", encoding="utf-8")
+    (shared / "forge_probe_sibling.py").write_text("VALUE = 41\n", encoding="utf-8")
+    (shared / "forge_broken.py").write_text("raise RuntimeError('import-time failure')\n", encoding="utf-8")
+    monkeypatch.setattr(forge_testutils, "SHARED_DIR", shared)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    before = set(sys.modules)
+    try:
+        first = load_shared("forge_probe", fresh=True)
+        assert first.VALUE == 42 and "forge_shared_forge_probe" not in sys.modules, "a fresh copy is not cached"
+        module = load_shared("forge_probe")
+        assert module.VALUE == 42 and module.__file__ == str(shared / "forge_probe.py")
+        assert sys.modules["forge_shared_forge_probe"] is module
+        assert load_shared("forge_probe.py") is module
+        fresh = load_shared("forge_probe", fresh=True)
+        assert fresh is not module and fresh.VALUE == 42 and sys.modules["forge_shared_forge_probe"] is module
+        with pytest.raises(FileNotFoundError, match="forge_missing.py"):
+            load_shared("forge_missing")
+        with pytest.raises(RuntimeError, match="import-time failure"):
+            load_shared("forge_broken")
+        assert "forge_shared_forge_broken" not in sys.modules, "a failed import is not cached"
+    finally:
+        _drop_modules_from(shared, before)
+
+
+@pytest.mark.parametrize("canonical", sorted(
+    entry["canonical"] for entry in read_json(SHARED_DIR / "VENDORED.json")["files"] if entry["canonical"].endswith(".py")))
+def test_load_shared_loads_each_landed_canonical(canonical, monkeypatch):
+    """Each canonical module imports by path from shared/, with its sibling imports (forge_matte
+    needs forge_core beside it). Skipped until the owning Wave A or B module has landed."""
+    path = REPO_ROOT / canonical
+    if not path.is_file():
+        pytest.skip(f"{canonical} has not landed in this checkout")
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    before = set(sys.modules)
+    try:
+        module = load_shared(path.stem, fresh=True)
+        assert module.__file__ == str(path)
+    finally:
+        _drop_modules_from(SHARED_DIR, before)
 
 
 def test_run_cli_reproduces_a_narrow_console():

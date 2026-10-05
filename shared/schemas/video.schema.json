@@ -84,7 +84,8 @@
             "key": {"$ref": "common.schema.json#/$defs/keyColor"},
             "erode": {"type": "number", "minimum": 0},
             "unmix": {"type": "boolean"},
-            "despill": {"enum": ["off", "edge", "all", "auto"]}
+            "despill": {"enum": ["off", "edge", "all", "auto"]},
+            "params": {"description": "Every forge_matte.KeyParams field the profile pins (KeyParams.to_dict() form), beyond the named key, erode, unmix and despill settings.", "type": "object"}
           }
         },
         "clips": {
@@ -129,7 +130,7 @@
       "else": {"required": ["fps"]}
     },
     "matte_report_v1": {
-      "description": "The matte block of video2dsprite pipeline-meta.json (forge_matte.matte_qa aggregated over the clip): pixel counts are sums over frames, fractions are the worst frame.",
+      "description": "The matte block of video2dsprite pipeline-meta.json (forge_matte.matte_qa aggregated over the clip): pixel counts are sums over frames, fractions are the worst frame. key is the key colour the matte used as a name, #rrggbb or whole-number RGB (round forge_matte's float key; key_estimate keeps the floats). key_estimate is forge_matte.estimate_key info (null for an explicit key), interior_despill the forge_matte.auto_interior_despill decision, params the KeyParams.to_dict() used, local_background the local-background radius in px (0 when off) and temporal the alpha hysteresis with its flips per frame pair before and after.",
       "type": "object",
       "required": ["schema", "mode", "key", "opaque_key_px", "outer_ring_spill_fraction", "semitransparent_fraction", "enclosed_key_pockets"],
       "properties": {
@@ -143,6 +144,43 @@
         "enclosed_key_pockets": {"type": "integer", "minimum": 0},
         "pockets_removed": {"type": "integer", "minimum": 0},
         "flips_per_frame_pair": {"type": "number", "minimum": 0},
+        "key_hued_px": {"type": "integer", "minimum": 0},
+        "key_estimate": {
+          "type": ["object", "null"],
+          "properties": {
+            "key": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3},
+            "source": {"enum": ["border_median", "declared", "native_alpha"]},
+            "valid": {"type": "boolean"},
+            "ring_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "coverage": {"type": "number", "minimum": 0, "maximum": 1},
+            "distance_from_declared": {"type": "number", "minimum": 0}
+          }
+        },
+        "interior_despill": {
+          "type": "object",
+          "required": ["interior_despill", "rule"],
+          "properties": {
+            "interior_despill": {"type": "boolean"},
+            "rule": {"type": "string", "minLength": 1},
+            "reference_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "clip_sample_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "clip_median_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "clip_max_share": {"type": "number", "minimum": 0, "maximum": 1}
+          }
+        },
+        "params": {"type": "object"},
+        "local_background": {"type": "integer", "minimum": 0},
+        "temporal": {
+          "type": "object",
+          "properties": {
+            "mode": {"enum": ["off", "alpha"]},
+            "band": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 1}, "minItems": 2, "maxItems": 2},
+            "max_step": {"type": "number", "minimum": 0},
+            "loop": {"type": "boolean"},
+            "flips_before": {"type": "number", "minimum": 0},
+            "flips_after": {"type": "number", "minimum": 0}
+          }
+        },
         "frames": {"type": "array", "items": {"type": "object"}}
       }
     },
@@ -249,6 +287,7 @@
         },
         "webm": {"$ref": "#/$defs/mediaFile"},
         "packedAlpha": {
+          "description": "Packed-alpha transport (forge_av.encode_packed_alpha). fps here and in mobilePackedAlpha is a positive number or an exact rational string such as 30000/1001 (forge_av writes num/den). Encoder extras may be copied in: keyint, keyframes, closedGop, crf, fpsCapped, inputFps, encodedSize, bytes.",
           "allOf": [{"$ref": "#/$defs/mediaFile"}],
           "properties": {
             "layout": {"type": "string", "minLength": 1},

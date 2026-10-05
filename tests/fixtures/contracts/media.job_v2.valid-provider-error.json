@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 2,
+  "provider": "openai",
+  "kind": "image",
+  "route": "rest",
+  "apiBase": "https://api.openai.com/v1",
+  "endpoint": "https://api.openai.com/v1/images/generations",
+  "requestedModel": "gpt-image-2.5-sunburst",
+  "options": {"model": "gpt-image-2.5-sunburst", "n": 1, "output_format": "png", "size": "1024x1024"},
+  "promptSha256": "17fc4886124f201a84e6622702340e0e316d4ad8cd0256cba730b30c94a4f63c",
+  "references": [],
+  "lastFrame": null,
+  "keyEnv": "OPENAI_API_KEY",
+  "paidRequests": 1,
+  "automaticPostRetries": 0,
+  "outDir": "D:\\games\\hero\\jobs\\potion-03",
+  "execution": "execute",
+  "fingerprint": "a75d3544dae3e5405e7823f090037ee0d6d8a77b019c71a5c20b3fc25de2ae35",
+  "estimate": {
+    "usd": null,
+    "currency": "USD",
+    "basis": "unpriced: no verified price row for openai/gpt-image-2.5-sunburst output_image(size=1024x1024)",
+    "pricesVersion": "2026-10-05",
+    "items": []
+  },
+  "consent": {
+    "provider": "openai",
+    "model": "gpt-image-2.5-sunburst",
+    "calls": 1,
+    "estimateUsd": null,
+    "apiHost": "api.openai.com"
+  },
+  "status": "failed",
+  "clientRequestId": "b04a27133fa440d2ab0967098d17eff4",
+  "receipt": {
+    "startedAt": "2026-10-05T05:24:32.279Z",
+    "submittedAt": "2026-10-05T05:24:32.292Z",
+    "completedAt": "2026-10-05T05:24:32.293Z",
+    "wallMs": 14,
+    "providerMs": 0,
+    "attempt": 1,
+    "purpose": null,
+    "toolVersion": "generate_media/2.0",
+    "outcomeCode": "invalid_request"
+  },
+  "ledger": {
+    "projectDir": "D:\\games\\hero\\project",
+    "reservationId": "6bcc1da1d77b4819a330a2da999e8b6e",
+    "status": "failed"
+  },
+  "error": {
+    "httpStatus": 400,
+    "code": "invalid_size",
+    "type": "invalid_request_error",
+    "param": "size",
+    "message": "Invalid size 13x13 for this model",
+    "requestId": "req_err42"
+  },
+  "errorType": "MediaError"
+}

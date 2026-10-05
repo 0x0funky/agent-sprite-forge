@@ -2,6 +2,7 @@
   "cases": [
     {"why": "'.' is reserved for transparency", "set": "/.", "value": "#ffffff"},
     {"why": "keys are one character", "set": "/kk", "value": "#000000"},
-    {"why": "values are hex colours", "set": "/k", "value": "black"}
+    {"why": "values are hex colours", "set": "/k", "value": "black"},
+    {"why": "5 hex digits are not a colour", "set": "/g", "value": "#38b76", "error": "$.g:"}
   ]
 }

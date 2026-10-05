@@ -2,6 +2,8 @@
   "cases": [
     {"why": "unknown route", "set": "/route", "value": "http"},
     {"why": "unknown status", "set": "/status", "value": "pending"},
-    {"why": "quotaCall is mandatory", "remove": "/quotaCall"}
+    {"why": "quotaCall is mandatory", "remove": "/quotaCall"},
+    {"why": "lines carry their reservation id", "remove": "/reservationId", "error": "'reservationId' is a required property"},
+    {"why": "negative reservation", "set": "/reservedUsd", "value": -0.01, "error": "$.reservedUsd:"}
   ]
 }

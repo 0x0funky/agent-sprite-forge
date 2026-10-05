@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "a run count needs its character", "set": "/0", "value": "13.6", "error": "$[0]:"},
+    {"why": "runs are at least one pixel long", "set": "/1", "value": "0l32.", "error": "$[1]:"},
+    {"why": "at least one row", "document": [], "error": "$:"},
+    {"why": "rows are strings", "set": "/2", "value": 32, "error": "$[2]:"}
+  ]
+}

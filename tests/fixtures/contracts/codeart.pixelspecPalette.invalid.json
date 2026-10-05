@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "a palette needs at least one colour", "document": {}, "error": "$:"},
+    {"why": "space is reserved for transparency", "set": "/ ", "value": "#ffffff", "error": "$:"},
+    {"why": "keys are one character", "set": "/kk", "value": "#000000", "error": "$:"},
+    {"why": "values are PixelSpec colours", "set": "/g", "value": "#38b76", "error": "$.g:"}
+  ]
+}

@@ -1,6 +1,7 @@
 {
   "cases": [
     {"why": "integer offsets", "set": "/layers/body/dy", "value": 1.5},
-    {"why": "name is mandatory", "remove": "/name"}
+    {"why": "frame offsets are integers", "set": "/dx", "value": 0.5, "error": "$.dx:"},
+    {"why": "override segments are run-length rows", "set": "/layers/body/segments", "value": ["2"], "error": "$.layers.body.segments[0]:"}
   ]
 }

@@ -3,6 +3,9 @@
     {"why": "codeart meta always says code", "set": "/art_source", "value": "host_image"},
     {"why": "qa is mandatory", "remove": "/qa"},
     {"why": "no outputs", "set": "/outputs", "value": []},
-    {"why": "unknown QA status", "set": "/qa/status", "value": "excellent"}
+    {"why": "unknown QA status", "set": "/qa/status", "value": "excellent"},
+    {"why": "qa is a QA envelope, not raw qa_pixels metrics", "set": "/qa", "value": {"partial_alpha": 0, "off_palette": 0, "outline_gaps": 0, "l_corners": 0}, "error": "'status' is a required property"},
+    {"why": "palette colours are hex", "set": "/palette", "value": {"colors": {"k": "black"}}, "error": "$.palette:"},
+    {"why": "unknown raster backend", "set": "/renderer/backend", "value": "inkscape", "error": "$.renderer.backend:"}
   ]
 }

@@ -5,6 +5,9 @@
     {"why": "v2 frames record trim_offset", "remove": "/frames/0/trim_offset"},
     {"why": "bad hash", "set": "/provenance/input_sha256", "value": "x"},
     {"why": "unknown mode", "set": "/hygiene/mode", "value": "all"},
-    {"why": "unknown background mode", "set": "/background_mode", "value": "magenta"}
+    {"why": "unknown background mode", "set": "/background_mode", "value": "magenta"},
+    {"why": "hygiene solid_min is at least 1", "set": "/hygiene/solid_min", "value": 0, "error": "$.hygiene.solid_min:"},
+    {"why": "bit_depth is a PNG bit depth", "set": "/provenance/bit_depth", "value": 32, "error": "$.provenance.bit_depth:"},
+    {"why": "key_still records the resolved quality, never auto", "set": "/matte", "value": {"quality": "auto"}, "error": "$.matte.quality:"}
   ]
 }

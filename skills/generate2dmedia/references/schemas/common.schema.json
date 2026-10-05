@@ -186,6 +186,21 @@
         "ry": {"type": "number", "minimum": 0},
         "opacity": {"type": "number", "minimum": 0, "maximum": 1}
       }
+    },
+    "seamReport": {
+      "description": "forge_core.seam_report of a loop, for QA envelopes of loop tools: seam is the premultiplied RGBA mean absolute difference (0-255) of the wrap (last -> first) and adjacent_* describe the steps between neighbours. seam_over_median and seam_over_p95 near 1 mean a seamless loop, well above 1 a pop at the wrap, near 0 a held duplicate frame; denominators are floored at 1e-6, so a static clip with a pop gives a very large ratio. Measure the decoded runtime file, inside the motion mask for scene loops; pass/fail thresholds belong to the adopting tool.",
+      "type": "object",
+      "required": ["seam", "adjacent_median", "adjacent_p95", "seam_over_median", "seam_over_p95"],
+      "properties": {
+        "frames": {"type": "integer", "minimum": 2},
+        "seam": {"type": "number", "minimum": 0},
+        "adjacent_median": {"type": "number", "minimum": 0},
+        "adjacent_p95": {"type": "number", "minimum": 0},
+        "adjacent_max": {"type": "number", "minimum": 0},
+        "seam_over_median": {"type": "number", "minimum": 0},
+        "seam_over_p95": {"type": "number", "minimum": 0},
+        "method": {"type": "string", "minLength": 1}
+      }
     }
   }
 }
