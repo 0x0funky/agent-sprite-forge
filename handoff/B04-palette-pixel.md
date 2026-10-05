@@ -6,7 +6,14 @@ Branch `asf/B04-palette-pixel` (from `wip/asf-upgrade-20261005` @ 3f9252d). The 
 - Its byte-identical copy [skills/generate2dsprite/scripts/forge_palette.py](../skills/generate2dsprite/scripts/forge_palette.py), written by `tools/vendor_sync.py --write`. `vendor_sync --check --strict` now passes: this was the last pending canonical.
 - Two CLIs: [palette_tool.py](../skills/generate2dsprite/scripts/palette_tool.py) and [pixel_reduce.py](../skills/generate2dsprite/scripts/pixel_reduce.py).
 - The reference [palette-and-pixels.md](../skills/generate2dsprite/references/palette-and-pixels.md).
-- Tests: [test_forge_palette.py](../tests/test_forge_palette.py), [test_palette_tool.py](../tests/test_palette_tool.py) and [test_pixel_reduce.py](../tests/test_pixel_reduce.py), 72 in all.
+- Tests: [test_forge_palette.py](../tests/test_forge_palette.py), [test_palette_tool.py](../tests/test_palette_tool.py) and [test_pixel_reduce.py](../tests/test_pixel_reduce.py), 72 in all at merge; integration added a CLI-conventions test and the opt-in real-clip bench.
+
+**Phase 3 integration status** (group fix pass "sprite", branch `asf/int-g-sprite`; the decisions file wins over the text below where they differ):
+
+- Resolved per D26/D27: `run_main` runs under `forge_core.run_cli`. Usage errors keep argparse's exit 2 (now the convention); `ToolError` is a ValueError, so user-facing failures stay one `error: ...` line with exit 1, and anything unexpected reads `error: internal error (<Type>: <message>)` instead of a bare message.
+- Resolved per D28/D29/D30: JSON skin maps are read with `forge_core.read_json` (a BOM is accepted); QA envelopes record `tool.version` 0.4.0 (it was "1"); fileRefs and manifest paths come from forge_core (S2 made `forge_palette.manifest_path`/`file_ref` aliases of them).
+- Resolved per D33: the section 5 requests are in shared/schemas (S1, f3d7eb2); the tests validate against the vendored copy.
+- New: an opt-in bench (`-m bench`) re-measures the temporal hysteresis on the real game-opus55 clip of the -45% figure: -46.4% noise flips (section 8).
 
 ## 1. CLIs
 
@@ -26,7 +33,7 @@ Behaviour shared by both tools:
 
 - `--output-dir` must not exist. The work is staged with `forge_core.staged_output`, the QA envelope is written, and the folder is published only when no check failed (with `--strict`, also when nothing warned). A refused run leaves no output and no stage folder.
 - On success, one ASCII JSON line on stdout. palette_tool prints `status`, `output` and `metadata` (the subcommand's main JSON: `palette.json`, `apply-qa.json`, `palette-lock.json`, `luts.json`, `variants-qa.json` or `quantize-qa.json`) plus per-command counts. pixel_reduce prints `status`, `output`, `metadata` (`pixel-reduce-qa.json`), `palette` and per-image `{file, period, logical_size, forced}`.
-- Runtime errors and refused QA print one `error: ...` line on stderr and exit 1, never a traceback. Argparse usage errors keep argparse's exit 2, as the Wave A CLIs do.
+- Runtime errors and refused QA print one `error: ...` line on stderr and exit 1, never a traceback; an unexpected failure prints `error: internal error (<Type>: <message>)` (D27). Argparse usage errors keep argparse's exit 2 (D26).
 - `--help` (top level and every palette_tool subcommand) is ASCII and exits 0 under cp1252 and cp950 (tested with `assert_cli_help`).
 - Image outputs are 8-bit RGBA with binary alpha, written by `forge_core.save_png`. Indexed PNGs appear only with `--indexed`, under `indexed/`.
 
@@ -118,7 +125,7 @@ Added:
 - `pixel_reduce.py`: integer grid period and phase, mode, box or centre downsample, OKLab palette, binary alpha, integer upscale and QC. It refuses `no clean grid` unless `--force` (B04-T4; roadmap P2-3, 4.7).
 - `references/palette-and-pixels.md`: lock, logical resolution, indexed export (never builder input) and clip hysteresis (B04-T5; DOC-11).
 
-Changed: none. B04 adds new tools only.
+Changed: none in behaviour before this release (B04 adds new tools only). At integration: QA envelopes record `tool.version` 0.4.0 (D29); unexpected failures read `error: internal error (...)` (D27); JSON skin maps may carry a UTF-8 BOM (D28).
 
 BREAKING: none.
 
@@ -128,6 +135,8 @@ Fixed:
 - Roadmap P2-3: image-model "pixel art" is no longer treated as pixel art without a measured grid. The fox fixture is refused with its numbers.
 
 ## 5. Schema change requests
+
+**Status: applied** in shared/schemas (S1, commit f3d7eb2); the tests validate against the vendored copy (per D33). Kept as the record.
 
 Producer: B04 (`palette_tool.py`, `forge_palette.lock_palette`). Consumers: B04 `apply --lock` and `quantize-seq --lock`, engine exporters (B09), and Z docs. Both diffs go into `shared/schemas/sprite.schema.json`, then `tools/vendor_sync.py --write`. `tests/test_palette_tool.py::amended_errors` applies exactly these fragments in memory and validates the real outputs against them.
 
@@ -196,7 +205,9 @@ Optional fields B04 producers add. Objects are open, so nothing else needs a sch
 
 ## 6. Shared-helper promotion requests
 
-1. `forge_palette.manifest_path(path, base)` and `forge_palette.file_ref(path, base)` (shared/forge_palette.py:1082 and :1091) belong in forge_core. Every Wave B writer needs a fileRef with the "file name when no relative path exists" rule that A1's `portable_path` leaves to callers. Tested by `test_file_ref_on_another_drive_records_the_file_name` and the fileRef checks in the CLI tests. After promotion, keep the forge_palette names as aliases: they are public now.
+**Status:** item 1 is resolved (S2: forge_core 1.1 `manifest_path` and `file_ref`; the forge_palette names are aliases; the CLIs call forge_core). Items 2-5 stay open. New (sprite review): `alpha_threshold` units differ across the public API (`quantize_image` and `fit_report` take 0-255, `quantize_sequence` takes 0-1); unify them or rename the fraction (for example `alpha_cutoff_fraction`) in shared/forge_palette.py, keeping the old keyword as an alias.
+
+1. Resolved (D30): `forge_palette.manifest_path(path, base)` and `forge_palette.file_ref(path, base)` (shared/forge_palette.py:1082 and :1091) belong in forge_core. Every Wave B writer needs a fileRef with the "file name when no relative path exists" rule that A1's `portable_path` leaves to callers. Tested by `test_file_ref_on_another_drive_records_the_file_name` and the fileRef checks in the CLI tests. After promotion, keep the forge_palette names as aliases: they are public now.
 2. `palette_tool.check`, `qa_envelope` and `enforce` (skills/generate2dsprite/scripts/palette_tool.py:104, :112, :124) are a generic QA-envelope builder: the status is the worst check, ungated measurements are `skipped`, and a failure or a strict warning raises before publish. Candidate for `forge_core.qa_envelope`. pixel_reduce imports them from palette_tool, which is allowed within one skill.
 3. `palette_tool.run_main` (:134), `expand_inputs` (:62), `natural_key` (:57), `output_names` (:86) and `load_images` (:95) are CLI plumbing: `error:` lines, the one-line JSON, folders expanded to PNGs in natural order. Candidates for forge_core once two or more skills need them.
 4. OKLab dedupe: `forge_matte._to_oklab` (shared/forge_matte.py:318) is bit-identical to `forge_palette.to_oklab` (shared/forge_palette.py:96; `test_to_oklab_matches_forge_matte_bit_for_bit`). forge_palette is vendored only into generate2dsprite, while forge_matte also ships in video2dsprite and generate2dmap. So either move `to_oklab`/`from_oklab` into forge_core, or add forge_palette targets for those two skills, then have forge_matte import it. Either way no result changes.
@@ -222,7 +233,12 @@ Optional fields B04 producers add. Objects are open, so nothing else needs a sch
   - sigma 5: 36-53%;
   - sigma 8: 24-41%.
 
-  The fixed dE 0.02 margin loses to heavy noise; `--margin` raises it. The game-opus55 study clip (-45%) was not re-run here, because it needs D:/chain art. The CLI reports the measured reduction for every clip in `quantize-qa.json`.
+  The fixed dE 0.02 margin loses to heavy noise; `--margin` raises it. The CLI reports the measured reduction for every clip in `quantize-qa.json`.
+- **Hysteresis on the real clip** (integration, 2026-10-05): `tests/test_forge_palette.py::test_bench_hysteresis_on_the_game_opus55_clip`, opt-in with `python -m pytest tests/test_forge_palette.py -m bench` (`FORGE_BENCH_OPUS55` names the game folder; default D:/chain/game-opus55, read in place, nothing copied or written). It prepares the study's clip (a_homura_idle, segment 44:92:2, 25 frames of 72x63) with the game's own `pixelate.prep_vframes`, executed from its source text with its one directory creation removed, and uses the game's shipped 255-colour palette. Results:
+  - Harness: the game's own quantizer on the float frames reproduces the study, -45.1% noise flips.
+  - `forge_palette.quantize_sequence` on the 8-bit RGBA frames (what `palette_tool quantize-seq` reads from PNGs) gives the game quantizer's index maps byte for byte, unseeded as in the study, and the per-frame nearest baselines match too.
+  - Noise flips 0.1917 -> 0.1027: -46.4% against per-frame nearest with the same cleanup (the study protocol: unseeded, consecutive pairs); -48.1% seeded as a loop, -48.9% counting the wrap pair. Alpha flips 0.0924 -> 0.0838. The bench gate is the plan's 40%.
+  - One clip of one game; the heavy-noise caveat above still holds.
 - **Indexed size**, measured:
 
   | Sheet | Colours | Indexed vs RGBA |

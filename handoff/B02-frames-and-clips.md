@@ -12,6 +12,16 @@ Files changed:
 - References: [character-animation.md](../skills/generate2dsprite/references/character-animation.md), now an index, and the new [frames-and-clips.md](../skills/generate2dsprite/references/frames-and-clips.md), [animation-planning.md](../skills/generate2dsprite/references/animation-planning.md) and [runtime-integration.md](../skills/generate2dsprite/references/runtime-integration.md).
 - Tests: [tests/test_assemble_frames.py](../tests/test_assemble_frames.py) and [tests/test_build_animation_clips.py](../tests/test_build_animation_clips.py).
 
+**Phase 3 integration status** (group fix pass "sprite", branch `asf/int-g-sprite`; the decisions file wins over the text below where they differ):
+
+- Resolved per D11: the builder honours the top-level `art_source`, `placeholder`, `pixel_art` and `sampling` and the clip `events` in v1 manifests (validated and written as in v2; the output keeps the v1 schema). The other v2-only fields are still ignored under v1 with a lint.
+- Resolved per D12/D13: frames-and-clips.md documents `events_ms[].at` (authored position), `position` (index into the played `frames`), `at_ms` (authoritative), authored `ticks`/`keys`/`entry_frame`, and `transitions` (v1 metrics) beside `transition_hints`. The consumers' side is B09's.
+- Resolved per D14: `assemble_frames.ownership_slice` wraps `forge_core.ownership_slice(..., haze="keep", alpha_threshold=16, min_area=4)`; its report and records are rebuilt from the shared report. Only ties change: a faint pixel that two owners reach in the same step now goes left, right, above, below, then diagonals (the report v2 order); the fox fixture is byte-identical.
+- Resolved per D26/D27: `_Parser` is gone. Usage errors exit 2 with argparse's `usage: ... error: ...`; runtime errors print one `error: ...` line and exit 1; both mains run under `forge_core.run_cli`.
+- Resolved per D28/D29/D30: JSON inputs go through `forge_core.read_json`/`parse_json`; `TOOL.version` is the package version 0.4.0; `manifest_path` and `file_ref` are forge_core's (the assemble_frames names stay as aliases); `_half_up` delegates to `forge_core.round_half_up`.
+- Resolved per D33: the section 5 requests are in shared/schemas (S1, f3d7eb2) and the tests validate against the vendored copy.
+- Review fixes: `--key chroma` refuses an opaque input whose border shows no backdrop of the chosen key (it published unkeyed frames with exit 0); B01's `RegisteredFrameExportTests` moved into these test files.
+
 ## 1. CLIs
 
 Run from the user's project root; `<skill-dir>` is the generate2dsprite folder (`${CLAUDE_SKILL_DIR}` in Claude Code):
@@ -54,7 +64,9 @@ Run from the user's project root; `<skill-dir>` is the generate2dsprite folder (
 Behaviour of both CLIs:
 
 - `--help` is ASCII and exits 0 under cp1252 and cp950 (`CliTests.test_help_works_under_cp1252_and_cp950`).
-- Errors, including argparse usage errors, print `error: ...` to stderr and exit 1.
+- Exit codes (D26, D27): usage errors exit 2 with argparse's `usage: ... error: ...`; every other error prints one `error: ...` line, publishes nothing and exits 1; an unexpected failure prints `error: internal error (<Type>: <message>)`.
+- `--key chroma` refuses (exit 1, nothing published) an opaque input whose border shows no backdrop of the chosen `--key-color`.
+- JSON inputs and files may be UTF-8 with or without a BOM (D28).
 - Success prints one JSON line:
   - `build_animation_clips`: `status`, `output`, `metadata` (absolute path of `animation-clips.json`), `schema`, `clips`, `frames`, `warnings`, `qa`.
   - `assemble_frames`: `status`, `output`, `metadata` (absolute path of `animation.json`), `frames`, `sequence`, `total_duration_ms`, `qa`.
@@ -63,7 +75,7 @@ Python API:
 
 - `build_animation_clips.build(manifest_path, output_dir, *, preview_scale=1, preview_background="all", reviews=True, tick_hz=60, near_duplicate_mae=1.5, strict=False) -> dict`. The positional form `build(manifest, output_dir)` is unchanged, as B01's tests call it.
 - `assemble_frames.assemble(args)` and `build_parser()` are unchanged.
-- Reusable helpers: `ticks_to_ms`, `tick_grid_report`, `playback_order`, `telegraph_report`, `clip_holds`, `near_duplicate_pairs`, `dissolve` and `review_font` in build_animation_clips; `parse_crop_boxes`, `spill_report`, `ownership_slice`, `loop_overlap`, `loop_seam`, `blend_rgba`, `ncc_drift`, `save_animation` and `manifest_path` in assemble_frames.
+- Reusable helpers: `ticks_to_ms`, `tick_grid_report`, `playback_order`, `telegraph_report`, `clip_holds`, `near_duplicate_pairs`, `dissolve` and `review_font` in build_animation_clips; `parse_crop_boxes`, `spill_report`, `ownership_slice` (forge_core's, D14), `loop_overlap`, `loop_seam`, `blend_rgba`, `ncc_drift`, `save_animation`, and `manifest_path`/`file_ref` (aliases of forge_core's, D30) in assemble_frames.
 
 ## 2. SKILL.md routing rows
 
@@ -126,6 +138,9 @@ Added:
 Changed:
 
 - Both tools publish through forge_core.staged_output (F-03).
+- A v1 manifest's top-level `art_source`, `placeholder`, `pixel_art` and `sampling` and its clip `events` are honoured, validated and written as in v2 (integration, D11).
+- `--slice ownership` is the shared `forge_core.ownership_slice` (haze kept): only ties between two owners can change (integration, D14).
+- An unexpected failure is one `error: internal error (...)` line, never a traceback (integration, D27); QA envelopes record `tool.version` 0.4.0 (D29).
 - animation-clips.json records manifest-relative source paths (absolute before). A v1 manifest keeps its v1 schema and every v1 value; the new diagnostics are extra keys.
 - assemble_frames animation.json is `generate2dsprite.full_frames.v2` with manifest-relative source paths.
 - Both tools accept a UTF-8 BOM in JSON inputs.
@@ -134,7 +149,8 @@ Changed:
 BREAKING (plan Appendix H):
 
 - `assemble_frames --sheet` fails on cross-cell spill. Legacy switch: `--allow-spill`. Better: `--slice ownership`.
-- Both CLIs print one JSON line (`output`, `metadata`) instead of the bare output path, and exit 1 instead of 2 on errors. This is the Appendix D convention; there is no legacy switch.
+- Both CLIs print one JSON line (`output`, `metadata`) instead of the bare output path. Runtime errors print one `error: ...` line and exit 1; usage errors keep argparse's exit 2 (D26). There is no legacy switch.
+- `assemble_frames --key chroma` fails when the input's border shows no backdrop of the chosen key colour (before: unkeyed frames published with a QA warning). Fix: pass `--key-color green|blue|#rrggbb`, or drop `--key chroma` for complete frames. No legacy switch (sprite review).
 - assemble_frames animation.json drops the absolute `output_directory`, and `sources[].path` is relative. There is no legacy switch; the folder holding animation.json is the output.
 
 Fixed:
@@ -147,6 +163,8 @@ Fixed:
 - WebP previews: libwebp 1.6 drops the VP8X alpha flag when it crops a fully opaque first frame, so cfed170 refused valid frames. A failed verification now re-encodes once with every frame a keyframe.
 
 ## 5. Schema change requests
+
+**Status: applied** in shared/schemas (S1, commit f3d7eb2), with the D12 position and D13 transition-hint semantics in the builtClip descriptions; the tests validate against the vendored copy (per D33). The blocks below are kept as the record (`test_handoff_requests_match_the_validated_proposal` compares them while this file exists).
 
 All requests are additive. Every A0 contract fixture still validates (`V1CompatibilityTests.test_contract_fixtures_still_validate_with_the_proposal`), and the tests validate the B02 outputs against these fragments in memory (`proposed_validator` and `patched_validator`). Producer: B02. Consumers: B09 export_engine, B18 and B19 (`--build-clips`), and the e2e smoke.
 
@@ -527,6 +545,8 @@ The schema does not cover these fields; record them for Z:
 
 ## 6. Shared-helper promotion requests
 
+**Status:** `manifest_path` (with `file_ref`) is `forge_core.manifest_path`/`file_ref` and adopted (D30); ownership slicing is `forge_core.ownership_slice` and adopted (D14); `_Parser` was not promoted: D26 keeps argparse's exit 2 for usage errors and `run_cli` (D27) gives the catch-all, so `_Parser` is deleted. Still open for forge_core: `blend_rgba`, the `seam_report` mean ratio, `ticks_to_ms`/`tick_grid_report`, `ncc_drift`, `save_animation` and `review_font`.
+
 | Helper (file) | Proposed home | Why and tests |
 |---|---|---|
 | `manifest_path(path, base) -> str` (assemble_frames.py) | forge_core, beside `portable_path` | `portable_path` returns an absolute path for another drive, and every manifest writer must then fall back to the file name. Tests: v1 golden paths, `test_rectangular_odd_dimensions...` |
@@ -544,14 +564,14 @@ The schema does not cover these fields; record them for Z:
   - The routing rows of section 2.
   - Links to the four references (character-animation.md, animation-planning.md, frames-and-clips.md, runtime-integration.md).
   - Registered frames go to build_animation_clips (v2). Full frames go to assemble_frames (`--slice ownership`; `--loop-overlap` for ambient loops only).
-- processing.md (B01) should replace its "Registered animation clips" and "Whole-frame packaging" sections with a plain pointer to frames-and-clips.md (B01-T8 plans this).
+- Done: processing.md (B01) points to frames-and-clips.md, now as a link.
 - prompt-rules.md (B03) should use the NEAR/FAR wording and link animation-planning.md for phase tables and the 28-tick telegraph.
-- B03 `scale_frames --emit-clips` should write `"schema": "generate2dsprite.animation_clips.v2"` with ticks, so the tick-grid report stays clean.
-- B18 and B19 `--build-clips` should call `build_animation_clips.py` by path. They should parse its one-line JSON summary (`metadata`), not a bare path, and pass a v2 manifest with `art_source: code`. The builder still refuses indexed PNGs and fully transparent frames.
-- B09 export_engine reads `animation-clips.json` as follows:
-  - For pingpong clips, `frames` and `duration_ms` are already the played order.
+- Done (D11): B03 `scale_frames --emit-clips` writes `"schema": "generate2dsprite.animation_clips.v2"` with `ticks`/`tick_hz` (plus `pixel_art`/`sampling` for nearest output), so the tick-grid report stays clean.
+- B18 and B19 `--build-clips` should call `build_animation_clips.py` by path. They should parse its one-line JSON summary (`metadata`), not a bare path, and pass a v2 manifest with `art_source: code` (D11 makes v2 their default; a v1 manifest still keeps `art_source`, `placeholder`, `pixel_art`, `sampling` and `events`). The builder still refuses indexed PNGs and fully transparent frames. Usage errors exit 2, runtime errors 1 (D26).
+- B09 export_engine reads `animation-clips.json` as follows (D12, D13; B09's side):
+  - For pingpong clips, `frames` and `duration_ms` are already the played order; `ticks`, `keys` and `entry_frame` stay authored positions.
   - Hints are in `transition_hints`; `transitions` holds frame-step metrics.
-  - `events_ms` lists every played occurrence.
+  - `events_ms` lists every played occurrence: `position` indexes `frames`, `at` is the authored position, `at_ms` is authoritative.
   - `entry_ms`, `keys_ms` and `hitstop_ms` are precomputed.
 - B09 forge-runtime.mjs should implement what runtime-integration.md describes:
   - The ditherDissolve as one draw with a 4x4 Bayer threshold, matching `build_animation_clips.dissolve`.
@@ -589,9 +609,11 @@ Deviations from the plan, with reasons:
 1. **`wrap_ratio`** is the seam over the **mean** adjacent step (the Dusk metric the plan cites: 3.50 to 0.73), not forge_core's median ratio. With the median, a crossfaded loop always lands near 1.0, so "below 1" would not be provable. Both ratios are recorded.
 2. **build_animation_clips still refuses indexed and 16-bit PNGs**, with a conversion hint. Appendix D says indexed PNG is never builder input, and frames are copied byte for byte. S23 is fixed in assemble_frames, which converts such inputs to RGBA.
 3. **`--key none` keeps RGB under alpha 0 exactly** in assemble_frames' frames and atlas. The fork's test requires it, and the tool's contract is lossless. Keyed frames and ownership-sliced frames have it zeroed (Appendix D).
-4. **A v1 manifest keeps `"schema": "generate2dsprite.animation_clips.v1"`** in the output, with extra diagnostic keys, rather than becoming v2. That keeps v1 consumers that check the schema working. v2 fields in a v1 manifest are ignored with a lint warning.
+4. **A v1 manifest keeps `"schema": "generate2dsprite.animation_clips.v1"`** in the output, with extra diagnostic keys, rather than becoming v2. That keeps v1 consumers that check the schema working. Since D11 the top-level `art_source`, `placeholder`, `pixel_art` and `sampling` and the clip `events` are honoured in v1; the other v2 fields in a v1 manifest are ignored with a lint warning.
 5. **Ownership slicing also accepts sheets that do not divide by the grid**, using rounded cells; grid slicing still refuses them. The frames share one canvas, so registration stays exact.
 6. **`--loop-overlap` needs `--ambient`.** This is how "never characters" is enforced; the tool cannot tell a character from water. K is at least 2 and below half the played positions.
+7. **Usage errors exit 2** (D26), not 1 as this module first chose with `_Parser`.
+8. **Ownership ties** follow the shared slicer's neighbour order (D14), not this module's first order; the fox fixture and 40 random sheets are otherwise byte-identical (tests/test_forge_core_promotions.py).
 
 **Hit-stop, time-warp and walk phase** are documented for runtimes and resolved into manifest fields. B09 implements them; this module does not test a runtime.
 
