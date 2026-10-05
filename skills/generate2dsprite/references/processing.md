@@ -1,76 +1,136 @@
 # Processor and export contracts
 
-Commands below run from the skill directory. Paths and dimensions are examples; use the measured input and a **new** output directory. Python dependencies are in the repository requirements.
+Run every command from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`, where `<skill-dir>` is this skill's folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Write outputs to a **new** folder inside your project, never inside the skill folder. The tools need Python 3.10+, numpy and Pillow 10.1 or newer; scipy only speeds up component labelling.
 
-## Isolated sprites / normalization
+`process` is for generated or painted sheets that still need keying, cell splitting and registration. Code art never goes through `process`: codeart2d frames are already on their pixel grid and go straight to `build_animation_clips.py`. Packaging registered frames (`build_animation_clips.py`) and complete rectangular frames (`assemble_frames.py`) is described in frames-and-clips.md in this folder.
 
-```bash
-python scripts/generate2dsprite.py process \
-  --input accepted-idle.png --target player --mode idle --rows 2 --cols 3 \
-  --output-dir output/hero-idle-v2 --cell-size 128 --fit-scale 0.80 \
-  --background-mode native_alpha --resampler nearest \
-  --align feet --scale-strategy preserve --component-mode largest \
-  --strict-qc --max-body-scale-cv 0.08 --max-anchor-y-std 0.05 \
-  --write-scale-profile output/hero-scale.json
-```
+## Normalize a generated sheet
 
-- `native_alpha` requires visible pixels plus real transparency, preserves RGBA and bypasses chroma trim/edge cleanup. It rejects fully opaque checkerboard art. `opaque` requires opaque pixels. `chroma_key` removes magenta; old CLI default remains `chroma_key`, not auto-detection.
-- `nearest` preserves pixel colors; `lanczos` remains the legacy default for smooth art. A shared scale profile locks these settings for compatible actions.
-- Chroma border trimming/edge cleanup can remove artwork. Use `--trim-border 0 --edge-clean-depth 0` when the clean source needs no border repair; inspect before enabling legacy cleanup. `--despill-radius 1..3` is optional and may alter intentional purple near transparent edges. Default 0 is off.
-- `preserve` uses a uniform raw-cell scale then translates subjects to the selected anchor. `fit --shared-scale` uses one bbox-derived scale within a sheet; it does not guarantee the same scale across separate sheets. Do not fit registered run/jump frames to their feet.
-- `largest` keeps only the selected connected component, including inside its bounding box; disconnected equipment/limbs may be removed. Inspect it. `all` preserves intentional components, with `--min-component-area` as an explicit noise threshold.
-- Rows/columns must divide source dimensions exactly; a generated 1672x941 image cannot silently lose its last row in a 2x2 split. Measure/correct geometry explicitly or use verified crop boxes with the full-frame assembler.
-- Later compatible actions use `--scale-profile output/hero-scale.json`. Old v1 profiles remain readable. Do not issue an independent profile per action to conceal model scale drift.
-
-The processor exports raw/clean source, transparent sheet, frame PNGs, GIF preview, prompt when supplied, and `pipeline-meta.json`. GIF is a limited-color, hard-alpha review format; PNGs remain the alpha source of truth. Strict failure publishes no finished output directory. Existing destinations are refused, preventing stale files from mixing into revisions.
-
-### QC and action-specific gates
-
-Inspect output edge touches, empty frames, paste clamping, anatomy and correct root at gameplay size. For ordinary grounded humanoids, `body_scale_cv <= 0.08`, normalized `anchor_y_std <= 0.05` and profile scale drift around `0.08` are useful diagnostics. These are not universal for crouching, flight, creatures changing posture or FX. Do not hide model drift with per-frame resizing.
-
-`--allow-source-edge-touch` permits only a visually reviewed complete raw contour; it never permits clipped output or paste clamping. Regenerate a clipped snout, tail or weapon. Read all runtime metadata before integration; successful alpha/geometry checks do not prove animation quality.
-
-## Registered animation clips
-
-For already extracted common-canvas RGBA PNGs, do not normalize again:
-
-```json
-{
-  "schema": "generate2dsprite.animation_clips.v1",
-  "frames": ["run-0.png", "run-1.png", "idle.png"],
-  "anchor_px": [48, 86],
-  "clips": {
-    "run": {"frames": [0, 1], "duration_ms": [90, 110], "loop": true},
-    "idle": {"frames": [2], "duration_ms": 400, "loop": true}
-  },
-  "states": {"moving": "run", "idle": "idle"}
-}
-```
+Smooth art from a host image tool, native transparency, one shared scale, feet on one ground line:
 
 ```bash
-python scripts/build_animation_clips.py --manifest clips.json --output-dir output/hero-clips
+python "<skill-dir>/scripts/generate2dsprite.py" process --input raw/hero-idle.png --target asset --mode idle --rows 2 --cols 3 --label-prefix hero-idle --output-dir sprites/hero-idle --background-mode native_alpha --align feet --scale-strategy preserve --cell-size 128 --fit-scale 0.8 --strict-qc --max-body-scale-cv 0.08 --max-anchor-y-std 0.05 --write-scale-profile sprites/hero-scale.json
 ```
 
-This validates same-size still 8-bit RGBA PNGs, explicit durations and one shared root, copies source PNG bytes and creates lossless WebP previews with verified decoded timing. It does not implement a game state machine or approve gait. See [character-animation.md](character-animation.md).
-
-## Whole-frame packaging
+Later actions of the same character reuse that scale profile; pass the drift limit explicitly (a profile stores 0.10 unless you set it):
 
 ```bash
-python scripts/assemble_frames.py --input phase-0.png phase-1.png phase-2.png phase-3.png \
-  --duration 250 --output-dir output/full-frame-loop
+python "<skill-dir>/scripts/generate2dsprite.py" process --input raw/hero-run.png --target asset --mode run --rows 2 --cols 4 --output-dir sprites/hero-run --scale-profile sprites/hero-scale.json --max-profile-scale-drift 0.08 --strict-qc
 ```
 
-Or use `--sheet source.png --rows 2 --cols 2`. Uneven measured layouts can use `--crop-boxes boxes.json`; inspect `--help` for schema. No keying, resize, silhouette crop, alignment or continuity repair occurs. Complete backgrounds remain rectangular. Equal-frame size and native PNG mode are verified; diagnostics are not evidence of a seamless loop. Detailed scene planning belongs to the map skill.
+Pixel art that the generator drew at 8 source pixels per art pixel, keeping its drawn bob and jump:
+
+```bash
+python "<skill-dir>/scripts/generate2dsprite.py" process --input raw/slime-hop.png --target asset --mode idle --rows 2 --cols 2 --output-dir sprites/slime-hop --background-mode native_alpha --resampler nearest --logical-pixel 8 --pixel-scale 2 --scale-strategy registered --align feet --cell-size 96 --strict-qc
+```
+
+- `--target` and `--mode` must match (`list-options` prints the pairs). An unknown mode fails; `--mode sheet` needs `--rows` and `--cols`. `single`, `player` and `npc` modes normalize one image into `clean.png` and run through the same 1x1-grid geometry and QC as a sheet (`--single-size`, default 256 px).
+- `--rows` and `--cols` describe the measured input; they never create missing poses.
+
+## Before strict QC: look at the alpha
+
+Host image tools often leave invisible haze: the 2026-10 fox sheet had 67,907 pixels with alpha 1-4 and made strict QC flag all eight cells. Check the alpha histogram of a native-alpha sheet before trusting edge checks (counts for alpha 0, 1-4, 5-16, 17-31, 32-254 and 255):
+
+```bash
+python -c "import numpy as np; from PIL import Image; a = np.asarray(Image.open('raw/hero-idle.png').convert('RGBA'))[..., 3]; print(np.histogram(a, [0, 1, 5, 17, 32, 255, 256])[0])"
+```
+
+`native_alpha` input gets `--alpha-hygiene both` by default: alpha at or below `--alpha-floor` (4) becomes 0 and faint islands with no solid pixel (alpha 32 or more) within 2 px are removed. The counts are in `pipeline-meta.json` under `hygiene`. Visible art is never changed by hygiene; `--alpha-hygiene none` keeps every pixel.
+
+## Background modes and keying
+
+- `chroma_key` (default) keys a flat key-colour backdrop, then trims `--trim-border` px (4) and cleans `--edge-clean-depth` px (3) of dark or key-coloured pixels at each cell edge. Set both to 0 when the source needs no border repair.
+  - `--key-quality auto` (default) uses the soft still matte for smooth art and the binary magenta keyer for `--resampler nearest`. `soft` keeps anti-aliased edges as partial alpha and un-mixes the key colour out of them; `hard` is the legacy binary keyer, byte for byte; `dominance` is a fast channel-dominance key.
+  - `--key magenta|green|blue` names the backdrop (default magenta). A green or blue key always uses the soft matte, because the binary keyer is magenta-only.
+  - `--despill-radius 1..3` removes key excess within that many pixels of transparency. It can desaturate real purple at an edge; default 0.
+  - Quote the `matte.qa` numbers of `pipeline-meta.json` (opaque key pixels, ring spill share, semi-transparent share, enclosed pockets) when you claim a clean key.
+- `native_alpha` needs real transparent pixels plus visible art and keeps RGBA as delivered, including purple. A painted checkerboard is refused.
+- `opaque` needs fully opaque input and only works for single images. A grid of opaque cells is refused: package complete rectangular frames with `assemble_frames.py` instead.
+
+## Geometry v2
+
+- Measurement counts pixels with alpha above `--alpha-geometry-threshold` (16): components, subject boxes, anchors, edge checks, clamping and the output subject height. The threshold never changes a pixel.
+- Components are 8-connected, so a 1-px diagonal blade or spear stays one piece.
+- The anchor sits on the ground line, the bottom edge of the main component's lowest row, measured on the subject's own box (a held spear cannot become the feet). `--anchor-mode`: `feet` (median support column, the default with `--align feet`), `stance` (middle of the support span; a mirrored pose gets a mirrored anchor, so turns do not slide), `bbox`, `center` (default with `--align center`), `centroid`, or `legacy-p98`.
+- `--anchor-px X,Y` declares the anchor in source-cell pixels for every frame, for sheets drawn on a known registration point (for example an anchor template).
+- Source-edge checks use the unpadded subject box; `--component-padding` only pads the crop of `fit`.
+- Every frame record has `trim_offset` and `source_rect` (the subject box in the input sheet's pixels, `null` for an empty cell), so results map back to the source.
+
+Changed defaults and their legacy switches:
+
+| New default | Legacy switch |
+|---|---|
+| 8-connected components | `--connectivity 4` |
+| anchor on the bottom edge of the lowest stable row | `--anchor-mode legacy-p98` |
+| geometry ignores alpha at or below 16 | `--alpha-geometry-threshold 0` |
+| alpha hygiene `both` for native alpha | `--alpha-hygiene none` |
+| fractional nearest scales refused | `--legacy-fractional-nearest` |
+| soft key for chroma + lanczos | `--key-quality hard` |
+| a profile/flag conflict is an error | `--profile-override` |
+| `--align bottom` is an alias of `feet` (warns) | none |
+
+## Scale strategies and resampling
+
+- `fit` (default) scales each subject box into `--fit-scale` of the cell, per frame or with one `--shared-scale`. It erases drawn motion and size changes; use it for isolated poses and icons.
+- `preserve` uses one scale for the sheet, resamples every cell on the same sampling grid and moves each frame by whole output pixels so its anchor lands on the shared origin. A body part that does not move gets identical pixels in every frame. Frames that would leave the cell are shifted inside and reported as clamped. `geometry.injected_shift_px` in the metadata reports how far the frames were moved relative to each other: that motion is erased.
+- `registered` uses one scale and one offset for every frame: jumps, bob and recoil drawn in the sheet survive. Use it for sheets drawn on a shared registration point; its scale reference ignores airborne frames.
+- `--resampler nearest` keeps pixel-art colours and only accepts whole-pixel scales (N or 1/N). Give `--pixel-scale N` (output pixels per art pixel) and, for art drawn at M source pixels per art pixel, `--logical-pixel M` (the centre of every art pixel is sampled). `qc_summary.pixel_grid_off_edges` counts colour edges off the pixel grid (0 for integer scales). `--legacy-fractional-nearest` restores uneven 1-2 px pixels.
+- `lanczos` (default) suits smooth art; resampling works on premultiplied colour, so soft edges do not darken.
+
+## Sizes that do not divide into the grid
+
+Host image tools return their own canvas: 1254x1254, 1672x941 and 1774x887 are common. `process` refuses a size that does not divide exactly and names the grid as rows x columns. Then either:
+
+- `--grid-rounding nearest`: cell edges are rounded, so cells differ by at most 1 px (1254 px in 4 columns gives 314, 313, 314, 313);
+- `--pad-to-grid`: transparent padding until the grid divides; `geometry.pad_offset` records it and `source_rect` stays in the original image's pixels.
+
+## Components
+
+`--component-mode all` (default) keeps every component; `--min-component-area N` drops specks smaller than N pixels. `largest` keeps only the main component and deletes everything else, including separate swords, hands, ornaments and FX sparks (a probe sheet lost its staff sparks this way and still passed strict QC). Use `all` for pixel art and FX; use `largest` only for one-piece bodies after inspection.
+
+## QC and scale profiles
+
+`--strict-qc` fails on empty frames, clamped frames, output-edge contact and source-edge contact, plus the optional limits below. A failed run publishes nothing; an existing output folder is never touched.
+
+- `--max-body-scale-cv` limits the variation of the visible output subject height across frames (0.08 suits grounded humanoids; crouches, flight and creature posture changes legitimately exceed it).
+- `--max-anchor-y-std` limits the normalized vertical anchor spread (0.05).
+- `--scale-profile` compares the median output subject height with the profile's reference height (`--max-profile-scale-drift`, 0.08 recommended). Version 2 profiles store `reference.output_subject_height_px`; version 1 profiles are still read and keep their old cell-area metric. A flag that differs from the profile is an error unless `--profile-override`; applied values are printed and recorded under `profile_applied`.
+- `--allow-source-edge-touch` accepts a visually reviewed raw contour that touches its cell edge. It never accepts clipped output, clamping or empty frames. Regenerate a cut-off snout, tail or weapon.
+
+Numbers do not prove pose quality, identity, timing or the loop seam; review frames at game size.
+
+## Outputs
+
+The output folder holds `raw-sheet.<ext>` (byte copy of the input; `raw.<ext>` for single images), `raw-sheet-clean.png` (the keyed sheet that was split), one PNG per cell, `sheet-transparent.png`, `animation.gif` or per-row `<direction>-strip.png` and `<direction>.gif`, `prompt-used.txt` when a prompt was given, and `pipeline-meta.json`. On success the command prints one JSON line with the output folder and metadata path.
+
+`pipeline-meta.json` follows `generate2dsprite.pipeline_meta.v2` in [schemas/sprite.schema.json](schemas/sprite.schema.json): geometry, hygiene, provenance (input sha256, Pillow mode, bit depth, conversion), the matte report, per-frame records and a `qa` envelope with every check, its method and what it does not prove. Paths in it are relative to the output folder.
+
+PNGs are the alpha source of truth. GIF previews have binary alpha and store frame times in 10 ms units: `--duration 125` plays as 120 ms, which is printed as a warning and recorded in `gif_decoded_duration_ms`.
+
+`player_sheet` rows are down, left, right, up. `--direction-order` names the facing of each row, top to bottom (for example `down,up,left,right`, or 8-direction names such as `down-left`), and the strips, GIFs and frame names follow it.
+
+## Anchor template and layout guide
+
+Repeat an accepted character into a fixed template that a generator can trace for every pose (same scale, same feet line). It keeps native RGBA, or produces a magenta RGB template from a chroma source:
+
+```bash
+python "<skill-dir>/scripts/make_anchor_layout.py" --input accepted/hero-master.png --rows 2 --cols 4 --cell-width 384 --cell-height 384 --feet-ratio 0.82 --background-mode native_alpha --resampler nearest --output guides/hero-anchor-2x4.png
+```
+
+Draw an empty layout guide with safe frames; each margin must be at least 0 and less than half the cell:
+
+```bash
+python "<skill-dir>/scripts/make_layout_guide.py" --rows 2 --cols 4 --cell-width 384 --cell-height 384 --safe-margin-x 58 --safe-margin-y 58 --output guides/layout-2x4.png
+```
+
+Both refuse an existing output file. Measure the sheet that comes back: when it keeps the template's cell size, its poses share the template's feet point, so process it with `--scale-strategy registered` (or `--anchor-px` at cell width / 2, cell height x feet ratio).
 
 ## Godot Sprite3D (optional)
 
-`process --godot-world-height 0.70` writes `godot-sprite3d.json` with a pixel size derived from reference subject height, source origin converted to Sprite3D offset, frame names and timing. Later actions using the reference profile reuse that pixel size and world height, preserving legitimate crouching/recoil.
+`process --godot-world-height 0.70` writes `godot-sprite3d.json` with a pixel size derived from the visible subject height, the feet origin converted to a Sprite3D offset, frame paths relative to the contract file and the timing. Later actions using the reference profile reuse that pixel size and world height, preserving legitimate crouching and recoil.
 
 ```bash
-python scripts/generate2dsprite.py build-godot-bundle \
-  --action idle=output/idle/godot-sprite3d.json \
-  --action attack=output/attack/godot-sprite3d.json \
-  --default-action idle --one-shot attack --output output/godot-bundle.json
+python "<skill-dir>/scripts/generate2dsprite.py" build-godot-bundle --action idle=sprites/hero-idle/godot-sprite3d.json --action attack=sprites/hero-attack/godot-sprite3d.json --default-action idle --one-shot attack --output sprites/hero-godot-bundle.json
 ```
 
-The bundle rejects incompatible world height or pixel size. Do not compensate for wrong action scale with per-action runtime magnification. Other engines can consume PNGs/clips and the declared origin directly; no Godot requirement applies to this skill.
+The bundle refuses an existing file, contracts whose frames do not resolve and incompatible world height or pixel size. Do not compensate a wrong action scale with per-action runtime magnification. Other engines can consume the PNGs and the declared origin directly.

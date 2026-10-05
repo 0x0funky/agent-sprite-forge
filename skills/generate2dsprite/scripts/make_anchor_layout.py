@@ -1,16 +1,29 @@
 #!/usr/bin/env python3
 """Repeat an accepted character into a fixed template: magenta RGB by default,
 or verified native-alpha RGBA. This is a generation reference, not pose alignment.
+
+The output PNG must be new; it is written beside its destination and published
+without replacing anything. Prints a one-line JSON summary on success.
 """
 
 from __future__ import annotations
 
 import argparse
 import importlib.util
-from pathlib import Path
+import json
+import os
 import sys
+import tempfile
+from pathlib import Path
+from typing import Sequence
 
 from PIL import Image
+
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+import forge_core  # noqa: E402  (this skill's vendored copy)
+
 
 def sprite_helpers():
     """Resolve the sibling processor without relying on cwd or sys.path."""
@@ -98,8 +111,8 @@ def build_anchor_layout(
     return canvas
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--rows", type=int, required=True)
     parser.add_argument("--cols", type=int, required=True)
@@ -114,31 +127,48 @@ def parse_args() -> argparse.Namespace:
                         help="Default chroma_key produces a magenta RGB template. native_alpha requires actual transparency and retains RGBA. opaque is explicitly rejected because no isolated subject can be located.")
     parser.add_argument("--resampler", choices=("nearest", "lanczos"), default="lanczos",
                         help="Default lanczos preserves legacy behavior; nearest keeps the pixel-art palette when resizing.")
-    parser.add_argument("--output", type=Path, required=True)
-    return parser.parse_args()
+    parser.add_argument("--output", type=Path, required=True,
+                        help="New .png file; an existing file is never replaced.")
+    return parser
 
 
-def main() -> None:
-    args = parse_args()
-    with Image.open(args.input) as opened:
-        source = opened.copy()
-    layout = build_anchor_layout(
-        source,
-        rows=args.rows,
-        cols=args.cols,
-        cell_width=args.cell_width,
-        cell_height=args.cell_height,
-        subject_height_ratio=args.subject_height_ratio,
-        subject_width_ratio=args.subject_width_ratio,
-        feet_ratio=args.feet_ratio,
-        threshold=args.threshold,
-        edge_threshold=args.edge_threshold,
-        background_mode=args.background_mode,
-        resampler=args.resampler,
-    )
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    (layout if args.background_mode == "native_alpha" else layout.convert("RGB")).save(args.output)
+def main(argv: Sequence[str] | None = None) -> int:
+    forge_core.utf8_stdio()
+    args = build_parser().parse_args(argv)
+    try:
+        output = args.output.resolve()
+        if output.suffix.lower() != ".png":
+            raise ValueError(f"--output must be a .png file: {output.name}")
+        if os.path.lexists(output):
+            raise FileExistsError(f"Refusing to overwrite existing output: {output}")
+        source, info = forge_core.load_rgba(args.input)
+        layout = build_anchor_layout(
+            source,
+            rows=args.rows,
+            cols=args.cols,
+            cell_width=args.cell_width,
+            cell_height=args.cell_height,
+            subject_height_ratio=args.subject_height_ratio,
+            subject_width_ratio=args.subject_width_ratio,
+            feet_ratio=args.feet_ratio,
+            threshold=args.threshold,
+            edge_threshold=args.edge_threshold,
+            background_mode=args.background_mode,
+            resampler=args.resampler,
+        )
+        image = layout if args.background_mode == "native_alpha" else layout.convert("RGB")
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix=f".{output.name}.", dir=output.parent) as temporary:
+            staged = Path(temporary) / output.name
+            forge_core.save_png(image, staged)
+            forge_core.publish_file_no_replace(staged, output)
+    except (ValueError, OSError, Image.DecompressionBombError) as error:
+        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
+        return 1
+    print(json.dumps({"output": str(output), "size": list(image.size), "mode": image.mode,
+                      "background_mode": args.background_mode, "input_sha256": info["sha256"]}))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
