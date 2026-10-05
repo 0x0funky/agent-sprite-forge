@@ -38,7 +38,7 @@ import validate_stage as vs  # noqa: E402  (the stage library beside this script
 
 
 GUIDE_SCHEMA = "generate2dmap.scene_guide.v1"
-TOOL = {"name": "scene_layout_guide", "version": "1.0"}
+TOOL = {"name": "scene_layout_guide", "version": forge_core.FORGE_PACKAGE_VERSION}
 DEFAULT_FORBIDDEN = (
     "people, characters, creatures or silhouettes",
     "trees, tall shrubs, grass clumps or hedges",
@@ -347,9 +347,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     with forge_core.staged_output(final) as stage_dir:
         forge_core.save_png(guide, stage_dir / "guide.png")
         (stage_dir / "prompt-block.txt").write_bytes(text.encode("ascii"))
-        guide_ref = vs._local_file_ref(stage_dir / "guide.png", stage_dir)
-        prompt_ref = vs._local_file_ref(stage_dir / "prompt-block.txt", stage_dir)
-        stage_ref = vs._local_file_ref(stage_path, final)
+        guide_ref = forge_core.file_ref(stage_dir / "guide.png", stage_dir)
+        prompt_ref = forge_core.file_ref(stage_dir / "prompt-block.txt", stage_dir)
+        stage_ref = forge_core.file_ref(stage_path, final)
         method = ("scene_layout_guide: the stage's UV geometry drawn at sourceSize and restated in whole percent; "
                   "the plan checked with validate_stage's static checks (footprint point-in-polygon tests of every "
                   "slot against ground, landmarks and water; polygon simplicity; effect overlaps).")
@@ -382,18 +382,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = run(args)
-    except (ValueError, OSError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary = run(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 1 if summary["status"] == "fail" else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
+    printed as one error: line, D27), 2 (usage)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 # B15-hd2d-scene-geometry: HD-2D stage validation and aspect layout solver, plate layout guide and prompt block, light extraction with cookie and atmosphere checks, plate-variant locality check, plate and presentation references
 
-Branch `asf/B15-hd2d-scene-geometry` (from `wip/asf-upgrade-20261005` @ 3f9252d). Files:
+Branch `asf/B15-hd2d-scene-geometry` (from `wip/asf-upgrade-20261005` @ 3f9252d), integrated on `asf/integration` and revised in the Phase 3 group pass `asf/int-g-map-scene`. Files:
 [validate_stage.py](../skills/generate2dmap/scripts/validate_stage.py) (CLI and the stage library the other three import),
 [scene_layout_guide.py](../skills/generate2dmap/scripts/scene_layout_guide.py),
 [extract_scene_lights.py](../skills/generate2dmap/scripts/extract_scene_lights.py),
@@ -10,6 +10,14 @@ Branch `asf/B15-hd2d-scene-geometry` (from `wip/asf-upgrade-20261005` @ 3f9252d)
 [tests/test_hd2d_stage.py](../tests/test_hd2d_stage.py) (30 tests),
 [tests/test_scene_lights.py](../tests/test_scene_lights.py) (30) and
 [tests/test_edit_locality.py](../tests/test_edit_locality.py) (18).
+
+## Phase 3 integration (what changed, and why)
+
+The Wave B review (group map-engines-scene) merged B15 without blocking items; this pass applied the conventions and the cheap non-blocking items. Resolved items cite the integration decisions.
+
+- **Conventions (D26-D30).** Every `main(argv)` runs through `forge_core.run_cli` (one `error:` line for any exception, never a traceback, in-process calls too; D27); exit codes are unchanged (0 pass, warn, needs-visual-review; 1 for a failed check with the report published, or an error; 2 usage, D26). Stage, UI-panel, lights, atmosphere and conform JSON is read with `forge_core.read_json(strict=True)` (BOM tolerated; NaN, Infinity and duplicate keys refused; D28). `tool.version` is `0.4.0` (D29). `forge_core.file_ref`, `forge_core.dilate_square` and `forge_core.round_half_up` replaced `_local_file_ref`, `_local_dilate` and the private `round_half_up` (identical results: the same zero-padded summed-area window and the same floor(x + 0.5); `validate_stage.round_half_up` stays as an alias for the three sibling scripts; D30).
+- **Tests on the real schemas (D33).** `requested_errors` in the three test files now validates against the vendored generate2dmap schemas; the in-memory `REQUESTED_*` fragments are gone.
+- **Reviewer non-blocking items.** lights_v1 `flicker`: S1 applied the additive alternative (the object form types `hz`, `depth` and `phase` without requiring `hz`), as the review preferred; extract_scene_lights still refuses a flicker object without `hz` (the parser stays strict). `guide.png` and `light-cookie.png` are opaque RGB, now stated in hd2d-plates.md and hd2d-presentation.md. The detector-tuning note was already documented. The remaining `_local_*` helpers are still promotion requests (section 6).
 
 ## 1. CLIs
 
@@ -32,7 +40,7 @@ Commands run from the user's project root; `<skill-dir>` is `${CLAUDE_SKILL_DIR}
 - `edit_locality_check.py` writes `locality-qa.json` (`generate2dmap.edit_locality.v1`) and `locality-diff.png` (changes red over the dimmed variant, protected regions orange or red, edit boxes green).
 - Every `--help` (and each `extract_scene_lights.py` verb's) is ASCII and exits 0 under cp1252 and cp950 (tested).
 - Success prints one ASCII JSON line: `output_dir`, `metadata` (the main JSON) and the tool's files (`overlay`, `renders`; `guide`, `prompt_block`; `report`, `cookie`, `overlay`, `lights`; `diff`), `status` (the envelope status) and `failed` (ids of failed checks).
-- Exit codes: 0 for pass, warn and needs-visual-review; 1 when a check fails (the report is still published, so the overlays can be inspected); 1 with `error: ...` on stderr and nothing published for bad input, an existing `--output-dir`, or a failed check under `--strict`. argparse usage errors keep argparse's exit 2.
+- Exit codes (D26, D27): 0 for pass, warn and needs-visual-review; 1 when a check fails (the report is still published, so the overlays can be inspected); 1 with `error: ...` on stderr and nothing published for bad input, an existing `--output-dir`, or a failed check under `--strict`; an unexpected exception prints `error: internal error (<Type>: <message>)` with exit 1. argparse usage errors keep argparse's exit 2. JSON inputs are read strictly (D28).
 - All four refuse an existing `--output-dir` and publish through `forge_core.staged_output` only after QA.
 
 ## 2. SKILL.md routing rows
@@ -82,7 +90,9 @@ Processing-notes bullets (generate2dmap):
 
 ## 5. Schema change requests
 
-Producer: B15 (all four tools). Consumers: agents, games, B17's scene preview if it reads stages or lights, B13's map_bundle (it schema-checks `stage`, `lights` and `atmosphere` references). Apply to `shared/schemas/map.schema.json`, then run `python tools/vendor_sync.py --write` (map.schema.json is vendored into generate2dmap and codeart2d). The same fragments are applied in memory by `requested_errors()` in tests/test_hd2d_stage.py (`REQUESTED_MAP_DEFS`, `REQUESTED_STAGE_PROPERTIES`), tests/test_scene_lights.py (`REQUESTED_MAP_DEFS`, `REQUESTED_LIGHTS_PROPERTIES`, `REQUESTED_LIGHT_ITEM_PROPERTIES`) and tests/test_edit_locality.py (`REQUESTED_MAP_DEFS`); every document the tools write validates against them, and the stage, lights and atmosphere documents also validate against the frozen schema unchanged. Once applied, those helpers can become `forge_testutils.assert_valid_contract(..., "map", "<def>", skill="generate2dmap")`.
+Status: applied by the shared stage S1 (commit f3d7eb2) in `shared/schemas/map.schema.json` and vendored, with one adaptation: the lights_v1 `flicker` object form is additive (typed `hz`, `depth`, `phase`; `hz` not required), the alternative offered below and preferred by the review. The tests now validate every document the tools write against the vendored schemas (`requested_errors` = `contract_errors`, D33). The fragments below are kept as the record of what was requested.
+
+Producer: B15 (all four tools). Consumers: agents, games, B17's scene preview if it reads stages or lights, B13's map_bundle (it schema-checks `stage`, `lights` and `atmosphere` references).
 
 5.1 New `$defs` (merge into `/$defs`; nothing existing changes):
 
@@ -972,9 +982,9 @@ In skills/generate2dmap/scripts/validate_stage.py (imported by the other three B
 - `_local_points_in_polygon(points, polygon) -> ndarray[bool]` (validate_stage.py:366): even-odd crossing test vectorised over points, the Appendix C walk-region rule and the reference layout's `inside()`. Proposed `forge_core.points_in_polygon`; B13's map_nav and B17's parity test need exactly this rule. Test: test_points_in_polygon_matches_plain_python.
 - `_local_polygon_mask(polygon_px, size) -> ndarray[bool]` (:384) and `_local_box_mask(box_px, size)` (:400): pixel-centre rasters (half-open boxes), restricted to the polygon's bounding box. Proposed `forge_core.polygon_mask` / `box_mask`; B16's motion masks, B13's nav rasters and B11's `_local_shape_mask` are the same idea. Same test.
 - `_local_box_mean(plane, radius)` (:410): summed-area-table box mean with replicated edges, float64. Proposed `forge_core.box_mean`. Used by light detection and the locality blur.
-- `_local_dilate(mask, radius)` (:422): Chebyshev dilation from a summed-area table; forge_core already has the same as private `_dilate_square`, so making that public (`dilate_mask`) would let this go.
+- `_local_dilate(mask, radius)`: resolved; `forge_core.dilate_square` (D30) is used, with identical results.
 - `_local_max_filter(plane, radius)` (extract_scene_lights.py:111): square-window maximum as two separable passes of shifted maxima, numpy only. Proposed `forge_core.max_filter` (scipy's `maximum_filter` with mode `nearest` gives the same result). Peak detection.
-- `_local_file_ref(path, base, sha256=None) -> dict` (:532): A1's portable-path rule (manifest-relative POSIX; only the file name on another drive). The same request as B11's `_local_file_ref`; proposed `forge_core.file_ref`.
+- `_local_file_ref(path, base, sha256=None) -> dict`: resolved; `forge_core.file_ref` (D30) is used. The private `round_half_up` is now `forge_core.round_half_up` (D30).
 - `_local_qa_envelope(checks, *, method, not_proven, inputs, outputs, tool, visual=False) -> dict` (:541): status fail > warn > needs-visual-review > pass, no createdAt. Proposed `forge_core.qa_envelope`; every Wave B module builds the same envelope.
 
 ## 7. Cross-module links that Z must add
@@ -994,6 +1004,7 @@ In skills/generate2dmap/scripts/validate_stage.py (imported by the other three B
 - Real plates (four owner battle plates, 1672x941, read-only, not in the repo; run by hand): validate_stage placed every actor at all four aspects on the port plate, feet on the dry floor, and the renders matched a visual check. Light extraction with the defaults: the 32 strongest candidates of each plate contain all 11 lights annotated in that game's own stage config (1.2-9.3 px from the hand-placed annotation); on the port plate the 16 strongest were lamps, flames and lit windows on visual inspection, with a few wet-stone highlights. A first version that thresholded one global contrast mask found 5 of 11: lit walls chained the lamps into regions too large to keep, which is why each light is now measured against its own peak; `--min-brightness` 0.7 and `--merge` 0.012 were chosen on these plates (same recall, half the candidates). Window rows, wet-floor glints and reflections still rank among real lights, and a lamp no brighter than its surroundings is missed: the list needs curation (documented, with the `cookie` verb). The 4 px acceptance is proven on synthetic plates (measured 0.1 px or less); the thresholds are tuned on four plates of one game.
 - Edit-locality thresholds (24 levels after a 3x3 blur, 0.2% changed, MAE 3, one component of 0.05% of the image) are synthetic: a bicubic-resized variant compared through a Lanczos resample gave MAE 0.14 and no changed pixel in the protected band, a global 8% darkening MAE 8.8, a 14 px lamp going out a 0.12% change caught by the component rule. Not calibrated on real image-model edits (JPEG blocks, colour drift, sub-pixel shifts).
 - Prompt percentages are whole percent; the guide does not make a generator obey it.
+- `guide.png` (a layout reference for the image model) and `light-cookie.png` (a tint texture) are opaque RGB, not the RGBA of Appendix D; both docs say so.
 - Fonts are Pillow's bundled default: PNG bytes repeat for one Pillow/FreeType/zlib build; across builds compare pixels.
 - Not run: Linux, macOS, Python 3.10, Pillow 10.1, numpy 1.26. Run here: Windows 11, Python 3.13, Pillow 12.3, numpy 2.5, scipy 1.18; the B15 tests also pass with `FORGE_CORE_NO_SCIPY=1`; the four scripts and three test files parse with the Python 3.10 grammar.
 - Deviations from the plan, with reasons:

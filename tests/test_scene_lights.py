@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import (FIXTURES_DIR, SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
-                             script_path)
+from forge_testutils import (FIXTURES_DIR, SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors,
+                             load_script, run_cli, script_path)
 
 SKILL = "generate2dmap"
 LIGHTS = load_script(SKILL, "extract_scene_lights")
@@ -24,82 +24,10 @@ LANTERNS = [(225.3, 158.4), (615.2, 270.6), (832.9, 142.7)]  # true glow centres
 GLOW_RGB = (255, 176, 92)
 COOL_DOT = (480.0, 90.0)
 
-# Schema additions requested in handoff section 5, applied in memory.
-_UNIT = {"type": "number", "minimum": 0, "maximum": 1}
-REQUESTED_LIGHTS_PROPERTIES = {
-    "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-    "plate": {"$ref": "common.schema.json#/$defs/fileRef"},
-    "sourceSize": {"$ref": "common.schema.json#/$defs/size2"},
-    "radiusUnit": {"enum": ["plate-width"]},
-    "ambient": {"$ref": "common.schema.json#/$defs/color"},
-    "cookieSize": {"$ref": "common.schema.json#/$defs/size2"},
-    "cookieSha256": {"$ref": "common.schema.json#/$defs/sha256"},
-}
-REQUESTED_LIGHT_ITEM_PROPERTIES = {
-    "id": {"type": "string", "minLength": 1},
-    "strength": _UNIT,
-    "flicker": {"anyOf": [{"type": "number", "minimum": 0},
-                          {"type": "object", "required": ["hz"],
-                           "properties": {"hz": {"type": "number", "exclusiveMinimum": 0}, "depth": _UNIT,
-                                          "phase": {"type": "number"}}}]},
-}
-REQUESTED_MAP_DEFS = {
-    "lights_qa_v1": {
-        "description": "extract_scene_lights.py report (lights-qa.json): a QA envelope over the plate or the edited "
-                       "lights file, with the detector settings and statistics and each light's measured blob.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "type": "object",
-        "required": ["schema"],
-        "properties": {
-            "schema": {"const": "generate2dmap.lights_qa.v1"},
-            "detector": {"type": "object"},
-            "lights": {"type": "array", "items": {"type": "object", "required": ["id", "u", "v"], "properties": {
-                "id": {"type": "string"}, "u": _UNIT, "v": _UNIT, "strength": _UNIT,
-                "corePx": {"type": "integer", "minimum": 0}, "box": {"$ref": "common.schema.json#/$defs/box"},
-                "touchesEdge": {"type": "boolean"}}}},
-            "rejected": {"type": "array", "items": {"type": "object", "required": ["u", "v", "reason"], "properties": {
-                "u": {"type": "number"}, "v": {"type": "number"}, "strength": {"type": "number"},
-                "reason": {"enum": ["glow hue", "on ground or water"]}}}},
-        },
-    },
-    "atmosphere_qa_v1": {
-        "description": "extract_scene_lights.py atmosphere report (atmosphere-qa.json): a QA envelope over an "
-                       "atmosphere.v1 file with its mote, shaft and mist summary.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "type": "object",
-        "required": ["schema", "summary"],
-        "properties": {
-            "schema": {"const": "generate2dmap.atmosphere_qa.v1"},
-            "summary": {"type": "object", "required": ["moteLayers", "motes", "mobileMotes", "shafts", "mist"],
-                        "properties": {"moteLayers": {"type": "integer", "minimum": 0},
-                                       "motes": {"type": "integer", "minimum": 0},
-                                       "mobileMotes": {"type": "integer", "minimum": 0},
-                                       "shafts": {"type": "integer", "minimum": 0}, "mist": {"type": "boolean"}}},
-        },
-    },
-}
-
 
 def requested_errors(document, name):
-    """Errors against the vendored generate2dmap schemas with the requested additions applied."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    lights = map_schema["$defs"]["lights_v1"]
-    for key, fragment in REQUESTED_LIGHTS_PROPERTIES.items():
-        lights["properties"].setdefault(key, fragment)
-    item = lights["properties"]["lights"]["items"]["properties"]
-    for key, fragment in REQUESTED_LIGHT_ITEM_PROPERTIES.items():
-        item[key] = fragment
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 # --------------------------------------------------------------------------- fixtures

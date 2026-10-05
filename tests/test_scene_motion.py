@@ -21,8 +21,8 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, require_ffmpeg, run_cli,
-                             script_path)
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script,
+                             require_ffmpeg, run_cli, script_path)
 
 
 MOTION = load_script("generate2dmap", "scene_motion")
@@ -31,102 +31,10 @@ AV = MOTION.forge_av
 SCRIPT = script_path("generate2dmap", "scene_motion")
 SKILL = "generate2dmap"
 
-# The documents this module asks integration to add to map.schema.json (handoff section 5), applied in memory.
-_FILE_REF = {"$ref": "common.schema.json#/$defs/fileRef"}
-_SEAM = {"$ref": "common.schema.json#/$defs/seamReport"}
-_FPS = {"$ref": "common.schema.json#/$defs/fpsValue"}
-SCENE_MOTION_V1 = {
-    "description": "scene_motion.py build: scene-motion.json, the record of a masked environment loop on a plate.",
-    "type": "object",
-    "required": ["schema", "plan", "plate", "clip", "registration", "loop", "composite", "video", "poster", "mask",
-                 "encodeAttempts", "qa"],
-    "properties": {
-        "schema": {"const": "generate2dmap.scene_motion.v1"},
-        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-        "plan": {"allOf": [_FILE_REF], "properties": {"document": {"$ref": "#/$defs/motion_plan_v1"}}},
-        "plate": {"allOf": [_FILE_REF], "required": ["size"],
-                  "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"}}},
-        "clip": {"allOf": [_FILE_REF], "required": ["kind", "frames", "size", "fps"],
-                 "properties": {"kind": {"enum": ["video", "frames"]}, "frames": {"type": "integer", "minimum": 1},
-                                "size": {"$ref": "common.schema.json#/$defs/size2"}, "fps": _FPS}},
-        "maskSource": _FILE_REF,
-        "registration": {"type": "object", "required": ["fit", "scale", "offset", "footprint"],
-                         "properties": {"fit": {"enum": ["contain", "cover", "explicit"]},
-                                        "scale": {"type": "number", "exclusiveMinimum": 0},
-                                        "offset": {"$ref": "common.schema.json#/$defs/point2"},
-                                        "footprint": {"$ref": "common.schema.json#/$defs/box"},
-                                        "edgeFadePx": {"type": "number", "minimum": 0},
-                                        "coverageMin": {"type": "number", "minimum": 0, "maximum": 1},
-                                        "shiftEstimates": {"type": "array"}}},
-        "loop": {"type": "object", "required": ["policy", "overlap", "range", "frameCount", "fps", "reversedSteps",
-                                                "frames"],
-                 "properties": {
-                     "policy": {"enum": ["forward-overlap", "pingpong"]},
-                     "overlap": {"type": "integer", "minimum": 0},
-                     "range": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2,
-                               "maxItems": 2},
-                     "frameCount": {"type": "integer", "minimum": 2}, "fps": _FPS,
-                     "durationMs": {"type": "number", "exclusiveMinimum": 0},
-                     "reversedSteps": {"type": "integer", "minimum": 0},
-                     "frames": {"type": "array", "minItems": 2, "items": {
-                         "type": "array", "minItems": 1, "maxItems": 2, "items": {
-                             "type": "array", "prefixItems": [{"type": "integer", "minimum": 0},
-                                                              {"type": "number", "minimum": 0, "maximum": 1}],
-                             "minItems": 2, "maxItems": 2}}}}},
-        "composite": {"type": "object", "required": ["outsideMaskMaxDelta", "sourceSeam"],
-                      "properties": {"outsideMaskMaxDelta": {"const": 0}, "sourceSeam": _SEAM}},
-        "video": {"allOf": [_FILE_REF],
-                  "required": ["codec", "encodedSize", "crop", "crf", "keyint", "closedGop", "keyframes", "fps"],
-                  "properties": {"codec": {"const": "h264"},
-                                 "encodedSize": {"$ref": "common.schema.json#/$defs/size2"},
-                                 "crop": {"$ref": "common.schema.json#/$defs/box"},
-                                 "padding": {"$ref": "common.schema.json#/$defs/padding4"},
-                                 "crf": {"type": "integer", "minimum": 1, "maximum": 51},
-                                 "keyint": {"type": "integer", "minimum": 1}, "closedGop": {"const": True},
-                                 "keyframes": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-                                 "wrapQp": {"type": ["integer", "null"], "minimum": 1, "maximum": 51},
-                                 "wrapFrames": {"type": "integer", "minimum": 0}, "fps": _FPS,
-                                 "decodedPixelsPerSecond": {"type": "number", "exclusiveMinimum": 0}}},
-        "poster": _FILE_REF,
-        "mask": _FILE_REF,
-        "encodeAttempts": {"type": "array", "minItems": 1, "items": {
-            "type": "object", "required": ["crf", "wrapQp", "bytes", "sha256", "decodedSeamOverP95", "status"],
-            "properties": {"status": {"enum": ["pass", "fail"]},
-                           "sha256": {"$ref": "common.schema.json#/$defs/sha256"}}}},
-        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-        "metrics": {"type": "object"},
-        "thresholds": {"type": "object"},
-    },
-}
-SCENE_LOOP_QA_V1 = {
-    "description": "scene_motion.py qa: loop-qa.json, a QA envelope of a decoded scene loop with its metrics.",
-    "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-    "type": "object",
-    "required": ["schema", "metrics", "thresholds"],
-    "properties": {
-        "schema": {"const": "generate2dmap.scene_loop_qa.v1"},
-        "metrics": {"type": "object", "required": ["frames", "keyframes", "decodedSeam", "meanOpacity",
-                                                   "motionEnergy", "leakRing", "regions"],
-                    "properties": {"decodedSeam": _SEAM}},
-        "thresholds": {"type": "object"},
-    },
-}
-
 
 def requested_errors(document, name):
-    """Errors against the vendored generate2dmap schemas plus this module's requested $defs (in memory)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    map_schema["$defs"].setdefault("scene_motion_v1", SCENE_MOTION_V1)
-    map_schema["$defs"].setdefault("scene_loop_qa_v1", SCENE_LOOP_QA_V1)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def smoothstep(value):
@@ -140,6 +48,16 @@ def motion_main(*arguments):
     with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
         status = MOTION.main([str(argument) for argument in arguments])
     return status, stdout.getvalue(), stderr.getvalue()
+
+
+def published_status(status, output, stderr):
+    """D26: a build published with status fail (kept by --allow-seam-fail) exits 1; pass and warn exit 0."""
+    report = json.loads((Path(output) / "scene-motion.json").read_text(encoding="utf-8"))
+    expected = 1 if report["qa"]["status"] == "fail" else 0
+    assert status == expected, f"exit {status}, published status {report['qa']['status']}: {stderr}"
+    if expected:
+        assert "published with status fail" in stderr, stderr
+    return report
 
 
 def _noise(height, width, cell, seed):
@@ -349,9 +267,9 @@ class BuildTests(unittest.TestCase):
         output = self.root / "single-gop"
         status, _stdout, stderr = motion_main(*build_args(self.scene, output, "--ladder", "off",
                                                           "--allow-seam-fail"))
-        self.assertEqual(status, 0, stderr)
+        self.assertEqual(status, 1, stderr)  # D26: published for review with status fail, so exit 1
         self.assertIn("allow-seam-fail", stderr)
-        report = json.loads((output / "scene-motion.json").read_text(encoding="utf-8"))
+        report = published_status(status, output, stderr)
         self.assertEqual(report["qa"]["status"], "fail")
         self.assertEqual(report["video"]["keyframes"], [0])
         qa_dir = self.root / "single-gop-qa"
@@ -372,8 +290,7 @@ class BuildTests(unittest.TestCase):
         self.assertFalse((self.root / "k7").exists())
         output = self.root / "k20"
         status, _stdout, stderr = motion_main(*build_args(self.scene, output, "--keyint", "20", "--allow-seam-fail"))
-        self.assertEqual(status, 0, stderr)
-        report = json.loads((output / "scene-motion.json").read_text(encoding="utf-8"))
+        report = published_status(status, output, stderr)
         self.assertEqual(report["video"]["keyframes"], [0, 20])
         gop = next(check for check in report["qa"]["checks"] if check["id"] == "gop_aligned")
         self.assertEqual(gop["status"], "pass")
@@ -407,8 +324,7 @@ class PolicyTests(unittest.TestCase):
         self.assertFalse((self.root / "out").exists())
         cloth = drifting_scene(self.root / "cloth", frames=12, policy="pingpong", motion="sway")
         status, _stdout, stderr = motion_main(*build_args(cloth, self.root / "cloth-out", "--allow-seam-fail"))
-        self.assertEqual(status, 0, stderr)
-        report = json.loads((self.root / "cloth-out" / "scene-motion.json").read_text(encoding="utf-8"))
+        report = published_status(status, self.root / "cloth-out", stderr)
         self.assertEqual((report["loop"]["frameCount"], report["loop"]["reversedSteps"]), (22, 11))
         forward = next(check for check in report["qa"]["checks"] if check["id"] == "forward_only")
         self.assertEqual(forward["status"], "pass")  # every region is sway
@@ -433,8 +349,7 @@ class PolicyTests(unittest.TestCase):
         status, stdout, stderr = motion_main("build", "--plan", scene / "plan.json", "--plate", scene / "plate.png",
                                              "--clip", scene / "provider.mp4", "--mask", scene / "mask.png",
                                              "--output-dir", output, "--allow-seam-fail")
-        self.assertEqual(status, 0, stderr)
-        report = json.loads((output / "scene-motion.json").read_text(encoding="utf-8"))
+        report = published_status(status, output, stderr)
         registration = report["registration"]
         self.assertEqual((registration["fit"], registration["offset"]), ("contain", [0.0, 0.0]))
         self.assertAlmostEqual(registration["scale"], 192 / 144)
@@ -454,8 +369,7 @@ class PolicyTests(unittest.TestCase):
         status, _stdout, stderr = motion_main("build", "--plan", scene / "plan.json", "--plate", scene / "plate.png",
                                               "--clip", cropped, "--fps", "24", "--mask", scene / "mask.png",
                                               "--output-dir", output, "--allow-seam-fail", "--edge-fade", "8")
-        self.assertEqual(status, 0, stderr)
-        report = json.loads((output / "scene-motion.json").read_text(encoding="utf-8"))
+        report = published_status(status, output, stderr)
         self.assertEqual((report["registration"]["scale"], report["registration"]["offset"]), (1.0, [16.0, 0.0]))
         mask = np.asarray(Image.open(output / "motion-mask.png"))
         source = np.asarray(Image.open(scene / "mask.png"))
@@ -616,7 +530,7 @@ class CliTests(unittest.TestCase):
         scene = drifting_scene(self.root / "scene")
         status, _stdout, stderr = motion_main(*build_args(scene, self.root / "loop", "--ladder", "off",
                                                           "--allow-seam-fail"))
-        self.assertEqual(status, 0, stderr)
+        self.assertEqual(published_status(status, self.root / "loop", stderr)["qa"]["status"], "fail")
         output = self.root / "qa"
         result = run_cli([SCRIPT, "qa", "--report", self.root / "loop" / "scene-motion.json", "--plate",
                           scene / "plate.png", "--output-dir", output, "--strict"], "cp1252")

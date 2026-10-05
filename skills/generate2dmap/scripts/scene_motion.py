@@ -59,7 +59,7 @@ import forge_core  # noqa: E402
 
 REPORT_SCHEMA = "generate2dmap.scene_motion.v1"
 LOOP_QA_SCHEMA = "generate2dmap.scene_loop_qa.v1"
-TOOL = {"name": "scene_motion", "version": "1.0.0"}
+TOOL = {"name": "scene_motion", "version": forge_core.FORGE_PACKAGE_VERSION}
 DEFAULT_CRF = 18
 DEFAULT_EDGE_FADE = 24.0
 WRAP_FRAMES = 8
@@ -791,7 +791,10 @@ def cmd_qa(args: argparse.Namespace) -> dict[str, Any]:
     report = None
     base = Path.cwd()
     if args.report is not None:
-        report = json.loads(Path(args.report).read_text(encoding="utf-8"))
+        try:
+            report = forge_core.read_json(args.report, strict=True)  # D28
+        except ValueError as error:
+            raise ValueError(f"{Path(args.report).name} is not valid JSON ({error}).") from None
         if not isinstance(report, dict) or report.get("schema") != REPORT_SCHEMA:
             raise ValueError(f"{Path(args.report).name} is not a {REPORT_SCHEMA} report.")
         base = Path(args.report).resolve().parent
@@ -926,21 +929,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = cmd_build(args) if args.verb == "build" else cmd_qa(args)
-    except (ValueError, OSError, forge_av.ForgeAVError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
-    except Exception as error:  # never show a traceback to the user
-        print(f"error: unexpected {type(error).__name__}: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+    summary = cmd_build(args) if args.verb == "build" else cmd_qa(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
+    if args.verb == "build" and summary["qa_status"] == "fail":  # D26: kept by --allow-seam-fail, still a failure
+        print(f"error: the loop was published with status fail for review (--allow-seam-fail); see "
+              f"{forge_core.ascii_text(summary['metadata'])}", file=sys.stderr)
+        return 1
     return 1 if args.verb == "qa" and summary["status"] == "fail" else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
+    printed as one error: line, D27), 2 (usage)."""
+    return forge_core.run_cli(_main, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (forge_av.ForgeAVError,))
 
 
 if __name__ == "__main__":

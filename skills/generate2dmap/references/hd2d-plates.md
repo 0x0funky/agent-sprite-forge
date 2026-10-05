@@ -11,7 +11,7 @@ Commands run from the user's project root; `<skill-dir>` is this skill's folder 
 
        python "<skill-dir>/scripts/scene_layout_guide.py" --stage plan/stage.json --output-dir plan/guide-v1
 
-3. Generate the plate with `guide.png` attached as a layout reference and `prompt-block.txt` pasted into the prompt (section 4). Measure the returned size; a requested size is not a returned size.
+3. Generate the plate with `guide.png` attached as a layout reference and `prompt-block.txt` pasted into the prompt (section 4). `guide.png` is an opaque RGB image (a reference for the image model, not a layer to composite). Measure the returned size; a requested size is not a returned size.
 4. Set `sourceSize` to the real size and `plate` to the file, look at the painting, and move polygons, slots and regions onto what was actually painted. UV values survive a resize of the same aspect.
 5. Validate the stage and look at every render:
 

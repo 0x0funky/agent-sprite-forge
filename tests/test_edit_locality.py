@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli, script_path
+from forge_testutils import assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli, script_path
 
 SKILL = "generate2dmap"
 LOCALITY = load_script(SKILL, "edit_locality_check")
@@ -18,57 +18,10 @@ BAND = "0.62:1"
 BAND_ID = "protected band y0.62-1 unchanged"
 EDIT_BOX = "0.6,0.2,0.75,0.4"
 
-REQUESTED_MAP_DEFS = {
-    "edit_locality_v1": {
-        "description": "edit_locality_check.py report (locality-qa.json): a QA envelope comparing a plate variant "
-                       "with its master through a recorded transform (out = (src - src_rect[0:2]) * scale); per "
-                       "protected region, outside the edit boxes and overall: changed pixels and fraction, mean "
-                       "absolute difference, p99 and the largest change components.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "type": "object",
-        "required": ["schema", "transform", "comparison", "regions"],
-        "properties": {
-            "schema": {"const": "generate2dmap.edit_locality.v1"},
-            "transform": {"type": "object", "required": ["kind", "scale", "src_rect", "out_size"], "properties": {
-                "kind": {"enum": ["identity", "conform", "cover", "stretch"]},
-                "scale": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2,
-                          "maxItems": 2},
-                "src_rect": {"$ref": "common.schema.json#/$defs/box"},
-                "out_size": {"$ref": "common.schema.json#/$defs/size2"},
-                "map": {"type": "string"}}},
-            "comparison": {"type": "object", "required": ["space", "size", "blur", "pixelThreshold", "exact"],
-                           "properties": {"space": {"enum": ["before", "after"]},
-                                          "size": {"$ref": "common.schema.json#/$defs/size2"},
-                                          "blur": {"type": "integer", "minimum": 0},
-                                          "pixelThreshold": {"type": "number", "minimum": 0},
-                                          "exact": {"type": "boolean"}}},
-            "regions": {"type": "array", "items": {
-                "type": "object", "required": ["id", "origin", "kind", "uv", "status"],
-                "properties": {"id": {"type": "string", "minLength": 1}, "origin": {"enum": ["stage", "cli"]},
-                               "kind": {"enum": ["polygon", "box"]},
-                               "uv": {"anyOf": [{"$ref": "#/$defs/uvBox"}, {"$ref": "#/$defs/uvPolygon"}]},
-                               "status": {"enum": ["pass", "fail", "skipped"]}}}},
-            "editBoxes": {"type": "array", "items": {"$ref": "#/$defs/uvBox"}},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-        },
-    },
-}
-
 
 def requested_errors(document, name):
-    """Errors against the vendored generate2dmap schemas with REQUESTED_MAP_DEFS applied."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 # --------------------------------------------------------------------------- fixtures

@@ -1,11 +1,20 @@
 # B16-hd2d-scene-motion: masked environment motion on static plates (build_motion_mask, scene_motion build and decoded-file qa, background-scenes.md)
 
-Branch `asf/B16-hd2d-scene-motion`, from `wip/asf-upgrade-20261005` @ 3f9252d. Files:
+Branch `asf/B16-hd2d-scene-motion`, from `wip/asf-upgrade-20261005` @ 3f9252d, integrated on `asf/integration` and revised in the Phase 3 group pass `asf/int-g-map-scene`. Files:
 
 - [build_motion_mask.py](../skills/generate2dmap/scripts/build_motion_mask.py) (B16-T1).
 - [scene_motion.py](../skills/generate2dmap/scripts/scene_motion.py): `build` (B16-T2) and `qa` (B16-T3).
 - [background-scenes.md](../skills/generate2dmap/references/background-scenes.md), rewritten (B16-T4).
 - [tests/test_motion_mask.py](../tests/test_motion_mask.py) (23 tests) and [tests/test_scene_motion.py](../tests/test_scene_motion.py) (29 tests; 21 carry the `ffmpeg` marker and skip without ffmpeg/ffprobe).
+
+## Phase 3 integration (what changed, and why)
+
+The Wave B review (group map-engines-scene) merged B16 without blocking items; this pass applied the conventions and the cheap non-blocking items. Resolved items cite the integration decisions.
+
+- **Exit codes (D26, D27).** `scene_motion.py build --allow-seam-fail` still publishes a loop whose decoded seam fails (status `fail`, for review), and now exits 1 after publishing, with `error: the loop was published with status fail ...` on stderr, like every tool whose published report fails. Both tools' `main(argv)` run through `forge_core.run_cli` with `forge_av.ForgeAVError` as an expected error (one `error:` line, never a traceback, in-process calls too).
+- **Conventions (D28-D30).** Plan and build-report JSON is read with `forge_core.read_json(strict=True)` (BOM tolerated; NaN, Infinity and duplicate keys refused); `tool.version` is `0.4.0`; `build_motion_mask.file_ref` is `forge_core.file_ref`, and a frame folder's path uses `forge_core.manifest_path`.
+- **Tests on the real schemas (D33).** `requested_errors` in both test files validates against the vendored generate2dmap schemas; the in-memory fragments are gone. S1 expressed `motion_plan_v1.registration`'s scale/offset dependency with `allOf` + `if`/`then` instead of `dependentRequired` (same meaning).
+- **Reviewer non-blocking items.** The temporary disk the build needs (full-plate PPM work frames, about 330 MB for a 136-frame 1280x720 loop) is stated in background-scenes.md and section 8. The forge_av promotion of the wrap-QP encoder (section 6.1) is still pending in A5's shared module; the GOP-alignment deviation is unchanged and documented. `--allow-seam-fail` now follows D26 (above).
 
 ## 1. CLIs
 
@@ -39,7 +48,7 @@ Writes `motion-mask.png` (8-bit L), `mask-overlay.png` (cyan motion, red protect
 | `--fit`, `--transform`, `--fps` | As above. |
 | `--crf N`, `--keyint N` | Default `plan.encode`, else crf 18 and one GOP per loop; crf 1-51; keyint must divide the loop length. |
 | `--ladder auto\|off` | auto: after a failed decoded seam, retry with wrap QP crf-8, then crf-12, then crf-14 (on each keyframe and the 8 frames before it), then crf-4 with wrap QP crf-16 (QP at least 1). |
-| `--allow-seam-fail` | Publish a loop whose seam still fails, marked `fail` (exit 0 with a warning). |
+| `--allow-seam-fail` | Publish a loop whose seam still fails, marked `fail`, for review; exit 1 after publishing (D26). |
 | `--edge-fade 24` | Fade inside clip edges that do not reach the plate border. |
 | `--max-seam-ratio 1.0`, `--warn-mean-opacity 0.07`, `--warn-motion-energy 2.0`, `--warn-leak 0.5`, `--warn-protected 0.5`, `--ring-px 4` | Decoded-QA gates (shared with `qa`). |
 
@@ -57,7 +66,7 @@ Writes `loop.mp4` (H.264 Main, closed GOPs aligned to the loop, BT.709, faststar
 
 Writes `loop-qa.json` (`generate2dmap.scene_loop_qa.v1`) and `seam-diff.png` (wrap difference x8 inside the mask). Exits 1 when the status is `fail` (the report is still published unless `--strict`). Summary keys: `output_dir`, `metadata`, `seam_diff`, `status`, `decoded_seam_over_p95`.
 
-Both tools: errors print `error: ...` to stderr with exit 1, warnings print `warning: ...`; success prints one ASCII JSON line. `--help` (and `build --help`, `qa --help`) is ASCII and exits 0 under cp1252 and cp950 (tested).
+Both tools: errors print `error: ...` to stderr with exit 1 (an unexpected exception prints `error: internal error (<Type>: <message>)`, D27), usage errors exit 2, warnings print `warning: ...`; success prints one ASCII JSON line. A build published with status `fail` (`--allow-seam-fail`) exits 1 (D26). `--help` (and `build --help`, `qa --help`) is ASCII and exits 0 under cp1252 and cp950 (tested).
 
 ## 2. SKILL.md routing rows
 
@@ -96,7 +105,9 @@ Requirements row: `scene_motion.py` needs ffmpeg 5.1+ with libx264 (forge_av); `
 
 ## 5. Schema change requests
 
-All against `shared/schemas/map.schema.json` (then `python tools/vendor_sync.py --write`). Producer: B16 (`build_motion_mask.py`, `scene_motion.py`). Consumers: agents, Z docs and the integration e2e (Appendix I, pipeline 5). Both test files apply these exact fragments in memory (`requested_errors()`) and validate every document the tools write against them. They are additive, so every existing fixture stays valid.
+Status: applied by the shared stage S1 (commit f3d7eb2) in `shared/schemas/map.schema.json` and vendored; `motion_plan_v1.registration`'s `dependentRequired` was written as `allOf` + `if`/`then` (same meaning). Both test files now validate every document the tools write against the vendored schemas (D33). The fragments below are kept as the record of what was requested.
+
+Producer: B16 (`build_motion_mask.py`, `scene_motion.py`). Consumers: agents, Z docs and the integration e2e (Appendix I, pipeline 5).
 
 1. Optional plan fields read by both tools (`motion_plan_v1` stays open; these document and type them).
 
@@ -443,6 +454,7 @@ Optional fields the producers write beyond these fragments (objects are open; li
 - The suite's QA evidence is synthetic (sub-pixel drifting texture in a water band, generated in the tests); it has no real provider clip, because no video fixture with provenance exists. Real footage was checked by hand only, reading the owner's files and writing to a scratch folder: `qa` on the shipped M02 lake loop (a single-GOP crossfade, 1280x720, 120 frames) reports `decoded_seam` 2.04 x p95 (fail; the study measured 2.2 inside the mask), mean opacity 0.1146 (the study's 0.1146), motion energy 7.1 and `leak_ring` 1.96 (warn: that file was never composited, so the plate moves outside the mask). `build` on the same native clip gives a pre-encode seam of 0.25 and passes at rung 2 (crf 18, wrap QP 6: 0.73, 1.98 MB). `qa --report` on that output passes every check (leak ring 0.002, poster swap 0.0). The build also flags a 1 px vertical registration shift, which is real: the plate was stretched to 1280x720 here, while the provider input had been scaled uniformly to 1280x721 and cropped. The thresholds rest on one project's loops and on these synthetic cases: seam 1.0, mean opacity 0.07, motion energy 2.0, leak ring and protected drift 0.5, still floor 0.05 and tolerance 1.0, envelope 10 luma levels.
 - x264 output differs between builds, so seam numbers vary by machine; the tests assert outcomes with wide margins (rung 0 above 1.6, rung 1 near 0.6). Only Windows 11 was run, with Python 3.13.2, numpy 2.5.3, Pillow 12.3.0, scipy 1.18.1 and ffmpeg 8.0.1 (gyan full build). The new files parse with the Python 3.10 grammar. Linux, macOS, Python 3.10 and Pillow 10.1 were not run.
 - The wrap-quality encode depends on forge_av private names until request 6.1 is applied.
+- `--allow-seam-fail` publishes a failing loop for review and exits 1 (D26); scripts that chain the build must treat exit 1 with a published folder as "kept for review", not as "nothing written".
 - Registration is one fixed uniform transform. The shift check searches whole-pixel translations within 2 px on the static areas of three frames (a larger shift is flagged but its size is clipped); provider zoom or rotation drift is not modelled. The envelope uses luma only, so a hue change at constant luma is not detected.
 - Per-region QA uses each region's plan geometry, not the envelope-grown shape. Motion admitted by the envelope counts in the global figures only.
 - The QA composite is decoded x mask + plate x (1 - mask), the masked-overlay runtime. Full-frame playback is covered only by the leak ring and the protected-core drift. Playback in browsers, engines, Safari and on iPhone, decoder throughput and memory are not proven.
