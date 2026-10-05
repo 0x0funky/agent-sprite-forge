@@ -540,6 +540,17 @@ class SoftRegionTests(unittest.TestCase):
         self.assertEqual(len(areas), 9)
         self.assertLess(sum(areas), 0.6 * sheet.shape[0] * sheet.shape[1])
 
+        specks = np.zeros((512, 512, 4), np.uint8)
+        specks[...] = (255, 0, 255, 255)
+        for y in range(10, 512, 48):
+            for x in range(10, 512, 48):
+                specks[y:y + 4, x:x + 4, :3] = (40, 90, 150)  # 121 separate groups: one whole-sheet call
+        areas.clear()
+        with mock.patch.object(fm, "soft_matte", side_effect=record):
+            result = G._local_soft_matte_regions(specks, fm.STILL_KEY_PARAMS, key)
+        self.assertEqual(areas, [512 * 512])
+        np.testing.assert_array_equal(result, original(specks, fm.STILL_KEY_PARAMS, key))
+
 
 if __name__ == "__main__":
     unittest.main()

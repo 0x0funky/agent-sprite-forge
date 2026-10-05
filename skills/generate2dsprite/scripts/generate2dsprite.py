@@ -589,6 +589,7 @@ _LUMA_ROW_SQ = 0.299 ** 2 + 0.587 ** 2 + 0.114 ** 2
 _CHROMA_ROWS_SQ = 0.168736 ** 2 + 0.331264 ** 2 + 0.5 ** 2 + 0.5 ** 2 + 0.418688 ** 2 + 0.081312 ** 2
 _REGION_TILE = 16
 _REGION_MARGIN = 32
+_REGION_MAX_GROUPS = 64  # more groups (a noisy backdrop) cost more in per-call overhead than they save
 
 
 def _local_soft_matte_regions(pixels: np.ndarray, params: forge_matte.KeyParams, key_rgb: np.ndarray) -> np.ndarray:
@@ -601,7 +602,8 @@ def _local_soft_matte_regions(pixels: np.ndarray, params: forge_matte.KeyParams,
     group of content tiles is matted inside its box plus a 32 px margin, and
     only that group's own tiles are copied back. Every other pixel is
     background, (0, 0, 0, 0), exactly as a whole-sheet matte leaves it. Falls
-    back to one whole-sheet call when the groups cover most of the sheet.
+    back to one whole-sheet call when the groups cover most of the sheet or
+    are too many (a noisy backdrop).
     """
     height, width = pixels.shape[:2]
     # Conservative: pixels a little inside the safe distance also count as content.
@@ -619,6 +621,8 @@ def _local_soft_matte_regions(pixels: np.ndarray, params: forge_matte.KeyParams,
     if not tile_mask.any():
         return out
     labels, count = forge_core.label_components(tile_mask, 8)
+    if count > _REGION_MAX_GROUPS:
+        return forge_matte.soft_matte(pixels, params, key_rgb)
     groups = []
     for label in range(1, count + 1):
         rows, cols = np.nonzero(labels == label)
