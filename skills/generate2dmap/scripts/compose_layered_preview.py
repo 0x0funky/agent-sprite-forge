@@ -838,16 +838,21 @@ def load_bundle(path: Path, geometry: Geometry, base_size: tuple[int, int], scal
 def _load_collision(path: Path, geometry: Geometry, kx: float, ky: float) -> None:
     """The bundle's D2 blocking set as the vendored forge_nav reads it (D2, D4): actor feet are judged
     on it, and the overlay draws it (solids, rects, object footprints and tile collision). A bundle
-    forge_nav cannot read keeps compose's own parse of it, with a warning."""
+    without a collision block still blocks with its footprints, tile collision and materials: it is
+    read with a point actor (actorRadius 0), as export_godot reads it. A bundle forge_nav cannot read
+    is an error: the audit never judges feet on another model (review r2, finding 6)."""
     try:
-        blocking = forge_nav.read_blocking_set(path)
+        document = forge_nav.read_json(path)
+        point_actor = isinstance(document, dict) and document.get("collision") is None
+        if point_actor:
+            document = {**document, "collision": {"actorRadius": 0}}
+        blocking = forge_nav.blocking_set_from_document(document, path.parent)
     except (forge_nav.NavError, OSError, ValueError) as error:
-        geometry.collision_note = f"compose's own parse of {path.name} (forge_nav cannot read it: {error})"
-        geometry.warnings.append(f"{path.name}: forge_nav cannot read its collision ({error}); actor feet are "
-                                 "checked against compose's own parse of the bundle instead of the D2 blocking set.")
-        return
+        raise ValueError(f"{path.name}: forge_nav cannot read its collision ({error}); run map_bundle.py validate "
+                         "first (actor feet are judged only on the bundle's D2 blocking set)") from None
     geometry.collision = blocking
-    geometry.collision_note = f"forge_nav D2 blocking set of {path.name}"
+    geometry.collision_note = (f"forge_nav D2 blocking set of {path.name}"
+                               + (" (no collision block: a point actor, actorRadius 0)" if point_actor else ""))
     geometry.solids = [_canvas_solid(solid, kx, ky) for solid in blocking.solids]
 
 
@@ -1006,8 +1011,8 @@ def _shape_hits(model: forge_nav.CollisionModel, xs: np.ndarray, ys: np.ndarray)
 @dataclass
 class FeetModel:
     """What actor feet are judged against: the bundle's D2 set in world pixels (kind "bundle",
-    forge_nav, D4), or the canvas with the stage ground polygons, compose's own parse of a bundle
-    and the solid placement footprints (kind "canvas"), with the same closed-set rules (D1)."""
+    forge_nav, D4; always with --bundle), or without a bundle the canvas with the stage ground
+    polygons and the solid placement footprints (kind "canvas"), with the same closed-set rules (D1)."""
     kind: str
     model: forge_nav.CollisionModel
     to_model: tuple[float, float]  # multiply a placement position (base pixels) by this
