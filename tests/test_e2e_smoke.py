@@ -315,7 +315,7 @@ class PipelineTests(unittest.TestCase):
         for name in ("walker16x24.pixelspec.json", "hero.anim.json", "hero.rig.svg", "slash.fx.json"):
             shutil.copyfile(SKILLS_DIR / "codeart2d" / "examples" / name, art / name)
         rendered = p.run("codeart2d", "render_pixelspec", "--spec", "art/walker16x24.pixelspec.json", "--output-dir",
-                         "work/walker", "--build-clips", "--strict-qc")
+                         "work/walker", "--build-clips", "--strict-qc", "--allow-duplicate-half-cycle")
         self.assertEqual(rendered["qa"], "pass")
         bundles = sorted((p.root / "work" / "walker").glob("*/bundle/animation-clips.json"))
         self.assertEqual(len(bundles), len(rendered["variants"]))

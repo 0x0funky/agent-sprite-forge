@@ -277,6 +277,59 @@ def test_walker_example_builds_four_direction_walk_clips(tmp_path, capsys):
     assert set(bottoms) == {spec["anchor_px"][1]}, "every frame stands on the shared root"
 
 
+def _gait_check(meta: dict) -> dict | None:
+    return next((check for check in meta["qa"]["checks"] if check["id"] == "half_cycle_duplicates"), None)
+
+
+def test_walk_and_run_clips_warn_on_duplicate_half_cycles(tmp_path, capsys):
+    """Live validation 2026-10-06: the Codex fox run had half-cycle frames 0/4 and 3/7 at IoU 0.97 and 0.95,
+    and the pixel gates passed it. Walk/run clips now warn (published, exit 0, even with --strict-qc) unless
+    --allow-duplicate-half-cycle records that the leg colours carry the stride."""
+    out = tmp_path / "warned"
+    code, stdout, stderr = render(capsys, "--spec", WALKER, "--output-dir", out, "--strict-qc")
+    assert code == 0, stderr
+    line = summary_of(stdout)
+    assert line["qa"] == "warn" and line["warned_checks"] == ["half_cycle_duplicates"] and line["failed_checks"] == []
+    assert "warning: half_cycle_duplicates: walk_down 0/2 (IoU 1.00)" in stderr and "value contrast" in stderr
+    meta = read_json(out / "codeart-meta.json")
+    assert_valid_contract(meta, "codeart", "codeart_meta_v1", skill="codeart2d")
+    check = _gait_check(meta)
+    assert check["status"] == "warn" and check["value"] == 1.0 and check["threshold"] == 0.95
+    assert {row["clip"] for row in check["detail"]["clips"]} == {"walk_down", "walk_up", "walk_right", "walk_left"}
+    assert all(len(row["pairs"]) == 2 for row in check["detail"]["clips"])
+
+    allowed = tmp_path / "allowed"
+    code, stdout, stderr = render(capsys, "--spec", WALKER, "--output-dir", allowed, "--allow-duplicate-half-cycle")
+    assert code == 0 and summary_of(stdout)["qa"] == "pass" and "half_cycle" not in stderr
+    check = _gait_check(read_json(allowed / "codeart-meta.json"))
+    assert check["status"] == "pass" and check["override"] == "--allow-duplicate-half-cycle" and check["failing"]
+
+
+def test_half_cycle_check_only_judges_walk_and_run_clips(tmp_path, capsys):
+    poses = {"p0": ["aa..", "aa..", "aa.."], "p1": [".aa.", ".aa.", ".aa."], "p2": ["..aa", "..aa", "..aa"],
+             "p3": ["aaaa", "a..a", "a..a"]}
+    frames = [{"name": f"f{i}", "layers": {"body": {"rows": f"p{i}"}}} for i in range(4)]
+    clip = {"frames": ["f0", "f1", "f2", "f3"], "duration_ms": 100, "loop": True}
+    spec = small_spec(poses=poses, frames=frames, outline={"mode": "none"},
+                      layers=[{"name": "body", "origin": [4, 4], "rows": "p0"}])
+    spec["clips"] = {"hero-run": clip}
+    code, stdout, stderr = render(capsys, "--spec", write_spec(tmp_path, spec), "--output-dir", tmp_path / "run")
+    assert code == 0 and summary_of(stdout)["qa"] == "pass", stderr
+    check = _gait_check(read_json(tmp_path / "run" / "codeart-meta.json"))
+    assert check["status"] == "pass" and check["value"] < 0.95 and check["detail"]["clips"][0]["clip"] == "hero-run"
+    # a state named for a walk marks its clip; a spin clip with the same frames is never judged
+    spec["clips"] = {"cycle": clip, "spin": dict(clip, frames=["f0", "f1", "f0", "f1"])}
+    spec["states"] = {"walking": "cycle"}
+    code, stdout, _ = render(capsys, "--spec", write_spec(tmp_path, spec, "b.json"), "--output-dir", tmp_path / "b")
+    check = _gait_check(read_json(tmp_path / "b" / "codeart-meta.json"))
+    assert code == 0 and [row["clip"] for row in check["detail"]["clips"]] == ["cycle"]
+    del spec["states"]
+    code, stdout, _ = render(capsys, "--spec", write_spec(tmp_path, spec, "c.json"), "--output-dir", tmp_path / "c")
+    assert code == 0 and _gait_check(read_json(tmp_path / "c" / "codeart-meta.json")) is None
+    assert RENDER.GAIT_NAME.search("walk_right") and RENDER.GAIT_NAME.search("Running")
+    assert not RENDER.GAIT_NAME.search("rune") and not RENDER.GAIT_NAME.search("crawler")
+
+
 def test_legacy_schema_alias_still_renders(tmp_path, capsys):
     code, _, stderr = render(capsys, "--spec", LEGACY_SLIME, "--output-dir", tmp_path / "legacy", "--variants", "red")
     assert code == 0, stderr

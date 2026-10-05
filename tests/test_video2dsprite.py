@@ -215,6 +215,21 @@ def test_strict_matte_failure_publishes_nothing(tmp_path, capsys):
     assert summary(stdout)["status"] == "fail" and len(list(out.glob("clean_*.png"))) == 3
 
 
+def test_clean_accepts_raw_named_frames(tmp_path, capsys):
+    """Live validation 2026-10-06: a folder of raw_*.png gave 'no raw frames'; frame_*.png still wins."""
+    raw = tmp_path / "raw"
+    raw.mkdir()
+    for index, rgb in enumerate(subject_frames(2)):
+        Image.fromarray(rgb).save(raw / f"raw_{index:04d}.png")
+    code, stdout, stderr = run_main(["clean", "--raw-dir", raw, "--output-dir", tmp_path / "clean"], capsys)
+    assert code == 0, stderr
+    assert summary(stdout)["frames"] == 2 and len(list((tmp_path / "clean").glob("clean_*.png"))) == 2
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    code, _, stderr = run_main(["clean", "--raw-dir", empty, "--output-dir", tmp_path / "c2"], capsys)
+    assert code == 1 and "frame_*.png or raw_*.png" in stderr
+
+
 def test_old_out_dir_spelling_and_one_line_summary(tmp_path, capsys):
     """--out-dir still works; the summary names the output and metadata paths (report v2 P1-7)."""
     raw = write_raw_frames(tmp_path / "raw", subject_frames(4))

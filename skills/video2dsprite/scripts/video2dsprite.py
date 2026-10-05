@@ -997,7 +997,7 @@ def key_frames(raw_dir: Path, clean_dir: Path, settings: MatteSettings = MatteSe
                reference: np.ndarray | None = None, profile: dict | None = None,
                despill_sample: tuple[list, list] | None = None, tool: str = "video2dsprite.py clean",
                log: Callable[[str], None] | None = None, workers: int | None = None) -> dict:
-    """Key ``raw_dir/frame_*.png`` into ``clean_dir/clean_0000.png`` onwards and write matte-report.json.
+    """Key ``raw_dir/frame_*.png`` (or ``raw_*.png`` when there is no frame_*.png) into ``clean_dir/clean_0000.png`` onwards and write matte-report.json.
 
     The clip is planned first (key per frame, native alpha, the auto interior
     despill rule), then keyed one frame at a time: matte, enclosed pockets,
@@ -1015,9 +1015,9 @@ def key_frames(raw_dir: Path, clean_dir: Path, settings: MatteSettings = MatteSe
     """
     settings.validate()
     raw_dir, clean_dir = Path(raw_dir), Path(clean_dir)
-    paths = sorted(raw_dir.glob("frame_*.png"))
+    paths = sorted(raw_dir.glob("frame_*.png")) or sorted(raw_dir.glob("raw_*.png"))
     if not paths:
-        raise FrameInputError(f"no raw frames in {raw_dir}")
+        raise FrameInputError(f"no raw frames in {raw_dir} (expected frame_*.png or raw_*.png)")
     _ensure_dir(clean_dir)
     if any(clean_dir.glob("clean_*.png")) or (clean_dir / MATTE_REPORT).exists():
         raise FileExistsError(f"{clean_dir} already holds keyed frames; key into a new directory")
@@ -1847,8 +1847,8 @@ def build_parser() -> argparse.ArgumentParser:
     add_trim(pe)
     pe.set_defaults(func=cmd_extract)
 
-    pc = sub.add_parser("clean", help="chroma-key raw frames")
-    pc.add_argument("--raw-dir", required=True)
+    pc = sub.add_parser("clean", help="chroma-key raw frames (frame_*.png or raw_*.png; one frame keys a still)")
+    pc.add_argument("--raw-dir", required=True, help="folder of frame_*.png (extract output) or raw_*.png, in name order")
     add_output(pc, "clean_0000.png onwards and matte-report.json")
     add_matte(pc)
     pc.set_defaults(func=cmd_clean)

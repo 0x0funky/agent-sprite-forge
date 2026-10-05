@@ -176,7 +176,11 @@ python "<skill-dir>/scripts/pixel_qa.py" --input "out/slime-v1/green/frames/*.pn
   frame; walk bob moves the head and body layers, not the feet.
 - Build animation from poses plus small frame overrides; a walk cycle needs only the
   contact and passing poses, and passing frames repeat (they are stored once).
-- Give far limbs a darker shade so the stride reads (the walker's far leg uses `P`).
+- Give far limbs a clearly darker shade so the stride reads (the walker's far leg uses `P`); in side-view
+  walk and run cycles the near and far legs need a clear value contrast and the arms or forelegs stay
+  visible. A walk/run clip whose frame i and i+n/2 share a silhouette (IoU >= 0.95) gets a
+  `half_cycle_duplicates` warning; the walker's passing poses repeat by design, so its clips pass
+  `--allow-duplicate-half-cycle` after a look at the review sheet.
 - Keep rows the same length inside a pose so the art stays aligned in diffs.
 - Read the review sheet at 1x and 2x before adding detail; at 16 to 32 px every pixel
   is a decision.
