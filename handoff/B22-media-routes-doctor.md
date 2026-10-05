@@ -190,7 +190,7 @@ generate2dmedia vendors no forge_core (and forge_core imports numpy, which the s
 - `.gitignore`: `.forge/` (also requested by A4) now also holds `cli-runs/`, `route-checks/` and `route-proofs.json`.
 - Owner decision 14 live validation: the per-project session cap (8 images, 2 videos per 12 h) is lower than the validation's caps (Codex 10 images, Grok 4 images, 4 videos); set `FORGE_SESSION_IMAGES` / `FORGE_SESSION_VIDEOS` for that run, or use one project folder per task.
 - Z-T5 `test_skill_packages`: exclude `references/agent-profiles/*.md` from any SKILL.md frontmatter allowlist (it is a Grok agent profile); `test_cli_encoding` should include `forge_doctor.py`, `cli_media.py` and `tools/install_skills.py`.
-- Z-T8 evals: "never treat an installed Grok/Codex CLI as a connected tool", "no CLI route without consent", "never reuse a Grok login for REST".
+- Z-T8 evals: "never treat an installed Grok/Codex CLI as a connected tool", "no unverified CLI route and no paid REST call without consent", "a VERIFIED local route runs within the session cap and the reply names it", "never raise the session cap unasked", "never reuse a Grok login for REST".
 - CHANGELOG: section 4; credit the PR #5 author for the adopt idea.
 
 ## 8. Known limitations and what is not proven

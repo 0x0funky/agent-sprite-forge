@@ -93,7 +93,7 @@ The contract example `tests/fixtures/contracts/video.animation_v3.valid.json` us
 ## 6. Shared-helper promotion requests
 
 - Resolved (D30): `_local_round_half_up` and `_local_file_ref` are gone; export_engine uses `forge_core.round_half_up`, `forge_core.file_ref` (another drive keeps only the file name), `forge_core.read_json` (D28), `forge_core.run_cli` (D27) and `forge_core.FORGE_PACKAGE_VERSION` (D29).
-- Godot 4 text resources: `spriteframes_text` (:389), `scene_text` (:414), `parse_godot_resource` (:488), `_gd_number` (:372), `_gd_string` (:381). If B14's Godot 4 map exporter writes `.tres`/`.tscn` too, move these into one shared helper (not part of Appendix A today; integration decides).
+- Godot 4 text resources in `export_engine.py`: `spriteframes_text` (:498), `scene_text` (:523), `parse_godot_resource` (:597), `_gd_number` (:481), `_gd_string` (:490). If B14's Godot 4 map exporter writes `.tres`/`.tscn` too, move these into one shared helper (not part of Appendix A today; integration decides).
 - JS: none. `splitDurations` in forge-runtime.mjs mirrors `forge_core.frame_durations` and is parity-tested against it.
 
 ## 7. Cross-module links that Z must add

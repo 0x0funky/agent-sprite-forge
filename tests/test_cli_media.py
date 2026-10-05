@@ -581,7 +581,7 @@ def test_session_window_counts_only_recent_quota_calls(tmp_path, monkeypatch):
     lines = ledger.path.read_text(encoding="utf-8").splitlines()
     old = [json.loads(line) for line in lines]
     for line in old:
-        line["ts"] = "2026-01-01T00:00:00.000Z"  # long before the window
+        line["ts"] = "2000-01-01T00:00:00.000Z"  # long before any window, whatever the clock says
     ledger.path.write_text("".join(json.dumps(line) + "\n" for line in old), encoding="utf-8")
     second = ledger.reserve({**entry, "fingerprint": "cd" * 32}, session=limits)
     ledger.commit(second, status="not_sent")

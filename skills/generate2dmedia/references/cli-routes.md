@@ -65,9 +65,9 @@ python "<skill-dir>/scripts/forge_doctor.py" --verify-route codex-cli --execute
 ```
 
 The installed CLI version is part of the verification request, so a re-verification after an
-update is a new request, and a consented verification is never refused as a duplicate. The
-verification makes an image, so it proves `image_gen` only; Grok's `image_edit` becomes VERIFIED
-after one successful `cli_media.py edit --route grok-cli ... --execute`.
+update is a new request, and a consented verification is never refused as a duplicate. An image
+route's verification makes one image, so it proves `image_gen` only; Grok's `image_edit` becomes
+VERIFIED after one successful `cli_media.py edit --route grok-cli ... --execute`.
 
 ## When to ask the user
 
@@ -207,8 +207,8 @@ account-level or unexpected outcome and writes `<jobs stem>.progress.json`, whos
 | `ARTIFACT_MISSING`, `ARTIFACT_COUNT`, `ARTIFACT_PATH_REJECTED`, `ARTIFACT_STALE`, `ARTIFACT_INVALID` | the output failed a provenance check | `failed` | inspect; `adopt --file` only for a file you checked |
 | `TIMEOUT`, `OUTPUT_LIMIT`, `PROTOCOL_ERROR`, `PROVIDER_ERROR`, `PUBLISH_FAILED`, `INTERRUPTED` | outcome unknown; the CLI may have produced something | `unknown` | `resume --run <id>`, then `--adopt` |
 
-A mistyped option exits 2 with the usage line; every other failure prints one
-`error: CODE: message` line and exits 1 (130 on Ctrl+C).
+A mistyped option exits 2 with the usage line; every other failure prints one `error:` line (a
+typed `CODE: message`, or `internal error (<Type>: <message>)` for a bug) and exits 1 (130 on Ctrl+C).
 
 ## What is verified
 
