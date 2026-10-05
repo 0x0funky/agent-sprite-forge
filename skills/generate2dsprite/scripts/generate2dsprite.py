@@ -4,16 +4,28 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import math
+import os
 import random
 import re
+import shutil
+import sys
+import tempfile
 from collections import deque
 from pathlib import Path
 
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageFilter
+
+
+BACKGROUND_MODES = ("chroma_key", "native_alpha", "opaque")
+RESAMPLERS = {"nearest": Image.Resampling.NEAREST, "lanczos": Image.Resampling.LANCZOS}
+DESPILL_MARGIN = 12
+LOCOMOTION_MODES = frozenset({"walk", "run", "player_walk", "npc_walk", "player_sheet"})
+RECOMMENDED_LOCOMOTION_POSES = (8, 12)
 
 
 ART_STYLE = (
@@ -37,8 +49,11 @@ GRID_RULES = (
     "1. EXACTLY 4 equal quadrants (2x2). "
     "2. NO borders, NO lines, NO frames between quadrants. "
     "3. NO text, NO labels. "
-    "4. Each character fills 80%+ of its quadrant, SAME SIZE in every quadrant. "
-    "5. Quadrants connected by magenta background only."
+    "4. Keep one anatomical scale and shared registration origin, not an identical pose bounding box. "
+    "Reserve the full motion envelope, including tail, ears, limbs and held equipment, "
+    "inside the central 70% of each quadrant with at least 15% clear background on every side. "
+    "No body part may touch or cross an internal cell boundary. "
+    "5. Quadrants connected by magenta background only. Do not draw gutters or separators."
 )
 
 GRID_RULES_4X4 = (
@@ -46,10 +61,11 @@ GRID_RULES_4X4 = (
     "1. EXACTLY 16 equal-size cells arranged in a 4x4 grid (4 rows of 4 columns, every cell the same width and height). "
     "2. NO borders, NO lines, NO frames between cells. "
     "3. NO text, NO labels, NO numbers, NO arrows. "
-    "4. CRITICAL CONSISTENCY: the character in every single cell has the IDENTICAL height and IDENTICAL width "
-    "(same bounding box, same pixel scale). Do NOT zoom in or out between cells. "
-    "Do NOT crop tighter in some cells. The character's head-to-foot height must be visibly identical in all 16 cells. "
-    "5. Character is CENTERED horizontally and vertically within its cell. Fills ~60% of the cell, leaving equal magenta margin on all four sides. "
+    "4. CRITICAL CONSISTENCY: keep the same anatomical scale, camera distance and shared registration origin "
+    "in every cell. Do NOT fit each pose to an identical bounding box or zoom between cells. "
+    "Preserve deliberate limb movement and body bob. "
+    "5. Keep the entire motion envelope, including tail, ears, limbs and held equipment, inside the central 70% "
+    "of each cell, with at least 15% clear background on every side. No part may touch or cross a cell boundary. "
     "6. Cells connected ONLY by solid magenta (#FF00FF) background."
 )
 
@@ -193,6 +209,25 @@ def ensure_valid_target_mode(target: str, mode: str) -> None:
     if mode not in TARGET_MODES[target]:
         allowed = ", ".join(TARGET_MODES[target])
         raise ValueError(f"Mode '{mode}' is invalid for target '{target}'. Valid modes: {allowed}")
+
+
+def locomotion_planning_warning(
+    mode: str, rows: int, cols: int, intentional_low_frame_count: bool = False
+) -> str | None:
+    """Flag a planning review, never reject or reinterpret a legacy input grid."""
+    if mode not in LOCOMOTION_MODES or intentional_low_frame_count:
+        return None
+    pose_count = cols if mode == "player_sheet" else rows * cols
+    if pose_count >= RECOMMENDED_LOCOMOTION_POSES[0]:
+        return None
+    scope = "per direction" if mode == "player_sheet" else "in this action"
+    return (
+        f"Locomotion planning: {pose_count} pose cells {scope}; existing grid compatibility is preserved. "
+        "For new locomotion, plan 8-12 useful poses unless a deliberately sparse style is intended. "
+        "Cell count does not establish unique or convincing poses: inspect contact, passing, "
+        "compression/flight as appropriate, opposite legs, and the loop seam at game size. "
+        "Use --intentional-low-frame-count to record a deliberate low-pose choice."
+    )
 
 
 def build_evolution_descs(subject: str, rng: random.Random) -> dict[str, str]:
@@ -378,8 +413,10 @@ def build_prompt(target: str, mode: str, prompt: str, role: str | None = None, s
             rows, cols = GRID_SHAPES.get(mode, (2, 2))
             result = (
                 f"A {rows}x{cols} pixel art animation sheet of the same {prompt}. "
-                "The same asset identity appears in every cell, with the same bounding box, the same pixel scale, "
-                "and no part crossing a cell edge. "
+                "The same asset identity appears in every cell, with one anatomical scale and shared registration origin. "
+                "Preserve intended compression, flight and bob; do not fit every pose to one bounding box. "
+                "Keep the full motion envelope, including tail, ears, limbs and held equipment, inside the central 70% "
+                "of each cell with at least 15% clear background on every side. No part may touch or cross a cell edge. "
                 "Keep the animation readable for a 2D game sprite, not a splash illustration. "
                 f"{ART_STYLE}"
             )
@@ -434,6 +471,65 @@ def remove_bg_magenta(img: Image.Image, threshold: int = 100, edge_threshold: in
     return img
 
 
+def validate_despill_radius(radius: int) -> None:
+    if type(radius) is not int or radius not in (0, 1, 2, 3):
+        raise ValueError("Despill radius must be an integer from 0 to 3.")
+
+
+def despill_chroma_edges(img: Image.Image, radius: int = 0) -> Image.Image:
+    """Remove magenta excess only near existing alpha-zero pixels; preserve alpha.
+
+    Distance is Chebyshev distance in source pixels (8-neighbor square radius).
+    The canvas exterior does not count as transparency. Where min(R,B)-G > 12,
+    subtract that excess from R and B, leaving G, alpha, and other pixels intact.
+    This opt-in heuristic cannot distinguish real purple edge art from spill.
+    """
+    validate_despill_radius(radius)
+    if radius == 0:
+        return img
+    pixels = np.array(img.convert("RGBA"))
+    transparent = pixels[:, :, 3] == 0
+    if not transparent.any():
+        return img
+    boundary = Image.fromarray(transparent.astype(np.uint8) * 255)
+    nearby = np.asarray(boundary.filter(ImageFilter.MaxFilter(2 * radius + 1))) > 0
+    red, green, blue = (pixels[:, :, channel].astype(np.int16) for channel in range(3))
+    excess = np.minimum(red, blue) - green
+    affected = nearby & (pixels[:, :, 3] > 0) & (excess > DESPILL_MARGIN)
+    pixels[:, :, 0][affected] = (red[affected] - excess[affected]).astype(np.uint8)
+    pixels[:, :, 2][affected] = (blue[affected] - excess[affected]).astype(np.uint8)
+    return Image.fromarray(pixels)
+
+
+def prepare_background(
+    img: Image.Image, background_mode: str, threshold: int, edge_threshold: int,
+    despill_radius: int = 0,
+) -> Image.Image:
+    validate_despill_radius(despill_radius)
+    if background_mode not in BACKGROUND_MODES:
+        raise ValueError(f"Unknown background mode: {background_mode}")
+    prepared = img.convert("RGBA")
+    if background_mode == "chroma_key":
+        keyed = remove_bg_magenta(prepared, threshold, edge_threshold)
+        return despill_chroma_edges(keyed, despill_radius)
+    alpha_min, alpha_max = prepared.getchannel("A").getextrema()
+    if background_mode == "native_alpha" and (alpha_min == 255 or alpha_max == 0):
+        raise ValueError(
+            "native_alpha requires actual transparency and visible pixels; "
+            "fully opaque RGB/RGBA or a baked checkerboard is not transparent. "
+            "Use chroma_key for a generated magenta background or opaque for opaque art."
+        )
+    if background_mode == "opaque" and (alpha_min, alpha_max) != (255, 255):
+        raise ValueError("opaque background mode requires fully opaque input; use native_alpha instead.")
+    return prepared
+
+
+def resampling_filter(resampler: str) -> Image.Resampling:
+    if resampler not in RESAMPLERS:
+        raise ValueError(f"Unknown resampler: {resampler}")
+    return RESAMPLERS[resampler]
+
+
 def trim_border(img: Image.Image, px: int = 4) -> Image.Image:
     width, height = img.size
     if width > px * 2 and height > px * 2:
@@ -466,7 +562,9 @@ def clean_edges(img: Image.Image, depth: int = 3) -> Image.Image:
     return img
 
 
-def connected_components(img: Image.Image, min_area: int = 1) -> list[dict[str, object]]:
+def connected_components(
+    img: Image.Image, min_area: int = 1, include_pixels: bool = False,
+) -> list[dict[str, object]]:
     alpha = img.getchannel("A")
     pixels = alpha.load()
     width, height = img.size
@@ -480,6 +578,7 @@ def connected_components(img: Image.Image, min_area: int = 1) -> list[dict[str, 
             queue: deque[tuple[int, int]] = deque([(x, y)])
             visited[y][x] = True
             area = 0
+            member_pixels = [] if include_pixels else None
             min_x = max_x = x
             min_y = max_y = y
             touches_edge = x == 0 or y == 0 or x == width - 1 or y == height - 1
@@ -487,6 +586,8 @@ def connected_components(img: Image.Image, min_area: int = 1) -> list[dict[str, 
             while queue:
                 cx, cy = queue.popleft()
                 area += 1
+                if member_pixels is not None:
+                    member_pixels.append((cx, cy))
                 min_x = min(min_x, cx)
                 min_y = min(min_y, cy)
                 max_x = max(max_x, cx)
@@ -505,6 +606,7 @@ def connected_components(img: Image.Image, min_area: int = 1) -> list[dict[str, 
                         "area": area,
                         "bbox": (min_x, min_y, max_x + 1, max_y + 1),
                         "touches_edge": touches_edge,
+                        **({"pixels": member_pixels} if member_pixels is not None else {}),
                     }
                 )
 
@@ -825,6 +927,9 @@ def build_scale_profile(
         raise ValueError("Cannot create a scale profile without a valid body-scale mean.")
 
     processing = {key: metadata[key] for key in SCALE_PROFILE_PROCESSING_KEYS}
+    processing["background_mode"] = metadata.get("background_mode", "chroma_key")
+    processing["resampler"] = metadata.get("resampler", "lanczos")
+    processing["despill_radius"] = metadata.get("despill_radius", 0)
     profile = {
         "version": SCALE_PROFILE_VERSION,
         "name": name,
@@ -865,6 +970,10 @@ def load_scale_profile(path: Path) -> dict[str, object]:
     missing = [key for key in SCALE_PROFILE_PROCESSING_KEYS if key not in processing]
     if missing:
         raise ValueError(f"Scale profile processing contract is missing: {', '.join(missing)}")
+    if processing.get("background_mode", "chroma_key") not in BACKGROUND_MODES:
+        raise ValueError("Scale profile has an invalid background_mode.")
+    resampling_filter(str(processing.get("resampler", "lanczos")))
+    validate_despill_radius(processing.get("despill_radius", 0))
     reference = payload.get("reference")
     if not isinstance(reference, dict) or float(reference.get("body_scale_mean", 0.0)) <= 0:
         raise ValueError("Scale profile is missing a valid reference body-scale mean.")
@@ -877,6 +986,10 @@ def apply_scale_profile(args: argparse.Namespace, profile: dict[str, object]) ->
     processing = dict(profile["processing"])
     for key in SCALE_PROFILE_PROCESSING_KEYS:
         setattr(args, key, processing[key])
+    # Older v1 profiles lack these fields; retain their caller's explicit choices.
+    for key in ("background_mode", "resampler", "despill_radius"):
+        if key in processing:
+            setattr(args, key, processing[key])
 
 
 def profile_scale_drift(
@@ -889,8 +1002,15 @@ def profile_scale_drift(
     return abs(current / reference - 1.0)
 
 
-def center_single_sprite(img: Image.Image, size: int, threshold: int, edge_threshold: int) -> Image.Image:
-    cleaned = remove_bg_magenta(img.convert("RGBA"), threshold, edge_threshold)
+def center_single_sprite(
+    img: Image.Image, size: int, threshold: int, edge_threshold: int,
+    background_mode: str = "chroma_key", resampler: str = "lanczos",
+    despill_radius: int = 0,
+) -> Image.Image:
+    if size <= 0:
+        raise ValueError("Single output size must be positive.")
+    resize_filter = resampling_filter(resampler)
+    cleaned = prepare_background(img, background_mode, threshold, edge_threshold, despill_radius)
     bbox = cleaned.getbbox()
     if bbox:
         cleaned = cleaned.crop(bbox)
@@ -900,7 +1020,7 @@ def center_single_sprite(img: Image.Image, size: int, threshold: int, edge_thres
         scale = min(size / width, size / height) * 0.9
         new_width = max(1, int(width * scale))
         new_height = max(1, int(height * scale))
-        cleaned = cleaned.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        cleaned = cleaned.resize((new_width, new_height), resize_filter)
         canvas.paste(cleaned, ((size - new_width) // 2, (size - new_height) // 2))
     return canvas
 
@@ -922,8 +1042,31 @@ def split_grid(
     min_component_area: int = 1,
     edge_touch_margin: int = 0,
     scale_strategy: str = "fit",
+    background_mode: str = "chroma_key",
+    resampler: str = "lanczos",
+    despill_radius: int = 0,
+    _background_prepared: bool = False,
 ) -> tuple[list[Image.Image], list[dict[str, object]]]:
-    cleaned = remove_bg_magenta(img.convert("RGBA"), threshold, edge_threshold)
+    if rows <= 0 or cols <= 0 or cell_size <= 0:
+        raise ValueError("Grid rows, columns, and output cell size must be positive.")
+    if not math.isfinite(fit_scale) or not 0 < fit_scale <= 1:
+        raise ValueError("fit_scale must be finite and in (0, 1].")
+    if min(trim_border_px, edge_clean_depth, component_padding, edge_touch_margin) < 0 or min_component_area < 1:
+        raise ValueError("Padding and edge settings must be nonnegative; component area must be positive.")
+    if img.width % cols or img.height % rows:
+        raise ValueError(
+            f"Image dimensions {img.width}x{img.height} are not divisible by "
+            f"grid {cols}x{rows}; refusing to discard remainder pixels."
+        )
+    if img.width < cols or img.height < rows:
+        raise ValueError("Grid cells must contain at least one source pixel.")
+    if background_mode not in BACKGROUND_MODES:
+        raise ValueError(f"Unknown background mode: {background_mode}")
+    resize_filter = resampling_filter(resampler)
+    validate_despill_radius(despill_radius)
+    cleaned = img if _background_prepared else prepare_background(
+        img, background_mode, threshold, edge_threshold, despill_radius
+    )
     width, height = cleaned.size
     cell_width, cell_height = width // cols, height // rows
     cropped_frames: list[Image.Image] = []
@@ -932,12 +1075,25 @@ def split_grid(
         for col in range(cols):
             box = (col * cell_width, row * cell_height, (col + 1) * cell_width, (row + 1) * cell_height)
             frame = cleaned.crop(box)
-            if trim_border_px > 0:
+            if background_mode == "chroma_key" and trim_border_px > 0:
                 frame = trim_border(frame, px=trim_border_px)
-            if edge_clean_depth > 0:
+            if background_mode == "chroma_key" and edge_clean_depth > 0:
                 frame = clean_edges(frame, depth=edge_clean_depth)
             source_frame_size = frame.size
-            components = connected_components(frame, min_area=min_component_area)
+            filter_components = component_mode == "largest" or min_component_area > 1
+            components = connected_components(
+                frame, min_area=min_component_area, include_pixels=filter_components,
+            )
+            if filter_components:
+                # A bounding-box crop alone retains unrelated pixels inside that box.
+                kept = components[:1] if component_mode == "largest" else components
+                filtered = np.array(frame)
+                keep_mask = np.zeros((frame.height, frame.width), dtype=bool)
+                for component in kept:
+                    points = np.asarray(component["pixels"])
+                    keep_mask[points[:, 1], points[:, 0]] = True
+                filtered[~keep_mask] = 0
+                frame = Image.fromarray(filtered)
             bbox = None
             selected_component = None
             if component_mode == "largest" and components:
@@ -1007,7 +1163,7 @@ def split_grid(
                 source_to_output_scale = base_scale * scale_adjustment
                 new_width = max(1, int(round(frame.width * source_to_output_scale)))
                 new_height = max(1, int(round(frame.height * source_to_output_scale)))
-                scaled = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                scaled = frame.resize((new_width, new_height), resize_filter)
                 anchor_in_crop_x = (anchor_x - crop_x0) * source_to_output_scale
                 anchor_in_crop_y = (anchor_y - crop_y0) * source_to_output_scale
                 paste_x = int(round(target_x - anchor_in_crop_x))
@@ -1016,7 +1172,7 @@ def split_grid(
                 paste_x = max(0, min(cell_size - new_width, paste_x))
                 paste_y = max(0, min(cell_size - new_height, paste_y))
                 paste_clamped = [paste_x, paste_y] != unclamped_paste
-                canvas.paste(scaled, (paste_x, paste_y), scaled)
+                canvas.paste(scaled, (paste_x, paste_y))
                 aligned_bbox = canvas.getbbox()
                 output_edge_touch = bbox_touches_edge(
                     aligned_bbox,
@@ -1076,7 +1232,7 @@ def split_grid(
             scale = common_scale or (min(cell_size / frame_width, cell_size / frame_height) * fit_scale)
             new_width = max(1, int(frame_width * scale))
             new_height = max(1, int(frame_height * scale))
-            frame = frame.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            frame = frame.resize((new_width, new_height), resize_filter)
             paste_x = (cell_size - new_width) // 2
             if align in {"bottom", "feet"}:
                 pad = max(0, int(cell_size * (1 - fit_scale) * 0.5))
@@ -1116,56 +1272,46 @@ def compose_sheet(frames: list[Image.Image], rows: int, cols: int, cell_size: in
     canvas = Image.new("RGBA", (cols * cell_size, rows * cell_size), (0, 0, 0, 0))
     for index, frame in enumerate(frames):
         row, col = divmod(index, cols)
-        canvas.paste(frame, (col * cell_size, row * cell_size), frame)
+        canvas.paste(frame, (col * cell_size, row * cell_size))
     return canvas
 
 
 def save_transparent_gif(frames: list[Image.Image], out_path: Path, duration: int) -> None:
+    """Encode a shared palette; GIF alpha is binary (source alpha >= 128 is opaque).
+
+    Reserve a transparent index only when required, and assign it from the alpha
+    mask rather than matching an RGB sentinel that could also be foreground art.
+    """
     if not frames:
         raise ValueError("No frames to encode.")
-
-    key = (255, 0, 254)
+    if duration <= 0:
+        raise ValueError("Animation duration must be positive.")
     width, height = frames[0].size
-    stacked = Image.new("RGB", (width, height * len(frames)), key)
-
+    if any(frame.size != (width, height) for frame in frames):
+        raise ValueError("GIF frames must have identical dimensions.")
+    stacked = Image.new("RGB", (width, height * len(frames)))
+    opaque_masks = []
     for index, frame in enumerate(frames):
-        r, g, b, a = frame.split()
+        r, g, b, a = frame.convert("RGBA").split()
         hard_mask = a.point(lambda value: 255 if value >= 128 else 0)
+        opaque_masks.append(np.asarray(hard_mask) > 0)
         rgb = Image.merge("RGB", (r, g, b))
         stacked.paste(rgb, (0, index * height), hard_mask)
-
-    paletted = stacked.convert("P", palette=Image.Palette.ADAPTIVE, colors=256, dither=Image.Dither.NONE)
-    palette = list(paletted.getpalette() or [])
-    while len(palette) < 256 * 3:
-        palette.append(0)
-
-    key_index = None
-    for index in range(256):
-        if palette[index * 3 : index * 3 + 3] == list(key):
-            key_index = index
-            break
-    if key_index is None:
-        best_distance = None
-        best_index = 0
-        for index in range(256):
-            r, g, b = palette[index * 3], palette[index * 3 + 1], palette[index * 3 + 2]
-            distance = (r - key[0]) ** 2 + (g - key[1]) ** 2 + (b - key[2]) ** 2
-            if best_distance is None or distance < best_distance:
-                best_distance = distance
-                best_index = index
-        key_index = best_index
-
-    if key_index != 0:
-        lut = np.arange(256, dtype=np.uint8)
-        lut[0], lut[key_index] = key_index, 0
-        arr = np.array(paletted)
-        arr = lut[arr]
-        paletted = Image.fromarray(arr, mode="P")
-        for channel in range(3):
-            zero_idx = channel
-            key_idx = key_index * 3 + channel
-            palette[zero_idx], palette[key_idx] = palette[key_idx], palette[zero_idx]
-        paletted.putpalette(palette)
+    opaque = np.concatenate(opaque_masks, axis=0)
+    has_transparency = not bool(opaque.all())
+    paletted = stacked.quantize(
+        colors=255 if has_transparency else 256,
+        method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE,
+    )
+    save_options = {}
+    if has_transparency:
+        palette = (paletted.getpalette() or [])[:255 * 3]
+        palette.extend([0] * (255 * 3 - len(palette)))
+        indices = (np.asarray(paletted).astype(np.uint16) + 1).astype(np.uint8)
+        indices[~opaque] = 0
+        paletted = Image.frombytes("P", paletted.size, indices.tobytes())
+        paletted.putpalette([0, 0, 0] + palette)
+        save_options = {"transparency": 0, "background": 0}
 
     out_frames = [
         paletted.crop((0, index * height, width, (index + 1) * height))
@@ -1179,8 +1325,8 @@ def save_transparent_gif(frames: list[Image.Image], out_path: Path, duration: in
         duration=duration,
         loop=0,
         disposal=2,
-        transparency=0,
-        background=0,
+        optimize=False,
+        **save_options,
     )
 
 
@@ -1197,10 +1343,19 @@ def cmd_list_options() -> None:
                 "npc_roles": NPC_ROLES,
                 "grid_shapes": GRID_SHAPES,
                 "frame_labels": FRAME_LABELS,
+                "locomotion_planning": {
+                    "recommended_poses_per_action_or_direction": list(RECOMMENDED_LOCOMOTION_POSES),
+                    "legacy_grid_defaults_preserved": True,
+                    "low_pose_count_override": "--intentional-low-frame-count",
+                    "note": "A planning range, not a quality gate; inspect actual poses and timing at game size.",
+                },
                 "processor": {
                     "component_mode": ["all", "largest"],
                     "align": ["center", "bottom", "feet"],
                     "scale_strategy": ["fit", "preserve"],
+                    "background_mode": list(BACKGROUND_MODES),
+                    "resampler": list(RESAMPLERS),
+                    "despill_radius": [0, 1, 2, 3],
                     "strict_qc": {
                         "structural_checks": ["empty", "edge_touch", "paste_clamped"],
                         "optional_metrics": [
@@ -1219,6 +1374,10 @@ def cmd_list_options() -> None:
 
 def cmd_build_prompt(args: argparse.Namespace) -> None:
     prompt_text, seed = build_prompt(args.target, args.mode, args.prompt, args.role, args.seed)
+    intentional = getattr(args, "intentional_low_frame_count", False)
+    warning = locomotion_planning_warning(args.mode, *GRID_SHAPES.get(args.mode, (1, 1)), intentional)
+    if warning:
+        print(warning, file=sys.stderr)
     payload = {
         "target": args.target,
         "mode": args.mode,
@@ -1226,6 +1385,8 @@ def cmd_build_prompt(args: argparse.Namespace) -> None:
         "role": args.role or "",
         "seed": seed,
         "generated_prompt": prompt_text,
+        "intentional_low_frame_count": intentional,
+        "planning_warnings": [warning] if warning else [],
     }
     if args.write:
         args.write.parent.mkdir(parents=True, exist_ok=True)
@@ -1236,7 +1397,127 @@ def cmd_build_prompt(args: argparse.Namespace) -> None:
     print(prompt_text)
 
 
+def _publish_file_no_replace(source: Path, destination: Path) -> None:
+    """Publish a complete sidecar atomically without replacing an existing file."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    # Stage beside the destination so linking also works for another filesystem.
+    with tempfile.NamedTemporaryFile(
+        prefix=f".{destination.name}.", suffix=".staged", dir=destination.parent, delete=False
+    ) as output:
+        temporary = Path(output.name)
+        try:
+            with source.open("rb") as input_file:
+                shutil.copyfileobj(input_file, output)
+        except BaseException:
+            output.close()
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        os.link(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _publish_directory_no_replace(stage: Path, final: Path) -> None:
+    """Atomically rename without replacing even a racing empty destination."""
+    if os.path.lexists(final):
+        raise FileExistsError(f"Refusing existing output: {final}")
+    if os.name == "nt":
+        os.rename(stage, final)
+        return
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform.startswith("linux") and hasattr(libc, "renameat2"):
+        rename = libc.renameat2
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(-100, os.fsencode(stage), -100, os.fsencode(final), 1)  # RENAME_NOREPLACE
+    elif sys.platform == "darwin" and hasattr(libc, "renamex_np"):
+        rename = libc.renamex_np
+        rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(os.fsencode(stage), os.fsencode(final), 4)  # RENAME_EXCL
+    else:
+        raise RuntimeError("This platform lacks a supported atomic no-replace directory rename.")
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error), str(final))
+
+
 def cmd_process(args: argparse.Namespace) -> None:
+    """Validate in private staging; publish only after all QC and exports pass.
+
+    The final directory must be new. Its rename is atomic. Explicit sidecars
+    outside that directory are individually atomic and rolled back on failure;
+    multiple filesystem paths cannot form a single atomic transaction.
+    """
+    destination = args.output_dir.resolve()
+    if destination.exists() or destination.is_symlink():
+        raise FileExistsError(f"Refusing to overwrite existing output directory: {destination}")
+    requested = {}
+    for option in ("write_godot_sprite3d_meta", "write_scale_profile"):
+        path = getattr(args, option)
+        if path is not None:
+            final_path = path.resolve()
+            if final_path == destination or final_path.exists() or final_path.is_symlink():
+                raise FileExistsError(f"Refusing to overwrite output path: {final_path}")
+            if destination.is_relative_to(final_path):
+                raise ValueError("A sidecar file cannot be an ancestor of the output directory.")
+            if final_path in requested.values():
+                raise ValueError("Godot metadata and scale profile must use different output paths.")
+            if any(final_path.is_relative_to(other) or other.is_relative_to(final_path)
+                   for other in requested.values()):
+                raise ValueError("Sidecar output files cannot be ancestors of each other.")
+            requested[option] = final_path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix=f".{destination.name}.staging-", dir=destination.parent
+    ) as temporary:
+        staging = Path(temporary)
+        staged_output = staging / "output"
+        staged_args = argparse.Namespace(**vars(args))
+        staged_args.output_dir = staged_output
+        exports = {}
+        path_mapping = {}
+        for option, final_path in requested.items():
+            if final_path.is_relative_to(destination):
+                staged_path = staged_output / final_path.relative_to(destination)
+            else:
+                staged_path = staging / "sidecars" / f"{option}.json"
+                exports[staged_path] = final_path
+            setattr(staged_args, option, staged_path)
+            path_mapping[staged_path] = final_path
+        _process_to_directory(staged_args)
+        metadata_path = staged_output / "pipeline-meta.json"
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        for field in ("godot_sprite3d_output", "scale_profile_output"):
+            if field in metadata:
+                staged_path = Path(metadata[field])
+                final_path = path_mapping.get(staged_path)
+                if final_path is None:
+                    final_path = destination / staged_path.relative_to(staged_output)
+                metadata[field] = str(final_path)
+        metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+        published = []
+        try:
+            for staged_path, final_path in exports.items():
+                _publish_file_no_replace(staged_path, final_path)
+                identity = final_path.stat()
+                published.append((final_path, identity.st_dev, identity.st_ino))
+            if destination.exists() or destination.is_symlink():
+                raise FileExistsError(f"Output directory appeared during processing: {destination}")
+            _publish_directory_no_replace(staged_output, destination)
+        except BaseException:
+            for path, device, inode in reversed(published):
+                # Never remove a different file that replaced our sidecar.
+                if path.exists():
+                    current = path.stat()
+                    if (current.st_dev, current.st_ino) == (device, inode):
+                        path.unlink()
+            raise
+    print(str(destination))
+
+
+def _process_to_directory(args: argparse.Namespace) -> None:
     if args.target not in PROCESS_TARGETS:
         raise ValueError(f"Unknown process target '{args.target}'. Valid targets: {', '.join(PROCESS_TARGETS)}")
     out_dir = args.output_dir
@@ -1253,7 +1534,8 @@ def cmd_process(args: argparse.Namespace) -> None:
     if scale_profile:
         apply_scale_profile(args, scale_profile)
 
-    raw = Image.open(args.input).convert("RGBA")
+    with Image.open(args.input) as source:
+        raw = source.convert("RGBA")
     metadata = {
         "target": args.target,
         "mode": args.mode,
@@ -1263,6 +1545,9 @@ def cmd_process(args: argparse.Namespace) -> None:
         "threshold": args.threshold,
         "edge_threshold": args.edge_threshold,
         "duration": args.duration,
+        "background_mode": args.background_mode,
+        "resampler": args.resampler,
+        "despill_radius": args.despill_radius if args.background_mode == "chroma_key" else 0,
     }
 
     has_custom_grid = args.rows is not None or args.cols is not None
@@ -1274,13 +1559,21 @@ def cmd_process(args: argparse.Namespace) -> None:
             rows, cols = args.rows, args.cols
         else:
             rows, cols = GRID_SHAPES[args.mode]
+        intentional = getattr(args, "intentional_low_frame_count", False)
+        warning = locomotion_planning_warning(args.mode, rows, cols, intentional)
+        metadata["intentional_low_frame_count"] = intentional
+        metadata["planning_warnings"] = [warning] if warning else []
+        if warning:
+            print(warning, file=sys.stderr)
         cell_size = args.cell_size or (96 if (rows, cols) == (4, 4) else 128)
         raw.save(out_dir / "raw-sheet.png")
-        cleaned = remove_bg_magenta(raw.copy(), args.threshold, args.edge_threshold)
+        cleaned = prepare_background(
+            raw, args.background_mode, args.threshold, args.edge_threshold, args.despill_radius
+        )
         cleaned.save(out_dir / "raw-sheet-clean.png")
 
         frames, frame_qc = split_grid(
-            raw,
+            cleaned,
             rows,
             cols,
             cell_size,
@@ -1296,9 +1589,15 @@ def cmd_process(args: argparse.Namespace) -> None:
             min_component_area=args.min_component_area,
             edge_touch_margin=args.edge_touch_margin,
             scale_strategy=args.scale_strategy,
+            background_mode=args.background_mode,
+            resampler=args.resampler,
+            despill_radius=args.despill_radius,
+            _background_prepared=True,
         )
         if has_custom_grid:
             prefix = args.label_prefix or args.mode
+            if not prefix or re.search(r'[<>:"/\\|?*\x00-\x1f]', prefix) or prefix.rstrip(". ") != prefix:
+                raise ValueError("Frame label prefix must be a filename, not a path or reserved filename characters.")
             labels = [f"{prefix}-{index + 1}" for index in range(rows * cols)]
         else:
             labels = FRAME_LABELS[args.mode]
@@ -1321,8 +1620,8 @@ def cmd_process(args: argparse.Namespace) -> None:
         metadata["cols"] = cols
         metadata["cell_size"] = cell_size
         metadata["fit_scale"] = args.fit_scale
-        metadata["trim_border"] = args.trim_border
-        metadata["edge_clean_depth"] = args.edge_clean_depth
+        metadata["trim_border"] = args.trim_border if args.background_mode == "chroma_key" else 0
+        metadata["edge_clean_depth"] = args.edge_clean_depth if args.background_mode == "chroma_key" else 0
         metadata["align"] = args.align
         metadata["shared_scale"] = args.shared_scale
         metadata["scale_strategy"] = args.scale_strategy
@@ -1386,9 +1685,14 @@ def cmd_process(args: argparse.Namespace) -> None:
         if args.godot_world_height is not None:
             raise ValueError("Godot Sprite3D metadata currently requires processed grid frames.")
         raw.save(out_dir / "raw.png")
-        centered = center_single_sprite(raw, args.single_size, args.threshold, args.edge_threshold)
+        centered = center_single_sprite(
+            raw, args.single_size, args.threshold, args.edge_threshold,
+            background_mode=args.background_mode, resampler=args.resampler,
+            despill_radius=args.despill_radius,
+        )
         centered.save(out_dir / "clean.png")
         metadata["single_size"] = args.single_size
+        metadata["empty_frames"] = [[0, 0]] if centered.getchannel("A").getbbox() is None else []
 
     if args.prompt_file and args.prompt_file.exists():
         prompt_text = args.prompt_file.read_text(encoding="utf-8")
@@ -1460,9 +1764,8 @@ def cmd_process(args: argparse.Namespace) -> None:
         raise ValueError("QC failed: " + "; ".join(qc_errors))
     if godot_sprite3d_payload is not None and godot_sprite3d_path is not None:
         godot_sprite3d_path.parent.mkdir(parents=True, exist_ok=True)
-        godot_sprite3d_path.write_text(
-            json.dumps(godot_sprite3d_payload, indent=2), encoding="utf-8"
-        )
+        with godot_sprite3d_path.open("x", encoding="utf-8") as output:
+            json.dump(godot_sprite3d_payload, output, indent=2)
         (out_dir / "pipeline-meta.json").write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"
         )
@@ -1478,14 +1781,12 @@ def cmd_process(args: argparse.Namespace) -> None:
             profile_limit,
         )
         args.write_scale_profile.parent.mkdir(parents=True, exist_ok=True)
-        args.write_scale_profile.write_text(
-            json.dumps(profile_payload, indent=2), encoding="utf-8"
-        )
+        with args.write_scale_profile.open("x", encoding="utf-8") as output:
+            json.dump(profile_payload, output, indent=2)
         metadata["scale_profile_output"] = str(args.write_scale_profile)
         (out_dir / "pipeline-meta.json").write_text(
             json.dumps(metadata, indent=2), encoding="utf-8"
         )
-    print(str(out_dir.resolve()))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1502,6 +1803,10 @@ def build_parser() -> argparse.ArgumentParser:
     build_prompt_parser.add_argument("--seed", type=int)
     build_prompt_parser.add_argument("--write", type=Path)
     build_prompt_parser.add_argument("--write-json", type=Path)
+    build_prompt_parser.add_argument(
+        "--intentional-low-frame-count", action="store_true",
+        help="Record deliberately sparse locomotion and suppress its advisory pose-count warning; does not change the grid.",
+    )
 
     bundle_parser = subparsers.add_parser(
         "build-godot-bundle",
@@ -1527,16 +1832,46 @@ def build_parser() -> argparse.ArgumentParser:
     process_parser.add_argument("--input", required=True, type=Path)
     process_parser.add_argument("--target", required=True, choices=PROCESS_TARGETS)
     process_parser.add_argument("--mode", required=True)
-    process_parser.add_argument("--output-dir", required=True, type=Path)
+    process_parser.add_argument(
+        "--output-dir", required=True, type=Path,
+        help="New output directory, published only after QC succeeds; existing directories are not overwritten.",
+    )
     process_parser.add_argument("--role")
     process_parser.add_argument("--prompt")
     process_parser.add_argument("--prompt-file", type=Path)
     process_parser.add_argument("--threshold", type=int, default=100)
     process_parser.add_argument("--edge-threshold", type=int, default=150)
+    process_parser.add_argument(
+        "--background-mode", choices=BACKGROUND_MODES, default="chroma_key",
+        help=(
+            "chroma_key removes magenta and applies border/edge cleanup (legacy default); "
+            "native_alpha requires actual transparent pixels plus visible content and preserves alpha/colors "
+            "(an opaque RGB/RGBA checkerboard is rejected); opaque requires fully opaque input. "
+            "native_alpha and opaque skip chroma removal, border trimming, and edge cleanup; "
+            "sprite bbox scaling/alignment still apply."
+        ),
+    )
+    process_parser.add_argument(
+        "--resampler", choices=tuple(RESAMPLERS), default="lanczos",
+        help="Resize filter: lanczos preserves the legacy behavior; nearest keeps hard pixel-art color boundaries.",
+    )
+    process_parser.add_argument(
+        "--despill-radius", type=int, choices=(0, 1, 2, 3), default=0,
+        help=(
+            "Opt-in chroma_key-only magenta edge despill: 0 disables it (default); "
+            "1-3 source pixels from an actual alpha-zero boundary. Preserves alpha, "
+            "reduces R/B where min(R,B)-G exceeds 12, and leaves deeper interior pixels unchanged. "
+            "May desaturate legitimate purple at the boundary; ignored for native_alpha/opaque."
+        ),
+    )
     process_parser.add_argument("--cell-size", type=int)
     process_parser.add_argument("--rows", type=int)
     process_parser.add_argument("--cols", type=int)
     process_parser.add_argument("--label-prefix")
+    process_parser.add_argument(
+        "--intentional-low-frame-count", action="store_true",
+        help="Record deliberately sparse locomotion and suppress its advisory pose-count warning; does not change the grid.",
+    )
     process_parser.add_argument("--fit-scale", type=float, default=0.85)
     process_parser.add_argument("--trim-border", type=int, default=4)
     process_parser.add_argument("--edge-clean-depth", type=int, default=3)

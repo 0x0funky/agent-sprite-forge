@@ -1,5 +1,8 @@
 # Agent Sprite Forge
 
+> **2026-10-05 업데이트:** 이미지·영상 API와 투명 영상 출력을 추가했습니다. 이 번역에는 이전 예제가 포함됩니다. 최신 사용법은 [English](./README.md)를 참고하세요. 영상 처리는 더 이상 Grok Build 전용이 아닙니다.
+
+
 언어: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
 <p align="center">

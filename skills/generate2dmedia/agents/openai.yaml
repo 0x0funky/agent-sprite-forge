@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate 2D Media API"
+  short_description: "API images and still-to-video for game assets"
+  default_prompt: "Use $generate2dmedia to plan an API-generated game asset, then process and validate it with the matching Forge skill."

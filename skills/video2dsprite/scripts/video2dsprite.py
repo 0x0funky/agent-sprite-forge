@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Postprocess Grok image_to_video clips into dense 2D sprites.
+"""Postprocess generated or supplied video into registered 2D animation assets.
 
 Pipeline steps (deterministic only — no creative generation):
   extract  → ffmpeg frames from mp4
@@ -7,13 +7,13 @@ Pipeline steps (deterministic only — no creative generation):
   sample   → even-index frame sets + feet/center normalize
   process  → extract + clean + sample in one shot
 
-This skill is designed for Grok Build (image_gen + image_to_video).
-The script itself only needs ffmpeg, Pillow, and numpy.
+Generation is a separate provider step. This processor never makes API calls.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import math
 import shutil
@@ -59,23 +59,37 @@ def sample_indices(n_total: int, n_want: int) -> list[int]:
     return [int(round(i * (n_total - 1) / (n_want - 1))) for i in range(n_want)]
 
 
-def extract_frames(video: Path, out_dir: Path, fps: float = 0.0) -> list[Path]:
-    _ensure_dir(out_dir)
-    for old in out_dir.glob("frame_*.png"):
-        old.unlink()
+def extract_frames(video: Path, out_dir: Path, fps: float = 0.0,
+                   start: float = 0.0, duration: float | None = None,
+                   decoder: str = "default") -> list[Path]:
+    if not video.is_file():
+        raise FileNotFoundError(video)
+    if not math.isfinite(fps) or fps < 0 or not math.isfinite(start) or start < 0:
+        raise ValueError("fps/start must be finite and nonnegative")
+    if duration is not None and (not math.isfinite(duration) or duration <= 0):
+        raise ValueError("duration must be positive")
     ffmpeg = shutil.which("ffmpeg")
     if not ffmpeg:
         raise RuntimeError(
             "ffmpeg not found on PATH. Install ffmpeg to extract video frames."
         )
+    # Do not leave frames from a previous, longer clip in a rerun.
+    _ensure_dir(out_dir)
+    for old in out_dir.glob("frame_*.png"):
+        old.unlink()
     pattern = str(out_dir / "frame_%04d.png")
-    cmd = [ffmpeg, "-y", "-i", str(video)]
+    cmd = [ffmpeg, "-hide_banner", "-loglevel", "error", "-y"]
+    if decoder == "libvpx-vp9":
+        cmd += ["-c:v", "libvpx-vp9"]
+    cmd += ["-i", str(video), "-ss", str(start)]
+    if duration is not None:
+        cmd += ["-t", str(duration)]
     if fps and fps > 0:
         cmd += ["-vf", f"fps={fps}"]
     else:
-        cmd += ["-vsync", "0"]
+        cmd += ["-fps_mode", "passthrough"]
     cmd.append(pattern)
-    proc = subprocess.run(cmd, capture_output=True, text=True)
+    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
     if proc.returncode != 0:
         raise RuntimeError(
             "ffmpeg failed:\n" + (proc.stderr or proc.stdout or "unknown error")
@@ -97,8 +111,10 @@ def _near_magenta_mask(rgb: np.ndarray, dist: float = 55.0) -> np.ndarray:
     return (d <= dist) | pinkish
 
 
-def chroma_key_rgba(im: Image.Image, dist: float = 55.0) -> Image.Image:
+def chroma_key_rgba(im: Image.Image, dist: float = 55.0, despill: float = 0.0) -> Image.Image:
     """Flood-fill magenta from corners, despill edges, return RGBA."""
+    if not math.isfinite(despill) or not 0 <= despill <= 1:
+        raise ValueError("despill must be between 0 and 1")
     rgba = im.convert("RGBA")
     arr = np.array(rgba)
     rgb = arr[:, :, :3]
@@ -134,18 +150,22 @@ def chroma_key_rgba(im: Image.Image, dist: float = 55.0) -> Image.Image:
     out = arr.copy()
     out[visited, 3] = 0
 
-    # Light despill on remaining near-magenta fringe (keep RGB, reduce alpha).
-    fringe = key & ~visited
-    if fringe.any():
-        # Pull toward less magenta and soften alpha.
+    # Optional correction on the first visible boundary only. Key candidates
+    # adjacent to visited are already flood-filled, so testing key & ~visited
+    # here would never reach a fringe. RGB correction leaves alpha untouched.
+    adjacent = np.zeros_like(visited)
+    adjacent[1:] |= visited[:-1]
+    adjacent[:-1] |= visited[1:]
+    adjacent[:, 1:] |= visited[:, :-1]
+    adjacent[:, :-1] |= visited[:, 1:]
+    channels = out[:, :, :3].astype(np.float32)
+    spill = np.maximum(0, np.minimum(channels[:, :, 0], channels[:, :, 2]) - channels[:, :, 1])
+    fringe = ~visited & adjacent & (out[:, :, 3] > 0) & (spill > 20)
+    if despill and fringe.any():
         fr = out[fringe].astype(np.float32)
-        r, g, b, a = fr[:, 0], fr[:, 1], fr[:, 2], fr[:, 3]
-        spill = np.maximum(0.0, (r + b) / 2.0 - g)
-        factor = np.clip(1.0 - spill / 180.0, 0.15, 1.0)
-        fr[:, 0] = np.clip(r - spill * 0.35, 0, 255)
-        fr[:, 2] = np.clip(b - spill * 0.35, 0, 255)
-        fr[:, 1] = np.clip(g + spill * 0.15, 0, 255)
-        fr[:, 3] = np.clip(a * factor, 0, 255)
+        amount = spill[fringe] * despill
+        fr[:, 0] = np.clip(fr[:, 0] - amount, 0, 255)
+        fr[:, 2] = np.clip(fr[:, 2] - amount, 0, 255)
         out[fringe] = fr.astype(np.uint8)
 
     # Fully transparent where alpha is 0.
@@ -199,23 +219,60 @@ def normalize_sprite(
             y = 0
         if y + nh > cell:
             y = max(0, cell - nh)
-    canvas.paste(resized, (x, y), resized)
+    canvas.paste(resized, (x, y))
     return canvas
+
+
+def fixed_envelope(sprites: Sequence[Image.Image], cell: int, body_height: int,
+                   foot_y: int, anchor: str) -> tuple[list[Image.Image], dict]:
+    """One scale and translation for the entire clip; motion stays authored."""
+    if not sprites or cell < 4 or body_height < 1 or not 0 <= foot_y <= cell:
+        raise ValueError("invalid frames, cell size, body height or foot line")
+    size = sprites[0].size
+    if any(im.size != size for im in sprites):
+        raise ValueError("all frames must use one source canvas")
+    boxes = [bb for im in sprites if (bb := im.getchannel("A").getbbox())]
+    if not boxes:
+        raise ValueError("all frames are empty")
+    box = (min(b[0] for b in boxes), min(b[1] for b in boxes),
+           max(b[2] for b in boxes), max(b[3] for b in boxes))
+    bw, bh = box[2] - box[0], box[3] - box[1]
+    available_h = cell - 4 if anchor == "center" else min(cell - 4, foot_y)
+    if available_h < 1:
+        raise ValueError("foot-y leaves no space for the sprite")
+    scale = min(body_height / bh, (cell - 4) / bw, available_h / bh)
+    nw, nh = max(1, round(bw * scale)), max(1, round(bh * scale))
+    x, y = (cell - nw) // 2, ((cell - nh) // 2 if anchor == "center" else foot_y - nh)
+    frames = []
+    for im in sprites:
+        out = Image.new("RGBA", (cell, cell))
+        # The shared crop retains deliberate changes in pose/height/contact.
+        out.paste(im.crop(box).resize((nw, nh), Image.Resampling.LANCZOS), (x, y))
+        frames.append(out)
+    return frames, {"mode": "fixed-envelope", "sourceSize": list(size),
+                    "unionRect": list(box), "scaleXY": [nw / bw, nh / bh],
+                    "outputOffset": [x, y], "outputSize": [cell, cell]}
 
 
 def clean_frames(
     raw_dir: Path,
     clean_dir: Path,
     dist: float = 55.0,
+    key_mode: str = "auto",
+    despill: float = 0.0,
 ) -> list[Path]:
     _ensure_dir(clean_dir)
     raws = sorted(raw_dir.glob("frame_*.png"))
     if not raws:
         raise RuntimeError(f"no raw frames in {raw_dir}")
+    for old in clean_dir.glob("clean_*.png"):
+        old.unlink()
     outs: list[Path] = []
     for i, path in enumerate(raws):
         im = Image.open(path)
-        cleaned = chroma_key_rgba(im, dist=dist)
+        rgba = im.convert("RGBA")
+        native_alpha = rgba.getchannel("A").getextrema()[0] < 255
+        cleaned = rgba if key_mode == "none" or (key_mode == "auto" and native_alpha) else chroma_key_rgba(rgba, dist=dist, despill=despill)
         out = clean_dir / f"clean_{i:04d}.png"
         cleaned.save(out)
         outs.append(out)
@@ -233,6 +290,8 @@ def build_exports(
 ) -> dict:
     _ensure_dir(out_sprite_dir)
     sub = _ensure_dir(out_sprite_dir / tag) if tag else out_sprite_dir
+    for old in sub.glob("sprite_*.png"):
+        old.unlink()
     paths = []
     for i, sp in enumerate(sprites):
         p = sub / f"sprite_{i + 1:02d}.png"
@@ -242,7 +301,7 @@ def build_exports(
     size = sprites[0].size[0]
     strip = Image.new("RGBA", (size * len(sprites), size), (0, 0, 0, 0))
     for i, sp in enumerate(sprites):
-        strip.paste(sp, (i * size, 0), sp)
+        strip.paste(sp, (i * size, 0))
     strip_path = out_sprite_dir / f"run-strip-{n_frames}.png"
     strip.save(strip_path)
 
@@ -251,7 +310,7 @@ def build_exports(
     grid = Image.new("RGBA", (size * cols, size * rows), (0, 0, 0, 0))
     for i, sp in enumerate(sprites):
         r, c = divmod(i, cols)
-        grid.paste(sp, (c * size, r * size), sp)
+        grid.paste(sp, (c * size, r * size))
     grid_path = out_sprite_dir / f"run-grid-{n_frames}.png"
     grid.save(grid_path)
 
@@ -304,46 +363,50 @@ def sample_and_export(
     body_height: int = 100,
     foot_y: int = 118,
     anchor: str = "feet",
+    registration: str = "fixed",
+    duration: float | None = None,
 ) -> dict:
+    if duration is not None and (not math.isfinite(duration) or duration <= 0):
+        raise ValueError("playback-duration must be positive and finite")
     cleans = sorted(clean_dir.glob("clean_*.png"))
     if not cleans:
         raise RuntimeError(f"no cleaned frames in {clean_dir}")
     sprite_dir = _ensure_dir(out_dir / "sprite")
     n_total = len(cleans)
+    original = [Image.open(path).convert("RGBA") for path in cleans]
+    if registration == "legacy-per-frame":
+        normalized = [normalize_sprite(im, cell, body_height, foot_y, anchor) for im in original]
+        registration_info = {"mode": "legacy-per-frame", "warning": "Per-frame resize changes body scale and erases contact motion."}
+    else:
+        normalized, registration_info = fixed_envelope(original, cell, body_height, foot_y, anchor)
     results = []
     for n_want in frame_counts:
         idxs = sample_indices(n_total, n_want)
-        sprites = []
-        for idx in idxs:
-            im = Image.open(cleans[idx]).convert("RGBA")
-            sprites.append(
-                normalize_sprite(
-                    im,
-                    cell=cell,
-                    body_height=body_height,
-                    foot_y=foot_y,
-                    anchor=anchor,
-                )
-            )
+        sprites = [normalized[idx] for idx in idxs]
+        gif_ms = max(10, round(duration * 1000 / len(sprites))) if duration else None
         tag = f"x{n_want}" if n_want != 8 else ""
         # Always also write under xN for consistency when n!=8;
         # for 8, write both root sprites and optional x8.
         if n_want == 8:
             # root-level sprite_01..08 for backwards compat
-            info = build_exports(sprites, sprite_dir, tag="", n_frames=n_want)
+            info = build_exports(sprites, sprite_dir, tag="", n_frames=n_want, gif_ms=gif_ms)
             # also x8 folder
-            build_exports(sprites, sprite_dir, tag="x8", n_frames=n_want)
+            build_exports(sprites, sprite_dir, tag="x8", n_frames=n_want, gif_ms=gif_ms)
         else:
-            info = build_exports(sprites, sprite_dir, tag=tag, n_frames=n_want)
+            info = build_exports(sprites, sprite_dir, tag=tag, n_frames=n_want, gif_ms=gif_ms)
         info["indices"] = idxs
+        info["requestedCount"] = n_want
+        info["count"] = len(sprites)
         results.append(info)
-        print(f"exported {n_want} frames → {info['gif']}")
-    return {"total_clean": n_total, "sets": results}
+        print(f"exported {len(sprites)} frames (requested {n_want}) → {info['gif']}")
+    return {"total_clean": n_total, "registration": registration_info,
+            "previewTiming": "specified-duration" if duration else "legacy-preview-only",
+            "sets": results}
 
 
 def write_readme(out_dir: Path, meta: dict) -> None:
     lines = [
-        "Video2dsprite output (Grok Build pipeline)",
+        "Video2dsprite output (provider-independent postprocessing)",
         "==========================================",
         "base/           base still on #FF00FF",
         "video/          image_to_video clip",
@@ -352,9 +415,9 @@ def write_readme(out_dir: Path, meta: dict) -> None:
         "sprite/         sampled normalized sprites + strips/grids/GIFs",
         "pipeline-meta.json",
         "",
-        "This folder was produced for Grok Build (image_gen + image_to_video).",
-        "Codex/other agents cannot run the video step; they can still re-sample",
-        "existing frames with: python video2dsprite.py sample --clean-dir ...",
+        "Generation is separate: native tools, generate2dmedia API, or supplied clip.",
+        "Fixed-envelope registration is the default. Inspect source contact drift",
+        "and loop seams; dense frames do not prove a seamless game-ready cycle.",
         "",
         json.dumps(meta, indent=2),
         "",
@@ -363,13 +426,14 @@ def write_readme(out_dir: Path, meta: dict) -> None:
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
-    frames = extract_frames(Path(args.video), Path(args.out_dir), fps=args.fps)
+    frames = extract_frames(Path(args.video), Path(args.out_dir), fps=args.fps,
+                            start=args.start, duration=args.duration, decoder=args.decoder)
     print(f"extracted {len(frames)} frames → {args.out_dir}")
     return 0
 
 
 def cmd_clean(args: argparse.Namespace) -> int:
-    outs = clean_frames(Path(args.raw_dir), Path(args.out_dir), dist=args.dist)
+    outs = clean_frames(Path(args.raw_dir), Path(args.out_dir), dist=args.dist, key_mode=args.key_mode, despill=args.despill)
     print(f"cleaned {len(outs)} frames → {args.out_dir}")
     return 0
 
@@ -384,6 +448,8 @@ def cmd_sample(args: argparse.Namespace) -> int:
         body_height=args.body_height,
         foot_y=args.foot_y,
         anchor=args.anchor,
+        registration=args.registration,
+        duration=args.playback_duration,
     )
     out = Path(args.out_dir)
     full = {
@@ -406,9 +472,9 @@ def cmd_process(args: argparse.Namespace) -> int:
         raise FileNotFoundError(video)
 
     print(f"extract {video}")
-    frames = extract_frames(video, raw_dir, fps=args.fps)
+    frames = extract_frames(video, raw_dir, fps=args.fps, start=args.start, duration=args.duration, decoder=args.decoder)
     print(f"clean {len(frames)} frames")
-    clean_frames(raw_dir, clean_dir, dist=args.dist)
+    clean_frames(raw_dir, clean_dir, dist=args.dist, key_mode=args.key_mode, despill=args.despill)
     counts = _parse_counts(args.frame_counts)
     print(f"sample counts={counts}")
     meta_sample = sample_and_export(
@@ -419,15 +485,18 @@ def cmd_process(args: argparse.Namespace) -> int:
         body_height=args.body_height,
         foot_y=args.foot_y,
         anchor=args.anchor,
+        registration=args.registration,
+        duration=args.playback_duration,
     )
     meta = {
         "skill": "video2dsprite",
-        "platform": "Grok Build (image_to_video required for generation step)",
+        "platform": "provider-independent offline processor",
         "name": args.name,
         "video": str(video.resolve()),
         "out_dir": str(out.resolve()),
         "raw_frames": len(frames),
         "chroma_dist": args.dist,
+        "despill": args.despill,
         "cell_size": args.cell_size,
         "body_height": args.body_height,
         "foot_y": args.foot_y,
@@ -437,6 +506,25 @@ def cmd_process(args: argparse.Namespace) -> int:
     (out / "pipeline-meta.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
     write_readme(out, meta)
     print("process done")
+    return 0
+
+
+def engine_module():
+    spec = importlib.util.spec_from_file_location("forge_engine_export", Path(__file__).with_name("engine_export.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def cmd_package(args: argparse.Namespace) -> int:
+    result = engine_module().package(args)
+    print(json.dumps({"manifest": str((Path(args.out_dir)/"animation.json").resolve()),
+                      "frameCount": result["frameCount"], "reviewStatus": result["reviewStatus"]}))
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    print(json.dumps(engine_module().capabilities(), indent=2))
     return 0
 
 
@@ -450,17 +538,28 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--body-height", type=int, default=100)
         sp.add_argument("--foot-y", type=int, default=118)
         sp.add_argument("--anchor", choices=("feet", "center"), default="feet")
+        sp.add_argument("--registration", choices=("fixed", "legacy-per-frame"), default="fixed")
+        sp.add_argument("--playback-duration", type=float, help="Preview seconds; otherwise legacy comparison timing")
+
+    def add_trim(sp: argparse.ArgumentParser) -> None:
+        sp.add_argument("--start", type=float, default=0.0, help="Trim start in source seconds")
+        sp.add_argument("--duration", type=float, help="Trim length in seconds")
+        sp.add_argument("--decoder", choices=("default", "libvpx-vp9"), default="default",
+                        help="Use libvpx-vp9 when extracting transparent VP9 WebM")
 
     pe = sub.add_parser("extract", help="ffmpeg extract frames")
     pe.add_argument("--video", required=True)
     pe.add_argument("--out-dir", required=True)
     pe.add_argument("--fps", type=float, default=0.0, help="0 = all frames")
+    add_trim(pe)
     pe.set_defaults(func=cmd_extract)
 
     pc = sub.add_parser("clean", help="chroma-key raw frames")
     pc.add_argument("--raw-dir", required=True)
     pc.add_argument("--out-dir", required=True)
     pc.add_argument("--dist", type=float, default=55.0)
+    pc.add_argument("--key-mode", choices=("auto", "magenta", "none"), default="auto")
+    pc.add_argument("--despill", type=float, default=0.0, help="Opt-in boundary RGB correction strength, 0..1; alpha unchanged")
     pc.set_defaults(func=cmd_clean)
 
     ps = sub.add_parser("sample", help="sample cleaned frames into sprite sets")
@@ -475,8 +574,27 @@ def build_parser() -> argparse.ArgumentParser:
     pp.add_argument("--name", default="clip")
     pp.add_argument("--fps", type=float, default=0.0)
     pp.add_argument("--dist", type=float, default=55.0)
+    pp.add_argument("--key-mode", choices=("auto", "magenta", "none"), default="auto")
+    pp.add_argument("--despill", type=float, default=0.0, help="Opt-in boundary RGB correction strength, 0..1; alpha unchanged")
+    add_trim(pp)
     add_common_sample(pp)
     pp.set_defaults(func=cmd_process)
+
+    pk = sub.add_parser("package", help="fixed-canvas PNG fallback plus optional alpha video")
+    pk.add_argument("--clean-dir", required=True, help="RGBA PNG frames sorted lexically")
+    pk.add_argument("--out-dir", required=True)
+    pk.add_argument("--name", default="clip")
+    pk.add_argument("--fps", type=float, required=True, help="constant playback frame rate")
+    pk.add_argument("--source-size", help="original art geometry W,H; defaults to input frames")
+    pk.add_argument("--source-anchor", help="original art anchor X,Y; defaults to bottom-center")
+    pk.add_argument("--max-side", type=int, default=384, help="encoding cap, never upscales")
+    pk.add_argument("--crop-union", action="store_true", help="one shared alpha envelope for all frames")
+    pk.add_argument("--formats", default="png", help="png,webm,packed; PNG fallback always included")
+    pk.add_argument("--loop", action="store_true", help="request looping; seam still needs visual review")
+    pk.set_defaults(func=cmd_package)
+
+    pd = sub.add_parser("doctor", help="inspect local encoders without generating media")
+    pd.set_defaults(func=cmd_doctor)
 
     return p
 

@@ -1,5 +1,8 @@
 # Agent Sprite Forge
 
+> **2026-10-05 更新:** 画像・動画 API と透過動画の出力を追加しました。この翻訳は過去の作例を含みます。最新の手順は [English](./README.md) を参照してください。動画処理は Grok Build 専用ではありません。
+
+
 言語：[English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
 <p align="center">

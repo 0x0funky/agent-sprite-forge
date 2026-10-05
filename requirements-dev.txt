@@ -1,0 +1,3 @@
+-r requirements.txt
+pytest>=8.0
+PyYAML>=6.0

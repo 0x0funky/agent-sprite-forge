@@ -1,5 +1,8 @@
 # Agent Sprite Forge
 
+> **2026-10-05 更新：** 已新增跨 agent 的图片／视频 API 与透明视频封装；本文保留历史展示，最新安装及功能以 [English](./README.md)／[繁體中文](./README.zh-TW.md) 为准。视频流程不再仅限 Grok Build。
+
+
 语言：[English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体中文](./README.zh-CN.md) | [日本語](./README.ja.md) | [한국어](./README.ko.md)
 
 <p align="center">

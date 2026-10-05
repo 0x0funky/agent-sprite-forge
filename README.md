@@ -7,11 +7,11 @@ Languages: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体�
 </p>
 
 <p align="center">
-  <strong>Codex skills for game-ready 2D sprites, layered maps, and engine-ready prototypes.</strong>
+  <strong>Agent skills for game-ready 2D sprites, AI video animation, and layered maps.</strong>
 </p>
 
 <p align="center">
-  Ask in natural language. Codex plans the asset pipeline, renders with built-in image generation, then local processors clean, split, validate, and export assets for Godot, Unity, or raw 2D game workflows.
+  Ask in natural language. Codex plans the asset pipeline, generates with host tools or selected APIs, then local processors clean, split, validate, and export assets for Godot, Unity, or raw 2D game workflows.
 </p>
 
 <p align="center">
@@ -382,19 +382,30 @@ Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to b
 
 ## Included Skills
 
-| Skill | Use it for | Output | Runtime |
-| --- | --- | --- | --- |
-| [`generate2dsprite`](./skills/generate2dsprite) | Sprites, animation sheets, props, spell bundles, FX, reference variants, optional layout guides for fixed-frame sheets | Raw sheet, cleaned transparent sheet, frames, GIFs, metadata | Codex / Grok (image gen) |
-| [`generate2dmap`](./skills/generate2dmap) | Baked maps, layered raster maps, clean HD RPG maps, prop packs, collision/zones, Godot-editable scenes | Base map, dressed reference, prop pack, extracted props, preview, scene metadata | Codex / Grok (image gen) |
-| [`video2dsprite`](./skills/video2dsprite) | **Denser motion sprites from video**: base still → `image_to_video` → frame extract → magenta chroma → multi-density sprite strips/GIFs | Video, raw/clean frames, 8/16/24/48 sprite sets, strips, preview GIFs | **Grok Build only** |
+| Skill | Use it for | Main outputs |
+| --- | --- | --- |
+| [`generate2dsprite`](./skills/generate2dsprite) | Precise sprites, per-action animation, character/prop artwork | Native-alpha or keyed PNGs, frames, anchors and QA |
+| [`generate2dmap`](./skills/generate2dmap) | RPG, scrolling and HD-2D scenes | Terrain, props, layers, collision/occlusion/transition data |
+| [`video2dsprite`](./skills/video2dsprite) | Animate an approved still or process existing video | Registered frames, transparent/packed-alpha media, poster and metadata |
+| [`generate2dmedia`](./skills/generate2dmedia) | API image generation, reference edits and image-to-video | Raw media, recoverable job IDs and hashes for downstream processing |
 
-### Grok Build only: `$video2dsprite`
+### Still → AI video → game-ready animation
 
-`$video2dsprite` is a **Grok Build exclusive** skill. It depends on Grok's native **`image_gen` / `image_edit` + `image_to_video`** tools (still → short clip). Codex and other agents do not have `image_to_video`, so they cannot run the generation half of this pipeline.
+`video2dsprite` accepts **Grok Build native tools, the official xAI API, or an existing
+video**. Codex, Claude and other tool-capable agents can use the API route; Grok Build
+is no longer required. New API commands default to a no-network dry-run. Execution
+requires an environment API key and `--execute`.
 
-Use it when you want **smoother intermediate poses** (e.g. run/walk cycles) by sampling dense frames from a 6s in-place motion clip. Tradeoffs: softer pixels, possible identity drift, chroma fringe — for crisp production sheets, keep using `$generate2dsprite`.
+Approve one source image, generate one action with a locked camera, then key,
+register, review the loop and package it. This works for actors, monsters, NPCs,
+props and local environment motion. Keep sheets for precise pixel animation.
+Video is not guaranteed to be smaller, cheaper to decode, or seamless.
 
-Install for Grok Build by copying skills into `~/.grok/skills` (see [Install](#install)). On Codex, install is still `~/.codex/skills`; `$video2dsprite` will load but must refuse the video step if tools are missing.
+The 2026-10-05 update adds API adapters, source-space geometry, transparency fixes
+and map/sprite audits. See the [upgrade audit](./docs/upgrade-audit-2026-10-05.zh-TW.md),
+[provider survey](./skills/generate2dmedia/references/provider-survey.md) and
+[API usage](./skills/generate2dmedia/references/api-usage.md).
+API adapters are offline-contract-tested; no paid generation benchmark was run in this update.
 
 #### Case study: Ryo run (16 denser frames)
 
@@ -438,7 +449,7 @@ When a visual reference is involved, the image skills follow the same wrapper ru
 
 1. The user asks Codex for a sprite, prop pack, map, or engine-ready prototype.
 2. The agent chooses the asset type, action, bundle shape, sheet layout, frame count, style, and alignment strategy.
-3. Built-in image generation creates the raw visual asset.
+3. Host image tools or a selected API create the raw visual asset; optional image-to-video adds motion.
 4. Local scripts run deterministic post-processing: chroma-key cleanup, despill, frame extraction, alignment, prop-pack slicing, GIF/PNG export, and validation metadata.
 5. For maps and prototypes, Codex can also assemble placement metadata, collision, trigger zones, Godot scenes, or Unity project wiring.
 
@@ -472,7 +483,7 @@ python -m pip install -r .\requirements.txt
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
 Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.codex\skills\"
 
-# Grok Build (required for $video2dsprite video generation)
+# Grok Build (optional native media route)
 New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.grok\skills" | Out-Null
 Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.grok\skills\"
 ```
@@ -488,14 +499,14 @@ python3 -m pip install -r ./requirements.txt
 mkdir -p ~/.codex/skills
 cp -R ./skills/* ~/.codex/skills/
 
-# Grok Build (required for $video2dsprite video generation)
+# Grok Build (optional native media route)
 mkdir -p ~/.grok/skills
 cp -R ./skills/* ~/.grok/skills/
 ```
 
 Start a new Codex or Grok Build session after installation so skills reload.
 
-**Note:** `$generate2dsprite` and `$generate2dmap` work wherever built-in image generation is available. **`$video2dsprite` full pipeline only works in Grok Build** (`image_to_video`). The Python postprocessor can still re-sample already-exported frames on any machine with ffmpeg + Pillow.
+**Note:** Generation can use host tools or selected APIs; existing media needs neither. Keep all four sibling skill directories together for shared processors and references. API keys belong in production tooling, never in the shipped game.
 
 ## Python Requirements
 
@@ -505,7 +516,7 @@ The local post-processors depend on:
 - `numpy`
 - `ffmpeg` (CLI on `PATH`) for `$video2dsprite` frame extraction
 
-They are listed in [`requirements.txt`](./requirements.txt) (Python only). Image/video generation is provided by the host agent; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
+They are listed in [`requirements.txt`](./requirements.txt) (Python only). Image/video generation is provided by host tools or selected APIs; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
 
 ## Repository Layout
 
@@ -540,7 +551,12 @@ agent-sprite-forge/
       scripts/
         generate2dsprite.py
         make_layout_guide.py
-    video2dsprite/                 # Grok Build only (image_to_video)
+    generate2dmedia/               # Optional OpenAI/xAI API adapter
+      SKILL.md
+      scripts/generate_media.py
+      references/api-usage.md
+      references/provider-survey.md
+    video2dsprite/                 # Host / API / existing video
       SKILL.md
       agents/
         openai.yaml
@@ -579,7 +595,7 @@ Use $generate2dsprite to create a late-Sengoku player_sheet for a wandering fire
 Use $generate2dsprite to create a wizard spell bundle with cast, projectile, and impact sprites.
 ```
 
-### Video → dense sprites (Grok Build only)
+### Video → dense sprites or transparent media
 
 ```text
 Use $video2dsprite with my existing side-view hero PNG as base. Generate a 6s in-place run on #FF00FF, extract frames, chroma key, and export 8/16/24/48 sprite sets + preview GIFs. Do not wire into the game; just report paths.

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import re
 import statistics
@@ -69,7 +70,21 @@ def normalized_difference(left: Image.Image, right: Image.Image) -> float:
 
 
 def extract(args: argparse.Namespace) -> dict[str, object]:
-    source = Image.open(args.input).convert("RGB")
+    if args.rows <= 0 or args.cols <= 0:
+        raise ValueError("rows and cols must be positive integers.")
+    if args.tile_size is not None and args.tile_size <= 0:
+        raise ValueError("tile-size must be positive.")
+    for name in ("runtime_world_size", "surface_y", "roughness", "min_contrast", "min_variant_difference"):
+        if not math.isfinite(getattr(args, name)):
+            raise ValueError(f"{name} must be finite.")
+    if args.runtime_world_size <= 0 or not 0 <= args.roughness <= 1:
+        raise ValueError("runtime-world-size must be positive and roughness must be in [0,1].")
+    if not 0 <= args.min_contrast <= 1 or not 0 <= args.min_variant_difference <= 1:
+        raise ValueError("QC thresholds must be in [0,1].")
+    with Image.open(args.input) as opened:
+        if opened.convert("RGBA").getchannel("A").getextrema() != (255, 255):
+            raise ValueError("Terrain atlas must be opaque; transparency cannot be discarded.")
+        source = opened.convert("RGB")
     if source.width % args.cols or source.height % args.rows:
         raise ValueError(
             f"Atlas {source.size} is not evenly divisible by {args.cols} columns x {args.rows} rows."
@@ -78,20 +93,34 @@ def extract(args: argparse.Namespace) -> dict[str, object]:
     row_map = dict(args.terrain_row)
     if len(row_map) != len(args.terrain_row):
         raise ValueError("Terrain names may only be mapped once.")
-    if set(row_map.values()) != set(range(args.rows)):
+    if len(row_map) != args.rows or set(row_map.values()) != set(range(args.rows)):
         raise ValueError(f"Terrain rows must cover every row from 0 to {args.rows - 1} exactly once.")
 
     emissions = dict(args.emission)
+    if len(emissions) != len(args.emission):
+        raise ValueError("Emission names may only be mapped once.")
+    if any(not math.isfinite(value) or value < 0 for value in emissions.values()):
+        raise ValueError("Emission values must be finite and nonnegative.")
     unknown_emissions = set(emissions) - set(row_map)
     if unknown_emissions:
         raise ValueError(f"Emission references unknown terrain: {sorted(unknown_emissions)}")
 
     cell_width = source.width // args.cols
     cell_height = source.height // args.rows
+    if cell_width != cell_height and args.cell_shape != "crop-square":
+        raise ValueError("Non-square source cells require explicit --cell-shape crop-square; cropping loses pixels.")
     output_size = args.tile_size or min(cell_width, cell_height)
-    args.output_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = args.manifest or args.output_dir / "terrain-bundle.json"
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    output_paths = [args.output_dir / f"{terrain}-{col + 1}.png" for terrain in row_map for col in range(args.cols)]
+    inputs = [args.input] + ([args.prompt] if args.prompt else [])
+    destinations = [manifest_path] + output_paths
+    if len({os.path.normcase(str(path.resolve())) for path in destinations}) != len(destinations):
+        raise ValueError("Manifest and image output paths must be distinct.")
+    for destination in destinations:
+        for input_path in inputs:
+            if destination.resolve() == input_path.resolve() or (destination.exists() and input_path.exists() and destination.samefile(input_path)):
+                raise ValueError("Output path aliases an input file.")
+    pending_images: list[tuple[Path, Image.Image]] = []
 
     terrain_payload: dict[str, object] = {}
     warnings: list[str] = []
@@ -108,7 +137,7 @@ def extract(args: argparse.Namespace) -> dict[str, object]:
                 y0 = (cell.height - crop_size) // 2
                 cell = cell.crop((x0, y0, x0 + crop_size, y0 + crop_size))
             if cell.size != (output_size, output_size):
-                cell = cell.resize((output_size, output_size), Image.Resampling.LANCZOS)
+                cell = cell.resize((output_size, output_size), getattr(Image.Resampling, args.resampler.upper()))
 
             metrics = image_metrics(cell)
             if metrics["contrast"] < args.min_contrast:
@@ -117,7 +146,7 @@ def extract(args: argparse.Namespace) -> dict[str, object]:
                 )
             filename = f"{terrain}-{col + 1}.png"
             output_path = args.output_dir / filename
-            cell.save(output_path)
+            pending_images.append((output_path, cell))
             variant_images.append(cell)
             variants.append(
                 {
@@ -161,7 +190,7 @@ def extract(args: argparse.Namespace) -> dict[str, object]:
             "output_tile_size": [output_size, output_size],
         },
         "runtime": {
-            "engine_target": "godot_mesh_top",
+            "engine_target": args.engine_target,
             "world_size": args.runtime_world_size,
             "surface_y": args.surface_y,
             "edge_policy": args.edge_policy,
@@ -172,8 +201,14 @@ def extract(args: argparse.Namespace) -> dict[str, object]:
             "min_variant_difference": args.min_variant_difference,
             "warnings": warnings,
             "passed": not warnings,
+            "seamless_verified": False,
         },
+        "processing": {"cell_shape": args.cell_shape, "resampler": args.resampler},
     }
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    for output_path, image in pending_images:
+        image.save(output_path)
     manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     return payload
 
@@ -186,6 +221,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--cols", type=int, required=True)
     parser.add_argument("--terrain-row", action="append", type=parse_row, required=True)
     parser.add_argument("--tile-size", type=int)
+    parser.add_argument("--cell-shape", choices=("square", "crop-square"), default="square")
+    parser.add_argument("--resampler", choices=("nearest", "lanczos"), default="lanczos")
+    parser.add_argument("--engine-target", default="project-native")
     parser.add_argument("--manifest", type=Path)
     parser.add_argument("--prompt", type=Path)
     parser.add_argument("--edge-policy", choices=("isolated", "seamless"), default="isolated")
