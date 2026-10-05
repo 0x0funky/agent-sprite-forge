@@ -2157,7 +2157,7 @@ def plan_process(args: argparse.Namespace) -> ProcessPlan:
             labels = FRAME_LABELS[args.mode]
     intentional = getattr(args, "intentional_low_frame_count", False)
     planning_warning = None if single else locomotion_planning_warning(args.mode, rows, cols, intentional)
-    if args.duration % 10:
+    if not single and args.duration % 10:
         warnings.append(f"GIF stores frame times in 10 ms units, so --duration {args.duration} plays as "
                         f"{args.duration // 10 * 10} ms in the GIF preview; PNG frames and metadata keep "
                         f"{args.duration} ms.")
@@ -2464,8 +2464,8 @@ def cmd_process(args: argparse.Namespace) -> dict[str, Any]:
 
     published: list[tuple[Path, int, int]] = []
     try:
-        with forge_core.staged_output(destination) as stage, \
-                tempfile.TemporaryDirectory(prefix=f".{destination.name}.sidecars-", dir=destination.parent) as side:
+        with (forge_core.staged_output(destination) as stage,
+              tempfile.TemporaryDirectory(prefix=f".{destination.name}.sidecars-", dir=destination.parent) as side):
             written = _write_outputs(stage, plan, args, result, raw_name, metadata)
             external: list[tuple[Path, Path]] = []
             for key, payload, final in (("godot_sprite3d_output", godot_payload, godot_final),
