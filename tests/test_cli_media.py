@@ -11,7 +11,6 @@ tests import them the same way to patch the instances the scripts use.
 from __future__ import annotations
 
 import base64
-import copy
 import json
 import os
 from pathlib import Path
@@ -36,53 +35,6 @@ THREAD = "0199aa11-2222-7333-8444-955556666777"
 SESSION = "01a0bb22-3333-7444-8555-a66667777888"
 CANARIES = {"OPENAI_API_KEY": "sk-cli-canary-0123456789abcdef", "XAI_API_KEY": "xai-cli-canary-0123456789abcdef",
             "CODEX_API_KEY": "codex-cli-canary-0123456789ab", "GITHUB_TOKEN": "ghp_cli_canary_0123456789abcdef"}
-# Schema request (handoff section 5): $defs/route_proofs_v1 for <project>/.forge/route-proofs.json.
-ROUTE_PROOFS_V1 = {
-    "description": "<project>/.forge/route-proofs.json written by cli_media.py: version-keyed evidence that an opt-in "
-                   "CLI route works. A record is valid only for its route, native tool, CLI version and recipe; "
-                   "forge_doctor.py reads it for the TOOL_EXPOSED and VERIFIED ladder steps.",
-    "type": "object",
-    "required": ["schema", "proofs"],
-    "properties": {
-        "schema": {"const": "generate2dmedia.route_proofs.v1"},
-        "proofs": {"type": "array", "items": {
-            "type": "object",
-            "required": ["route", "tool", "version", "recipe", "level", "verifiedAt"],
-            "properties": {
-                "route": {"enum": ["codex-cli", "grok-cli", "grok-acp"]},
-                "tool": {"enum": ["image_gen", "image_edit", "image_to_video"]},
-                "version": {"type": "string", "minLength": 1},
-                "versionText": {"type": "string", "minLength": 1},
-                "recipe": {"type": "string", "pattern": "^[a-z0-9-]+/[0-9]+$"},
-                "level": {"enum": ["TOOL_EXPOSED", "VERIFIED"]},
-                "verifiedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
-                "runId": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
-                "method": {"type": "string"},
-                "jobDir": {"$ref": "common.schema.json#/$defs/relPath"},
-                "artifactSha256": {"$ref": "common.schema.json#/$defs/sha256"},
-            },
-            "if": {"properties": {"level": {"const": "VERIFIED"}}, "required": ["level"]},
-            "then": {"required": ["artifactSha256"]},
-        }},
-    },
-}
-
-
-def patched_media_validator(name: str):
-    """A validator for media.schema.json#/$defs/<name> with the section 5 additions applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / "generate2dmedia" / "references" / "schemas"
-    schemas = {p.name: json.loads(p.read_text(encoding="utf-8")) for p in folder.glob("*.schema.json")}
-    media = copy.deepcopy(schemas["media.schema.json"])
-    media["$defs"]["route_proofs_v1"] = ROUTE_PROOFS_V1
-    schemas["media.schema.json"] = media
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in schemas.values())
-    return Draft202012Validator({"$ref": f"{media['$id']}#/$defs/{name}"}, registry=registry)
-
-
 def assert_media(document: dict, name: str) -> None:
     assert_valid_contract(document, "media", name, skill="generate2dmedia")
 
@@ -91,7 +43,7 @@ def assert_media(document: dict, name: str) -> None:
 def env(tmp_path, monkeypatch):
     """Hermetic CLI homes, the fake CLIs in place of the native ones, a project folder as cwd."""
     for name in (*CANARIES, "FORGE_MAX_PAID_REQUESTS", "FAKE_CLI_MODE", "FAKE_THREAD_ID", "FAKE_SESSION_ID",
-                 "FAKE_CODEX_LOGIN"):
+                 "FAKE_CODEX_LOGIN", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION", *media_ledger.SESSION_ENV.values()):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
@@ -108,7 +60,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(cli_media, "resolve_route_cli", fake)
     (project / "prompt.txt").write_text("A small red apple icon on flat magenta.", encoding="utf-8")
     (project / "ref.png").write_bytes(forge_doctor._tiny_png(64))
-    return SimpleNamespace(tmp=tmp_path, project=project, log=log)
+    return SimpleNamespace(tmp=tmp_path, project=project, log=log, fake=fake)
 
 
 def run(capsys, *argv):
@@ -230,7 +182,7 @@ def test_codex_success_has_provenance_ledger_and_proof(env, capsys, monkeypatch)
     assert record["status"] == "done" and record["cliRun"]["threadId"] == job["cliRun"]["threadId"]
     assert (env.project / ".forge" / "cli-runs" / f"{record['cliRun']['runId']}.prompt.txt").is_file()
     proofs = json.loads((env.project / ".forge" / "route-proofs.json").read_text(encoding="utf-8"))
-    patched_media_validator("route_proofs_v1").validate(proofs)
+    assert_media(proofs, "route_proofs_v1")
     proof, = proofs["proofs"]
     assert (proof["route"], proof["level"], proof["version"]) == ("codex-cli", "VERIFIED", "0.155.1")
     assert proof["artifactSha256"] == summary["sha256"] and proof["jobDir"] == "out/hero"
@@ -271,7 +223,7 @@ def test_grok_image_edit_and_acp_video_succeed(env, capsys):
                for e in starts)
     assert all(e["credentialEnv"] == [] for e in starts)
     proofs = json.loads((env.project / ".forge" / "route-proofs.json").read_text(encoding="utf-8"))
-    patched_media_validator("route_proofs_v1").validate(proofs)
+    assert_media(proofs, "route_proofs_v1")
     assert {(p["route"], p["tool"], p["level"]) for p in proofs["proofs"]} == {
         ("grok-cli", "image_gen", "VERIFIED"), ("grok-cli", "image_edit", "VERIFIED"),
         ("grok-acp", "image_to_video", "VERIFIED")}
@@ -519,3 +471,223 @@ def test_invalid_requests_fail_before_anything_runs(env, capsys):
         code, _, err = run(capsys, *argv, "--execute")
         assert code == 1 and "INVALID_REQUEST" in err and message in err, err
     assert not env.log.exists() and not (env.project / ".forge").exists()
+
+
+# --------------------------------------------------------------------------- D22: --route auto and the session cap
+
+def write_proofs(project: Path, *records: tuple[str, str, str]) -> None:
+    """VERIFIED proofs (route, tool, version) for the recipes cli_media runs today."""
+    proofs = []
+    for route, tool, version in records:
+        recipe = next(c.recipe for c in forge_doctor.CAPABILITIES if (c.route, c.tool) == (route, tool))
+        proofs.append({"route": route, "tool": tool, "version": version, "recipe": recipe, "level": "VERIFIED",
+                       "verifiedAt": "2026-10-05T06:00:00.000Z", "runId": "ab" * 16, "artifactSha256": "cd" * 32})
+    (project / ".forge").mkdir(exist_ok=True)
+    (project / ".forge" / "route-proofs.json").write_text(json.dumps(
+        {"schema": forge_doctor.PROOFS_SCHEMA, "proofs": proofs}), encoding="utf-8")
+
+
+def test_route_auto_takes_the_first_verified_local_route(env, capsys, monkeypatch):
+    """Owner decision 13 / D22: Codex (local CLI) first, then Grok (local CLI); only VERIFIED routes for the
+    installed version count, and the route used is always named."""
+    code, _, err = run(capsys, *image_args("out/none", "auto"))
+    assert code == 1 and "NOT_VERIFIED" in err and "codex-cli" in err and "grok-cli" in err
+    write_proofs(env.project, ("codex-cli", "image_gen", "0.150.0"), ("grok-cli", "image_gen", "1.0.40"))
+    # A dry run reads no version (nothing is spawned): the newest VERIFIED proof is enough to plan with.
+    with monkeypatch.context() as patch:
+        patch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("a dry run must not start a process"))
+        code, plan, err = run(capsys, *image_args("out/a", "auto"))
+    assert code == 0, err
+    assert plan["route"] == "codex-cli" and plan["routeChoice"]["verifiedFor"] == "0.150.0"
+    assert plan["label"] == "Codex (local CLI)" and plan["routeChoice"]["order"] == ["codex-cli", "grok-cli"]
+    # Executed, the installed Codex is 0.155.1, whose proof is missing: Grok (local CLI) is used and named.
+    code, summary, err = run(capsys, *image_args("out/a", "auto"), "--execute")
+    assert code == 0, err
+    assert summary["route"] == "grok-cli" and summary["label"] == "Grok (local CLI, one-shot image mode)"
+    assert summary["routeChoice"]["skipped"] == ["codex-cli: no VERIFIED proof for 0.155.1"]
+    job = json.loads(Path(summary["metadata"]).read_text(encoding="utf-8"))
+    assert_media(job, "job_v2")
+    assert job["route"] == "grok-cli" and job["routeChoice"]["route"] == "grok-cli"
+    assert [e["cli"] for e in generations(env.log)] == ["grok"]
+    # With a proof for the installed Codex, Codex comes first; video goes to Grok (local CLI, ACP).
+    write_proofs(env.project, ("codex-cli", "image_gen", "0.155.1"), ("grok-acp", "image_to_video", "1.0.40"))
+    code, summary, err = run(capsys, *image_args("out/b", "auto"), "--execute")
+    assert code == 0 and summary["route"] == "codex-cli" and summary["routeChoice"]["skipped"] == [], err
+    code, summary, err = run(capsys, "video", "--route", "auto", "--reference", "ref.png", "--prompt-file",
+                             "prompt.txt", "--duration", "2", "--resolution", "480p", "--output-dir", "out/clip",
+                             "--execute")
+    assert code == 0 and summary["route"] == "grok-acp", err
+    code, _, err = run(capsys, "edit", "--route", "auto", "--reference", "ref.png", "--prompt-file", "prompt.txt",
+                       "--output-dir", "out/edit")
+    assert code == 1 and "NOT_VERIFIED" in err  # no image_edit proof: auto never runs an unverified route
+
+
+def test_route_auto_skips_a_cli_that_is_not_installed(env, capsys, monkeypatch):
+    def only_grok(cli):
+        if cli == "codex":
+            return cli_media.RouteCli([], forge_doctor.CliInfo("codex", problem="not found on PATH"))
+        return env.fake(cli)
+
+    monkeypatch.setattr(cli_media, "resolve_route_cli", only_grok)
+    write_proofs(env.project, ("codex-cli", "image_gen", "0.155.1"), ("grok-cli", "image_gen", "1.0.40"))
+    code, summary, err = run(capsys, *image_args("out/a", "auto"), "--execute")
+    assert code == 0 and summary["route"] == "grok-cli", err
+    assert summary["routeChoice"]["skipped"] == ["codex-cli: not found on PATH"]
+
+
+def test_session_cap_is_enforced_through_the_ledger(env, capsys, monkeypatch):
+    """D22: by default 8 images and 2 videos per 12 hours through the local routes, counted in the project's
+    ledger before anything is spawned; settable per command or by environment."""
+    assert media_ledger.SESSION_DEFAULTS == {"image": 8, "video": 2, "hours": 12.0}
+    for index in range(2):
+        (env.project / f"p{index}.txt").write_text(f"A red apple, variant {index}.", encoding="utf-8")
+        code, _, err = run(capsys, "image", "--route", "codex-cli", "--prompt-file", f"p{index}.txt", "--output-dir",
+                           f"out/{index}", "--execute", "--session-images", "2")
+        assert code == 0, err
+    (env.project / "p2.txt").write_text("A red apple, variant 2.", encoding="utf-8")
+    third = ["image", "--route", "codex-cli", "--prompt-file", "p2.txt", "--output-dir", "out/2"]
+    code, plan, _ = run(capsys, *third, "--session-images", "2")
+    assert code == 0 and plan["ledger"]["session"]["images"] == {"used": 2, "cap": 2}
+    assert any("session cap reached" in warning for warning in plan["warnings"])
+    code, _, err = run(capsys, *third, "--execute", "--session-images", "2")
+    assert code == 1 and "CAP" in err and "session cap reached" in err and "--session-images" in err
+    assert len(generations(env.log)) == 2 and not (env.project / "out" / "2").exists()
+    monkeypatch.setenv("FORGE_SESSION_IMAGES", "3")  # the environment raises it; the flag still wins
+    assert run(capsys, *third, "--execute")[0] == 0
+    # Videos have their own cap; a video does not use the image cap.
+    monkeypatch.setenv("FORGE_SESSION_VIDEOS", "0")
+    code, _, err = run(capsys, "video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt",
+                       "--output-dir", "out/clip", "--execute")
+    assert code == 1 and "session cap reached: 0 local CLI video call(s) of at most 0" in err
+    monkeypatch.setenv("FORGE_SESSION_VIDEOS", "two")
+    code, _, err = run(capsys, "video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt",
+                       "--output-dir", "out/clip")
+    assert code == 1 and "INVALID_REQUEST" in err and "FORGE_SESSION_VIDEOS" in err
+    assert len(generations(env.log)) == 3
+
+
+def test_session_window_counts_only_recent_quota_calls(tmp_path, monkeypatch):
+    """The session is a window of hours over the ledger: older calls, paid REST calls and not_sent calls do
+    not count; a reservation whose time cannot be read does (the cap errs on the safe side)."""
+    monkeypatch.delenv(media_ledger.MAX_PAID_ENV, raising=False)
+    ledger = media_ledger.Ledger(tmp_path)
+    entry = {"jobDir": "out/a", "fingerprint": "ab" * 32, "provider": "openai", "model": "codex-image_gen",
+             "kind": "image", "route": "codex-cli", "reservedUsd": 0.0}
+    limits = media_ledger.session_limits(1, 1, 12)
+    first = ledger.reserve(entry, session=limits)
+    ledger.commit(first, status="done")
+    with pytest.raises(media_ledger.SessionCapExceeded):
+        ledger.reserve({**entry, "fingerprint": "cd" * 32}, session=limits)
+    lines = ledger.path.read_text(encoding="utf-8").splitlines()
+    old = [json.loads(line) for line in lines]
+    for line in old:
+        line["ts"] = "2026-01-01T00:00:00.000Z"  # long before the window
+    ledger.path.write_text("".join(json.dumps(line) + "\n" for line in old), encoding="utf-8")
+    second = ledger.reserve({**entry, "fingerprint": "cd" * 32}, session=limits)
+    ledger.commit(second, status="not_sent")
+    paid = ledger.reserve({**entry, "fingerprint": "ef" * 32, "route": "rest", "reservedUsd": 0.1}, session=limits)
+    ledger.commit(paid, status="done")
+    usage = ledger.session_usage(12)
+    assert (usage["image"], usage["video"]) == (0, 0)
+    ledger.reserve({**entry, "fingerprint": "12" * 32}, session=limits)
+    assert ledger.session_usage(12)["image"] == 1
+    with open(ledger.path, "a", encoding="utf-8") as stream:
+        stream.write(json.dumps({**json.loads(lines[0]), "reservationId": "f" * 32, "ts": "not a time",
+                                 "kind": "video"}) + "\n")
+    assert ledger.session_usage(12)["video"] == 1
+    with pytest.raises(media_ledger.LedgerError):
+        media_ledger.session_limits(-1, None, None)
+    with pytest.raises(media_ledger.LedgerError):
+        media_ledger.session_limits(None, None, 0)
+
+
+# --------------------------------------------------------------------------- D25, D27, scrub
+
+def test_batch_progress_paths_are_relative(env, capsys):
+    """D25 (reviewer b22_spot.py case 3): the progress file records jobsFile and every jobDir relative to its
+    own folder, never an absolute path."""
+    jobs_dir = env.project / "jobs"
+    jobs_dir.mkdir()
+    (jobs_dir / "p.txt").write_text("A blue pear.", encoding="utf-8")
+    (jobs_dir / "jobs.json").write_text(json.dumps({"jobs": [
+        {"id": "a", "command": "image", "route": "codex-cli", "prompt_file": "p.txt", "output_dir": "../out/a"}]}),
+        encoding="utf-8")
+    code, summary, err = run(capsys, "batch", "jobs/jobs.json", "--execute", "--allow-unverified")
+    assert code == 0, err
+    text = (jobs_dir / "jobs.progress.json").read_text(encoding="utf-8")
+    progress = json.loads(text)
+    assert_media(progress, "batch_progress_v1")
+    assert progress["jobsFile"] == "jobs.json" and progress["results"][0]["jobDir"] == "../out/a"
+    for needle in (str(env.tmp), env.tmp.as_posix(), str(Path.home()), Path.home().as_posix()):
+        assert needle not in text
+    # A re-run reuses the finished job and keeps the paths relative; --progress elsewhere stays relative too.
+    code, summary, err = run(capsys, "batch", "jobs/jobs.json", "--execute", "--progress", "logs/run.json")
+    assert code == 0, err
+    other = json.loads((env.project / "logs" / "run.json").read_text(encoding="utf-8"))
+    assert other["jobsFile"] == "../jobs/jobs.json" and other["results"][0]["jobDir"] == "../out/a"
+    assert other["results"][0]["status"] == "reused"
+
+
+def test_internal_errors_are_one_clean_line(env, capsys, monkeypatch):
+    """D27: an unexpected exception prints error: internal error (<Type>: <message>), scrubbed, and exits 1."""
+    monkeypatch.setenv("XAI_API_KEY", CANARIES["XAI_API_KEY"])
+
+    def broken(*args, **kwargs):
+        raise RuntimeError(f"state broke near {Path.home() / 'x'} with {CANARIES['XAI_API_KEY']}")
+    monkeypatch.setattr(cli_media, "dry_run", broken)
+    code, out, err = run(capsys, *image_args())
+    assert code == 1 and out is None
+    assert err.startswith("error: internal error (RuntimeError: state broke near ~") and "nothing was retried" in err
+    assert CANARIES["XAI_API_KEY"] not in err and str(Path.home()) not in err and "Traceback" not in err
+
+
+def test_scrub_keeps_long_relative_paths_readable():
+    """Reviewer note: the blob pattern used to eat '/', so a 40+ character relative job folder read as
+    'job .[blob]'; tokens and keys are still masked."""
+    path = ".forge/route-checks/codex-cli-20261005T123928Z-a1b2c3"
+    assert cli_media.scrub(f"An identical request already succeeded: job {path}") == \
+        f"An identical request already succeeded: job {path}"
+    token = "eyJhbGciOiJIUzI1NiJ9" + "Q" * 30
+    assert cli_media.scrub(f"token {token} refused") == "token [blob] refused"
+    assert cli_media.scrub("auth sk-proj-abcdefghijklmnop failed") == "auth [redacted] failed"
+
+
+def test_cli_routes_doc_matches_the_tools():
+    """cli-routes.md: single-line commands whose options exist, the D22 order and the user-facing route names."""
+    import re
+
+    references = SKILLS_DIR / "generate2dmedia" / "references"
+    text = (references / "cli-routes.md").read_text(encoding="utf-8")
+    commands = [line for block in re.findall(r"```bash\n(.*?)```", text, re.S) for line in block.splitlines() if line]
+    assert len(commands) >= 10
+    parser = cli_media.build_parser()
+    verbs = next(a for a in parser._actions if isinstance(a, cli_media.argparse._SubParsersAction)).choices
+    for command in commands:
+        assert command.startswith('python "<skill-dir>/scripts/') and not command.endswith("\\"), command
+        if "/cli_media.py" in command:
+            verb = command.split('cli_media.py" ', 1)[1].split()[0]
+            options = set(re.findall(r"\s(--[a-z-]+)", command))
+            assert options <= set(verbs[verb]._option_string_actions), command
+    for phrase in ("Codex (local CLI)", "Grok (local CLI)", "--route auto", "8 images", "2 videos", "12 hours"):
+        assert phrase in text, phrase
+    section = text[text.index("## Route order"):]
+    order = [section.index(name) for name in ("the host's own image tool", "**Codex (local CLI)**",
+                                              "**Grok (local CLI)** in one-shot mode", "the paid REST API")]
+    assert order == sorted(order)
+    readme = (references / "agent-profiles" / "README.md").read_text(encoding="utf-8")
+    profiles = sorted(p.name for p in (references / "agent-profiles").glob("*.md") if p.name != "README.md")
+    assert profiles == ["video-agent.md"] and all(f"]({name})" in readme for name in profiles)
+
+
+def test_batch_dry_run_warns_about_the_session_cap(env, capsys):
+    """A batch plan says where the session cap would stop it (D22), before anything runs."""
+    for index in range(3):
+        (env.project / f"p{index}.txt").write_text(f"A green plum, variant {index}.", encoding="utf-8")
+    (env.project / "jobs.json").write_text(json.dumps({"jobs": [
+        {"id": f"j{index}", "command": "image", "route": "codex-cli", "prompt_file": f"p{index}.txt",
+         "output_dir": f"out/{index}"} for index in range(3)]}), encoding="utf-8")
+    code, plan, err = run(capsys, "batch", "jobs.json", "--session-images", "2")
+    assert code == 0 and plan["calls"] == 3, err
+    assert plan["warnings"] == ["the session cap stops the batch after 2 more local CLI image call(s) "
+                                "(0 of 2 used in the last 12 h)"]
+    assert not env.log.exists()

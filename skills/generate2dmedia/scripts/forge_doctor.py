@@ -15,13 +15,21 @@ step will break); MISSING (a route is unavailable); AGENT (only the calling
 agent knows: declare your tools with --host-tools); UNKNOWN (cannot be proven
 without an authorised call). FAIL and MISSING always come with a remedy.
 
-Opt-in CLI routes climb a readiness ladder: PRESENT (native executable found,
+Local CLI routes climb a readiness ladder: PRESENT (native executable found,
 never an npm launcher) -> AUTH_MODE (sign-in mode known, --probe-auth) ->
 TOOL_EXPOSED (the native media tool answered a cli_media.py run) -> VERIFIED
 (a cli_media.py run of this exact CLI version and recipe published a verified
 artifact; proofs live in <project>/.forge/route-proofs.json). An installed CLI
 is not a connected tool: only VERIFIED CLI routes are offered in ROUTES.
---verify-route ROUTE --execute spends one quota call to record that proof.
+--verify-route ROUTE --execute spends one quota call to record that proof; it
+can be repeated after every CLI update (the version is part of its request).
+
+ROUTES puts the local agent first (owner decision 13, D22). Images: the host's
+own image tool, then Codex (local CLI), then Grok (local CLI, one-shot mode),
+then the paid REST API with consent. Video: Grok (local CLI, ACP mode), then the
+REST API with consent. A VERIFIED local route is "ready": it runs without a
+per-call question within the session cap that cli_media.py enforces through the
+ledger (8 images and 2 videos per 12 hours by default); name the route used.
 
 Exit status 1 when any check FAILs (the report is still printed).
 """
@@ -51,7 +59,10 @@ import time
 import zlib
 
 TOOL_NAME = "forge_doctor"
-TOOL_VERSION = "1.0"
+# The package release (D29). The doctor imports no sibling at start-up (it must report a damaged
+# install), so it carries the constant itself; a test keeps it equal to media_ledger's and forge_core's.
+FORGE_PACKAGE_VERSION = "0.4.0"
+TOOL_VERSION = FORGE_PACKAGE_VERSION
 DOCTOR_SCHEMA = "generate2dmedia.doctor.v1"
 PROOFS_SCHEMA = "generate2dmedia.route_proofs.v1"
 PROOFS_FILE = Path(".forge") / "route-proofs.json"
@@ -107,6 +118,17 @@ NPM_TARGETS = {
 }
 VERSION_RE = re.compile(r"\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.]+)?")
 TEXT_SUFFIXES = frozenset({".py", ".json", ".md", ".js", ".mjs", ".txt", ".yaml", ".yml"})
+# What an install never ships and a drift check never counts (tools/install_skills.py shipped(), D24):
+# bytecode caches, dot files and OS junk that normal use writes into an installed skill.
+SKIP_DIRS = frozenset({"__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".git", "node_modules"})
+SKIP_FILES = frozenset({"Thumbs.db", "desktop.ini"})
+SKIP_SUFFIXES = frozenset({".pyc", ".pyo"})
+# User-facing route names (D22): one "Grok (local CLI)" route, one-shot mode for images and ACP mode for
+# video; the internal ids stay codex-cli, grok-cli and grok-acp.
+ROUTE_LABEL = {"codex-cli": "Codex (local CLI)", "grok-cli": "Grok (local CLI, one-shot image mode)",
+               "grok-acp": "Grok (local CLI, ACP video mode)"}
+# The session cap cli_media.py enforces through the ledger (media_ledger.SESSION_DEFAULTS; FORGE_SESSION_*).
+SESSION_CAP_TEXT = "8 images and 2 videos per 12 hours unless FORGE_SESSION_IMAGES/VIDEOS/HOURS say otherwise"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ASCII_MAP = str.maketrans({"→": "->", "←": "<-", "—": "-", "–": "-", "×": "x",
                             "·": ".", "…": "...", "‘": "'", "’": "'", "“": '"', "”": '"'})
@@ -356,7 +378,7 @@ def package_version(info: CliInfo) -> str | None:
     if info.cli != "codex" or info.path is None or info.source != "npm":
         return None
     try:
-        data = json.loads((info.path.parents[3] / "package.json").read_text(encoding="utf-8"))
+        data = json.loads((info.path.parents[3] / "package.json").read_text(encoding="utf-8-sig"))
     except (OSError, ValueError, IndexError):
         return None
     version = data.get("version") if isinstance(data, dict) else None
@@ -403,7 +425,7 @@ def load_proofs(project_dir: str | os.PathLike) -> tuple[list[dict], str | None]
     """Records of <project>/.forge/route-proofs.json, plus a problem string when unreadable."""
     path = Path(project_dir) / PROOFS_FILE
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
     except FileNotFoundError:
         return [], None
     except (OSError, ValueError) as exc:
@@ -620,7 +642,7 @@ def skill_checks(root: Path) -> list[Check]:
 
 def _canonical_check(repo: Path, vendored: Path) -> Check:
     try:
-        entries = json.loads(vendored.read_text(encoding="utf-8"))["files"]
+        entries = json.loads(vendored.read_text(encoding="utf-8-sig"))["files"]
         stale = []
         for entry in entries:
             canonical = repo / entry["canonical"]
@@ -637,10 +659,19 @@ def _canonical_check(repo: Path, vendored: Path) -> Check:
     return Check("skills.canonical", "OK", "source checkout: vendored copies match shared/")
 
 
+def shipped(relative: Path) -> bool:
+    """Whether a file inside a skill folder belongs to an install (twin of tools/install_skills.shipped):
+    __pycache__, bytecode, dot files and OS junk never do, so they are never drift (D24)."""
+    if any(part in SKIP_DIRS or part.startswith(".") for part in relative.parts[:-1]):
+        return False
+    name = relative.name
+    return not (name.startswith(".") or name in SKIP_FILES or Path(name).suffix.lower() in SKIP_SUFFIXES)
+
+
 def _install_check(root: Path, manifest: Path) -> Check:
     safe = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_.][A-Za-z0-9_. -]*)*")
     try:
-        data = json.loads(manifest.read_text(encoding="utf-8"))
+        data = json.loads(manifest.read_text(encoding="utf-8-sig"))
         files = {item["path"]: item["sha256"] for item in data["files"]
                  if safe.fullmatch(item["path"]) and ".." not in item["path"].split("/")}
         skills = [s for s in data["skills"] if isinstance(s, str) and safe.fullmatch(s) and "/" not in s]
@@ -655,7 +686,8 @@ def _install_check(root: Path, manifest: Path) -> Check:
         elif file_sha256(path) != digest:
             changed.append(rel)
     extra = sorted(p.relative_to(root).as_posix() for skill in skills for p in (root / skill).rglob("*")
-                   if p.is_file() and p.relative_to(root).as_posix() not in files)
+                   if p.is_file() and shipped(p.relative_to(root / skill))
+                   and p.relative_to(root).as_posix() not in files)
     if changed or missing or extra:
         parts = [f"{len(changed)} changed", f"{len(missing)} missing", f"{len(extra)} extra"]
         sample = ", ".join((changed + missing + extra)[:3])
@@ -683,7 +715,19 @@ def ledger_check(project: Path) -> Check | None:
     if unknown:
         return Check("media.ledger", "WARN", f"{len(unknown)} request(s) with an unknown outcome are unsettled",
                      "check the provider's usage history, then media_ledger.py settle <reservation> --status ...")
-    return Check("media.ledger", "OK", f"{summary['calls']} recorded call(s), {summary['usd']} USD")
+    session = summary.get("session") or {}
+    if "caps" not in session:  # an unreadable FORGE_SESSION_* value
+        return Check("media.ledger", "WARN", f"session cap: {session.get('error', 'unreadable')}",
+                     "set FORGE_SESSION_IMAGES / FORGE_SESSION_VIDEOS to whole numbers and FORGE_SESSION_HOURS to hours")
+    used = ", ".join(f"{session[kind]} of {session['caps'][kind]} {kind}s" for kind in ("image", "video"))
+    detail = (f"{summary['calls']} recorded call(s), {summary['usd']} USD; local CLI session ({session['hours']:g} h): "
+              f"{used}")
+    full = [kind for kind in ("image", "video") if session[kind] >= session["caps"][kind]]
+    if full:
+        return Check("media.ledger", "WARN", detail + f"; the session cap is reached for {' and '.join(full)}s",
+                     "local CLI calls of that kind stop until the window moves on; only the user may raise "
+                     "FORGE_SESSION_IMAGES / FORGE_SESSION_VIDEOS")
+    return Check("media.ledger", "OK", detail)
 
 
 # --------------------------------------------------------------------------- the ladder and routes
@@ -741,9 +785,14 @@ def evaluate_ladder(capability: Capability, info: CliInfo, auth: str | None, pro
                       "detail": f"seen with version {newest['version']}, not yet with {info.version or 'this version'}"})
     else:
         steps.append({"step": "TOOL_EXPOSED", "status": "UNKNOWN", "detail": f"{capability.tool} not seen yet"})
-    remedy = (f"verify once (uses one quota call): python \"<skill-dir>/scripts/forge_doctor.py\" --verify-route "
-              f"{capability.route} --execute" + ("" if capability.tool != "image_edit" else
-                                                 "; or run any cli_media.py edit, which records the proof"))
+    if capability.tool == "image_edit":  # --verify-route grok-cli runs image_gen, which proves nothing about edits
+        remedy = ("verify once with the user's consent (one quota call): a successful python "
+                  "\"<skill-dir>/scripts/cli_media.py\" edit --route grok-cli --reference <image> --prompt-file <file> "
+                  "--output-dir <new folder> --execute records the image_edit proof (--verify-route grok-cli "
+                  "verifies image_gen only)")
+    else:
+        remedy = ("verify once with the user's consent (one quota call; repeat after a CLI update): python "
+                  f"\"<skill-dir>/scripts/forge_doctor.py\" --verify-route {capability.route} --execute")
     if best is not None and best["level"] == "VERIFIED":
         steps.append({"step": "VERIFIED", "status": "OK",
                       "detail": f"proof for {best['version']} ({capability.recipe}) of {best['verifiedAt'][:10]}"})
@@ -771,9 +820,10 @@ def _option(route: str, status: str, detail: str, **extra) -> dict:
 
 def plan_routes(host: list[str], declared: bool, keys: dict, ladders: dict, ffmpeg: dict, deps: dict,
                 skills_root: Path) -> dict:
-    """Usable art routes. ``route`` is the first option that is ready (a host tool) or
-    needs only consent (a VERIFIED CLI route or an API key); unverified CLI routes are
-    listed as options, never chosen."""
+    """Usable art routes, local agent first (owner decision 13, D22). ``route`` is the first option
+    that is ready (a host tool, or a local CLI route VERIFIED for the installed version, which runs
+    without a per-call question within the session cap) or needs consent (the paid REST API).
+    Unverified CLI routes are listed as options, never chosen."""
     undeclared = "" if declared else "; host tools undeclared (rerun with --host-tools)"
 
     def cli_options(*keys_):
@@ -783,12 +833,16 @@ def plan_routes(host: list[str], declared: bool, keys: dict, ladders: dict, ffmp
             if ladder is None or ladder["level"] is None or ladder["blocked"]:
                 continue
             route = ladder["route"]
+            label = ROUTE_LABEL[route]
             if ladder["level"] == "VERIFIED":
-                verified.append(_option(route, "consent", f"opt-in CLI route, verified for {ladder['version']}; "
-                                        "uses the user's subscription quota", consent="quota", level="VERIFIED"))
+                verified.append(_option(route, "ready", f"{label}, verified for {ladder['version']}: runs without a "
+                                        f"per-call question within the session cap ({SESSION_CAP_TEXT}); name the "
+                                        "route; spends the user's subscription quota, not API credit",
+                                        consent="quota", level="VERIFIED", label=label))
             else:
-                unverified.append(_option(route, "unverified", f"opt-in CLI route at {ladder['level']}; verify it "
-                                          "before relying on it", consent="quota", level=ladder["level"]))
+                unverified.append(_option(route, "unverified", f"{label} at {ladder['level']}: unused until verified "
+                                          "(the one verification call needs the user's consent)", consent="quota",
+                                          level=ladder["level"], label=label))
         return verified, unverified
 
     def api_option(providers):
@@ -1039,16 +1093,21 @@ def _tiny_png(size: int = 256) -> bytes:
 
 
 def verification_argv(route: str, project: Path, work: Path) -> list[str]:
-    """The cli_media.py arguments that verify one route (without --execute)."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    """The cli_media.py arguments that verify one route (without --execute).
+
+    Re-verification after a CLI update must work (D23): --verification puts the installed CLI
+    version into the request's fingerprint, and --allow-duplicate lets an explicitly consented
+    verification run again although an identical earlier one succeeded."""
+    # A unique folder per verification: two checks within one second must not collide (OUTPUT_EXISTS).
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + os.urandom(3).hex()
     output = project / ".forge" / "route-checks" / f"{route}-{stamp}"
     prompt = work / "verify-prompt.txt"
+    common = ["--output-dir", str(output), "--project-dir", str(project), "--purpose", "route verification",
+              "--verification", "--allow-duplicate"]
     if route == "grok-acp":
         return ["video", "--route", route, "--prompt-file", str(prompt), "--reference", str(work / "verify-reference.png"),
-                "--duration", "2", "--resolution", "480p", "--output-dir", str(output), "--project-dir", str(project),
-                "--purpose", "route verification"]
-    return ["image", "--route", route, "--prompt-file", str(prompt), "--output-dir", str(output),
-            "--project-dir", str(project), "--purpose", "route verification"]
+                "--duration", "2", "--resolution", "480p", *common]
+    return ["image", "--route", route, "--prompt-file", str(prompt), *common]
 
 
 def verify_route(route: str, project: Path, execute: bool) -> int:
@@ -1094,7 +1153,14 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _mask_home(text: str) -> str:
+    home = str(Path.home())
+    return text if len(home) <= 3 else text.replace(home, "~").replace(home.replace("\\", "/"), "~")
+
+
 def main(argv: list[str] | None = None) -> int:
+    """Usage errors exit 2 (argparse, D26); a report with a FAIL check is printed and exits 1; any
+    other failure prints ``error: <message>`` or ``error: internal error (<Type>: <message>)`` (D27)."""
     started = time.perf_counter()
     console = getattr(sys.stdout, "encoding", None)  # read before the streams are reconfigured
     _local_utf8_stdio()
@@ -1111,19 +1177,18 @@ def main(argv: list[str] | None = None) -> int:
         validate_report(report)
         if args.save:
             save_report(report, args.save)
+        if args.json:
+            shown = {**report, "saved": str(args.save)} if args.save else report
+            text = json.dumps(shown, ensure_ascii=True, separators=(",", ":"))
+        else:
+            text = render_text(report) + (ascii_text(f"\nsaved: {args.save}") if args.save else "")
     except (DoctorError, OSError) as exc:
-        print("error: " + ascii_text(exc), file=sys.stderr)
+        print("error: " + ascii_text(_mask_home(str(exc))), file=sys.stderr)
         return 1
-    except Exception as exc:  # noqa: BLE001  (a diagnostic never ends in a traceback)
-        print(f"error: unexpected {type(exc).__name__} while diagnosing", file=sys.stderr)
+    except Exception as exc:  # noqa: BLE001  (D27: a diagnostic never ends in a traceback)
+        print("error: " + ascii_text(_mask_home(f"internal error ({type(exc).__name__}: {exc})")), file=sys.stderr)
         return 1
-    if args.json:
-        shown = {**report, "saved": str(args.save)} if args.save else report
-        print(json.dumps(shown, ensure_ascii=True, separators=(",", ":")))
-    else:
-        print(render_text(report))
-        if args.save:
-            print(ascii_text(f"saved: {args.save}"))
+    print(text)
     failed = [c["id"] for c in report["checks"] if c["status"] == "FAIL"]
     if failed:
         print("error: " + ascii_text(f"{len(failed)} check(s) failed: {', '.join(failed)}"), file=sys.stderr)

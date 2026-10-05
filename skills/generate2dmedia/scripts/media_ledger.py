@@ -6,12 +6,17 @@ is sent, then committed as done, failed, unknown or not_sent. The file is
 append-only; readers fold it per reservation and the last line wins. An unknown
 outcome keeps its reservation counted against the caps until someone settles it
 with the settle command. Stdlib only; never reads credentials.
+
+Local CLI routes (quota calls) also have a session cap (owner decision 13, D22):
+at most 8 images and 2 videos in this project's ledger within the last 12 hours
+by default. FORGE_SESSION_IMAGES, FORGE_SESSION_VIDEOS and FORGE_SESSION_HOURS
+change it; reserve() enforces it under the ledger lock.
 """
 from __future__ import annotations
 
 import argparse
 import contextlib
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -22,12 +27,19 @@ import sys
 import threading
 import uuid
 
+# The package release this skill ships with (D29). generate2dmedia is stdlib-only and vendors no
+# forge_core, so it carries the same constant as forge_core.FORGE_PACKAGE_VERSION (a test keeps them equal).
+FORGE_PACKAGE_VERSION = "0.4.0"
 LEDGER_API_VERSION = "1"
 STATUSES = ("reserved", "done", "failed", "unknown", "not_sent")
 FINAL_STATUSES = STATUSES[1:]
 ROUTES = ("rest", "codex-cli", "grok-cli", "grok-acp")
 QUOTA_ROUTES = ROUTES[1:]
 MAX_PAID_ENV = "FORGE_MAX_PAID_REQUESTS"
+# Session cap of the local CLI routes (D22): quota calls per kind within a window of hours.
+SESSION_KINDS = ("image", "video")
+SESSION_DEFAULTS = {"image": 8, "video": 2, "hours": 12.0}
+SESSION_ENV = {"image": "FORGE_SESSION_IMAGES", "video": "FORGE_SESSION_VIDEOS", "hours": "FORGE_SESSION_HOURS"}
 PRICES_PATH = Path(__file__).resolve().parent.parent / "references" / "prices.json"
 # Plan keys that identify a request; output paths, timestamps and secrets never do.
 FINGERPRINT_KEYS = ("provider", "kind", "route", "endpoint", "requestedModel", "model", "options", "promptSha256")
@@ -52,6 +64,10 @@ class CapExceeded(LedgerError):
     """Sending one more call would break a cap; nothing may be sent."""
 
 
+class SessionCapExceeded(CapExceeded):
+    """The local CLI routes' session cap for this kind (image or video) is used up."""
+
+
 class DuplicateRequest(LedgerError):
     """An identical request already succeeded, is still open, or has an unknown outcome."""
 
@@ -66,6 +82,48 @@ def utc_timestamp(moment=None):
     """ISO 8601 UTC with milliseconds, e.g. 2026-10-05T12:00:00.000Z."""
     moment = moment or datetime.now(timezone.utc)
     return moment.strftime("%Y-%m-%dT%H:%M:%S.") + f"{moment.microsecond // 1000:03d}Z"
+
+
+def _parse_timestamp(text):
+    """An aware datetime from a ledger timestamp, or None when it cannot be read."""
+    try:
+        moment = datetime.fromisoformat(str(text).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return moment if moment.utcoffset() is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def session_kind(kind):
+    """The session-cap bucket of a request kind: video, else image (images and reference edits)."""
+    return "video" if kind == "video" else "image"
+
+
+def session_limits(images=None, videos=None, hours=None):
+    """The session cap {image, video, hours}: an explicit value, else FORGE_SESSION_IMAGES /
+    FORGE_SESSION_VIDEOS / FORGE_SESSION_HOURS, else 8 images and 2 videos in 12 hours.
+    0 calls blocks that kind; hours must be positive."""
+    limits = {}
+    for key, given in (("image", images), ("video", videos), ("hours", hours)):
+        if given is None:
+            raw = os.environ.get(SESSION_ENV[key], "").strip()
+            if not raw:
+                limits[key] = SESSION_DEFAULTS[key]
+                continue
+            try:
+                given = float(raw) if key == "hours" else int(raw)
+            except ValueError:
+                raise LedgerError(f"{SESSION_ENV[key]} must be a {'number' if key == 'hours' else 'whole number'}") \
+                    from None
+        if key == "hours":
+            if isinstance(given, bool) or not isinstance(given, (int, float)) or not math.isfinite(given) \
+                    or given <= 0:
+                raise LedgerError("the session window must be a positive number of hours")
+            limits[key] = float(given)
+        else:
+            if isinstance(given, bool) or not isinstance(given, int) or given < 0:
+                raise LedgerError(f"the session cap for {key}s must be a whole number >= 0")
+            limits[key] = given
+    return limits
 
 
 def _usd(value, name="usd"):
@@ -237,7 +295,7 @@ class Ledger:
     def lines(self) -> list:
         """Parsed ledger lines; torn or foreign lines are skipped."""
         try:
-            text = self.path.read_text(encoding="utf-8")
+            text = self.path.read_text(encoding="utf-8-sig")  # a hand-edited copy may start with a BOM (D28)
         except FileNotFoundError:
             return []
         parsed = []
@@ -325,6 +383,34 @@ class Ledger:
                                   f"in {where} + {next_usd} USD for this request")
         return totals
 
+    def session_usage(self, hours, *, now=None, states=None) -> dict:
+        """Quota calls (the local CLI routes) per session kind reserved within the last ``hours``:
+        {"image", "video", "since", "hours"}. not_sent calls never left the machine and do not count;
+        a reservation whose time cannot be read counts (the cap errs on the safe side)."""
+        now = now or datetime.now(timezone.utc)
+        since = now - timedelta(hours=hours)
+        counts = {kind: 0 for kind in SESSION_KINDS}
+        for state in (self.entries() if states is None else states).values():
+            if not state.get("quotaCall") or state["status"] == "not_sent":
+                continue
+            reserved = _parse_timestamp(state.get("reservedAt") or state.get("ts"))
+            if reserved is None or reserved >= since:
+                counts[session_kind(state.get("kind"))] += 1
+        return {**counts, "since": utc_timestamp(since), "hours": hours}
+
+    def check_session_cap(self, kind, limits, *, now=None, states=None) -> dict:
+        """Raise SessionCapExceeded unless one more quota call of ``kind`` fits ``limits``
+        (session_limits()). Returns the usage."""
+        usage = self.session_usage(limits["hours"], now=now, states=states)
+        bucket = session_kind(kind)
+        if usage[bucket] + 1 > limits[bucket]:
+            env = SESSION_ENV[bucket]
+            raise SessionCapExceeded(
+                f"session cap reached: {usage[bucket]} local CLI {bucket} call(s) of at most {limits[bucket]} "
+                f"recorded in {self.path.as_posix()} since {usage['since']} (the last {limits['hours']:g} h); the "
+                f"user can raise it with --session-{bucket}s or {env}")
+        return usage
+
     @contextlib.contextmanager
     def _locked(self):
         with _THREAD_LOCKS_GUARD:
@@ -353,12 +439,14 @@ class Ledger:
             handle.flush()
             os.fsync(handle.fileno())
 
-    def reserve(self, entry, *, budget_usd=None, max_calls=None, refuse_duplicate=False) -> str:
+    def reserve(self, entry, *, budget_usd=None, max_calls=None, refuse_duplicate=False, session=None) -> str:
         """Append a reserved line and return its reservation id.
 
         entry: jobDir, fingerprint, provider, model, kind, route, reservedUsd
         (None when unpriced) and optional quotaCall (default: route is a CLI
-        route). Caps and FORGE_MAX_PAID_REQUESTS are checked under the lock.
+        route). Caps and FORGE_MAX_PAID_REQUESTS are checked under the lock, and
+        so is ``session`` (session_limits()) for a quota call: the local CLI
+        routes' session cap (D22).
         """
         unknown = set(entry) - set(ENTRY_KEYS)
         if unknown:
@@ -383,6 +471,8 @@ class Ledger:
             if refuse_duplicate and prior is not None:
                 raise DuplicateRequest(prior)
             self.check_caps(budget_usd, max_calls, next_usd=reserved, quota_call=quota, states=states)
+            if quota and session is not None:
+                self.check_session_cap(line["kind"], session, states=states)
             self._append(line)
         return rid
 
@@ -404,11 +494,18 @@ class Ledger:
         return line
 
     def summary(self) -> dict:
-        """Totals plus the reservations that still hold budget (reserved or unknown)."""
+        """Totals, the reservations that still hold budget (reserved or unknown) and the local CLI
+        routes' session usage against the session cap."""
         states = self.entries()
         unsettled = [{k: s.get(k) for k in ("reservationId", "status", "reservedAt", "jobDir", "provider", "model", "reservedUsd")}
                      for s in states.values() if s["status"] in ("reserved", "unknown")]
-        return {"ledger": self.path.as_posix(), **self.totals(states), "unsettled": unsettled}
+        try:
+            limits = session_limits()
+            session = {**self.session_usage(limits["hours"], states=states),
+                       "caps": {kind: limits[kind] for kind in SESSION_KINDS}}
+        except LedgerError as exc:
+            session = {"error": str(exc)}
+        return {"ledger": self.path.as_posix(), **self.totals(states), "unsettled": unsettled, "session": session}
 
 
 def _local_utf8_stdio():
@@ -436,7 +533,13 @@ def parser():
     return p
 
 
+def _ascii(text):
+    return str(text).encode("ascii", "backslashreplace").decode("ascii")
+
+
 def main(argv=None):
+    """Usage errors exit 2 (argparse); ledger errors print ``error: <message>`` and exit 1; anything
+    unexpected prints ``error: internal error (<Type>: <message>)`` and exits 1 (D26, D27)."""
     _local_utf8_stdio()
     args = parser().parse_args(argv)
     ledger = Ledger(args.project_dir)
@@ -446,7 +549,10 @@ def main(argv=None):
         else:
             result = ledger.commit(args.reservation, actual_usd=args.actual_usd, status=args.status)
     except (LedgerError, ValueError, OSError) as exc:
-        print("error: " + str(exc).encode("ascii", "backslashreplace").decode("ascii"), file=sys.stderr)
+        print("error: " + _ascii(exc), file=sys.stderr)
+        return 1
+    except Exception as exc:  # noqa: BLE001  (D27: tracebacks are never user-facing)
+        print("error: " + _ascii(f"internal error ({type(exc).__name__}: {exc})"), file=sys.stderr)
         return 1
     print(json.dumps(result, ensure_ascii=True))
     return 0
