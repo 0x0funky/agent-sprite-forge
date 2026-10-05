@@ -43,7 +43,7 @@ Inputs must meet these rules:
 }
 ```
 
-A manifest without `schema` is v1. Every v1 clip needs `duration_ms` (one integer, or one per frame) and `loop` (true or false). Clip frames are zero-based indices or unique frame names; string frames are named after their file stem. A v1 manifest gives the same output values as before. Fields that exist only in v2 are ignored under v1, and a lint warning names them.
+A manifest without `schema` is v1. Every v1 clip needs `duration_ms` (one integer, or one per frame) and `loop` (true or false). Clip frames are zero-based indices or unique frame names; string frames are named after their file stem. A v1 manifest gives the same output values as before. The top-level `art_source`, `placeholder`, `pixel_art` and `sampling` and the clip `events` are honoured in v1 too: they are validated and written as in v2, and the output keeps the v1 schema. The other v2-only fields are ignored under v1, and a lint warning names them. New manifests should be v2.
 
 ### Manifest v2
 
@@ -108,9 +108,10 @@ At 60 Hz, 80 ms frames show for 5, 5, 4 and 5 ticks: uniform timing that plays u
 
 Every v1 key keeps its meaning in `animation-clips.json`. Pingpong clips list the played order in `frames` and keep the authored order in `authored_frames`. Each clip also gets:
 
-- `events_ms`: every played occurrence, as `at_ms` and `at_tick`.
+- `events_ms`: every played occurrence, as `at_ms` (authoritative) and `at_tick`. `at` is the authored position, an index into the clip's frame list as written in the manifest; `position` is the index into `frames`, the played timeline, so a pingpong event can occur twice (authored position 1 of `[0,1,2,3]` plays at positions 1 and 5). `ticks`, `keys` and `entry_frame` also stay authored positions. A player that needs timeline indices uses `position`, or derives it from `at_ms`.
+- `transitions` keeps its v1 meaning, the frame-to-frame metrics of the played timeline; the authored hints `{to, entry_frame, dissolve_ms, mode}` are written as `transition_hints`.
 - `tick_grid`, `holds` and `seam` (the loop wrap: `wrap_ratio` is the seam over the mean step).
-- The resolved `keys_ms`, `entry_ms`, `hitstop_ms` and `transition_hints`.
+- The resolved `keys_ms`, `entry_ms`, `hitstop_ms` and `transition_hints` (with `entry_ms` and `dissolve_ticks`).
 
 Frame records list `near_duplicates` and the `holds` they take part in. `qa` is a QA envelope with method, `notProven` and the sha256 of every input and output.
 
@@ -148,7 +149,8 @@ python "<skill-dir>/scripts/assemble_frames.py" --sheet output/props/sheet.png -
 - `--key-color auto|magenta|green|blue|#rrggbb` chooses the backdrop.
 - `--key-quality auto|soft|hard|dominance` chooses the keyer. `auto` gives soft edges; with `--pixel-art` it keeps binary alpha.
 - Keyed frames have RGB zeroed under alpha 0.
-- QA reports opaque key residue, and warns when no key backdrop was found.
+- An opaque image whose border shows no backdrop of the chosen key is refused and nothing is published, instead of publishing unkeyed frames: pass the right `--key-color`, or drop `--key chroma` for complete frames.
+- QA reports opaque key residue.
 
 **Crop boxes.** `--crop-boxes` takes inline JSON or a file. One schema serves every tool: `common.schema.json`, `$defs/cropBoxes`, as proposed by this module. Boxes are `[left, top, right, bottom]` with exclusive right and bottom.
 
@@ -160,7 +162,7 @@ Two legacy forms are still read: a bare list of boxes, and a prop-pack `{"props"
 
 **Cross-cell spill.** Before cutting a sheet that has a transparent background, the tool checks for subject components that cross their cell. A subject component is 8-connected `alpha > 16`, and it is owned by the cell that holds most of its pixels. Specks under 4 px never count. On a crossing, the run fails and names the component, its owner, the pixels over the line and the overhang. For example, frame 3 of the fox fixture has 77 px of tail in frame 2's cell, overhanging by 7 px. Then pick one fix:
 
-- `--slice ownership` keeps every component whole in its owner's frame. Faint edge pixels join the nearest subject within `--attach-radius` px (default 6). Every frame shares one padded canvas, and frame pixel `(u, v)` is sheet pixel `(u - padding[0] + cell x0, v - padding[1] + cell y0)`. Registration therefore stays the sheet's. Ownership slicing also accepts sheets whose size does not divide by the grid, using rounded cells.
+- `--slice ownership` keeps every component whole in its owner's frame. Faint edge pixels join the nearest subject within `--attach-radius` px (default 6). Faint pixels that reach no subject stay in the cell that contains them. Every frame shares one padded canvas, and frame pixel `(u, v)` is sheet pixel `(u - padding[0] + cell x0, v - padding[1] + cell y0)`. Registration therefore stays the sheet's. Ownership slicing also accepts sheets whose size does not divide by the grid, using rounded cells. It is the shared `forge_core.ownership_slice`; `sheet_qc.py` uses the same slicer with stricter solid pixels (alpha above 127, 64 px) and drops the unreached haze instead.
 - Regenerate the sheet with wider cells (see [animation-planning.md](animation-planning.md)).
 - `--allow-spill` cuts anyway and records a warning.
 
@@ -183,6 +185,7 @@ Paths are relative to `animation.json`. A source on another drive is recorded by
 
 ## Notes for every run
 
-- Errors print `error: ...` and exit 1. Success prints one JSON line with the output folder and the metadata path.
+- Usage errors exit 2 with argparse's `usage: ... error: ...`. Every other error prints one `error: ...` line, publishes nothing and exits 1. Success prints one JSON line with the output folder and the metadata path.
+- JSON inputs (manifests, `--crop-boxes`, `--static-regions`, `--manifest`) may be UTF-8 with or without a byte-order mark (Windows PowerShell 5.1 writes one).
 - Both tools re-encode a preview once with every frame a keyframe if the first encode fails decoded verification. libwebp 1.6 drops the alpha flag of some animations whose first frame is an opaque block, so the re-encode is recorded as `all_keyframes`.
 - Previews are review aids. Runtime engines read the PNG frames and the JSON; see [runtime-integration.md](runtime-integration.md).

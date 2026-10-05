@@ -31,9 +31,11 @@ finds each box's drift by normalized cross-correlation within +-N px.
 smoothstep curve (premultiplied); it is for ambient loops only (water, fire, mist,
 foliage), requires --ambient and must never be used on characters.
 
-JSON options accept inline JSON or a path to a JSON file. Errors print "error: ..."
-and exit 1; success prints one JSON line with the output and metadata paths.
-Numerical diagnostics are not visual approval of motion or of a seamless loop.
+JSON options accept inline JSON or a path to a JSON file (UTF-8, a byte-order mark is
+accepted). Usage errors exit 2 (argparse); every other error prints one "error: ..."
+line, publishes nothing and exits 1; success prints one JSON line with the output and
+metadata paths. Numerical diagnostics are not visual approval of motion or of a
+seamless loop.
 """
 
 from __future__ import annotations
@@ -44,7 +46,7 @@ import io
 import json
 import math
 import os
-from pathlib import Path, PurePosixPath, PureWindowsPath
+from pathlib import Path
 import struct
 import sys
 
@@ -60,7 +62,7 @@ import forge_matte  # noqa: E402
 
 MAX_WEBP_DURATION = (1 << 24) - 1
 SCHEMA = "generate2dsprite.full_frames.v2"
-TOOL = {"name": "assemble_frames", "version": "2.0"}
+TOOL = {"name": "assemble_frames", "version": forge_core.FORGE_PACKAGE_VERSION}  # the package version (D29)
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
 SPILL_THRESHOLD = forge_core.ALPHA_GEOMETRY_THRESHOLD  # subject pixels: alpha above this
 SPILL_MIN_AREA = 4          # components smaller than this are specks: reported, never a spill
@@ -69,16 +71,10 @@ BACKGROUND_MIN_SHARE = 0.01  # spill checks need a transparent background (alpha
 DRIFT_NCC_MARGIN = 0.02     # a static region drifted when its best shift beats no shift by this
 SLICE_MODES = ("grid", "ownership")
 KEY_MODES = ("none", "chroma")
-_NEIGHBOURS = ((-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1))
 _LUMA = np.array([0.299, 0.587, 0.114])
-
-
-class _Parser(argparse.ArgumentParser):
-    """argparse with the repository's error convention: 'error: ...' on stderr and exit status 1."""
-
-    def error(self, message: str) -> None:  # type: ignore[override]
-        self.print_usage(sys.stderr)
-        self.exit(1, f"error: {forge_core.ascii_text(message)}\n")
+# The shared fileRef helpers (D30); the names stay public here because build_animation_clips uses them.
+manifest_path = forge_core.manifest_path
+file_ref = forge_core.file_ref
 
 
 def require(condition: bool, message: str) -> None:
@@ -91,12 +87,15 @@ def digest(data: bytes) -> str:
 
 
 def json_option(value: str | None) -> object | None:
-    """Inline JSON, or the path of a JSON file (a UTF-8 BOM, as Windows PowerShell 5.1 writes, is accepted)."""
+    """Inline JSON, or the path of a JSON file; a UTF-8 BOM (Windows PowerShell 5.1 writes one) is accepted (D28)."""
     if value is None:
         return None
     if value.lstrip().startswith(("[", "{")):
-        return json.loads(value)
-    return json.loads(Path(value).read_text(encoding="utf-8-sig"))
+        return forge_core.parse_json(value)
+    try:
+        return forge_core.read_json(value)
+    except ValueError as error:
+        raise ValueError(f"{Path(value).name} is not valid JSON: {error}") from None
 
 
 def validate_box(value: object, size: tuple[int, int], label: str) -> tuple[int, int, int, int]:
@@ -111,23 +110,6 @@ def validate_box(value: object, size: tuple[int, int], label: str) -> tuple[int,
 def output_path(path: Path) -> Path:
     """The absolute output directory, resolved the way forge_core.staged_output resolves it."""
     return path.parent.resolve() / path.name
-
-
-def manifest_path(path: Path, base: Path) -> str:
-    """A manifest-relative POSIX path for ``path``; just the file name when no relative route exists.
-
-    forge_core.portable_path returns an absolute path for a file on another drive; manifests
-    never store absolute paths, so the file name (plus the sha256 recorded beside it) is used.
-    """
-    portable = forge_core.portable_path(path, base)
-    if PurePosixPath(portable).is_absolute() or PureWindowsPath(portable).drive:
-        return Path(path).name
-    return portable
-
-
-def file_ref(path: Path, base: Path) -> dict[str, object]:
-    data = Path(path).read_bytes()
-    return {"path": manifest_path(path, base), "sha256": digest(data), "bytes": len(data)}
 
 
 # --------------------------------------------------------------------------- loading and keying
@@ -147,8 +129,13 @@ def load_png(path: Path) -> tuple[Image.Image, dict[str, object]]:
     }
 
 
-def key_image(image: Image.Image, args: argparse.Namespace) -> tuple[Image.Image, dict[str, object]]:
-    """Key a uniform backdrop with forge_matte.key_still; RGB under alpha 0 is zeroed."""
+def key_image(image: Image.Image, args: argparse.Namespace,
+              source_name: str = "the input") -> tuple[Image.Image, dict[str, object]]:
+    """Key a uniform backdrop with forge_matte.key_still; RGB under alpha 0 is zeroed.
+
+    Keying was asked for explicitly, so an opaque image whose border shows no backdrop of the
+    declared key is refused instead of being published unkeyed (sprite review B02).
+    """
     try:
         keyed, info = forge_matte.key_still(image.convert("RGBA"), quality=args.key_quality, key=args.key_color,
                                             resampler_hint="nearest" if args.pixel_art else "lanczos")
@@ -157,13 +144,18 @@ def key_image(image: Image.Image, args: argparse.Namespace) -> tuple[Image.Image
             raise
         raise ValueError(f"{error} The binary key used by --pixel-art (or --key-quality hard) needs a magenta "
                          "backdrop; pass --key-quality dominance or soft for a green or blue key.") from error
+    estimate = info.get("key_estimate")
+    if estimate and not estimate["valid"] and not estimate["native_alpha"]:
+        raise ValueError(f"--key chroma found no {estimate['declared']} backdrop on the border of {source_name} "
+                         f"({estimate['reason']}); nothing was keyed. Pass --key-color green, blue or #rrggbb for "
+                         "another backdrop, or drop --key chroma for complete frames.")
     pixels = np.array(keyed)
     pixels[pixels[..., 3] == 0] = 0
-    qa = {name: value for name, value in info["qa"].items() if name != "key"}
+    qa = {key: value for key, value in info["qa"].items() if key != "key"}
     record = {
         "quality": info["quality"], "requested_quality": info["requested_quality"],
-        "key_rgb": [int(math.floor(float(value) + 0.5)) for value in info["key"]],
-        "key_estimate": info.get("key_estimate"), "qa": qa,
+        "key_rgb": [forge_core.round_half_up(float(value)) for value in info["key"]],
+        "key_estimate": estimate, "qa": qa,
     }
     for name in ("interior_despill", "key_material_share", "params"):
         if name in info:
@@ -310,94 +302,29 @@ def spill_report(alpha: np.ndarray, boxes: list[tuple[str, tuple[int, int, int, 
     return report
 
 
-def _shift(array: np.ndarray, dy: int, dx: int, fill: int) -> np.ndarray:
-    """``array`` moved by (dy, dx): result[y, x] = array[y - dy, x - dx]; vacated cells get ``fill``."""
-    height, width = array.shape
-    result = np.full_like(array, fill)
-    result[max(0, dy):height + min(0, dy), max(0, dx):width + min(0, dx)] = \
-        array[max(0, -dy):height + min(0, -dy), max(0, -dx):width + min(0, -dx)]
-    return result
-
-
 def ownership_slice(rgba: np.ndarray, boxes: list[tuple[str, tuple[int, int, int, int]]], *,
                     threshold: int = SPILL_THRESHOLD, min_area: int = SPILL_MIN_AREA,
                     attach_radius: int = ATTACH_RADIUS) -> tuple[list[np.ndarray], dict, list[dict]]:
     """Cut a sheet so that no subject component is split (report v2 P1-3, game-opus55 fix_sheet).
 
-    Components of ``alpha > threshold`` with at least ``min_area`` px go whole to the box
-    holding most of their pixels. Other visible pixels (faint edges, specks) join the owner
-    of the nearest owned pixel within ``attach_radius`` px, reached through visible pixels;
-    the rest stay in the box that contains them, and pixels outside every box are dropped.
-    Every frame is placed on one shared canvas at its box origin plus one shared padding,
-    so the frames keep the sheet's registration. Returns ``(frames, report, per-frame records)``.
+    forge_core.ownership_slice with the frame-assembly policy of D14 (haze ``keep``):
+    components of ``alpha > threshold`` with at least ``min_area`` px go whole to the box
+    holding most of their pixels; other visible pixels (faint edges, specks) join the owner
+    they reach within ``attach_radius`` px through visible pixels (ties: left, right, above,
+    below, then the diagonals); the rest stay in the first box that contains them, and pixels
+    outside every box are dropped. Every frame is placed on one shared canvas at its box
+    origin plus one shared padding, so the frames keep the sheet's registration. Returns
+    ``(frames, report, per-frame records)``.
     """
-    alpha = rgba[..., 3]
-    height, width = alpha.shape
-    labels, count = forge_core.label_components(alpha > threshold, 8)
-    areas = np.bincount(labels.ravel(), minlength=count + 1)
-    counts = _box_counts(labels, count, [box for _, box in boxes])
-    owner = counts.argmax(axis=0).astype(np.int32)
-    owner[(counts.max(axis=0) == 0) | (areas < min_area)] = -1
-    owner[0] = -1
-    owners = owner[labels]
-    loose = (alpha > 0) & (owners < 0)
-    attached = 0
-    for _ in range(attach_radius):
-        pending = loose & (owners < 0)
-        if not pending.any():
-            break
-        grown = np.full(owners.shape, -1, np.int32)
-        for dy, dx in _NEIGHBOURS:
-            neighbour = _shift(owners, dy, dx, -1)
-            take = pending & (grown < 0) & (neighbour >= 0)
-            grown[take] = neighbour[take]
-        attached += int((grown >= 0).sum())
-        owners = np.where(grown >= 0, grown, owners)
-    fallback = 0
-    for index, (_, (x0, y0, x1, y1)) in enumerate(boxes):
-        region = owners[y0:y1, x0:x1]
-        unassigned = loose[y0:y1, x0:x1] & (region < 0)
-        fallback += int(unassigned.sum())
-        region[unassigned] = index
-    dropped = int(((alpha > 0) & (owners < 0)).sum())
-    ys, xs = np.nonzero(owners >= 0)
-    assigned = owners[ys, xs]
-    order = np.argsort(assigned, kind="stable")
-    ys, xs, assigned = ys[order], xs[order], assigned[order]
-    splits = np.searchsorted(assigned, np.arange(len(boxes) + 1))
-    left = top = 0
-    right = max(box[2] - box[0] for _, box in boxes)
-    bottom = max(box[3] - box[1] for _, box in boxes)
-    for index, (_, (x0, y0, _x1, _y1)) in enumerate(boxes):
-        lo, hi = splits[index], splits[index + 1]
-        if lo < hi:
-            left = min(left, int(xs[lo:hi].min()) - x0)
-            top = min(top, int(ys[lo:hi].min()) - y0)
-            right = max(right, int(xs[lo:hi].max()) + 1 - x0)
-            bottom = max(bottom, int(ys[lo:hi].max()) + 1 - y0)
-    pad_left, pad_top = -left, -top
-    canvas = (right - left, bottom - top)
-    frames, records = [], []
-    for index, (item_id, (x0, y0, x1, y1)) in enumerate(boxes):
-        lo, hi = splits[index], splits[index + 1]
-        frame = np.zeros((canvas[1], canvas[0], 4), np.uint8)
-        fy, fx = ys[lo:hi], xs[lo:hi]
-        frame[fy - y0 + pad_top, fx - x0 + pad_left] = rgba[fy, fx]
-        outside = int((~((fx >= x0) & (fx < x1) & (fy >= y0) & (fy < y1))).sum())
-        owned = np.flatnonzero(owner == index)
-        frames.append(frame)
-        records.append({"sheet_origin": [x0 - pad_left, y0 - pad_top], "owned_components": int(owned.size),
-                        "pixels_from_outside_cell": outside})
-    max_width = max(box[2] - box[0] for _, box in boxes)
-    max_height = max(box[3] - box[1] for _, box in boxes)
-    report = {
-        "mode": "ownership", "threshold": threshold, "min_area": min_area, "attach_radius": attach_radius,
-        "connectivity": 8, "canvas": [int(canvas[0]), int(canvas[1])],
-        "padding": [pad_left, pad_top, int(canvas[0] - pad_left - max_width), int(canvas[1] - pad_top - max_height)],
-        "registration": "frame pixel (u, v) = sheet pixel (u - padding[0] + cell x0, v - padding[1] + cell y0)",
-        "attached_px": attached, "cell_fallback_px": fallback, "dropped_px": dropped,
-        "hidden_rgb": "zeroed (only visible pixels are copied)",
-    }
+    frames, shared = forge_core.ownership_slice(rgba, boxes=[box for _, box in boxes], alpha_threshold=threshold,
+                                                min_area=min_area, haze="keep", attach_radius=attach_radius)
+    report = {key: shared[key] for key in ("mode", "threshold", "min_area", "attach_radius", "connectivity", "canvas",
+                                           "padding", "registration", "attached_px", "cell_fallback_px",
+                                           "dropped_px")}
+    report.update({"haze": shared["haze"], "hidden_rgb": "zeroed (only visible pixels are copied)",
+                   "method": f"forge_core.ownership_slice (D14): {shared['method']}"})
+    records = [{key: frame[key] for key in ("sheet_origin", "owned_components", "pixels_from_outside_cell")}
+               for frame in shared["frames"]]
     return frames, report, records
 
 
@@ -717,7 +644,7 @@ def _load_sources(args: argparse.Namespace, final: Path) -> tuple[list[Image.Ima
         image, record = load_png(path)
         record = {"path": manifest_path(path, final), **record}
         if args.key == "chroma":
-            image, record["key"] = key_image(image, args)
+            image, record["key"] = key_image(image, args, Path(path).name)
             record["mode"] = image.mode
         images.append(image)
         records.append(record)
@@ -920,7 +847,7 @@ def assemble(args: argparse.Namespace) -> dict[str, object]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--input", nargs="+", type=Path, help="Ordered still PNG files (one frame each).")
     source.add_argument("--sheet", type=Path, help="One still PNG containing the frames.")
@@ -967,21 +894,21 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        result = assemble(args)
-    except (ValueError, OSError, RuntimeError) as error:
-        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+def _run(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    result = assemble(args)
     final = output_path(args.output_dir)
     summary = {"status": "ok", "output": str(final), "metadata": str(final / "animation.json"),
                "frames": len(result["frames"]), "sequence": len(result["sequence"]),
                "total_duration_ms": result["total_duration_ms"], "qa": result["qa"]["status"]}
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry (D26, D27): usage errors exit 2 (argparse); every other failure prints one
+    ``error: ...`` line and exits 1 (an unexpected one as ``error: internal error (...)``)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

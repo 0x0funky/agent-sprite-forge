@@ -35,7 +35,9 @@ cancel, chain, impact, hold, end, sfx, step_l, step_r or custom:<name>; keys
 cadence_ms, speed_ref; transitions [{"to", "entry_frame", "dissolve_ms", "mode":
 dither|premultiplied}]; hitstop_ticks; role player|enemy|npc|fx|prop. Top level:
 sampling, pixel_art, palette_ref, art_source, placeholder, body_height_px and
-shadow {rx, ry, opacity}.
+shadow {rx, ry, opacity}. The top-level art_source, placeholder, pixel_art and
+sampling and the clip events are honoured in v1 manifests too (D11); the other v2
+fields are ignored there with a lint warning.
 
 Output: frames/ (byte copies), clips/clip-NN.webp (lossless; decoded timing, alpha
 and visible RGB verified), contact-sheet.png, review/ (filmstrips on light, dark and
@@ -44,8 +46,10 @@ test with anchor marks, A->B dissolve previews), source-manifest.json and
 animation-clips.json with, per clip, events_ms, a tick-grid drift report (60 Hz by
 default), holds and the loop seam. Lints: enemy telegraph (tell -> hit) under 28
 ticks, uneven or vanishing ticks, near-duplicate holds. --strict turns any warning
-into a failure and publishes nothing. Errors print "error: ..." and exit 1; success
-prints one JSON line with the output and metadata paths.
+into a failure and publishes nothing. Usage errors exit 2 (argparse); every other
+error prints one "error: ..." line, publishes nothing and exits 1; success prints one
+JSON line with the output and metadata paths. A UTF-8 byte-order mark in the
+manifest is accepted.
 """
 
 from __future__ import annotations
@@ -80,7 +84,7 @@ require = FRAME_UTILS.require
 SCHEMA_V1 = "generate2dsprite.animation_clips.v1"
 SCHEMA_V2 = "generate2dsprite.animation_clips.v2"
 SCHEMA = SCHEMA_V1  # a manifest without "schema" is v1
-TOOL = {"name": "build_animation_clips", "version": "2.0"}
+TOOL = {"name": "build_animation_clips", "version": forge_core.FORGE_PACKAGE_VERSION}  # package version (D29)
 TICK_HZ = 60
 TELEGRAPH_MIN_TICKS = 28  # 60 Hz ticks between an enemy's tell and its hit (game-opus55 combat-feel-v0)
 NEAR_DUPLICATE_MAE = 1.5  # premultiplied RGBA MAE over the union of visible pixels, 0-255 units
@@ -100,6 +104,9 @@ BACKGROUNDS = ("light", "dark", "checker")
 V2_CLIP_FIELDS = ("ticks", "tick_hz", "loop_policy", "events", "keys", "entry_frame", "stride_px_per_frame",
                   "cadence_ms", "speed_ref", "transitions", "hitstop_ticks", "role")
 V2_TOP_FIELDS = ("sampling", "pixel_art", "palette_ref", "art_source", "placeholder", "body_height_px", "shadow")
+# Not gated by version (D11): producers that still write v1 keep their art provenance, sampling and events.
+V1_HONOURED_TOP_FIELDS = ("art_source", "placeholder", "pixel_art", "sampling")
+V1_HONOURED_CLIP_FIELDS = ("events",)
 _CUSTOM_EVENT = re.compile(r"custom:\S+")
 _BAYER4 = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], np.float64)
 
@@ -113,17 +120,9 @@ BACKGROUND_COLOURS = {"light": (236, 236, 228, 255), "dark": (24, 28, 36, 255)}
 CHECKER_COLOURS = ((204, 204, 204, 255), (150, 150, 150, 255))
 
 
-class _Parser(argparse.ArgumentParser):
-    """argparse with the repository's error convention: 'error: ...' on stderr and exit status 1."""
-
-    def error(self, message: str) -> None:  # type: ignore[override]
-        self.print_usage(sys.stderr)
-        self.exit(1, f"error: {forge_core.ascii_text(message)}\n")
-
-
 def _half_up(numerator: int, denominator: int) -> int:
-    """round_half_up(numerator / denominator) for non-negative integers, exactly."""
-    return (2 * numerator + denominator) // (2 * denominator)
+    """forge_core.round_half_up(numerator / denominator), exactly (a Fraction, never a float; D30)."""
+    return forge_core.round_half_up(Fraction(numerator, denominator))
 
 
 def _finite_number(value: object) -> bool:
@@ -155,9 +154,12 @@ def load_frame_png(path: Path, name: str) -> tuple[Image.Image, dict]:
 
 
 def load_contract(path: Path) -> tuple[dict, int, list[Image.Image], list[np.ndarray], list[dict], list[Path]]:
-    """Read the manifest (a UTF-8 BOM is accepted) and its frames:
+    """Read the manifest (UTF-8 with or without a BOM, D28) and its frames:
     ``(contract, version, images, arrays, records, frame paths)``."""
-    contract = json.loads(path.read_text(encoding="utf-8-sig"))
+    try:
+        contract = forge_core.read_json(path)
+    except ValueError as error:
+        raise ValueError(f"Manifest {Path(path).name} is not valid JSON: {error}") from None
     require(isinstance(contract, dict), "Manifest must be a JSON object.")
     schema = contract.get("schema", SCHEMA_V1)
     require(schema in (SCHEMA_V1, SCHEMA_V2), f"Expected schema {SCHEMA_V1} or {SCHEMA_V2}.")
@@ -199,8 +201,14 @@ def load_contract(path: Path) -> tuple[dict, int, list[Image.Image], list[np.nda
     return contract, 2 if schema == SCHEMA_V2 else 1, images, arrays, records, paths
 
 
-def resolve_top_level(contract: dict, manifest: Path, final: Path) -> tuple[dict, list[dict]]:
-    """Validate the v2 top-level fields and return them as written to the output, plus lint."""
+def resolve_top_level(contract: dict, manifest: Path, final: Path, version: int = 2) -> tuple[dict, list[dict]]:
+    """Validate the top-level fields and return them as written to the output, plus lint.
+
+    v2 takes every field of V2_TOP_FIELDS; v1 only the ones D11 honours in any version
+    (art_source, placeholder, pixel_art, sampling). The caller lints the rest of a v1 manifest.
+    """
+    if version == 1:
+        contract = {name: contract[name] for name in V1_HONOURED_TOP_FIELDS if name in contract}
     fields: dict = {}
     lint: list[dict] = []
     if "sampling" in contract:
@@ -458,8 +466,9 @@ def resolve_clips(contract: dict, frame_records: list[dict], version: int = 1, *
                   tick_hz: int = TICK_HZ) -> tuple[dict, dict, list[dict]]:
     """Validate the clips and states; returns ``(clips, states, lint)``.
 
-    v1 clips keep their cfed170 meaning exactly (v2-only fields are ignored with a lint
-    warning); v2 clips accept every optional field of the clips_input contract.
+    v1 clips keep their cfed170 meaning exactly. Their events are resolved as in v2 (D11:
+    events are not gated by version); the other v2-only fields are ignored with a lint
+    warning. v2 clips accept every optional field of the clips_input contract.
     """
     raw_clips = contract.get("clips")
     require(isinstance(raw_clips, dict) and bool(raw_clips), "clips must be a nonempty object.")
@@ -479,7 +488,10 @@ def resolve_clips(contract: dict, frame_records: list[dict], version: int = 1, *
         require(type(loop) is bool, f"Clip {name} must declare loop as true or false.")
         clips[name] = _timeline(indices, durations, loop)
         _stride(name, value, clips[name])
-        ignored = [field for field in V2_CLIP_FIELDS if field in value]
+        if "events" in value:
+            starts = np.concatenate([[0], np.cumsum(durations)[:-1]]).astype(int).tolist()
+            clips[name]["events_ms"] = _events(name, value["events"], list(range(len(indices))), starts, tick_hz)
+        ignored = [field for field in V2_CLIP_FIELDS if field in value and field not in V1_HONOURED_CLIP_FIELDS]
         if ignored:
             lint.append(_warning("v2_field_ignored", f"Clip {name} uses v2 fields {', '.join(ignored)}; set schema "
                                                      f"{SCHEMA_V2} to apply them (ignored under v1).", clip=name))
@@ -1161,10 +1173,10 @@ def build(manifest_path: Path, output_dir: Path, *, preview_scale: int = 1, prev
             f"--preview-scale {preview_scale} makes {width * preview_scale}x{height * preview_scale} previews; "
             "scaled previews are for small pixel art and stay within 4096x4096 px.")
     clips, states, lint = resolve_clips(contract, records, version, tick_hz=tick_hz)
-    top_level, top_lint = resolve_top_level(contract, manifest_path, final) if version == 2 else ({}, [])
+    top_level, top_lint = resolve_top_level(contract, manifest_path, final, version)
     lint += top_lint
     if version == 1:
-        ignored = [field for field in V2_TOP_FIELDS if field in contract]
+        ignored = [field for field in V2_TOP_FIELDS if field in contract and field not in V1_HONOURED_TOP_FIELDS]
         if ignored:
             lint.append(_warning("v2_field_ignored", f"The manifest uses v2 fields {', '.join(ignored)}; set schema "
                                                      f"{SCHEMA_V2} to apply them (ignored under v1)."))
@@ -1243,7 +1255,7 @@ def build(manifest_path: Path, output_dir: Path, *, preview_scale: int = 1, prev
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = _Parser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--manifest", type=Path, required=True, help="Clips manifest (v1 or v2 JSON).")
     parser.add_argument("--output-dir", type=Path, required=True,
                         help="New output directory; never overwrite existing paths.")
@@ -1263,23 +1275,23 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    parser = build_parser()
-    args = parser.parse_args(argv)
-    try:
-        result = build(args.manifest, args.output_dir, preview_scale=args.preview_scale,
-                       preview_background=args.preview_background, reviews=not args.no_reviews,
-                       tick_hz=args.tick_hz, near_duplicate_mae=args.near_duplicate_mae, strict=args.strict)
-    except (ValueError, OSError, RuntimeError) as error:
-        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+def _run(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    result = build(args.manifest, args.output_dir, preview_scale=args.preview_scale,
+                   preview_background=args.preview_background, reviews=not args.no_reviews,
+                   tick_hz=args.tick_hz, near_duplicate_mae=args.near_duplicate_mae, strict=args.strict)
     final = FRAME_UTILS.output_path(args.output_dir)
     summary = {"status": "ok", "output": str(final), "metadata": str(final / "animation-clips.json"),
                "schema": result["schema"], "clips": len(result["clips"]), "frames": len(result["frames"]),
                "warnings": len(result["diagnostics"]["lint"]), "qa": result["qa"]["status"]}
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry (D26, D27): usage errors exit 2 (argparse); every other failure prints one
+    ``error: ...`` line and exits 1 (an unexpected one as ``error: internal error (...)``)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":
