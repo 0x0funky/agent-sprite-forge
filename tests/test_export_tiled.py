@@ -16,7 +16,8 @@ import pytest
 from PIL import Image
 
 from forge_testutils import assert_cli_help, assert_valid_contract, load_script, run_cli, script_path
-from test_map_bundle import BLOB_MASKS, SKILL, assert_patched_valid, demo, edit, prop_image, save, wang_atlas
+from test_map_bundle import (BLOB_MASKS, SKILL, assert_patched_valid, d6_bundle, demo, edit, prop_image, save,
+                             wang_atlas)
 
 et = load_script(SKILL, "export_tiled")
 mb = et.map_bundle
@@ -70,7 +71,9 @@ def pytiled_render(tmj: Path, size: tuple[int, int]) -> np.ndarray:
             for obj in layer.tiled_objects:
                 if not hasattr(obj, "gid"):
                     continue
-                image = tile_image(obj.gid)
+                image = tile_image(obj.gid & 0x0FFFFFFF)
+                if obj.gid & 0x80000000:  # Tiled's horizontal flip flag (a flip_x object, D6)
+                    image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
                 width, height = math.floor(obj.size.width + 0.5), math.floor(obj.size.height + 0.5)
                 if (width, height) != image.size:
                     image = image.resize((width, height), Image.Resampling.NEAREST)
@@ -384,6 +387,53 @@ def test_topdown_order_is_not_the_ground_line(tmp_path):
     assert tuple(topdown[25, 20, :3]) == (200, 40, 40) and et.differing_pixels(topdown, expected) == 80
 
 
+def test_d6_art_and_flip_x_round_trip(tmp_path):
+    """D6 in the export: an object's own image and the registry art become separate prop tiles, a
+    flip_x object is a tile object with Tiled's horizontal flip flag placed by its mirrored anchor,
+    and the files re-render at 0 px with the built-in reader and pytiled-parser. Without a registry,
+    prop_packs labels and occluder sources supply the art. Footprints are forge_nav's (D6, D7)."""
+    path = d6_bundle(tmp_path / "registry")
+    out = export(tmp_path, "--embedded-variant", bundle=path, name="registry-tiled")
+    expected = mb.render_map(mb.load_bundle(path))
+    for name in ("map.tmj", "map.embedded.tmj"):
+        assert et.differing_pixels(et.render_tiled(et.read_tiled_map(out / name), (64, 48)), expected) == 0, name
+    tmj = json.loads((out / "map.tmj").read_text(encoding="utf-8"))
+    objects = {o["name"]: o for o in tmj["layers"][0]["objects"]}
+    assert objects["post-2"]["gid"] & 0x80000000 and not objects["post-1"]["gid"] & 0x80000000
+    assert objects["post-2"]["gid"] & 0x0FFFFFFF == objects["post-1"]["gid"]
+    assert (objects["post-1"]["x"], objects["post-2"]["x"]) == (8.0, 26.0)
+    assert {p["name"]: p["value"] for p in objects["post-2"]["properties"]}["flipX"] is True
+    tiles = {(properties(t)["prop"][1], t.find("image").get("source")): t for t in tsx(out / "props.tsx").findall("tile")}
+    assert set(tiles) == {("post", "images/post.png"), ("post", "images/lamp.png")}
+    lamp = tiles[("post", "images/lamp.png")]
+    assert (properties(lamp)["anchorX"], properties(lamp)["anchorY"]) == (("float", "4"), ("float", "7"))
+    assert lamp.find("objectgroup") is None and "solid" not in properties(lamp)
+    collision = {o["name"]: o for o in tmj["layers"][1]["objects"]}
+    assert (collision["post-1"]["x"], collision["post-2"]["x"]) == (9.5, 26.5)  # the footprint mirrors too
+    assert "lamp-1" not in collision
+
+    path = d6_bundle(tmp_path / "packs", registry=False)
+    out = export(tmp_path, bundle=path, name="packs-tiled")
+    expected = mb.render_map(mb.load_bundle(path))
+    assert et.differing_pixels(et.render_tiled(et.read_tiled_map(out / "map.tmj"), (64, 48)), expected) == 0
+    tmj = json.loads((out / "map.tmj").read_text(encoding="utf-8"))
+    assert [o["name"] for o in tmj["layers"][0]["objects"]] == ["crate-1", "stone-1"]  # ghost has no art
+    tiles = {properties(t)["prop"][1]: t.find("image").get("source") for t in tsx(out / "props.tsx").findall("tile")}
+    assert tiles == {"crate": "images/prop.png", "stone": "images/stone.png"}
+
+
+def test_flip_x_rerenders_with_pytiled(tmp_path):
+    """The horizontal flip flag of a flip_x object, read by an independent parser (pytiled-parser)."""
+    pytest.importorskip("pytiled_parser")
+    path = d6_bundle(tmp_path / "registry")
+    out = export(tmp_path, "--embedded-variant", bundle=path, name="registry-tiled")
+    expected = mb.render_map(mb.load_bundle(path))
+    for name in ("map.tmj", "map.embedded.tmj"):
+        assert et.differing_pixels(pytiled_render(out / name, (64, 48)), expected) == 0, name
+        run = run_cli([TOOL, "verify", "--map", out / name, "--bundle", path, "--reader", "pytiled"])
+        assert run.returncode == 0, run.stderr
+
+
 def test_reader_rules(tmp_path):
     out = export(tmp_path)
     expected = reference(tmp_path)
@@ -392,6 +442,11 @@ def test_reader_rules(tmp_path):
     (out / "flipped.tmj").write_text(json.dumps(flipped), encoding="utf-8")
     with pytest.raises(mb.BundleError, match="flip flags"):
         et.render_tiled(et.read_tiled_map(out / "flipped.tmj"), (192, 128))
+    flipped = json.loads((out / "map.tmj").read_text(encoding="utf-8"))
+    flipped["layers"][3]["objects"][0]["gid"] |= 0x40000000  # vertical flip of a tile object: refused
+    (out / "vertical.tmj").write_text(json.dumps(flipped), encoding="utf-8")
+    with pytest.raises(mb.BundleError, match="vertical, diagonal or hexagonal flip flags"):
+        et.render_tiled(et.read_tiled_map(out / "vertical.tmj"), (192, 128))
     (out / "not-a-tileset.tsx").write_text('<?xml version="1.0"?><map/>', encoding="utf-8")
     broken = json.loads((out / "map.tmj").read_text(encoding="utf-8"))
     broken["tilesets"][0]["source"] = "not-a-tileset.tsx"

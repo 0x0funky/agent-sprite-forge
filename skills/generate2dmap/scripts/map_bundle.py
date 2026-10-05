@@ -6,6 +6,16 @@ ground footprints, collision, portals, spawns, anchors and interactions. map_nav
 (collision, reachability, portal checks) and export_tiled.py (Tiled TMJ/TSX) read bundles
 through load_bundle() and draw them with render_map().
 
+Collision is not modelled here. The blocking set every map tool shares (integration
+decisions D1-D7) comes from the vendored forge_nav.py: world_solids(), footprint_solid(),
+tile_solids(), nav_cell() and MaterialMap.class_codes() delegate to it, and merge_rects()
+is forge_core's. The contract is evaluated by the vendored forge_schema.py (D31), JSON is
+read by forge_core.read_json (strict, a BOM tolerated, D28).
+
+Object art follows one lookup order in every reader (D6): objects[].image, then the props
+registry (props[prop]), then the bundle's prop_packs by label, then objects[].occluder.source.
+objects[].flip_x mirrors the art around the anchor x (and forge_nav mirrors the footprint).
+
 Verbs:
   validate  check the contract (the vendored references/schemas/map.schema.json, evaluated
             here without third-party packages), every referenced file and its sha256, and
@@ -34,9 +44,11 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_nav  # noqa: E402  (the shared collision rule book, D4)
+import forge_schema  # noqa: E402  (the shared contract evaluator, D31)
 
 TOOL_NAME = "map_bundle.py"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29: QA envelopes carry the package version
 SCHEMA_V1 = "generate2dmap.map_bundle.v1"
 SCHEMA_V2 = "generate2dmap.map_bundle.v2"
 TILESET_SCHEMA = "generate2dmap.tileset.v1"
@@ -45,16 +57,17 @@ SCHEMA_DIR = Path(__file__).resolve().parent.parent / "references" / "schemas"
 
 OCCLUSION_CLASSES = ("low", "tall", "foreground")
 OCCUPANT_POLICIES = ("y_sort", "rear_shift_and_fade", "static_front", "static_back")
-FREE, BLOCK, ONE_WAY = 0, 1, 2
+FREE, BLOCK, ONE_WAY = forge_nav.FREE, forge_nav.BLOCK, forge_nav.ONE_WAY
 EMPTY_TILE = -1
 BLOB_BITS = ("N", "NE", "E", "SE", "S", "SW", "W", "NW")
+ART_SOURCES = ("object", "props", "prop_packs", "occluder")  # the D6 lookup order
 # A blob diagonal counts only when both adjacent edges are set (plan Appendix B, tile).
 _BLOB_DIAGONALS = ((1, 0, 2), (3, 4, 2), (5, 4, 6), (7, 0, 6))
 _REL_PATH = re.compile(r"^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\]+$")
 _KNOWN_TOP_LEVEL = frozenset({
-    "schema", "id", "tile_size", "world", "terrain", "tilesets", "layers", "props", "objects", "collision",
-    "material_map", "nav", "portals", "spawns", "anchors", "interactions", "camera", "stage", "atmosphere",
-    "lights", "qa", "art_source", "placeholder",
+    "schema", "id", "name", "tile_size", "world", "terrain", "tilesets", "layers", "props", "prop_packs", "objects",
+    "collision", "material_map", "nav", "portals", "spawns", "anchors", "interactions", "roads", "camera", "stage",
+    "atmosphere", "lights", "qa", "provenance", "art_source", "placeholder",
 })
 
 
@@ -62,73 +75,19 @@ class BundleError(ValueError):
     """A bundle (or a file it needs) cannot be read at all."""
 
 
-# --------------------------------------------------------------------------- JSON and the schema evaluator
+# --------------------------------------------------------------------------- JSON and the contract
 
-def _local_read_json(path: str | os.PathLike) -> Any:
-    """Read strict JSON: UTF-8 (a BOM is tolerated), no NaN or Infinity, no duplicate keys."""
-    def unique_pairs(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate key {key!r}")
-            result[key] = value
-        return result
-
-    def no_constants(name: str) -> Any:
-        raise ValueError(f"{name} is not valid JSON")
-
+def read_json(path: str | os.PathLike) -> Any:
+    """Strict JSON through forge_core.read_json(strict=True) (D28): UTF-8 with an optional BOM, no
+    NaN, Infinity or overflowing numbers, no duplicate keys. Raises BundleError naming the file."""
     try:
-        text = Path(path).read_text(encoding="utf-8-sig")
-        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=no_constants)
-    except (OSError, UnicodeDecodeError, ValueError) as error:
+        return forge_core.read_json(path, strict=True)
+    except (OSError, ValueError) as error:
         raise BundleError(f"cannot read JSON {Path(path).name}: {error}") from error
-
-
-_ASSERTIONS = frozenset({
-    "$ref", "type", "const", "enum", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum",
-    "minLength", "maxLength", "pattern", "minItems", "maxItems", "items", "prefixItems", "contains",
-    "required", "properties", "additionalProperties", "propertyNames", "minProperties", "maxProperties",
-    "allOf", "anyOf", "oneOf", "not", "if", "then", "else",
-})
-_ANNOTATIONS = frozenset({
-    "$schema", "$id", "$comment", "$defs", "title", "description", "default", "examples", "format",
-    "deprecated", "readOnly", "writeOnly",
-})
-_IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _is_type(value: Any, expected: Any) -> bool:
-    if isinstance(expected, list):
-        return any(_is_type(value, item) for item in expected)
-    checks = {
-        "null": lambda v: v is None,
-        "boolean": lambda v: isinstance(v, bool),
-        "object": lambda v: isinstance(v, dict),
-        "array": lambda v: isinstance(v, list),
-        "string": lambda v: isinstance(v, str),
-        "number": _is_number,
-        "integer": lambda v: _is_number(v) and (isinstance(v, int) or float(v).is_integer()),
-    }
-    if expected not in checks:
-        raise ValueError(f"unknown JSON Schema type {expected!r}")
-    return checks[expected](value)
-
-
-def _json_equal(a: Any, b: Any) -> bool:
-    """JSON equality: 1 == 1.0, but booleans never equal numbers."""
-    if isinstance(a, bool) or isinstance(b, bool):
-        return isinstance(a, bool) and isinstance(b, bool) and a == b
-    if _is_number(a) and _is_number(b):
-        return a == b
-    if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(_json_equal(x, y) for x, y in zip(a, b))
-    if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(_json_equal(a[key], b[key]) for key in a)
-    return type(a) is type(b) and a == b
 
 
 def _brief(value: Any, limit: int = 60) -> str:
@@ -136,161 +95,35 @@ def _brief(value: Any, limit: int = 60) -> str:
     return text if len(text) <= limit else text[:limit - 3] + "..."
 
 
-def json_path(base: str, key: str | int) -> str:
-    """Extend a JSONPath like jsonschema's json_path: $.a.b[0] or $['odd key']."""
-    if isinstance(key, int):
-        return f"{base}[{key}]"
-    return f"{base}.{key}" if _IDENTIFIER.match(key) else f"{base}[{json.dumps(key, ensure_ascii=False)}]"
+json_path = forge_schema.json_path  # jsonschema's JSONPath form, shared with the schema errors
+
+SCHEMAS = forge_schema.schema_set(SCHEMA_DIR)  # the vendored map and common schemas (D31)
+
+# Plain words for the bundle schema's alternatives (anyOf / oneOf), whose generic message names
+# none of the allowed forms; keyed by the JSONPath of the failing value.
+_KEY = r"(\.[A-Za-z][A-Za-z0-9_]*|\['(?:[^'\\]|\\.)*'\])"  # one object key: .name or ['odd key']
+_ALTERNATIVES = (
+    (re.compile(r"^\$\.tile_size$"), "tile_size is a whole number of pixels or [width, height]"),
+    (re.compile(r"^\$\.props" + _KEY + "$"), "a prop needs an image (or pack + label)"),
+    (re.compile(r"^\$\.portals\[\d+\]$"), "a portal needs exactly one trigger: rect [x, y, w, h] or circle [cx, cy, r]"),
+    (re.compile(r"^\$\.layers\[\d+\]\.data$"), "tiles layer data is a relative path to a CSV or JSON file, or a list "
+                                               "of rows"),
+    (re.compile(r"^\$\.(spawns\[\d+\]|anchors" + _KEY + r")\.facing$"), "facing is a direction name or an angle"),
+    (re.compile(r"^\$\.anchors" + _KEY + r"\.approach$"), "approach is a point [x, y] or a list of points"),
+    (re.compile(r"^\$\.(stage|atmosphere|lights)$"), "give a relative path to the file or the document inline"),
+)
+_NO_ALTERNATIVE = (" is not valid under any of the given schemas", " is valid under each of ")
 
 
-class _LocalSchemaSet:
-    """The JSON Schemas of one folder with a small Draft 2020-12 evaluator (standard library only).
-
-    It implements exactly the assertion keywords the vendored schemas use (the test suite
-    compares its verdicts with the jsonschema package); any other assertion keyword raises
-    ValueError rather than being skipped. "format" is an annotation, as in jsonschema's
-    default validator. Error lines read "$.json.path: message".
-    """
-
-    def __init__(self, directory: str | os.PathLike) -> None:
-        self.directory = Path(directory)
-        self._documents: dict[str, Any] = {}
-        self._patterns: dict[str, re.Pattern[str]] = {}
-
-    def document(self, name: str) -> Any:
-        if name not in self._documents:
-            path = self.directory / name
-            try:
-                self._documents[name] = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as error:
-                raise ValueError(f"cannot load schema {path}: {error}") from error
-        return self._documents[name]
-
-    def errors(self, instance: Any, ref: str) -> list[str]:
-        """Return every violation of ``ref`` (for example ``map.schema.json#/$defs/map_bundle_v2``)."""
-        name, schema = self._resolve(ref, "")
-        out: list[str] = []
-        self._check(instance, schema, name, "$", out)
-        return out
-
-    def _resolve(self, ref: str, current: str) -> tuple[str, Any]:
-        name, _, pointer = ref.partition("#")
-        name = name.rsplit("/", 1)[-1] if name else current
-        node = self.document(name)
-        for part in [p for p in pointer.split("/") if p]:
-            part = part.replace("~1", "/").replace("~0", "~")
-            node = node[int(part)] if isinstance(node, list) else node[part]
-        return name, node
-
-    def _sub_errors(self, value: Any, schema: Any, doc: str, path: str) -> list[str]:
-        out: list[str] = []
-        self._check(value, schema, doc, path, out)
-        return out
-
-    def _check(self, value: Any, schema: Any, doc: str, path: str, out: list[str]) -> None:
-        if schema is True:
-            return
-        if schema is False:
-            out.append(f"{path}: no value is allowed here")
-            return
-        unknown = set(schema) - _ASSERTIONS - _ANNOTATIONS
-        if unknown:
-            raise ValueError(f"unsupported JSON Schema keyword(s) {sorted(unknown)} in {doc}")
-        if "$ref" in schema:
-            target_doc, target = self._resolve(schema["$ref"], doc)
-            self._check(value, target, target_doc, path, out)
-        if "type" in schema and not _is_type(value, schema["type"]):
-            out.append(f"{path}: {_brief(value)} is not of type {_brief(schema['type'])}")
-            return
-        if "const" in schema and not _json_equal(value, schema["const"]):
-            out.append(f"{path}: {_brief(schema['const'])} was expected, got {_brief(value)}")
-        if "enum" in schema and not any(_json_equal(value, item) for item in schema["enum"]):
-            out.append(f"{path}: {_brief(value)} is not one of {_brief(schema['enum'])}")
-        if _is_number(value):
-            self._check_number(value, schema, path, out)
-        elif isinstance(value, str):
-            self._check_string(value, schema, path, out)
-        elif isinstance(value, list):
-            self._check_array(value, schema, doc, path, out)
-        elif isinstance(value, dict):
-            self._check_object(value, schema, doc, path, out)
-        for sub in schema.get("allOf", ()):
-            self._check(value, sub, doc, path, out)
-        for keyword in ("anyOf", "oneOf"):
-            if keyword not in schema:
-                continue
-            results = [self._sub_errors(value, sub, doc, path) for sub in schema[keyword]]
-            passing = sum(1 for result in results if not result)
-            if passing == 0:
-                closest = min(results, key=len)
-                out.append(f"{path}: matches none of the allowed forms ({keyword}); closest: {closest[0]}")
-            elif keyword == "oneOf" and passing > 1:
-                out.append(f"{path}: matches {passing} of the mutually exclusive forms (oneOf)")
-        if "not" in schema and not self._sub_errors(value, schema["not"], doc, path):
-            out.append(f"{path}: matches a form that is not allowed (not)")
-        if "if" in schema:
-            branch = "then" if not self._sub_errors(value, schema["if"], doc, path) else "else"
-            if branch in schema:
-                self._check(value, schema[branch], doc, path, out)
-
-    @staticmethod
-    def _check_number(value: float, schema: dict, path: str, out: list[str]) -> None:
-        if "minimum" in schema and value < schema["minimum"]:
-            out.append(f"{path}: {value} is less than the minimum of {schema['minimum']}")
-        if "maximum" in schema and value > schema["maximum"]:
-            out.append(f"{path}: {value} is greater than the maximum of {schema['maximum']}")
-        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
-            out.append(f"{path}: {value} is less than or equal to the minimum of {schema['exclusiveMinimum']}")
-        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
-            out.append(f"{path}: {value} is greater than or equal to the maximum of {schema['exclusiveMaximum']}")
-
-    def _check_string(self, value: str, schema: dict, path: str, out: list[str]) -> None:
-        if "minLength" in schema and len(value) < schema["minLength"]:
-            out.append(f"{path}: {_brief(value)} is too short")
-        if "maxLength" in schema and len(value) > schema["maxLength"]:
-            out.append(f"{path}: {_brief(value)} is too long")
-        if "pattern" in schema:
-            pattern = self._patterns.setdefault(schema["pattern"], re.compile(schema["pattern"]))
-            if not pattern.search(value):
-                out.append(f"{path}: {_brief(value)} does not match {schema['pattern']!r}")
-
-    def _check_array(self, value: list, schema: dict, doc: str, path: str, out: list[str]) -> None:
-        prefix = schema.get("prefixItems", [])
-        for index, (item, sub) in enumerate(zip(value, prefix)):
-            self._check(item, sub, doc, json_path(path, index), out)
-        if "items" in schema:
-            for index in range(len(prefix), len(value)):
-                self._check(value[index], schema["items"], doc, json_path(path, index), out)
-        if "minItems" in schema and len(value) < schema["minItems"]:
-            out.append(f"{path}: needs at least {schema['minItems']} item(s), has {len(value)}")
-        if "maxItems" in schema and len(value) > schema["maxItems"]:
-            out.append(f"{path}: allows at most {schema['maxItems']} item(s), has {len(value)}")
-        if "contains" in schema and not any(not self._sub_errors(item, schema["contains"], doc, path)
-                                            for item in value):
-            out.append(f"{path}: no item matches the required form (contains)")
-
-    def _check_object(self, value: dict, schema: dict, doc: str, path: str, out: list[str]) -> None:
-        for key in schema.get("required", ()):
-            if key not in value:
-                out.append(f"{path}: {key!r} is a required property")
-        properties = schema.get("properties", {})
-        for key, sub in properties.items():
-            if key in value:
-                self._check(value[key], sub, doc, json_path(path, key), out)
-        if "additionalProperties" in schema:
-            for key in value:
-                if key not in properties:
-                    self._check(value[key], schema["additionalProperties"], doc, json_path(path, key), out)
-        if "propertyNames" in schema:
-            for key in value:
-                self._check(key, schema["propertyNames"], doc, f"{json_path(path, key)} (name)", out)
-        if "minProperties" in schema and len(value) < schema["minProperties"]:
-            out.append(f"{path}: needs at least {schema['minProperties']} propert(ies)")
-        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
-            out.append(f"{path}: allows at most {schema['maxProperties']} propert(ies)")
-
-
-SCHEMAS = _LocalSchemaSet(SCHEMA_DIR)
+def schema_problem(message: str) -> tuple[str, str]:
+    """(JSON path, text) of one forge_schema error line; an unmatched alternative gets plain words."""
+    path, _, text = message.partition(": ")
+    for marker in _NO_ALTERNATIVE:
+        if marker in text:
+            for pattern, plain in _ALTERNATIVES:
+                if pattern.match(path):
+                    return path, f"{plain}; got {text.split(marker, 1)[0]}"
+    return path, text
 
 
 # --------------------------------------------------------------------------- data model
@@ -373,7 +206,9 @@ class Prop:
 
 @dataclass
 class MapObject:
-    """A placed prop: (x, y) is where the prop's anchor_px lands, in world pixels."""
+    """A placed prop: (x, y) is where the prop's anchor_px (the unmirrored image anchor) lands,
+    in world pixels. image is its art found by the D6 lookup order (art names the step:
+    object, props, prop_packs or occluder), drawn mirrored around the anchor x when flip_x."""
     id: str
     prop: str
     x: float
@@ -386,6 +221,10 @@ class MapObject:
     layer: str | None
     occlusion: str | None
     occupant_policy: str | None
+    flip_x: bool = False
+    image: Path | None = None
+    image_size: tuple[int, int] | None = None
+    art: str | None = None
 
 
 @dataclass
@@ -442,14 +281,8 @@ class MaterialMap:
     walkable: list[bool]
 
     def class_codes(self) -> np.ndarray:
-        """(h, w) uint8: FREE, BLOCK or ONE_WAY per material pixel (plan Appendix C)."""
-        codes = np.zeros(len(self.names) + 1, np.uint8)  # the extra last entry is "no material"
-        for i, (klass, walkable) in enumerate(zip(self.classes, self.walkable)):
-            if klass == "solid" or (klass in ("liquid", "hazard") and not walkable):
-                codes[i] = BLOCK
-            elif klass == "one_way":
-                codes[i] = ONE_WAY
-        return codes[self.index]
+        """(h, w) uint8: FREE, BLOCK or ONE_WAY per material pixel (forge_nav rule N8)."""
+        return forge_nav.material_codes(self.index, self.classes, self.walkable)
 
 
 @dataclass
@@ -484,10 +317,18 @@ class Bundle:
     files: list[dict] = field(default_factory=list)
     problems: list[Problem] = field(default_factory=list)
     readable: bool = False
+    _blocking: forge_nav.BlockingSet | None = field(default=None, repr=False)
+    _art: dict = field(default_factory=dict, repr=False)
 
     @property
     def base_dir(self) -> Path:
         return self.path.parent
+
+    def art_rgba(self, path: Path) -> Image.Image:
+        """An art image as 8-bit straight RGBA, loaded once."""
+        if path not in self._art:
+            self._art[path] = forge_core.load_rgba(path)[0]
+        return self._art[path]
 
     @property
     def errors(self) -> list[Problem]:
@@ -542,7 +383,12 @@ def path_fields(doc: Any) -> Iterator[tuple[dict, str, str, str | None]]:
                     yield entry, "image", f"{base}.image", "sha256"
                 if isinstance(entry.get("pack"), str):
                     yield entry, "pack", f"{base}.pack", None
+    for i, entry in enumerate(_as_list(doc.get("prop_packs"))):
+        if isinstance(entry, dict) and isinstance(entry.get("manifest"), str):
+            yield entry, "manifest", f"$.prop_packs[{i}].manifest", "sha256"
     for i, obj in enumerate(_as_list(doc.get("objects"))):
+        if isinstance(obj, dict) and isinstance(obj.get("image"), str):
+            yield obj, "image", f"$.objects[{i}].image", "image_sha256"
         occluder = obj.get("occluder") if isinstance(obj, dict) else None
         if isinstance(occluder, dict) and isinstance(occluder.get("source"), str):
             yield occluder, "source", f"$.objects[{i}].occluder.source", "sha256"
@@ -557,165 +403,89 @@ def path_fields(doc: Any) -> Iterator[tuple[dict, str, str, str | None]]:
 
 # --------------------------------------------------------------------------- geometry helpers
 
-def _local_round_half_up(value: float) -> int:
-    """floor(value + 0.5): the forge rounding rule (never banker's rounding)."""
-    return math.floor(value + 0.5)
-
-
 def nav_cell(actor_radius: float) -> int:
-    """Navigation grid cell (plan Appendix C): max(1, round(r / 2)) with half-up rounding."""
-    return max(1, _local_round_half_up(actor_radius / 2))
+    """Navigation grid cell: max(1, round(r / 2)) with half-up rounding (forge_nav rule N12)."""
+    return forge_nav.nav_cell(actor_radius)
 
 
 def merge_rects(mask: Any) -> list[tuple[int, int, int, int]]:
-    """Cover a boolean grid with disjoint axis-aligned rectangles (x, y, w, h) in cells.
-
-    Greedy: rows are scanned top to bottom; each maximal run of uncovered True cells in a
-    row becomes a rectangle that grows downward while the whole run stays True and
-    uncovered. The rectangles are disjoint and their union is exactly the True cells.
-    """
-    blocked = np.asarray(mask, bool)
-    if blocked.ndim != 2:
-        raise ValueError("merge_rects needs a 2-D mask")
-    rows = blocked.shape[0]
-    used = np.zeros_like(blocked)
-    rects: list[tuple[int, int, int, int]] = []
-    for y in range(rows):
-        free = blocked[y] & ~used[y]
-        if not free.any():
-            continue
-        edges = np.flatnonzero(np.diff(np.concatenate(([False], free, [False])).astype(np.int8)))
-        for x0, x1 in zip(edges[0::2], edges[1::2]):
-            y1 = y + 1
-            while y1 < rows and blocked[y1, x0:x1].all() and not used[y1, x0:x1].any():
-                y1 += 1
-            used[y:y1, x0:x1] = True
-            rects.append((int(x0), int(y), int(x1 - x0), int(y1 - y)))
-    return rects
+    """Cover a boolean grid with disjoint axis-aligned rectangles (x, y, w, h) in cells whose
+    union is exactly the True cells: forge_core.merge_rects, the one cover every tool shares (D30)."""
+    return forge_core.merge_rects(mask)
 
 
 def object_placement(obj: MapObject, image_size: tuple[int, int]) -> tuple[float, float, float, float]:
     """(left, bottom, width, height) of an object's drawn image in world pixels.
 
     This is the Tiled tile-object convention (x, y = bottom-left): the image is scaled by
-    obj.scale and its anchor_px lands on (obj.x, obj.y).
+    obj.scale and its anchor_px lands on (obj.x, obj.y). With flip_x the image is drawn
+    mirrored around the anchor x (D6), so the mirrored anchor, image width - anchor_px[0],
+    is the one that lands on obj.x.
     """
     s = obj.scale
     width, height = image_size[0] * s, image_size[1] * s
-    left = obj.x - obj.anchor_px[0] * s
+    anchor_x = image_size[0] - obj.anchor_px[0] if obj.flip_x else obj.anchor_px[0]
+    left = obj.x - anchor_x * s
     bottom = obj.y - obj.anchor_px[1] * s + height
     return left, bottom, width, height
 
 
 def raster_box(left: float, bottom: float, width: float, height: float) -> tuple[int, int, int, int]:
     """Whole-pixel (x0, y0, w, h) for a drawn image, rounding half up."""
-    return (_local_round_half_up(left), _local_round_half_up(bottom - height), _local_round_half_up(width),
-            _local_round_half_up(height))
+    return (forge_core.round_half_up(left), forge_core.round_half_up(bottom - height),
+            forge_core.round_half_up(width), forge_core.round_half_up(height))
 
 
 def footprint_solid(obj: MapObject) -> dict | None:
-    """The object's ground footprint as a world solid, scaled exactly once by obj.scale.
+    """The object's ground footprint as a world solid (forge_nav rule N6), or None.
 
-    Footprints are measured in prop-image pixels: width across, depth along the ground,
-    offset [dx, dy] from anchor_px, rotate in degrees (clockwise, y down). A rotated rect
-    becomes a polygon. Actor size is never added here (plan Appendix C).
+    Footprints are measured in prop-image pixels (basis prop_px, or its legacy alias
+    image_px) and scaled exactly once by obj.scale; basis world_px is never scaled (D7).
+    flip_x mirrors the footprint around the anchor x (D6). A rotated rect becomes a polygon.
+    Actor size is never added here.
     """
-    fp = obj.footprint
-    if not obj.solid or not fp or fp.get("shape") not in ("ellipse", "rect"):
+    if not obj.solid or not obj.footprint:
         return None
-    s = obj.scale
-    offset = fp.get("offset") or [0, 0]
-    cx, cy = obj.x + s * offset[0], obj.y + s * offset[1]
-    width, depth = s * fp["width"], s * fp["depth"]
-    rotate = float(fp.get("rotate", 0) or 0)
-    source = f"object:{obj.id}"
-    if fp["shape"] == "ellipse":
-        return {"shape": "ellipse", "cx": cx, "cy": cy, "rx": width / 2, "ry": depth / 2, "rotate": rotate,
-                "source": source}
-    if rotate == 0:
-        return {"shape": "rect", "x": cx - width / 2, "y": cy - depth / 2, "w": width, "h": depth, "source": source}
-    theta = math.radians(rotate)
-    cos, sin = math.cos(theta), math.sin(theta)
-    corners = [(-width / 2, -depth / 2), (width / 2, -depth / 2), (width / 2, depth / 2), (-width / 2, depth / 2)]
-    points = [[cx + u * cos - v * sin, cy + u * sin + v * cos] for u, v in corners]
-    return {"shape": "polygon", "points": points, "source": source}
+    return forge_nav.footprint_solid(obj.x, obj.y, obj.footprint, scale=obj.scale, flip_x=obj.flip_x,
+                                     source=f"object:{obj.id}")
 
 
 def tile_solids(bundle: Bundle) -> list[dict]:
-    """World solids from the collision of every placed tile.
+    """World solids from the collision of every placed tile (forge_nav rule N7).
 
     Each tile's collision shapes are moved to the tile's position; a tile whose
     properties say walkable false and that has no shapes blocks its whole cell.
     Axis-aligned rects with whole-pixel corners are unioned per layer and re-merged
     (solids are closed sets, so this does not change which points are blocked).
     """
-    solids: list[dict] = []
+    layers = []
     for layer in bundle.layers:
         tileset = bundle.tilesets.get(layer.tileset or "")
-        if layer.kind != "tiles" or layer.grid is None or tileset is None:
-            continue
-        tw, th = tileset.tile_w, tileset.tile_h
-        tile_masks = np.zeros((tileset.tile_count + 1, th, tw), bool)
-        loose: dict[int, list[dict]] = {}
-        for index, tile in tileset.tiles.items():
-            if not 0 <= index < tileset.tile_count:
-                continue
-            shapes = tile.get("collision") or []
-            if not shapes and (tile.get("properties") or {}).get("walkable") is False:
-                shapes = [{"shape": "rect", "x": 0, "y": 0, "w": tw, "h": th}]
-            for shape in shapes:
-                box = _integral_rect(shape)
-                if box is not None:
-                    x0, y0, x1, y1 = (min(max(v, 0), limit) for v, limit in zip(box, (tw, th, tw, th)))
-                    tile_masks[index, y0:y1, x0:x1] = True
-                    if box != (x0, y0, x1, y1):  # the part outside the cell stays an exact solid
-                        loose.setdefault(index, []).append(shape)
-                else:
-                    loose.setdefault(index, []).append(shape)
-        grid = np.where(layer.grid >= 0, layer.grid, tileset.tile_count)
-        rows, cols = grid.shape
-        mask = tile_masks[grid].transpose(0, 2, 1, 3).reshape(rows * th, cols * tw)
-        for x, y, w, h in merge_rects(mask):
-            solids.append({"shape": "rect", "x": x, "y": y, "w": w, "h": h, "source": f"tiles:{layer.name}"})
-        for index, shapes in sorted(loose.items()):
-            for row, col in zip(*np.nonzero(layer.grid == index)):
-                for shape in shapes:
-                    solids.append(_translate_solid(shape, col * tw, row * th, f"tiles:{layer.name}"))
-    return solids
+        if layer.kind == "tiles" and layer.grid is not None and tileset is not None:
+            layers.append(forge_nav.TileLayer(layer.name, layer.grid, tileset.tile_w, tileset.tile_h, tileset.tiles,
+                                              tileset.tile_count))
+    return forge_nav.tile_solids(layers)
 
 
-def _integral_rect(shape: dict) -> tuple[int, int, int, int] | None:
-    if shape.get("shape") != "rect":
-        return None
-    values = [shape.get(key) for key in ("x", "y", "w", "h")]
-    if not all(_is_number(v) and float(v).is_integer() for v in values) or values[2] <= 0 or values[3] <= 0:
-        return None
-    x, y, w, h = (int(v) for v in values)
-    return x, y, x + w, y + h
+def blocking_set(bundle: Bundle) -> forge_nav.BlockingSet:
+    """The D2 blocking set of a readable bundle, read by forge_nav from the same document (cached).
 
-
-def _translate_solid(shape: dict, dx: float, dy: float, source: str) -> dict:
-    moved = {key: value for key, value in shape.items() if key != "id"}
-    if shape["shape"] == "rect":
-        moved.update(x=shape["x"] + dx, y=shape["y"] + dy)
-    elif shape["shape"] == "ellipse":
-        moved.update(cx=shape["cx"] + dx, cy=shape["cy"] + dy)
-    else:
-        moved["points"] = [[px + dx, py + dy] for px, py in shape["points"]]
-    moved["source"] = source
-    return moved
+    Raises forge_nav.NavError (a ValueError) when collision cannot be read, for example
+    without a collision block."""
+    if bundle._blocking is None:
+        bundle._blocking = forge_nav.blocking_set_from_document(bundle.raw, bundle.base_dir)
+    return bundle._blocking
 
 
 def world_solids(bundle: Bundle) -> list[dict]:
-    """Every blocking shape of the map in world pixels: collision solids and rects, solid
-    object footprints (scaled once) and tile collision. Each carries a "source"."""
-    solids = list(bundle.collision.solids) if bundle.collision else []
-    for obj in bundle.objects:
-        solid = footprint_solid(obj)
-        if solid is not None:
-            solids.append(solid)
-    solids.extend(tile_solids(bundle))
-    return solids
+    """Every blocking shape of the map in world pixels (the D2 set of forge_nav, rule N4):
+    collision solids and rects, solid object footprints (scaled once) and tile collision.
+    Each carries a "source". A bundle without a collision block has no solids or rects;
+    its footprints and tile collision follow the same rules (N6, N7)."""
+    if bundle.collision is None:
+        footprints = [solid for solid in (footprint_solid(obj) for obj in bundle.objects) if solid is not None]
+        return footprints + tile_solids(bundle)
+    return blocking_set(bundle).solids
 
 
 # --------------------------------------------------------------------------- loading
@@ -775,6 +545,8 @@ class _Loader:
         self.require_sha256 = require_sha256
         self._hashes: dict[Path, str] = {}
         self._inline_tilesets: dict[str, tuple[dict, str]] = {}
+        self._pack_labels: dict[str, tuple[int, Path, dict]] | None = None
+        self._pack_art: dict[tuple[int, str], tuple[Path | None, tuple[int, int] | None]] = {}
 
     def error(self, path: str, message: str, code: str = "") -> None:
         self.b.problems.append(Problem("error", path, message, code))
@@ -829,8 +601,7 @@ class _Loader:
                                       if not (isinstance(e, dict) and "manifest" not in e)])
         b.doc = doc
         for message in SCHEMAS.errors(doc, "map.schema.json#/$defs/map_bundle_v2"):
-            path, _, text = message.partition(": ")
-            self.error(path, text, "schema")
+            self.error(*schema_problem(message), "schema")
         if b.errors:
             return
         self.identity()
@@ -886,7 +657,7 @@ class _Loader:
             if manifest is None:
                 continue
             try:
-                doc = _local_read_json(manifest)
+                doc = read_json(manifest)
             except BundleError as error:
                 self.error(f"{where}.manifest", str(error))
                 continue
@@ -1022,7 +793,7 @@ class _Loader:
                     lines = path.read_text(encoding="utf-8-sig").splitlines()
                     rows = [[int(cell) for cell in line.split(",")] for line in lines if line.strip()]
                 else:
-                    rows = _local_read_json(path)
+                    rows = read_json(path)
                     rows = rows.get("data") if isinstance(rows, dict) else rows
             except (ValueError, BundleError) as error:
                 self.error(f"{where}.data", f"cannot read tile data {data}: {error}")
@@ -1105,7 +876,7 @@ class _Loader:
         if path is None:
             return
         try:
-            grid = _local_read_json(path)
+            grid = read_json(path)
             grid = grid.get("data") if isinstance(grid, dict) else grid
             array = np.asarray(grid)
         except (BundleError, ValueError) as error:
@@ -1118,7 +889,8 @@ class _Loader:
             self.error("$.terrain.vertex_grid",
                        f"vertex values must index terrain.materials (0..{len(block['materials']) - 1})")
         if b.tile_w:
-            expected = (_local_round_half_up(b.height / b.tile_h) + 1, _local_round_half_up(b.width / b.tile_w) + 1)
+            expected = (forge_core.round_half_up(b.height / b.tile_h) + 1,
+                        forge_core.round_half_up(b.width / b.tile_w) + 1)
             if array.shape != expected:
                 self.error("$.terrain.vertex_grid", f"vertex grid is {array.shape[1]}x{array.shape[0]}, the map needs "
                                                     f"{expected[1]}x{expected[0]} (one more than the tiles each way)")
@@ -1150,13 +922,7 @@ class _Loader:
                 continue
             image_base = b.base_dir if "image" in entry else base
             image = self.file(f"{where}.image", merged["image"], merged.get("sha256"), image_base)
-            size = None
-            if image is not None:
-                try:
-                    with Image.open(image) as handle:
-                        size = handle.size
-                except OSError as error:
-                    self.error(f"{where}.image", f"cannot open {merged['image']}: {error}")
+            size = None if image is None else self.image_size(f"{where}.image", image, merged["image"])
             prop = Prop(id=name, image=image, size=size, anchor_px=_point(merged.get("anchor_px")),
                         footprint=merged.get("footprint"), solid=merged.get("solid"),
                         occlusion_class=merged.get("occlusion_class"), occupant_policy=merged.get("occupant_policy"),
@@ -1170,7 +936,7 @@ class _Loader:
         if pack is None:
             return None, self.b.base_dir
         try:
-            manifest = _local_read_json(pack)
+            manifest = read_json(pack)
         except BundleError as error:
             self.error(f"{where}.pack", str(error))
             return None, self.b.base_dir
@@ -1180,9 +946,78 @@ class _Loader:
         label = entry.get("label")
         for item in manifest.get("accepted", []):
             if item.get("label") == label:
+                self.placeholder_warning(f"{where}.label", entry["pack"], item)
                 return dict(item), pack.parent
         self.error(f"{where}.label", f"prop pack {entry['pack']} has no accepted item {label!r}")
         return None, self.b.base_dir
+
+    def placeholder_warning(self, where: str, pack: str, item: dict) -> None:
+        if item.get("status") == "placeholder":
+            self.warn(where, f"{pack} item {item.get('label')!r} is a placeholder (status placeholder, an "
+                             "--keep-empty stand-in), not extracted art")
+
+    def image_size(self, where: str, path: Path, rel: str) -> tuple[int, int] | None:
+        try:
+            with Image.open(path) as handle:
+                return handle.size
+        except OSError as error:
+            self.error(where, f"cannot open {rel}: {error}")
+            return None
+
+    def prop_pack_index(self) -> dict[str, tuple[int, Path, dict]]:
+        """label -> (prop_packs index, manifest path, accepted item) over the bundle's prop_packs
+        (D6 step 3); the first manifest listing a label wins. Read once."""
+        if self._pack_labels is not None:
+            return self._pack_labels
+        self._pack_labels = {}
+        for i, entry in enumerate(_as_list(self.b.doc.get("prop_packs"))):
+            where = f"$.prop_packs[{i}].manifest"
+            path = self.file(where, entry["manifest"], entry.get("sha256"), self.b.base_dir)
+            if path is None:
+                continue
+            try:
+                manifest = read_json(path)
+            except BundleError as error:
+                self.error(where, str(error))
+                continue
+            messages = SCHEMAS.errors(manifest, "map.schema.json#/$defs/prop_pack_v2")
+            for message in messages:
+                self.error(where, f"{entry['manifest']}: {message}", "schema")
+            if messages:
+                continue
+            for item in manifest["accepted"]:
+                if isinstance(item.get("label"), str) and isinstance(item.get("image"), str):
+                    self._pack_labels.setdefault(item["label"], (i, path, item))
+        return self._pack_labels
+
+    def object_art(self, where: str, entry: dict, prop: Prop | None) -> tuple[Path | None, tuple | None, str | None]:
+        """(image, size, step) of an object's art by the D6 lookup order: objects[].image, the
+        props registry, prop_packs by label, then occluder.source. The first step the object
+        names decides; a missing file there is an error, not a reason to look further."""
+        b = self.b
+        if "image" in entry:
+            path = self.file(f"{where}.image", entry["image"], entry.get("image_sha256"), b.base_dir)
+            size = None if path is None else self.image_size(f"{where}.image", path, entry["image"])
+            return path, size, "object"
+        if prop is not None:
+            return prop.image, prop.size, "props"
+        found = self.prop_pack_index().get(entry["prop"])
+        if found is not None:
+            index, manifest, item = found
+            self.placeholder_warning(f"{where}.prop", b.doc["prop_packs"][index]["manifest"], item)
+            key = (index, entry["prop"])
+            if key not in self._pack_art:
+                at = f"$.prop_packs[{index}] {entry['prop']!r}.image"
+                path = self.file(at, item["image"], item.get("sha256"), manifest.parent)
+                self._pack_art[key] = (path, None if path is None else self.image_size(at, path, item["image"]))
+            path, size = self._pack_art[key]
+            return path, size, "prop_packs"
+        occluder = entry.get("occluder")
+        if occluder is not None:  # checked as a file by objects()
+            path = (b.base_dir / occluder["source"]).resolve()
+            if path.is_file():
+                return path, self.image_size(f"{where}.occluder.source", path, occluder["source"]), "occluder"
+        return None, None, None
 
     def check_prop(self, where: str, prop: Prop, merged: dict) -> None:
         if merged.get("anchor_px") is not None and prop.anchor_px is None:
@@ -1203,10 +1038,9 @@ class _Loader:
         object_layers = [layer.name for layer in b.layers if layer.kind == "objects"]
         seen: set[str] = set()
         entries = b.doc.get("objects", [])
-        if entries and not b.props:
-            self.warn("$.props", "no props registry: objects cannot be drawn or exported with images")
         if entries and not object_layers:
             self.warn("$.layers", "objects are not drawn: the bundle has no objects layer")
+        artless: list[str] = []
         for i, entry in enumerate(entries):
             where = f"$.objects[{i}]"
             if entry["id"] in seen:
@@ -1231,18 +1065,34 @@ class _Loader:
             occluder = entry.get("occluder")
             if occluder is not None:
                 self.file(f"{where}.occluder.source", occluder["source"], occluder.get("sha256"), b.base_dir)
+            image, size, art = self.object_art(where, entry, prop)
             obj = MapObject(id=entry["id"], prop=entry["prop"], x=float(entry["x"]), y=float(entry["y"]),
                             scale=float(entry.get("scale", 1)), anchor_px=_point(entry["anchor_px"]),
                             footprint=footprint, solid=bool(solid), sort_y=float(entry.get("sortY", entry["y"])),
-                            layer=layer, occlusion=occlusion, occupant_policy=policy)
-            if prop is not None and prop.size is not None:
+                            layer=layer, occlusion=occlusion, occupant_policy=policy,
+                            flip_x=entry.get("flip_x", False) is True, image=image, image_size=size, art=art)
+            if art is None:
+                artless.append(obj.id)
+            if ("footprint" not in entry and prop is not None and prop.footprint is not None
+                    and prop.anchor_px is not None and obj.anchor_px != prop.anchor_px):
+                dx, dy = obj.anchor_px[0] - prop.anchor_px[0], obj.anchor_px[1] - prop.anchor_px[1]
+                self.warn(f"{where}.anchor_px", f"anchor_px {list(obj.anchor_px)} differs from prop {prop.id!r} "
+                                                f"anchor_px {list(prop.anchor_px)}: the prop's footprint is relative to "
+                                                f"its own anchor, so collision moves against the art by "
+                                                f"({dx:g}, {dy:g}) prop px; give the object its own footprint or the "
+                                                "prop's anchor")
+            if size is not None:
                 ax, ay = obj.anchor_px
-                if not (0 <= ax <= prop.size[0] and 0 <= ay <= prop.size[1]):
+                if not (0 <= ax <= size[0] and 0 <= ay <= size[1]):
                     self.warn(f"{where}.anchor_px", f"anchor {list(obj.anchor_px)} lies outside the "
-                                                    f"{prop.size[0]}x{prop.size[1]} prop image")
+                                                    f"{size[0]}x{size[1]} {'prop ' if art == 'props' else ''}image")
             if not (0 <= obj.x <= b.width and 0 <= obj.y <= b.height):
                 self.warn(where, f"object {obj.id!r} is anchored outside the world")
             b.objects.append(obj)
+        if artless:
+            listed = ", ".join(repr(ident) for ident in artless[:8]) + (", ..." if len(artless) > 8 else "")
+            self.warn("$.objects", f"{len(artless)} object(s) have no art (no image, props entry, prop_packs label or "
+                                   f"occluder source), so they are not drawn or exported as tile objects: {listed}")
 
     # -- collision and materials
 
@@ -1469,7 +1319,7 @@ class _Loader:
                 if path is None:
                     continue
                 try:
-                    document = _local_read_json(path)
+                    document = read_json(path)
                 except BundleError as error:
                     self.error(f"$.{key}", str(error))
                     continue
@@ -1515,7 +1365,7 @@ def load_bundle(path: str | os.PathLike, *, check_hashes: bool = True, require_s
     """Read and check a map bundle. Data problems are collected in bundle.problems; only an
     unreadable bundle file raises BundleError. bundle.readable is False when errors stopped
     the reader before the whole bundle was understood."""
-    return bundle_from_document(_local_read_json(path), path, check_hashes=check_hashes, require_sha256=require_sha256)
+    return bundle_from_document(read_json(path), path, check_hashes=check_hashes, require_sha256=require_sha256)
 
 
 # --------------------------------------------------------------------------- rendering
@@ -1568,39 +1418,38 @@ def render_map(bundle: Bundle) -> np.ndarray:
     """Reference render of a bundle, world-sized straight-alpha RGBA (H, W, 4) uint8.
 
     Layers draw in bundle order: image layers at their offset, tiles layers cell by cell,
-    objects layers in draw_order() with each prop image placed by object_placement() and
-    drawn by draw_image(). It proves what the data says, not how an engine filters or
-    sorts at run time.
+    objects layers in draw_order() with each object's art (the D6 lookup order, mirrored
+    around the anchor x when flip_x) placed by object_placement() and drawn by draw_image().
+    It proves what the data says, not how an engine filters or sorts at run time.
     """
     canvas = Image.new("RGBA", canvas_size(bundle), (0, 0, 0, 0))
     for layer in bundle.layers:
         if layer.kind == "image" and layer.image is not None:
             image = forge_core.load_rgba(layer.image)[0]
-            composite(canvas, image, _local_round_half_up(layer.offset[0]), _local_round_half_up(layer.offset[1]))
+            composite(canvas, image, forge_core.round_half_up(layer.offset[0]),
+                      forge_core.round_half_up(layer.offset[1]))
         elif layer.kind == "tiles" and layer.grid is not None and layer.tileset in bundle.tilesets:
             composite(canvas, Image.fromarray(tile_layer_rgba(bundle, layer)), 0, 0)
         elif layer.kind == "objects":
             for obj in draw_order([o for o in bundle.objects if o.layer == layer.name]):
-                prop = bundle.props.get(obj.prop)
-                if prop is not None and prop.image is not None and prop.size is not None:
-                    draw_image(canvas, prop.rgba(), *object_placement(obj, prop.size))
+                if obj.image is not None and obj.image_size is not None:
+                    draw_image(canvas, object_image(bundle, obj), *object_placement(obj, obj.image_size))
     return np.asarray(canvas)
+
+
+def object_image(bundle: Bundle, obj: MapObject) -> Image.Image:
+    """An object's art as drawn: the D6 image, mirrored left to right when flip_x (D6)."""
+    image = bundle.art_rgba(obj.image)
+    return image.transpose(Image.Transpose.FLIP_LEFT_RIGHT) if obj.flip_x else image
 
 
 # --------------------------------------------------------------------------- reports
 
-def _local_file_ref(path: Path, base: Path, digest: str | None = None) -> dict:
-    """A common fileRef relative to ``base``; a file on another drive records its name only."""
-    rel = forge_core.portable_path(path, base)
-    if not _REL_PATH.match(rel):
-        rel = path.name
-    return {"path": rel, "sha256": digest or forge_core.sha256_file(path), "bytes": path.stat().st_size}
-
-
 def bundle_inputs(bundle: Bundle, base: Path) -> list[dict]:
-    refs = [_local_file_ref(bundle.path, base)]
+    """fileRefs (forge_core.file_ref, D30) of the bundle and every file it references, relative to ``base``."""
+    refs = [forge_core.file_ref(bundle.path, base)]
     for entry in bundle.files:
-        refs.append(_local_file_ref(entry["file"], base, entry["sha256"]))
+        refs.append(forge_core.file_ref(entry["file"], base, sha256=entry["sha256"]))
     return refs
 
 
@@ -1743,21 +1592,15 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _local_run_cli(parser: argparse.ArgumentParser, argv: list[str] | None) -> int:
-    """Shared CLI driver: UTF-8 console, argparse, and 'error: ...' instead of a traceback."""
-    forge_core.utf8_stdio()
-    args = parser.parse_args(argv)
-    try:
-        return args.func(args)
-    except (BundleError, OSError, ValueError) as error:
-        print(forge_core.ascii_text(f"error: {error}"), file=sys.stderr)
-    except Exception as error:  # an internal bug: still no traceback for the user
-        print(forge_core.ascii_text(f"error: internal error ({type(error).__name__}): {error}"), file=sys.stderr)
-    return 1
+def _run(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
 
 
 def main(argv: list[str] | None = None) -> int:
-    return _local_run_cli(build_parser(), argv)
+    """The CLI under forge_core.run_cli (D26, D27): usage errors exit 2, expected errors print
+    'error: <message>' and exit 1, anything else 'error: internal error (<Type>: <message>)'."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ import forge_matte  # noqa: E402
 
 SCHEMA = "generate2dmap.platform_strip.v2"
 TOOL_NAME = "extract_platform_strip.py"
-TOOL_VERSION = "2.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29: QA envelopes carry the package version
 MANIFEST_NAME = "platform-strip.json"
 PREVIEW_NAME = "strip-preview.png"
 ROLES = ("left_cap", "middle", "right_cap")
@@ -37,16 +37,10 @@ PREVIEW_MIDDLES = 3  # the preview repeats the middle variants up to at least th
 RESERVED_STEMS = {"strip-preview", "platform-strip"}
 DEVICE_NAMES = {"CON", "PRN", "AUX", "NUL", *(f"COM{i}" for i in range(1, 10)), *(f"LPT{i}" for i in range(1, 10))}
 
-# Normalised seam ratio (MAP-14). Steps are premultiplied RGBA mean absolute differences (0-255)
-# between neighbouring columns. A join is compared with the interior steps near it.
-SEAM_LOCAL_STEPS = 8      # interior steps per side that describe the art around a join
-SEAM_WINDOW_ROWS = 4      # a partial seam must show along this many consecutive rows
-SEAM_NEAR_STEPS = 3       # steps per side that define a join's immediate neighbourhood
-SEAM_FLOOR = 1.0          # joins below this step are continuous whatever the ratio
-DUPLICATE_RATIO = 0.25    # join step below this share of the neighbourhood: a duplicated edge
-DUPLICATE_FLOOR = 2.0     # flatter neighbourhoods cannot show a duplicated edge
-NOMINAL_SEAM_RATIO = 1.25  # verdict label when no --max-seam-ratio gate is set
-EPSILON = 1e-6
+# The normalised seam ratio (MAP-14) is forge_core.edge_seam_report, the one seam metric (D9): steps are
+# premultiplied RGBA mean absolute differences (0-255) between neighbouring columns, and a join is
+# compared with the interior steps near it.
+NOMINAL_SEAM_RATIO = forge_core.EDGE_SEAM_NOMINAL_RATIO  # verdict label when no --max-seam-ratio gate is set
 
 
 # --------------------------------------------------------------------------- spec
@@ -153,63 +147,6 @@ def edge_metrics(left: np.ndarray, right: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _premultiplied(pixels: np.ndarray) -> np.ndarray:
-    values = pixels.astype(np.float64)
-    values[..., :3] *= values[..., 3:] / 255.0
-    return values
-
-
-def _window_max(values: np.ndarray, window: int) -> float:
-    """Largest mean over ``window`` consecutive rows of any column of ``values`` (rows x columns)."""
-    if values.size == 0:
-        return 0.0
-    window = min(window, values.shape[0])
-    sums = np.cumsum(np.pad(values, ((1, 0), (0, 0))), axis=0)
-    return float(((sums[window:] - sums[:-window]) / window).max())
-
-
-def _local_edge_seam_report(left: np.ndarray, right: np.ndarray, *, left_start: int = 0,
-                            right_stop: int | None = None, gate: float | None = None) -> dict[str, Any]:
-    """Normalised seam of the join ``left[:, -1] | right[:, 0]`` (MAP-14).
-
-    ``seam`` is the premultiplied RGBA step across the join; ``adjacent_*`` describe the interior
-    steps within SEAM_LOCAL_STEPS columns of it, on both sides, never using columns of ``left``
-    before ``left_start`` or of ``right`` from ``right_stop`` on (outer cap padding).
-    ``seam_ratio`` is the larger of seam / adjacent_max and worst SEAM_WINDOW_ROWS-row window of
-    the join / worst window of any of those steps: about 1 or less for a join that looks like the
-    art, well above 1 for a seam. A join much flatter than its neighbourhood is a duplicated edge.
-    The output follows common seamReport plus ``seam_ratio``, ``near_median`` and ``verdict``.
-    """
-    a = _premultiplied(left[:, left_start:][:, -(SEAM_LOCAL_STEPS + 1):])  # only the columns near the join
-    b = _premultiplied(right[:, :right_stop][:, :SEAM_LOCAL_STEPS + 1])
-    join_rows = np.abs(a[:, -1] - b[:, 0]).mean(axis=1)
-    left_steps = np.abs(np.diff(a, axis=1)).mean(axis=2)
-    right_steps = np.abs(np.diff(b, axis=1)).mean(axis=2)
-    local = np.concatenate([left_steps, right_steps], axis=1)
-    means = local.mean(axis=0) if local.size else np.zeros(1)
-    near = np.concatenate([left_steps[:, -SEAM_NEAR_STEPS:].mean(axis=0) if left_steps.size else np.zeros(0),
-                           right_steps[:, :SEAM_NEAR_STEPS].mean(axis=0) if right_steps.size else np.zeros(0)])
-    seam = float(join_rows.mean())
-    median, p95, peak = float(np.median(means)), float(np.percentile(means, 95)), float(means.max())
-    near_median = float(np.median(near)) if near.size else 0.0
-    ratio = max(seam / max(peak, EPSILON),
-                _window_max(join_rows[:, None], SEAM_WINDOW_ROWS) / max(_window_max(local, SEAM_WINDOW_ROWS), EPSILON))
-    if near_median >= DUPLICATE_FLOOR and seam < DUPLICATE_RATIO * near_median:
-        verdict = "duplicate_edge"
-    elif seam > SEAM_FLOOR and ratio > (gate if gate is not None else NOMINAL_SEAM_RATIO):
-        verdict = "seam"
-    else:
-        verdict = "continuous"
-    return {
-        "seam": round(seam, 6), "adjacent_median": round(median, 6), "adjacent_p95": round(p95, 6),
-        "adjacent_max": round(peak, 6), "seam_over_median": round(seam / max(median, EPSILON), 6),
-        "seam_over_p95": round(seam / max(p95, EPSILON), 6), "seam_ratio": round(ratio, 6),
-        "near_median": round(near_median, 6), "verdict": verdict,
-        "method": (f"premultiplied RGBA column steps (0-255); join vs interior steps within {SEAM_LOCAL_STEPS} "
-                   f"columns per side, whole edge and worst {SEAM_WINDOW_ROWS}-row window"),
-    }
-
-
 def measure_surface(alpha: np.ndarray, top: int, span: list[int], *, solid: int, tolerance: int,
                     decoration: int, measurable: bool = True) -> dict[str, Any]:
     """Measure the art's top in each collision column against the declared surface (MAP-07).
@@ -247,14 +184,6 @@ def measure_surface(alpha: np.ndarray, top: int, span: list[int], *, solid: int,
 
 
 # --------------------------------------------------------------------------- QA
-
-def _local_file_ref(path: Path, base: Path, sha256: str, size: int) -> dict[str, Any]:
-    """fileRef with a manifest-relative POSIX path; another drive records the file name only."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": sha256, "bytes": size}
-
 
 def _check(identifier: str, status: str, value: Any, threshold: Any) -> dict[str, Any]:
     return {"id": identifier, "status": status, "value": value, "threshold": threshold}
@@ -332,8 +261,8 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
         raise FileExistsError(f"Output directory already exists: {output}")
     spec_bytes = Path(args.spec).read_bytes()
     try:
-        spec = json.loads(spec_bytes.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        spec = forge_core.parse_json(spec_bytes)  # D28: UTF-8 with an optional BOM
+    except ValueError as exc:
         raise ValueError(f"Spec is not valid UTF-8 JSON: {exc}") from exc
     source, info = forge_core.load_rgba(args.input)
     pieces = validate_spec(spec, source.size)
@@ -391,8 +320,8 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
                    & (band_right[:, 3] >= args.solid_alpha_threshold))
         label = f"{left_piece['role']}->{right_piece['role']}"
         name = label if single_middle else f"{label} ({left_piece['id']}|{right_piece['id']})"
-        seam = _local_edge_seam_report(left_pixels, right_pixels, left_start=left_piece["collision_span_px"][0],
-                                       right_stop=right_piece["collision_span_px"][1], gate=args.max_seam_ratio)
+        seam = forge_core.edge_seam_report(left_pixels, right_pixels, left_start=left_piece["collision_span_px"][0],
+                                           right_stop=right_piece["collision_span_px"][1], gate=args.max_seam_ratio)
         joins.append({"join": label, "left": left_piece["id"], "right": right_piece["id"], "full_edge": full,
                       "contact_band": {**edge_metrics(band_left, band_right),
                                        "y_range_px": [top, top + depth],
@@ -419,8 +348,9 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
     checks = build_checks(pieces, joins, args)
     status = "fail" if any(c["status"] == "fail" for c in checks) else (
         "warn" if any(c["status"] == "warn" for c in checks) else "pass")
-    spec_ref = _local_file_ref(Path(args.spec), output, forge_core.sha256_bytes(spec_bytes), len(spec_bytes))
-    source_ref = _local_file_ref(Path(args.input), output, info["sha256"], info["bytes"])
+    spec_ref = forge_core.file_ref(args.spec, output, sha256=forge_core.sha256_bytes(spec_bytes),
+                                   size=len(spec_bytes))
+    source_ref = forge_core.file_ref(args.input, output, sha256=info["sha256"], size=info["bytes"])
     payload: dict[str, Any] = {
         "schema": SCHEMA,
         "source": {**source_ref, "size": info["size"], "mode": info["source_mode"],
@@ -536,8 +466,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _cli(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         payload = extract(args)
@@ -551,6 +480,12 @@ def main(argv: list[str] | None = None) -> int:
                "qc": {key: payload["qc"][key] for key in ("passed", "structural_passed", "issues", "warnings")}}
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """The CLI under forge_core.run_cli (D26, D27): usage errors exit 2, runtime errors print
+    'error: <message>' and exit 1, and no traceback reaches the user."""
+    return forge_core.run_cli(_cli, argv)
 
 
 if __name__ == "__main__":

@@ -20,113 +20,16 @@ from unittest import mock
 import numpy as np
 from PIL import Image, ImageDraw
 
-from forge_testutils import assert_cli_help, load_script, run_cli, script_path
-from test_extract_platform_strip import proposed_map_errors  # applies edgeSeam and platform_strip_v2 too
+from forge_testutils import assert_cli_help, contract_errors, load_script, run_cli, script_path
 
 MODULE = load_script("generate2dmap", "extract_terrain_tiles")
 SCRIPT = script_path("generate2dmap", "extract_terrain_tiles")
 
 
-# --------------------------------------------------------------------------- proposed contract (handoff section 5)
-
-_NUMBER_01 = {"type": "number", "minimum": 0, "maximum": 1}
-TERRAIN_TILE_BUNDLE_V2 = {
-    "description": "terrain-bundle.json from extract_terrain_tiles.py. Each atlas row is one terrain: a fill or a Wang "
-                   "corner transition row (variants carry wang [TL, TR, BL, BR] material indices into materials). "
-                   "Tiles are square, rect, iso-diamond or hex, base or overlay; tile.footprint is the polygon in "
-                   "tile pixels. runtime and material numbers appear only when given, or with "
-                   "--emit-runtime-defaults (listed in runtime_defaults_applied); v1 bundles "
-                   "(generate2dmap.terrain_tile_bundle.v1) always wrote them. seamless_verified stays false: image "
-                   "tiles have no exact seam proof; the seamless policy records wrap and Wang seams (edgeSeam).",
-    "type": "object",
-    "required": ["schema", "source", "grid", "tile", "terrains", "processing", "qc", "qa"],
-    "properties": {
-        "schema": {"const": "generate2dmap.terrain_tile_bundle.v2"},
-        "source": {"allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}], "required": ["size", "mode"],
-                   "properties": {"size": {"$ref": "common.schema.json#/$defs/size2"},
-                                  "mode": {"type": "string", "minLength": 1},
-                                  "bit_depth": {"type": "integer", "minimum": 1},
-                                  "conversion": {"type": "string"}}},
-        "prompt": {"$ref": "common.schema.json#/$defs/fileRef"},
-        "grid": {"type": "object", "required": ["rows", "cols", "rounding", "source_cell_size", "output_tile_size"],
-                 "properties": {"rows": {"type": "integer", "minimum": 1}, "cols": {"type": "integer", "minimum": 1},
-                                "rounding": {"enum": ["exact", "nearest"]},
-                                "source_cell_size": {"$ref": "common.schema.json#/$defs/size2"},
-                                "source_cell_size_max": {"$ref": "common.schema.json#/$defs/size2"},
-                                "output_tile_size": {"$ref": "common.schema.json#/$defs/size2"}}},
-        "tile": {"type": "object", "required": ["shape", "layer", "footprint"],
-                 "properties": {"shape": {"enum": ["square", "rect", "iso-diamond", "hex-pointy", "hex-flat"]},
-                                "layer": {"enum": ["base", "overlay"]},
-                                "footprint": {"$ref": "common.schema.json#/$defs/polygon"}}},
-        "terrains": {"type": "object", "minProperties": 1,
-                     "propertyNames": {"pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"},
-                     "additionalProperties": {
-                         "type": "object",
-                         "required": ["display_name", "row", "kind", "variants", "variant_difference_min"],
-                         "properties": {
-                             "display_name": {"type": "string", "minLength": 1},
-                             "row": {"type": "integer", "minimum": 0},
-                             "kind": {"enum": ["fill", "wang_corner"]},
-                             "materials": {"type": "array", "minItems": 2, "maxItems": 9,
-                                           "items": {"type": "string", "minLength": 1}},
-                             "variant_difference_min": _NUMBER_01,
-                             "material": {"type": "object",
-                                          "properties": {"roughness": _NUMBER_01,
-                                                         "emission_energy": {"type": "number", "minimum": 0}}},
-                             "wang_coverage": {"type": "object", "required": ["masks", "of", "complete"]},
-                             "wang_seams": {"type": "object", "required": ["legal_joins", "failed"]},
-                             "cross_variant_seams": {"type": "object"},
-                             "variants": {"type": "array", "minItems": 1, "items": {
-                                 "type": "object",
-                                 "required": ["path", "sha256", "source_cell", "source_box", "resized",
-                                              "mean_luminance", "contrast"],
-                                 "properties": {
-                                     "path": {"$ref": "common.schema.json#/$defs/relPath"},
-                                     "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-                                     "source_cell": {"type": "array", "items": {"type": "integer", "minimum": 0},
-                                                     "minItems": 2, "maxItems": 2},
-                                     "source_box": {"$ref": "common.schema.json#/$defs/box"},
-                                     "crop_box": {"$ref": "common.schema.json#/$defs/box"},
-                                     "resized": {"type": "boolean"},
-                                     "mean_luminance": _NUMBER_01, "contrast": _NUMBER_01,
-                                     "visible_fraction": _NUMBER_01,
-                                     "wang": {"type": "array", "items": {"type": "integer", "minimum": 0, "maximum": 8},
-                                              "minItems": 4, "maxItems": 4},
-                                     "variant": {"type": "integer", "minimum": 0},
-                                     "border": {"type": "object", "required": ["checked", "frame", "frames"]},
-                                     "shape": {"type": "object",
-                                               "required": ["footprint_px", "coverage", "spill_px", "spill_fraction"]},
-                                     "shape_fill": {"type": "object"},
-                                     "wrap": {"type": "object", "required": ["x", "y"],
-                                              "properties": {"x": {"$ref": "#/$defs/edgeSeam"},
-                                                             "y": {"$ref": "#/$defs/edgeSeam"}}}}}}},
-                         "if": {"properties": {"kind": {"const": "wang_corner"}}, "required": ["kind"]},
-                         "then": {"required": ["materials"],
-                                  "properties": {"variants": {"items": {"required": ["wang"]}}}}}},
-        "runtime": {"type": "object",
-                    "properties": {"engine_target": {"type": "string", "minLength": 1},
-                                   "world_size": {"type": "number", "exclusiveMinimum": 0},
-                                   "surface_y": {"type": "number"},
-                                   "edge_policy": {"enum": ["isolated", "seamless"]}}},
-        "runtime_defaults_applied": {"type": "array", "items": {"type": "string"}},
-        "processing": {"type": "object", "required": ["background_mode", "resampler", "edge_policy", "grid_rounding"],
-                       "properties": {"background_mode": {"enum": ["opaque", "native_alpha", "chroma_key",
-                                                                   "shape_fill"]},
-                                      "resampler": {"enum": ["nearest", "lanczos"]},
-                                      "edge_policy": {"enum": ["isolated", "seamless"]},
-                                      "grid_rounding": {"enum": ["exact", "nearest"]},
-                                      "wrap_aware_resize": {"type": "boolean"}}},
-        "qc": {"type": "object", "required": ["warnings", "passed", "seamless_verified"],
-               "properties": {"warnings": {"type": "array", "items": {"type": "string"}},
-                              "passed": {"type": "boolean"}, "seamless_verified": {"const": False}}},
-        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-    },
-}
-PROPOSED_TERRAIN_DEFS = {"terrain_tile_bundle_v2": TERRAIN_TILE_BUNDLE_V2}  # edgeSeam: see the platform tests
-
-
 def terrain_errors(instance) -> list[str]:
-    return proposed_map_errors(instance, "terrain_tile_bundle_v2", PROPOSED_TERRAIN_DEFS)
+    """Errors against the vendored map terrain_tile_bundle_v2 contract, which holds handoff B11's section 5
+    request (per D33); its wraps are common edgeSeam reports (D9)."""
+    return contract_errors(instance, "map", "terrain_tile_bundle_v2", skill="generate2dmap")
 
 
 # --------------------------------------------------------------------------- fixtures
@@ -655,6 +558,22 @@ class ShapeTests(TerrainCase):
 # --------------------------------------------------------------------------- repro_10/10b: wrap-aware resize, seams
 
 class SeamlessTests(TerrainCase):
+    def test_a_flat_axis_is_not_a_seam(self):
+        """D9: the wraps are forge_core.edge_seam_report, which calls a join with no steps near it flat; the
+        seamless gates fail only seam and duplicate_edge (forge_core.EDGE_SEAM_DEFECTS), so a fill that is
+        flat along x and periodic along y passes strict QC (before D9 the gate failed every non-continuous)."""
+        rows = 128 + 60 * np.sin(2 * np.pi * np.arange(32) / 32)
+        tile = np.repeat(np.repeat(rows[:, None, None], 32, axis=1), 3, axis=2).round().astype(np.uint8)
+        self.save(tile)
+        result = self.run_extract("--rows", "1", "--cols", "1", "--terrain-row", "sand=0", "--tile-size", "32",
+                                  "--edge-policy", "seamless", "--max-border-delta", "1", "--strict-qc")
+        wrap = result["terrains"]["sand"]["variants"][0]["wrap"]
+        self.assertEqual((wrap["x"]["verdict"], wrap["y"]["verdict"]), ("flat", "continuous"))
+        checks = {check["id"]: check["status"] for check in result["qa"]["checks"]}
+        self.assertEqual(checks["wrap_seams"], "pass")
+        self.assertEqual(terrain_errors(result), [])
+        self.assertFalse(hasattr(MODULE, "_local_edge_seam_report"))
+
     def test_repro_10_wrap_aware_resize_matches_the_reference(self):
         """repro_10 (MAP-15): a periodic tile downscaled 256 -> 64 stays within 1/255 of the wrap-aware result."""
         tile = periodic_noise()
@@ -901,6 +820,22 @@ class PublicationTests(TerrainCase):
         self.assertFalse((self.root / "meta" / "other.json").exists())
         self.assertEqual(list((self.root / "tiles3").iterdir()), [])
 
+    def test_rollback_never_removes_a_manifest_that_replaced_the_sidecar(self):
+        """Review B11: the rollback unlinks the --manifest sidecar only while it is still the file this run
+        published (same st_dev/st_ino), as extract_prop_pack does."""
+        original = MODULE.forge_core.publish_directory_no_replace
+        sidecar = self.root / "meta" / "late.json"
+
+        def replace_then_fail(stage, final):
+            sidecar.unlink()
+            sidecar.write_text('{"someone": "else"}', encoding="utf-8")
+            Path(final).mkdir()
+            original(stage, final)
+        with mock.patch.object(MODULE.forge_core, "publish_directory_no_replace", side_effect=replace_then_fail):
+            with self.assertRaises(FileExistsError):
+                self.run_extract(*self.argv, "--manifest", str(sidecar), out="tiles4")
+        self.assertEqual(json.loads(sidecar.read_text(encoding="utf-8")), {"someone": "else"})
+
     def test_manifest_in_a_subfolder_of_the_output(self):
         result = self.run_extract(*self.argv, "--manifest", str(self.root / "tiles" / "meta" / "bundle.json"))
         self.assertEqual(result["terrains"]["grass"]["variants"][0]["path"], "../grass-1.png")
@@ -961,7 +896,7 @@ class ContractTests(TerrainCase):
         result = self.run_extract("--rows", "1", "--cols", "1", "--terrain-row", "grass=0", "--tile-size", "32")
         qa = result["qa"]
         self.assertEqual(qa["status"], "pass")
-        self.assertEqual(qa["tool"], {"name": "extract_terrain_tiles.py", "version": "2.0"})
+        self.assertEqual(qa["tool"], {"name": "extract_terrain_tiles.py", "version": "0.4.0"})  # D29
         self.assertEqual(qa["inputs"][0]["path"], "../atlas.png")
         for ref in qa["inputs"] + qa["outputs"]:
             path = (self.root / "tiles" / ref["path"]).resolve()
