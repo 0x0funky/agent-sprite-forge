@@ -395,9 +395,12 @@ def test_merge_rects_is_forge_cores_cover(tmp_path):
         assert fn.merge_rects(mask) == core.merge_rects(mask) == nav.merge_rects(mask)
     (tmp_path / "forge_nav.py").write_bytes((REPO_ROOT / "shared" / "forge_nav.py").read_bytes())
     (tmp_path / "forge_core.py").write_text('FORGE_CORE_API_VERSION = "1"\n', encoding="utf-8")
+    # Appendix D (review r3, finding 5): the child writes UTF-8 and the parent decodes UTF-8 with errors=replace, so
+    # a traceback through a non-ASCII temp folder never fails to decode under a cp950 or cp1252 locale.
     done = subprocess.run([sys.executable, "-c", "import forge_nav; forge_nav.merge_rects([[True]])"],
-                          capture_output=True, text=True, cwd=str(tmp_path),
-                          env={**os.environ, "PYTHONPATH": str(tmp_path), "PYTHONDONTWRITEBYTECODE": "1"})
+                          capture_output=True, encoding="utf-8", errors="replace", cwd=str(tmp_path),
+                          env={**os.environ, "PYTHONPATH": str(tmp_path), "PYTHONDONTWRITEBYTECODE": "1",
+                               "PYTHONIOENCODING": "utf-8"})
     assert done.returncode != 0 and "NavError: merge_rects needs forge_core.merge_rects" in done.stderr
 
 
