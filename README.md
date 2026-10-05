@@ -7,51 +7,102 @@ Languages: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体�
 </p>
 
 <p align="center">
-  <strong>Agent skills for game-ready 2D sprites, AI video animation, and layered maps.</strong>
+  <strong>Agent skills for game-ready 2D sprites, code-drawn pixel art, AI video animation and playable maps.</strong>
 </p>
 
 <p align="center">
-  Ask in natural language. Codex plans the asset pipeline, generates with host tools or selected APIs, then local processors clean, split, validate, and export assets for Godot, Unity, or raw 2D game workflows.
+  Ask in natural language in Codex, Claude Code or Grok. The agent plans the asset, gets the art from the best route it has (code art, the host's image tool, your local Codex or Grok CLI, or a paid API with your consent), then deterministic Python tools key, slice, register, check and export it for Godot, Tiled, LDtk, Aseprite or a web game.
 </p>
 
 <p align="center">
+  <a href="#whats-new-in-040">What's new</a> ·
   <a href="#showcase">Showcase</a> ·
   <a href="#included-skills">Skills</a> ·
   <a href="#install">Install</a> ·
-  <a href="#suggested-prompts">Prompts</a> ·
-  <a href="#star-history">Star History</a>
+  <a href="#tools">Tools</a> ·
+  <a href="#suggested-prompts">Prompts</a>
 </p>
+
+<!-- PROMO -->
+
+## What's new in 0.4.0
+
+One integrated release; the full list, with every breaking default and its legacy switch, is in the [CHANGELOG](./CHANGELOG.md).
+
+- **Five sibling skills.** `generate2dsprite`, `generate2dmap`, `video2dsprite`, `generate2dmedia` and the new **`codeart2d`**, which draws game art from code with no image model.
+- **Claude Code plugin.** Install the five skills with `claude plugin marketplace add` (below). Codex and Grok keep the folder install, now with a backup and drift check.
+- **Local agent first.** Images come from the host's own tool (Codex `image_gen`), then your local Codex CLI or Grok CLI (one-shot image mode), video from the Grok CLI in ACP mode. A local route is used only after `forge_doctor` has VERIFIED it for the installed version. Every call goes into a project ledger with a session cap (8 images and 2 videos per 12 hours by default). The paid OpenAI/xAI APIs run only with your consent for each request, with budget caps and a duplicate guard.
+- **Soft matte, no purple fringe.** A shared keyer with a soft matte, pocket removal, auto despill and temporal hysteresis. On the Ryo test clip: visible fringe 8,504 to 0 px per frame, enclosed key pockets in 16 of 145 frames to 0, matte flicker 9.6 to 3.5 flips per frame pair.
+- **Loops chosen by measurement.** `gait_loop.py` finds walk and run cycles (half-period guard, unusable frames, drift) and idle loops; `retime.py` times attacks to their impact and hold on a 60 Hz tick grid.
+- **Registration by construction.** `prepare_i2v_input.py` places the master on the provider canvas at a recorded transform; `register_clip.py` undoes exactly that transform, so body scale no longer pumps between frames.
+- **Engine export 3.0 and runtime.** `engine_export.py` writes animation.json 3.0, a PNG atlas, VP9-alpha WebM and packed-alpha MP4 for iPhone behind a key-residue gate, and `verify` decodes every file. `export_engine.py` writes Aseprite JSON and Godot SpriteFrames/Sprite3D. `forge-runtime.mjs` adds distance-driven walks, hit-stop and transitions; a WebGL compositor plays packed alpha.
+- **Playable maps.** `map_bundle.v2`, `map_nav.py` (collision and reachability from data, portals) and exports to Tiled, Godot 4 and LDtk, plus a single-file walkable HTML preview.
+- **HD-2D.** `stage.v1` with a battle layout solved at 4:3 to 9:19.5, light and atmosphere extraction, plate-variant locality checks, and masked scene motion with decoded-file loop QA.
+- **Code-art pipeline.** PixelSpec sprites with palette variants, portable SVG with a renderer doctor, rigs with FK/IK and planted feet, FX with a JS runtime, seam-proven autotiles (Wang-16, three-material, blob-47), playable layouts with reachability, parallax and ambient plates.
+- **`forge_doctor.py`.** One capability check per session: packages, ffmpeg, console encoding, install drift, API keys (presence only) and the Codex/Grok readiness ladder. It never reads credentials and spends nothing.
 
 ## What Makes It Different
 
-Agent Sprite Forge is not just a folder of prompts. It is a Codex-first 2D game asset workflow where the agent decides the plan, image generation creates the raw visuals, and deterministic scripts turn those visuals into reusable game assets.
+Agent Sprite Forge is not a folder of prompts. The agent decides the plan and the art source; deterministic scripts turn the art into reusable game assets and prove what they can with numbers.
 
 <table>
   <tr>
     <td width="25%">
-      <strong>Sprite sheets</strong><br />
-      Characters, monsters, props, attacks, spells, projectiles, impacts, idles, walks, and reference-guided variants.
+      <strong>Sprites and animation</strong><br />
+      Characters, monsters, props, attacks, spells, projectiles, impacts, idles and walks, from sheets, code or video.
     </td>
     <td width="25%">
-      <strong>Layered maps</strong><br />
-      Ground-only bases, dressed references, prop packs, transparent props, y-sort placement, collision, zones, and previews.
+      <strong>Maps and scenes</strong><br />
+      Tiles and autotiles, prop packs, layered and HD-2D scenes, collision, navigation, exits and a walkable preview.
     </td>
     <td width="25%">
       <strong>Engine handoff</strong><br />
-      Godot scenes, editable TileMap layers, separated props, encounter grass, collision bodies, exits, and debug players.
+      Aseprite JSON, Godot SpriteFrames/Sprite3D/TileMapLayer, Tiled, LDtk, animation.json with WebM and packed MP4, JS runtimes.
     </td>
     <td width="25%">
-      <strong>Local cleanup</strong><br />
-      Chroma-key removal, frame extraction, alignment, transparent PNG/GIF export, prop-pack slicing, and QA metadata.
+      <strong>Measured cleanup</strong><br />
+      Soft chroma key, slicing, registration, palettes, loop selection, QA envelopes and review sheets.
     </td>
   </tr>
 </table>
 
 ## Showcase
 
+### Code Art (no image model)
+
+Rendered by the `codeart2d` tools from the specs in [`skills/codeart2d/examples`](./skills/codeart2d/examples). Code-drawn, no image model, no quota.
+
+<table>
+  <tr>
+    <td align="center" width="25%">
+      <img src="./src/codeart/hero-walk.gif" alt="Code-drawn pixel hero walk cycle" width="192" />
+      <br />
+      <strong>Rigged walk, planted feet</strong>
+      <br />
+      <code>rig_animate.py</code>: FK/IK with a ground constraint, 0 px foot slide, exact palette.
+    </td>
+    <td align="center" width="45%">
+      <img src="./src/codeart/fx-set.gif" alt="Code-drawn slash, impact ring, dust and projectile FX" width="420" />
+      <br />
+      <strong>FX set</strong>
+      <br />
+      <code>fx_build.py</code>: slash, impact, dust and projectile with hit events and an fx.v1 JS runtime.
+    </td>
+    <td align="center" width="30%">
+      <img src="./src/codeart/meadow-layout.png" alt="Code-made top-down meadow map with roads, pond, houses and trees" width="320" />
+      <br />
+      <strong>Playable layout</strong>
+      <br />
+      <code>autotile_build.py</code> + <code>layout_build.py</code>: seam-proven tiles, collision and every exit reachable.
+    </td>
+  </tr>
+</table>
+
+<!-- LIVE:codex-fox -->
+
 ### Engine-Ready Prototypes
 
-These examples were assembled with Codex using `agent-sprite-forge` workflows. They are meant to show the full loop: generated assets, structured scene data, and playable prototype wiring.
+These examples were assembled with Codex using `agent-sprite-forge` workflows. They show the full loop: generated assets, structured scene data and playable prototype wiring.
 
 <table>
   <tr>
@@ -92,7 +143,7 @@ These examples were assembled with Codex using `agent-sprite-forge` workflows. T
     <td align="center" width="50%">
       <img src="./src/pokemonlike2.png" alt="Sengoku Era JavaScript RPG starter selection" width="420" />
       <br />
-      <strong>Sengoku Era — JavaScript Pokémon-like</strong>
+      <strong>Sengoku Era — JavaScript monster RPG</strong>
       <br />
       A browser-based RPG prototype with generated characters, starter selection, map flow, and battle UI.
       <br />
@@ -179,32 +230,18 @@ image_gen map + directional hero sheets + summon/evolution sheets + enemy sheets
 
 ### Sprite Sheets And FX
 
-Use `$generate2dsprite` when you need animated units, playable characters, monsters, props, spell bundles, projectile/impact FX, or reference-guided variants.
+Use `$generate2dsprite` for animated units, playable characters, monsters, props, spell bundles, projectile/impact FX or reference-guided variants. Small pixel sprites (48 px visible height or less) and game FX are drawn with `codeart2d` first.
 
 <table>
   <tr>
-    <td align="center" width="25%">
-      <img src="./src/goku-kame.gif" alt="Goku Kamehameha sprite animation" width="170" />
-      <br />
-      <strong>Text to sprite</strong>
-      <br />
-      Attack animation from a plain-language request.
-    </td>
-    <td align="center" width="25%">
-      <img src="./src/naruto-rasengan.gif" alt="Naruto Rasengan sprite animation" width="170" />
-      <br />
-      <strong>Character action</strong>
-      <br />
-      Compact 2D action sheet with transparent export.
-    </td>
-    <td align="center" width="25%">
+    <td align="center" width="50%">
       <img src="./src/cast.gif" alt="Fire mage cast animation" width="150" />
       <br />
       <strong>Spell cast</strong>
       <br />
       Bundle-friendly cast animation.
     </td>
-    <td align="center" width="25%">
+    <td align="center" width="50%">
       <img src="./src/projectile.gif" alt="Fire mage projectile animation" width="150" />
       <br />
       <strong>Projectile</strong>
@@ -266,9 +303,33 @@ Use `$generate2dsprite` when you need animated units, playable characters, monst
   </tr>
 </table>
 
+<details>
+<summary>Fan-art capability tests (not for commercial use)</summary>
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./src/goku-kame.gif" alt="Energy-beam attack sprite animation" width="170" />
+      <br />
+      <strong>Text to sprite</strong>
+      <br />
+      Attack animation from a plain-language request.
+    </td>
+    <td align="center" width="50%">
+      <img src="./src/naruto-rasengan.gif" alt="Energy-sphere attack sprite animation" width="170" />
+      <br />
+      <strong>Character action</strong>
+      <br />
+      Compact 2D action sheet with transparent export.
+    </td>
+  </tr>
+</table>
+
+</details>
+
 ### Layered RPG Map Pipeline
 
-Use `$generate2dmap` when you need maps instead of isolated sprites. For readable layered raster maps, the current workflow prefers a clean hand-painted HD game-map style: ground-only base first, dressed reference second, prop pack third, then transparent prop extraction and layered preview composition.
+Use `$generate2dmap` for maps instead of isolated sprites. For painted layered maps: ground-only base first, dressed reference second, prop pack third, then transparent prop extraction (anchored, prop_pack.v2) and a ground-line sorted preview.
 
 <table>
   <tr>
@@ -300,9 +361,9 @@ Use `$generate2dmap` when you need maps instead of isolated sprites. For readabl
 layered_raster + y_sorted_props + precise_shapes + trigger_zones + raw_canvas
 ```
 
-### Godot Editable TileMap Export
+### Godot Editable TileMap
 
-`$generate2dmap` can also produce an editable Godot map project instead of a single flattened image. This showcase uses an image-generated tileset and 3x3 prop sheet, then wires them into a Godot 4.5 scene.
+An earlier showcase: an image-generated tileset and 3x3 prop sheet that the agent wired into a Godot 4.5 scene in the game project.
 
 <p align="center">
   <img src="./src/godot-editor.png" alt="Generate2DMap Godot editor scene with editable TileMapLayer and nodes" width="860" />
@@ -337,81 +398,19 @@ layered_raster + y_sorted_props + precise_shapes + trigger_zones + raw_canvas
   </tr>
 </table>
 
-Godot output includes editable `TileMapLayer` nodes, independent `Sprite2D` props, encounter grass `Area2D` zones, `StaticBody2D` collision blockers, exit `Area2D` zones, and a debug player/camera.
+> **Engine imports: not yet verified.** In 0.4.0, map data is exported for Tiled (verified by re-rendering the exported files at 0 px difference) and, through `export_godot.py` and `export_ldtk.py`, for Godot 4.3+ and LDtk 1.5.3; those editor imports are verified at parse level only. The same holds for `export_engine.py` (Aseprite, Godot SpriteFrames/Sprite3D). Nobody has opened the 0.4.0 exports in the editors yet.
 
-```text
-image_gen tileset + prop_pack_3x3 + layered_tilemap + separate_props + trigger_zones + Godot_TileMap
-```
+### Still → AI Video → Game-Ready Animation
 
-### Playable Game Prompt Examples
+`video2dsprite` takes motion from the host's image-to-video tool, the Grok CLI in ACP mode (once VERIFIED), the xAI API with your consent, or a clip you already have. Approve one master, prepare the input with a recorded transform, generate one action with a locked camera, then key, register, pick the loop or retime, package and verify. Keep sheets for exact pixel animation; video is not promised to be smaller, cheaper to decode or seamless.
 
-<details>
-<summary>Cyberpunk side-scroller prompt</summary>
-
-```text
-use $generate2dsprite to create a 2D side-scrolling game similar to Mega Man. It should include attack mechanics, map elements, and all the essential features. I would like you to design it, and all the necessary assets should be created using this skill. It needs to be an actually playable game, with a cyberpunk story setting.
-```
-
-</details>
-
-<details>
-<summary>Sengoku Pokémon-like prototype</summary>
-
-Link: <a href="https://sengoku-era.vercel.app/">Play the JavaScript browser build</a>
-
-<table>
-  <tr>
-    <td align="center" width="50%">
-      <img src="./src/pokemonlike2.png" alt="Sengoku starter selection screen" width="360" />
-      <br />
-      <strong>Starter selection</strong>
-    </td>
-    <td align="center" width="50%">
-      <img src="./src/pokemonlike.png" alt="Sengoku battle screen" width="360" />
-      <br />
-      <strong>Battle scene</strong>
-    </td>
-  </tr>
-</table>
-
-```text
-Use $generate2dsprite to create a 2D game similar to Pokemon. You only need to build one scene for now. It must include a starter monster selection mechanic, a battle screen, and all basic gameplay functions. I would like you to design all the elements and the story, and you can also decide which game engine to use. Use this skill to create any assets you need. The story should be set in the Sengoku period.
-```
-
-</details>
-
-## Included Skills
-
-| Skill | Use it for | Main outputs |
-| --- | --- | --- |
-| [`generate2dsprite`](./skills/generate2dsprite) | Precise sprites, per-action animation, character/prop artwork | Native-alpha or keyed PNGs, frames, anchors and QA |
-| [`generate2dmap`](./skills/generate2dmap) | RPG, scrolling and HD-2D scenes | Terrain, props, layers, collision/occlusion/transition data |
-| [`video2dsprite`](./skills/video2dsprite) | Animate an approved still or process existing video | Registered frames, transparent/packed-alpha media, poster and metadata |
-| [`generate2dmedia`](./skills/generate2dmedia) | API image generation, reference edits and image-to-video | Raw media, recoverable job IDs and hashes for downstream processing |
-
-### Still → AI video → game-ready animation
-
-`video2dsprite` accepts **Grok Build native tools, the official xAI API, or an existing
-video**. Codex, Claude and other tool-capable agents can use the API route; Grok Build
-is no longer required. New API commands default to a no-network dry-run. Execution
-requires an environment API key and `--execute`.
-
-Approve one source image, generate one action with a locked camera, then key,
-register, review the loop and package it. This works for actors, monsters, NPCs,
-props and local environment motion. Keep sheets for precise pixel animation.
-Video is not guaranteed to be smaller, cheaper to decode, or seamless.
-
-The 2026-10-05 update adds API adapters, source-space geometry, transparency fixes
-and map/sprite audits. See the [upgrade audit](./docs/upgrade-audit-2026-10-05.zh-TW.md),
-[provider survey](./skills/generate2dmedia/references/provider-survey.md) and
-[API usage](./skills/generate2dmedia/references/api-usage.md).
-API adapters are offline-contract-tested; no paid generation benchmark was run in this update.
+<!-- LIVE:grok-video -->
 
 #### Case study: Ryo run (16 denser frames)
 
-Pipeline: **base still → image_to_video (6s) → chroma key → 16-frame strip**.
+Pipeline: **base still → image_to_video (6s) → chroma key → 16-frame strip**. Made with the earlier pipeline; the 0.4.0 keyer's numbers on this clip are in the [CHANGELOG](./CHANGELOG.md).
 
-> **Note:** GitHub README does **not** reliably render `<video>` tags (especially inside tables). Motion is shown as **GIF** previews; MP4 files are still in the repo for download / local play.
+> GitHub READMEs do not reliably render `<video>`, so motion is shown as GIF; the MP4 files are in the repo.
 
 | Base still | Motion (`image_to_video`) | Sprite result (16f) |
 | --- | --- | --- |
@@ -422,158 +421,160 @@ Pipeline: **base still → image_to_video (6s) → chroma key → 16-frame strip
   <em>16-frame strip (feet-aligned, denser than a classic 6–8 pose sheet)</em>
 </p>
 
-Short skill intro (MP4, open file): [intro.mp4](./src/video2dsprite-ryo/intro.mp4)
+Short skill intro (MP4): [intro.mp4](./src/video2dsprite-ryo/intro.mp4)
+
+### Playable Game Prompt Examples
 
 <details>
-<summary>Case assets on disk (~2–3 MB — safe for git)</summary>
+<summary>Cyberpunk side-scroller prompt</summary>
 
 ```text
-src/video2dsprite-ryo/
-  base.png              # identity still (docs size)
-  run-6s.mp4            # image_to_video clip (compressed)
-  run-6s-preview.gif    # same motion as GIF for README display
-  strip-16.png          # denser sprite strip
-  preview-16.gif        # sprite loop for README
-  intro.mp4             # short skill explainer
+use $generate2dsprite to create a 2D side-scrolling action game. It should include attack mechanics, map elements, and all the essential features. I would like you to design it, and all the necessary assets should be created using this skill. It needs to be an actually playable game, with a cyberpunk story setting.
 ```
-
-We intentionally **do not** commit raw 145-frame dumps or full-resolution working folders.
 
 </details>
 
-`$generate2dmap` only uses `$generate2dsprite` when the selected map pipeline needs reusable transparent props. Small environmental props can be batched into `2x2`, `3x3`, or `4x4` prop packs, then extracted into individual transparent props. Simple maps can stay as a single baked image.
+<details>
+<summary>Sengoku monster-RPG prototype</summary>
 
-When a visual reference is involved, the image skills follow the same wrapper rule: make the image visible in the conversation first. Attached images and freshly generated images are already visible; local files should be opened with `view_image` before asking built-in image generation to preserve identity, style, map layout, or sprite lineage.
+Link: <a href="https://sengoku-era.vercel.app/">Play the JavaScript browser build</a>
 
-## How It Works
+```text
+Use $generate2dsprite to create a 2D monster-collecting RPG. You only need to build one scene for now. It must include a starter monster selection mechanic, a battle screen, and all basic gameplay functions. I would like you to design all the elements and the story, and you can also decide which game engine to use. Use this skill to create any assets you need. The story should be set in the Sengoku period.
+```
 
-1. The user asks Codex for a sprite, prop pack, map, or engine-ready prototype.
-2. The agent chooses the asset type, action, bundle shape, sheet layout, frame count, style, and alignment strategy.
-3. Host image tools or a selected API create the raw visual asset; optional image-to-video adds motion.
-4. Local scripts run deterministic post-processing: chroma-key cleanup, despill, frame extraction, alignment, prop-pack slicing, GIF/PNG export, and validation metadata.
-5. For maps and prototypes, Codex can also assemble placement metadata, collision, trigger zones, Godot scenes, or Unity project wiring.
+</details>
 
-The script is not the creative brain. The agent makes the visual and pipeline decisions; the Python tools only perform repeatable pixel and export operations.
+## Included Skills
 
-## What It Can Generate
+Keep the five skill folders together: they call each other's scripts by relative path.
 
-- Creatures, characters, players, NPCs, props, and monsters
-- Spell casts, projectiles, impacts, explosions, and FX sheets
-- Small bundles such as `unit_bundle`, `spell_bundle`, and `combat_bundle`
-- Reference-guided sprite variants, animation sheets, and evolution lines
-- Single baked maps, clean HD layered maps, prop-pack maps, and flattened previews
-- Collision and zone metadata for playable maps
-- Godot-ready editable maps with `TileMapLayer`, separate props, encounter grass, collision, exits, and debug player scenes
-- Prototype-scale Godot and Unity scenes when the user asks Codex to wire assets into an engine project
+| Skill | Use it for | Main outputs |
+| --- | --- | --- |
+| [`generate2dsprite`](./skills/generate2dsprite) | Characters, creatures, props and FX as stills, sheets or clips; packaging frames from any source | Registered frames, clips with ticks and events, palettes, QA, Aseprite/Godot exports |
+| [`generate2dmap`](./skills/generate2dmap) | Top-down and side-scroll maps, tiles, prop kits, parallax, HD-2D plates | map_bundle.v2, collision and navigation checks, Tiled/Godot/LDtk exports, HTML preview, scene loops |
+| [`video2dsprite`](./skills/video2dsprite) | Fluid motion from an approved still, or a supplied clip | Soft-keyed, registered, looped frames; animation.json 3.0, WebM alpha, packed MP4, PNG fallback |
+| [`codeart2d`](./skills/codeart2d) | Code-drawn pixel sprites (up to 48 px; 49-64 px with consent), flat vector art, FX, autotiles, layouts, parallax | Exact-palette frames, clips, fx.v1 runtime, seam-proven tilesets, playable bundles, `codeart-meta.json` |
+| [`generate2dmedia`](./skills/generate2dmedia) | The capability check, local Codex/Grok CLI routes and paid API calls with consent | Raw media with receipts, ledger lines, route proofs |
+
+In Codex, `codeart2d` and `generate2dmedia` are explicit-only: the sprite and map skills route to them.
 
 ## Install
 
-Local processors need **Python**, **Pillow**, **numpy**, and (for `$video2dsprite`) **ffmpeg** on `PATH`.
+The skills need Python 3.10+ with numpy, Pillow and scipy (see [Requirements](#requirements)). Start a new agent session after installing so the skills load.
 
-### Option 1: Windows PowerShell
+### Claude Code (plugin)
 
-Clone the repo, install dependencies, then copy skills into the agent skills directory you use:
-
-```powershell
-git clone https://github.com/0x0funky/agent-sprite-forge.git
-cd .\agent-sprite-forge
-python -m pip install -r .\requirements.txt
-
-# Codex
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.codex\skills" | Out-Null
-Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.codex\skills\"
-
-# Grok Build (optional native media route)
-New-Item -ItemType Directory -Force -Path "$env:USERPROFILE\.grok\skills" | Out-Null
-Copy-Item -Recurse -Force ".\skills\*" "$env:USERPROFILE\.grok\skills\"
+```bash
+claude plugin marketplace add 0x0funky/agent-sprite-forge --sparse .claude-plugin skills
+claude plugin install agent-sprite-forge@agent-sprite-forge
+python -m pip install "numpy>=1.26" "Pillow>=10.1" "scipy>=1.11"
 ```
 
-### Option 2: macOS / Linux
+`--sparse` checks out only the manifest and the skills, not the showcase media. Copy fallback, from a clean clone (the installer copies every non-dot file of each skill folder, untracked files included):
 
 ```bash
 git clone https://github.com/0x0funky/agent-sprite-forge.git
-cd ./agent-sprite-forge
-python3 -m pip install -r ./requirements.txt
-
-# Codex
-mkdir -p ~/.codex/skills
-cp -R ./skills/* ~/.codex/skills/
-
-# Grok Build (optional native media route)
-mkdir -p ~/.grok/skills
-cp -R ./skills/* ~/.grok/skills/
+cd agent-sprite-forge
+python -m pip install -r requirements.txt
+python tools/install_skills.py --apply --host claude
 ```
 
-Start a new Codex or Grok Build session after installation so skills reload.
+### Codex
 
-**Note:** Generation can use host tools or selected APIs; existing media needs neither. Keep all four sibling skill directories together for shared processors and references. API keys belong in production tooling, never in the shipped game.
-
-## Python Requirements
-
-The local post-processors depend on:
-
-- `Pillow`
-- `numpy`
-- `ffmpeg` (CLI on `PATH`) for `$video2dsprite` frame extraction
-
-They are listed in [`requirements.txt`](./requirements.txt) (Python only). Image/video generation is provided by host tools or selected APIs; these packages handle magenta cleanup, frame splitting, alignment, GIF/PNG export, prop-pack slicing, and video-frame sampling.
-
-## Repository Layout
-
-```text
-agent-sprite-forge/
-  README.md
-  README.zh-TW.md
-  README.zh-CN.md
-  README.ja.md
-  README.ko.md
-  requirements.txt
-  src/
-  skills/
-    generate2dmap/
-      SKILL.md
-      agents/
-        openai.yaml
-      references/
-        layered-map-contract.md
-        map-strategies.md
-        prop-pack-contract.md
-      scripts/
-        compose_layered_preview.py
-        extract_prop_pack.py
-    generate2dsprite/
-      SKILL.md
-      agents/
-        openai.yaml
-      references/
-        modes.md
-        prompt-rules.md
-      scripts/
-        generate2dsprite.py
-        make_layout_guide.py
-    generate2dmedia/               # Optional OpenAI/xAI API adapter
-      SKILL.md
-      scripts/generate_media.py
-      references/api-usage.md
-      references/provider-survey.md
-    video2dsprite/                 # Host / API / existing video
-      SKILL.md
-      agents/
-        openai.yaml
-      references/
-        pipeline.md
-        prompt-rules.md
-      scripts/
-        video2dsprite.py
-  src/
-    video2dsprite-ryo/             # README case study (~2–3 MB)
-      base.png
-      run-6s.mp4
-      run-6s-preview.gif           # motion GIF (GitHub-safe)
-      strip-16.png
-      preview-16.gif
-      intro.mp4
+```bash
+git clone https://github.com/0x0funky/agent-sprite-forge.git
+cd agent-sprite-forge
+python -m pip install -r requirements.txt
+python tools/install_skills.py --apply --host codex
 ```
+
+`--apply` backs up any installed copy, then writes a sha256 manifest; `python tools/install_skills.py --check --host codex` reports drift later. Plain copy fallback: `cp -R skills/* ~/.codex/skills/` (PowerShell: `Copy-Item -Recurse -Force .\skills\* "$env:USERPROFILE\.codex\skills\"`).
+
+### Grok and other hosts
+
+`python tools/install_skills.py --apply --host grok` (`~/.grok/skills`), `--host agents` (`~/.agents/skills`) or `--dest <skills folder>`.
+
+### First run
+
+Each skill starts with one capability check; you can run it yourself:
+
+```bash
+python skills/generate2dmedia/scripts/forge_doctor.py --host-tools none
+```
+
+It lists the art routes that work on this machine, local agent first. A Codex or Grok CLI that is installed but not yet verified is offered only after one verification call you approve.
+
+## Requirements
+
+| Need | Install |
+| --- | --- |
+| Every skill | Python 3.10+, `python -m pip install -r requirements.txt` (numpy>=1.26, Pillow>=10.1, scipy>=1.11; scipy is an accelerator with an identical numpy fallback) |
+| codeart2d SVG art | `python -m pip install -r requirements-codeart.txt` (resvg-py>=0.5,<0.6), or the resvg-js CLI, or Chrome/Edge. PixelSpec sprites need nothing extra |
+| Video, packaging and scene loops | ffmpeg 5.1+ with libvpx-vp9 and libx264 on `PATH` |
+| JS runtimes, `fx_verify.mjs`, scene preview checks | node 22 (optional); `build_scene_preview.py --verify` also uses playwright when present |
+| Local CLI routes (optional) | Your own signed-in Codex CLI or Grok CLI |
+| Paid API routes (optional) | `OPENAI_API_KEY` or `XAI_API_KEY` in the environment; never in prompts, outputs or the shipped game |
+| Contributors | `python -m pip install -r requirements-dev.txt`, then `python -m pytest -q` and `node --test "tests/js/*.test.mjs"` |
+
+## Art Routes And Spend Safety
+
+Every asset records its `art_source` (`code`, `host_image`, `api` or `existing`) and the agent names the route it used.
+
+1. **Code art first** inside its envelope on every host: pixel sprites up to 48 px visible height (49-64 px with your consent), FX, tile topology, autotiles and map data. Always disclosed as "code-drawn, no image model".
+2. **Images:** the host's own image tool, then a VERIFIED local Codex CLI, then a VERIFIED local Grok CLI (one-shot image or edit), then the paid REST API only with your consent for that request, else the agent explains the gap.
+3. **Video:** the Grok CLI in ACP mode when VERIFIED, then REST with consent, then a clip you supply.
+
+Local routes run without a per-call question but within the session cap (8 images, 2 videos per 12 hours per project; `FORGE_SESSION_IMAGES`, `FORGE_SESSION_VIDEOS`, `FORGE_SESSION_HOURS`). Paid calls are a dry run until `--execute`, show a consent block with provider, model, call count and estimate, honour `--budget-usd` / `--max-calls`, and refuse an identical earlier request. Every call is a line in `<project>/.forge/ledger.jsonl`. No credential is ever read by the doctor or the CLI routes. Details: [cli-routes.md](./skills/generate2dmedia/references/cli-routes.md), [api-usage.md](./skills/generate2dmedia/references/api-usage.md), [provider-survey.md](./skills/generate2dmedia/references/provider-survey.md).
+
+## Tools
+
+Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`; every tool has `--help`, writes a new output folder (it never replaces one), prints one JSON line and exits 1 on failure. The SKILL.md files hold the routing tables.
+
+| Skill | Tool | What it does |
+| --- | --- | --- |
+| generate2dsprite | `generate2dsprite.py process` | Keys (soft or hard), slices and registers a sheet on one sampling grid; pipeline-meta v2 with QA |
+| | `sheet_qc.py` | `spill` finds parts crossing cell lines before slicing; `frames` checks identity, NEAR/FAR leg alternation, drift |
+| | `scale_frames.py` | One scale and root per action; the canvas grows, nothing is clamped |
+| | `plan_guide.py`, `make_anchor_layout.py`, `make_layout_guide.py` | Sheet planning, pose guides and fixed-scale templates for an image tool |
+| | `build_animation_clips.py` | Clips v2: 60 Hz ticks, events, transitions, hit-stop, review sheets and lints |
+| | `assemble_frames.py` | Packs whole frames losslessly; ownership slicing, loop seams, ambient crossfades |
+| | `palette_tool.py`, `pixel_reduce.py` | OKLab palettes, locks, variants, flicker-free clip quantizing; integer pixel-grid reduction |
+| | `export_engine.py` | Aseprite JSON, Godot SpriteFrames and AnimatedSprite3D (imports not yet verified) |
+| video2dsprite | `video2dsprite.py` | `key-plan`, `triage`, soft-matte `process`/`clean`, `package`, `verify`, `doctor` |
+| | `prepare_i2v_input.py`, `register_clip.py` | Registration by construction: input on a recorded transform, one inverse transform back, take QC |
+| | `gait_loop.py`, `retime.py`, `animation_review.py` | Measured walk/run/idle loops and stride; impact/hold retiming on ticks; classified candidates |
+| | `engine_export.py`, `validate_animation.py` | animation.json 3.0 with WebM alpha, packed MP4 and mobile tiers behind a residue gate; decoded verify; contract check |
+| | `references/runtime/forge-runtime.mjs`, `packed-alpha-webgl.mjs` | Distance-driven walks, hit-stop, transitions; WebGL packed-alpha compositor |
+| generate2dmap | `extract_prop_pack.py` | Anchored transparent props with footprints and despill (prop_pack.v2) |
+| | `extract_terrain_tiles.py`, `extract_platform_strip.py` | Terrain fills, overlays, iso/hex and Wang rows; platform caps with surface and seam QC |
+| | `compose_layered_preview.py`, `validate_parallax.py`, `conform_background.py` | Ground-line sorted previews with audit overlays; parallax coverage and seams; fitting paintings to screens |
+| | `map_bundle.py`, `map_nav.py` | map_bundle.v2 validation; collision, reachability and portals from data |
+| | `export_tiled.py`, `export_godot.py`, `export_ldtk.py` | Tiled 1.10 (re-render verified), Godot 4.3+ and LDtk 1.5.3 (parse level only) |
+| | `validate_chunks.py`, `validate_layout.py` | Room-chunk sockets; side-scroll jumps, slopes and decks |
+| | `build_scene_preview.py`, `references/runtime/map-runtime.mjs` | Single-file walkable HTML preview with a route check; JS collision that mirrors map_nav |
+| | `scene_layout_guide.py`, `validate_stage.py`, `extract_scene_lights.py`, `edit_locality_check.py` | HD-2D stage guide, aspect-robust battle layout, lights and atmosphere, variant locality |
+| | `build_motion_mask.py`, `scene_motion.py` | Masked motion on a still plate; GOP-aligned loops with decoded-seam QA |
+| codeart2d | `render_pixelspec.py`, `pixel_qa.py` | PixelSpec to exact-palette frames and clips; pixel-art QA |
+| | `svg_render.py` | Portable SVG `render`, `lint` and renderer `doctor` |
+| | `rig_animate.py` | SVG rigs with FK, two-bone IK and a ground constraint |
+| | `fx_build.py`, `fx_verify.mjs` | Six FX presets with hit events and the fx.v1 runtime; runtime checker |
+| | `autotile_build.py` | Wang-16, three-material, blob-47 and bevel tilesets with an exhaustive seam proof |
+| | `layout_build.py`, `parallax_build.py`, `ambient_bake.py` | Playable top-down layouts; periodic parallax layers; ambient loops on a plate |
+| generate2dmedia | `forge_doctor.py` | Capability check and route readiness ladder; `--verify-route` |
+| | `cli_media.py` | Local Codex/Grok CLI image, edit and video routes; `resume`, `adopt --codex-thread`, `batch` |
+| | `generate_media.py`, `media_ledger.py` | Paid OpenAI/xAI API with consent, caps and receipts; ledger summary and settle |
+| repository | `tools/install_skills.py`, `tools/vendor_sync.py`, `tools/check_links.py` | Guarded install and drift check; shared-module copies in sync; README/doc link check |
+
+## How It Works
+
+1. You ask for a sprite, an animation, a map or a prototype.
+2. The agent plans size, camera, motion and art source, and runs the capability check once.
+3. The art comes from code, the host's image tool, a verified local CLI, a paid API with consent, or your files; image-to-video adds motion when needed.
+4. Local tools key, slice, register, palette, loop, validate and export, and write QA with numbers.
+5. The agent looks at the review sheets before it reports, and wires the result into your engine if you ask.
+
+The scripts are not the creative brain, and numeric QA never approves anatomy or motion by itself.
 
 ## Suggested Prompts
 
@@ -584,11 +585,11 @@ Use $generate2dsprite to create a 3x3 idle for an ultimate earth titan.
 ```
 
 ```text
-Use $generate2dsprite to create a side-view lightning knight attack animation.
+Use $generate2dsprite to create a side-view lightning knight attack animation, then export it for Godot.
 ```
 
 ```text
-Use $generate2dsprite to create a late-Sengoku player_sheet for a wandering fire swordsman.
+Use $generate2dsprite to create a 32 px pixel-art slime enemy with three colour variants and an idle loop.
 ```
 
 ```text
@@ -598,17 +599,13 @@ Use $generate2dsprite to create a wizard spell bundle with cast, projectile, and
 ### Video → dense sprites or transparent media
 
 ```text
-Use $video2dsprite with my existing side-view hero PNG as base. Generate a 6s in-place run on #FF00FF, extract frames, chroma key, and export 8/16/24/48 sprite sets + preview GIFs. Do not wire into the game; just report paths.
-```
-
-```text
-Use $video2dsprite to create a smooth side-scroller walk cycle from a new magenta-background still, 6 seconds, then sample 24 feet-aligned frames.
+Use $video2dsprite with my existing side-view hero PNG as the master. Generate a 6s in-place run, key it, pick the loop, and package PNG, WebM and packed MP4. Report paths and QA numbers.
 ```
 
 ### Map
 
 ```text
-Use $generate2dmap to create a small fixed-screen pixel-art battle arena with simple collision.
+Use $generate2dmap to create a small top-down village with a pond, roads to three exits, collision, and a walkable HTML preview, then export it to Tiled.
 ```
 
 ```text
@@ -616,36 +613,38 @@ Use $generate2dmap to create a top-down RPG forest shrine map. Use a layered ras
 ```
 
 ```text
-Use $generate2dmap to create a Godot-editable RPG map with separated props, encounter grass Area2D zones, collision StaticBody2D blockers, exit zones, and a debug player scene.
+Use $generate2dmap to create an HD-2D battle plate for a harbour at night with lantern lights and moving water.
 ```
-
-## What You Get
-
-For a typical sprite sheet output:
-
-- `raw-sheet.png`
-- `raw-sheet-clean.png`
-- `sheet-transparent.png`
-- Frame PNGs
-- `animation.gif`
-- `prompt-used.txt`
-- `pipeline-meta.json`
-
-For player walk sheets, you also get direction strips and per-direction GIFs.
-
-For a map output, the result depends on the chosen pipeline:
-
-- Single baked map: complete map image, optional prompt file, and optional collision metadata.
-- Layered raster map: base map, dressed reference, prop folders or prop-pack extraction manifest, prop placement metadata, collision/zones metadata, and flattened layered preview.
-- Godot editable map: tileset/prop assets, scene files, layer metadata, collision/zones, exits, and debug player setup.
 
 ## Notes
 
-- Best results come from prompts that clearly specify view, action, and desired motion style.
-- Large creatures often work better as `3x3 idle`.
-- Small spells and projectiles often work better as `1x4`, `2x2`, or `2x3`.
-- Layout guides are useful for fixed-frame action sheets and prop packs, but they are not always better for compact attack sheets.
-- For commercial projects, prefer original characters or IP that you control.
+- Best results come from prompts that state view, size, action and motion style.
+- Large creatures often work better as `3x3 idle`; small spells and projectiles as `1x4`, `2x2` or `2x3`.
+- Thresholds that came from one clip or one sheet are flagged as such. What is and is not proven is listed in [docs/known-limitations.md](./docs/known-limitations.md); test results are in [docs/validation-2026-10-06.md](./docs/validation-2026-10-06.md).
+- Engine and editor imports of the 0.4.0 exporters are not yet verified (see above).
+
+## Generated Assets And Licensing
+
+The MIT license below covers this repository's code and documentation. It does not cover what you generate with it. Images and videos from an image or video model are subject to that provider's terms; code-drawn art is produced from specs you or your agent write. Do not trace or prompt for characters you do not own; the fan-art tests above are capability demos, not licensed assets. For commercial projects, use original characters or IP you control, and check each provider's terms.
+
+## Repository Layout
+
+```text
+agent-sprite-forge/
+  .claude-plugin/        plugin.json, marketplace.json (Claude Code)
+  skills/
+    generate2dsprite/    SKILL.md, agents/openai.yaml, references/, scripts/
+    generate2dmap/
+    video2dsprite/
+    codeart2d/           examples/ with every spec shown above
+    generate2dmedia/
+  shared/                canonical shared modules and JSON schemas (vendored into skills)
+  tools/                 install_skills.py, vendor_sync.py, check_links.py
+  tests/                 pytest and node suites, fixtures with provenance
+  docs/                  validation record, known limitations, audit
+  src/                   README media
+  CHANGELOG.md
+```
 
 ## Star History
 
