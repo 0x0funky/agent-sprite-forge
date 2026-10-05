@@ -230,6 +230,19 @@ class ValidateCropsTests(unittest.TestCase):
         with Image.open(out / "crops-overlay.png") as overlay:
             self.assertEqual(overlay.size, (1280, 720))
 
+    def test_the_failed_report_line_is_ascii_in_a_non_ascii_folder(self):
+        """Appendix D (review r2, finding 14): 'published a failed QA report: <path>' printed the path raw, so a
+        project folder such as '測試 ü' put non-ASCII bytes on stderr; it is escaped like every other line."""
+        folder = self.root / "測試 ü"
+        folder.mkdir()
+        run = run_cli([SCRIPT, "validate-crops", "--input", self.plate, "--subject", "crest=560,40,720,200",
+                       "--output-dir", folder / "crops"], "utf-8")
+        self.assertEqual(run.returncode, 1, run.stdout)
+        self.assertIn("error: validate-crops published a failed QA report", run.stderr)
+        self.assertTrue(run.stderr.isascii(), run.stderr)
+        self.assertTrue(run.stdout.isascii(), run.stdout)
+        self.assertTrue((folder / "crops" / "crops-qa.json").is_file())
+
     def test_focus_list_and_plate_pan_zoom(self):
         out = self.root / "pan"
         run = conform_cli("validate-crops", "--input", self.plate, "--aspects", "16:9", "--zoom", "1.12",

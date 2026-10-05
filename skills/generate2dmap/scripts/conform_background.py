@@ -438,8 +438,8 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(summary, ensure_ascii=True))
     status = summary["qa_status"] if args.verb == "conform" else summary["status"]
     if status == "fail":  # D26: the report is published, and the failed check still exits 1
-        print(f"error: {args.verb} published a failed QA report: {summary.get('metadata') or summary['report']}",
-              file=sys.stderr)
+        report = summary.get("metadata") or summary["report"]
+        print(forge_core.ascii_text(f"error: {args.verb} published a failed QA report: {report}"), file=sys.stderr)
         return 1
     return 0
 

@@ -6,7 +6,8 @@ Tiles are opaque square or rect fills, or RGBA overlays and rect, iso-diamond or
 and material numbers are written only when given. QC checks contrast, variant similarity, drawn
 border frames and shape coverage; --edge-policy seamless adds a wrap-aware resize and normalised
 wrap and Wang seam checks. The output directory must be new: work is staged beside it and
-published only after QC, so a failed run leaves nothing behind.
+published only after QC, so a failed run leaves nothing behind. A QA status of fail is still
+published for inspection and exits 1 (D26); --strict-qc publishes nothing instead.
 """
 
 from __future__ import annotations
@@ -437,6 +438,15 @@ def _check(identifier: str, status: str, value: Any, threshold: Any) -> dict[str
     return {"id": identifier, "status": status, "value": value, "threshold": threshold}
 
 
+def _atlas_size(path: Path) -> tuple[int, int]:
+    """(width, height) from the image header alone, so grid counts are checked before any per-cell work."""
+    try:
+        with Image.open(path) as image:
+            return image.size
+    except Image.DecompressionBombError as error:
+        raise ValueError(f"{path.name}: {error}") from None
+
+
 def _same_file(first: Path, second: Path) -> bool:
     if os.path.normcase(str(first.resolve())) == os.path.normcase(str(second.resolve())):
         return True
@@ -461,6 +471,10 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
     if os.path.splitdrive(str(manifest_path))[0].lower() != os.path.splitdrive(str(output))[0].lower():
         raise ValueError("Keep --manifest on the same drive as --output-dir so tile paths stay relative.")
 
+    width, height = _atlas_size(Path(args.input))
+    if args.rows > height or args.cols > width:  # before any per-cell work (review r2, finding 13)
+        raise ValueError(f"--rows {args.rows} and --cols {args.cols} do not fit the {width}x{height} atlas: every "
+                         "cell needs at least one pixel.")
     terrains = resolve_terrains(args)
     tile_paths = {output / f"{terrain['id']}-{col + 1}.png" for terrain in terrains for col in range(args.cols)}
     if manifest_path in tile_paths:
@@ -913,6 +927,10 @@ def _cli(argv: list[str] | None = None) -> int:
                "status": payload["qa"]["status"],
                "qc": {"passed": payload["qc"]["passed"], "warnings": payload["qc"]["warnings"]}}
     print(json.dumps(summary, ensure_ascii=True))
+    if payload["qa"]["status"] == "fail":  # D26: the report is published, and a failed QA status still exits 1
+        failed = [check["id"] for check in payload["qa"]["checks"] if check["status"] == "fail"] or ["qc"]
+        print(f"error: published with QA status fail: {', '.join(failed)}", file=sys.stderr)
+        return 1
     return 0
 
 
