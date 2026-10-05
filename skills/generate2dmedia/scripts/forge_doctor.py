@@ -312,7 +312,11 @@ def _path_candidates(cli: str) -> list[Path]:
 
 def _npm_target() -> tuple[str, str] | None:
     system = {"win32": "win32", "linux": "linux", "darwin": "darwin"}.get(sys.platform)
-    machine = platform.machine().lower()
+    # On Windows, read the architecture from the environment, as platform itself does. On Python 3.10 and
+    # 3.11, platform.machine() goes through win32_ver(), which spawns `cmd /c ver`: a child process the
+    # doctor does not promise to start (r3-platform finding 1).
+    machine = ((os.environ.get("PROCESSOR_ARCHITEW6432") or os.environ.get("PROCESSOR_ARCHITECTURE", ""))
+               if sys.platform == "win32" else platform.machine()).lower()
     arch = "x64" if machine in ("amd64", "x86_64", "x64") else "arm64" if machine in ("arm64", "aarch64") else None
     return NPM_TARGETS.get((system, arch))
 
