@@ -266,8 +266,8 @@ def _legacy_sheet() -> np.ndarray:
 # --------------------------------------------------------------------------- API surface and vendoring
 
 def test_api_surface_matches_appendix_a():
-    """plan Appendix A: every frozen forge_matte name exists with its documented parameters."""
-    assert fm.FORGE_MATTE_API_VERSION == "1"
+    """plan Appendix A: every frozen forge_matte name exists with its documented parameters (API 1.1 only adds)."""
+    assert fm.FORGE_MATTE_API_VERSION == "1.1"
     assert fm.DECLARED_KEYS == {"magenta": (255, 0, 255), "green": (0, 255, 0), "blue": (0, 0, 255)}
     expected = {
         "estimate_key": ["rgb", "declared", "ring"],
@@ -457,7 +457,7 @@ def test_outlined_disk_edge_alpha_error_le_0_06():
     """
     rgb, truth = fx.outlined_disk()
     rim = (truth > 0) & (truth < 1)
-    band = fm._distance_to(rim, 1) <= 1
+    band = fm.forge_core.distance_to(rim, 1) <= 1  # promoted from forge_matte._distance_to (D30)
     for params in (fm.KeyParams(), fm.STILL_KEY_PARAMS):
         alpha = fm.soft_matte(rgb, params, "#ff00ff")[..., 3] / 255.0
         assert float(np.abs(alpha - truth)[band].mean()) <= 0.06, params.w_chroma

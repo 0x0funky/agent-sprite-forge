@@ -1,4 +1,4 @@
-"""Shared chroma keyer for the Agent Sprite Forge skills (API version 1).
+"""Shared chroma keyer for the Agent Sprite Forge skills (API version 1.1).
 
 One canonical keyer replaces the three diverged copies (S11, MAP-12):
 
@@ -14,6 +14,12 @@ One canonical keyer replaces the three diverged copies (S11, MAP-12):
   ``complement_cleanup`` repair colour; ``temporal_alpha_hysteresis`` and
   ``flip_count`` handle clips; ``matte_qa`` measures residue; ``key_still``
   is the one-call still-image keyer.
+
+API 1.1 (Phase 3 integration) adds ``soft_matte_regions``, the same bytes
+as ``soft_matte`` on a sheet for a fraction of the work, which ``key_still``
+now uses (D15), and keyword-only ``threshold``/``edge_threshold`` for
+``key_still(quality="hard")``. Distances and dilations come from forge_core
+1.1 (``distance_to``, ``dilate_square``); results are unchanged.
 
 This file is vendored byte-for-byte into the sprite, map and video skills as
 listed in ``shared/VENDORED.json``; edit only ``shared/forge_matte.py`` and run
@@ -45,11 +51,13 @@ if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (the sibling copy: shared/ or the skill's scripts/)
 
-if getattr(forge_core, "FORGE_CORE_API_VERSION", None) != "1":
-    raise ImportError("forge_matte needs forge_core API version 1 next to it; run tools/vendor_sync.py --write.")
+_CORE_API = str(getattr(forge_core, "FORGE_CORE_API_VERSION", "")).split(".")
+if _CORE_API[0] != "1" or len(_CORE_API) < 2 or not _CORE_API[1].isdigit() or int(_CORE_API[1]) < 1:
+    raise ImportError("forge_matte needs forge_core API version 1.1 or a later 1.x next to it; "
+                      "run tools/vendor_sync.py --write.")
 
 
-FORGE_MATTE_API_VERSION = "1"
+FORGE_MATTE_API_VERSION = "1.1"
 
 DECLARED_KEYS = {"magenta": (255, 0, 255), "green": (0, 255, 0), "blue": (0, 0, 255)}
 KEY_QUALITIES = ("hard", "soft", "dominance", "auto")
@@ -236,25 +244,9 @@ def _grow(mask: np.ndarray) -> np.ndarray:
     return result
 
 
-def _distance_to(mask: np.ndarray, cap: int) -> np.ndarray:
-    """Chebyshev distance to ``mask``, capped at ``cap + 1`` (uint8)."""
-    distance = np.full(mask.shape, cap + 1, np.uint8)
-    distance[mask] = 0
-    reached = mask.copy()
-    for step in range(1, cap + 1):
-        grown = _grow(reached)
-        distance[grown & ~reached] = step
-        reached = grown
-    return distance
-
-
-def _dilate(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Chebyshev dilation by ``radius`` px with clipped windows (Pillow MaxFilter(2r+1) on a mask)."""
-    if radius <= 0:
-        return mask.copy()
-    size = 2 * radius + 1
-    table = np.pad(np.pad(mask, radius).astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
-    return (table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]) > 0
+# Distances and dilations: forge_core.distance_to(mask, cap) (Chebyshev, capped at cap + 1, uint8 here) and
+# forge_core.dilate_square(mask, radius) (clipped windows, Pillow MaxFilter(2r+1) on a mask), promoted from
+# this module's former _distance_to and _dilate with identical results (D30).
 
 
 def _box_max(image: np.ndarray, radius: int) -> np.ndarray:
@@ -421,7 +413,7 @@ def estimate_key(rgb: Any, declared: Any = "magenta", ring: int = 8) -> tuple[np
 
 def _material_share(rgb: np.ndarray, subject: np.ndarray, model: _KeyModel, min_excess: float) -> float:
     """Share of deep-interior subject pixels (more than 6 px from non-subject) with dominance >= min_excess."""
-    deep = subject & (_distance_to(~subject, 6) > 6)
+    deep = subject & (forge_core.distance_to(~subject, 6) > 6)
     if not deep.any():
         return 0.0
     return float((_dominance(rgb, model)[deep] >= min_excess).mean())
@@ -500,7 +492,7 @@ def _subject_pixels(master: np.ndarray, alpha: np.ndarray | None) -> np.ndarray:
     backdrop = np.median(samples, axis=0)
     if np.mean(np.sqrt(((samples - backdrop) ** 2).sum(-1)) <= KEY_TOLERANCE) >= 0.5:
         near = np.sqrt(((master.astype(np.float32) - backdrop) ** 2).sum(-1)) <= KEY_TOLERANCE
-        inside = _distance_to(near, 2) > 2
+        inside = forge_core.distance_to(near, 2) > 2
         if inside.any():
             return master[inside]
     return master.reshape(-1, 3)
@@ -724,7 +716,7 @@ def soft_matte(rgb: Any, params: KeyParams = KeyParams(), key: Any = None, *,
         bg = (dW <= p.t_bg) | ((m_C >= p.keylike * _dominance(local, model)) & (dW < p.t_fg))
     if guard is not None:
         bg &= ~guard
-    dist = _distance_to(bg, max(p.r_c, p.r_a + p.radius))
+    dist = forge_core.distance_to(bg, max(p.r_c, p.r_a + p.radius))
     zone_a = (~bg) & ((dist <= p.r_a) | (dW < p.t_fg))
     if guard is not None:
         zone_a &= ~guard
@@ -822,6 +814,120 @@ def soft_matte(rgb: Any, params: KeyParams = KeyParams(), key: Any = None, *,
                       "local_background": int(radius_lb),
                       "protected_px": 0 if guard is None else int(guard.sum())}
     return rgba
+
+
+# Region matting (D15; B01's _local_soft_matte_regions, promoted with an exactness guard).
+_REGION_TILE = 16              # px: content is found on this tile grid
+_REGION_MARGIN = 32            # px of context around each group of content tiles
+_REGION_MAX_GROUPS = 64        # more groups (a noisy backdrop) cost more in per-call overhead than they save
+_REGION_MAX_SHARE = 0.75       # crops covering this share of the sheet: one whole-sheet call is cheaper
+_FLOAT32_EXACT_SUM = 2.0 ** 24  # float32 sums of whole numbers are exact up to this total
+
+
+def _soft_matte_reach(params: KeyParams) -> int:
+    """Farthest pixel (Chebyshev px) whose input can change a pixel's soft_matte output.
+
+    The capped distance to background reaches ``cap``; candidates look
+    ``radius`` px further; the inward monotone pass adds ``r_a - 1``; speck
+    removal adds ``speck_steps``; the colour-clean reference adds ``ref_r``
+    to the distance. 17 px for both KeyParams() and STILL_KEY_PARAMS.
+    """
+    cap = max(params.r_c, params.r_a + params.radius)
+    return cap + max(params.ref_r, params.radius + params.r_a - 1 + params.speck_steps)
+
+
+def _float32_sums_exact(colour: np.ndarray, content: np.ndarray, model: _KeyModel, params: KeyParams,
+                        crops: Sequence[tuple[int, int, int, int]]) -> bool:
+    """True when every float32 integral image of soft_matte's colour-clean band is exact.
+
+    The band's limit comes from box sums of float32 integral images of the
+    deep subject's positive key dominance (whole numbers) and of the deep
+    pixel count. While their totals stay at or below 2**24 those sums are
+    exact and independent of where the image starts; above it the whole sheet
+    and a crop round differently (seen: 5 px on a 1536 px sheet of pink
+    subjects). Deep pixels are ``content`` (``content`` holds every
+    non-background pixel), so all content bounds the sheet and every crop;
+    when that bound is too loose, the deep pixels are bounded by content
+    more than ``r_c`` px from non-content (sure background) on the sheet, and
+    each crop by its own content.
+    """
+    dominance = np.maximum(_dominance(colour[content].astype(np.int16), model), 0)  # whole numbers, content only
+    if int(dominance.sum(dtype=np.int64)) <= _FLOAT32_EXACT_SUM and dominance.size <= _FLOAT32_EXACT_SUM:
+        return True  # a crop never holds more content than the sheet
+    positive = np.zeros(content.shape, np.int16)
+    positive[content] = dominance
+    deep_bound = content & ~forge_core.dilate_square(~content, params.r_c)
+    if (int(positive[deep_bound].sum(dtype=np.int64)) > _FLOAT32_EXACT_SUM
+            or np.count_nonzero(deep_bound) > _FLOAT32_EXACT_SUM):
+        return False
+    return all(int(positive[y0:y1, x0:x1].sum(dtype=np.int64)) <= _FLOAT32_EXACT_SUM
+               and np.count_nonzero(content[y0:y1, x0:x1]) <= _FLOAT32_EXACT_SUM for x0, y0, x1, y1 in crops)
+
+
+def soft_matte_regions(rgb: Any, params: KeyParams = KeyParams(), key: Any = None) -> np.ndarray:
+    """``soft_matte(rgb, params, key)``, byte for byte, matting only the parts of a sheet that hold content (D15).
+
+    A pixel within ``t_bg / ||M||_F`` (RGB distance) of the key, or with
+    alpha 0, always comes out (0, 0, 0, 0), and every soft-matte step is
+    local (at most _soft_matte_reach, 17 px, away). So content is found on a
+    16 px tile grid, each 8-connected group of content tiles is matted inside
+    its box plus a 32 px margin, and only the group's own tiles are copied
+    back. One whole-sheet call is made instead when that cannot be faster or
+    exact: more than 64 groups (a noisy backdrop), crops covering 75% of the
+    sheet, ``refine="guided"``, a reach beyond the margin, or float32 sums of
+    the colour-clean band that could round (see _float32_sums_exact). On the
+    2048 px 4x4 perf sheet about half the area is matted. ``key`` None or a
+    declared name is estimated from the whole image's colour, as soft_matte
+    does. local_background and protect are not offered; use soft_matte.
+    """
+    pixels = _pixels(rgb)
+    colour = pixels[..., :3]
+    if key is None or (isinstance(key, str) and key.strip().lower() in DECLARED_KEYS):
+        K, _ = estimate_key(colour, "magenta" if key is None else key)
+    else:
+        K = _key_rgb(key)
+    p = params
+    height, width = colour.shape[:2]
+    if p.refine != "none" or _soft_matte_reach(p) > _REGION_MARGIN or not height or not width:
+        return soft_matte(pixels, p, K)
+    M, _ = _matting_space(p.w_chroma)
+    safe = 0.999 * p.t_bg / float(np.sqrt(np.square(M.astype(np.float64)).sum()))  # |M v| <= ||M||_F |v|
+    squares = np.square(np.arange(256, dtype=np.float32)[:, None] - K)  # (c - K)^2 per channel value
+    distance2 = squares[colour[..., 0], 0] + squares[colour[..., 1], 1] + squares[colour[..., 2], 2]
+    content_rgb = distance2 > np.float32(safe * safe)  # False: within safe of the key, so surely background
+    content = content_rgb if pixels.shape[2] == 3 else content_rgb & (pixels[..., 3] > 0)
+    tile = _REGION_TILE
+    tiles_y, tiles_x = -(-height // tile), -(-width // tile)
+    padded = np.zeros((tiles_y * tile, tiles_x * tile), bool)
+    padded[:height, :width] = content
+    tile_mask = padded.reshape(tiles_y, tile, tiles_x, tile).any(axis=(1, 3))
+    if not tile_mask.any():
+        return np.zeros((height, width, 4), np.uint8)
+    labels, count = forge_core.label_components(tile_mask, 8)
+    if count > _REGION_MAX_GROUPS:
+        return soft_matte(pixels, p, K)
+    groups = []
+    for label in range(1, count + 1):
+        rows, cols = np.nonzero(labels == label)
+        tiles = (int(cols.min()), int(rows.min()), int(cols.max()) + 1, int(rows.max()) + 1)
+        box = (max(0, tiles[0] * tile - _REGION_MARGIN), max(0, tiles[1] * tile - _REGION_MARGIN),
+               min(width, tiles[2] * tile + _REGION_MARGIN), min(height, tiles[3] * tile + _REGION_MARGIN))
+        groups.append((label, tiles, box))
+    if sum((x1 - x0) * (y1 - y0) for _label, _tiles, (x0, y0, x1, y1) in groups) >= _REGION_MAX_SHARE * height * width:
+        return soft_matte(pixels, p, K)
+    if not p.interior_despill and not _float32_sums_exact(colour, content_rgb, _key_model(K), p,
+                                                          [box for _label, _tiles, box in groups]):
+        return soft_matte(pixels, p, K)  # interior despill replaces the band's limit by a constant: always exact
+    out = np.zeros((height, width, 4), np.uint8)
+    for label, (tx0, ty0, tx1, ty1), (x0, y0, x1, y1) in groups:
+        keyed = soft_matte(pixels[y0:y1, x0:x1], p, K)
+        own = np.repeat(np.repeat(labels[ty0:ty1, tx0:tx1] == label, tile, axis=0), tile, axis=1)
+        top, left = ty0 * tile, tx0 * tile
+        own = own[:height - top, :width - left]
+        region = out[top:top + own.shape[0], left:left + own.shape[1]]
+        source = keyed[top - y0:top - y0 + own.shape[0], left - x0:left - x0 + own.shape[1]]
+        np.copyto(region, source, where=own[..., None])
+    return out
 
 
 def dominance_matte(rgb: Any, key: Any = "magenta", lo: float = 20.0, hi: float = 140.0, *,
@@ -935,7 +1041,7 @@ def despill(rgba: Any, mode: str = "edge", radius: int = 1, margin: int = 12, pr
         transparent = alpha == 0
         if radius == 0 or not transparent.any():
             return pixels, report
-        region = _dilate(transparent, int(radius)) & (alpha > 0)
+        region = forge_core.dilate_square(transparent, int(radius)) & (alpha > 0)
     else:
         region = alpha > 0
     channels = pixels[..., :3].astype(np.int16)
@@ -1248,25 +1354,28 @@ def matte_qa(rgba: Any, key: Any, *, key_tolerance: float = KEY_TOLERANCE, spill
     }
 
 
-def key_still(rgba: Any, quality: str = "auto", key: Any = "auto",
-              resampler_hint: str = "lanczos") -> tuple[Image.Image, dict[str, Any]]:
+def key_still(rgba: Any, quality: str = "auto", key: Any = "auto", resampler_hint: str = "lanczos", *,
+              threshold: float = 100, edge_threshold: float = 150) -> tuple[Image.Image, dict[str, Any]]:
     """Key a generated still (sprite sheet, prop pack, master) in one call (report v2 P2-2, S24).
 
     ``quality``: ``hard`` is legacy_hard_key (binary alpha, the cfed170 sprite
-    keyer with its fixed #FF00FF thresholds; magenta-family keys only); ``soft`` is soft_matte with ``STILL_KEY_PARAMS``
+    keyer; magenta-family keys only) with its #FF00FF distances ``threshold``
+    and ``edge_threshold`` (keyword-only, default 100 and 150, recorded in
+    ``info["thresholds"]``); ``soft`` is soft_matte with ``STILL_KEY_PARAMS``
     (w_chroma 1.0, r_c 3: stills have full-resolution chroma) and interior
-    despill when the image owns no key-coloured material; ``dominance`` is
-    dominance_matte; ``auto`` is soft unless ``resampler_hint`` is
-    ``nearest`` (pixel art keeps binary alpha). ``key``: ``auto`` estimates a
-    magenta backdrop, a declared name estimates that key, ``#rrggbb`` or RGB
-    is used as given. An image with real transparency and no key backdrop is
-    returned unchanged (quality ``native_alpha``). RGBA input keeps its alpha
-    as an upper bound.
+    despill when the image owns no key-coloured material, computed by
+    soft_matte_regions (D15: the same bytes, matting only the parts of a sheet
+    that hold content); ``dominance`` is dominance_matte; ``auto`` is soft
+    unless ``resampler_hint`` is ``nearest`` (pixel art keeps binary alpha).
+    ``key``: ``auto`` estimates a magenta backdrop, a declared name estimates
+    that key, ``#rrggbb`` or RGB is used as given. An image with real
+    transparency and no key backdrop is returned unchanged (quality
+    ``native_alpha``). RGBA input keeps its alpha as an upper bound.
 
     Returns ``(image, info)``: ``info`` holds ``quality``,
     ``requested_quality``, ``key``, ``key_estimate``, the soft-matte
-    ``params``, ``interior_despill``, ``key_material_share`` and ``qa``
-    (matte_qa of the result).
+    ``params``, ``interior_despill``, ``key_material_share``, ``thresholds``
+    (hard only) and ``qa`` (matte_qa of the result).
     """
     if quality not in KEY_QUALITIES:
         raise ValueError(f"Unknown key quality {quality!r}; use one of {', '.join(KEY_QUALITIES)}.")
@@ -1290,13 +1399,15 @@ def key_still(rgba: Any, quality: str = "auto", key: Any = "auto",
     if resolved == "hard":
         if _key_model(key_rgb).high != (0, 2):
             raise ValueError("hard keying is the legacy magenta keyer; use soft or dominance for other keys.")
-        keyed = np.asarray(legacy_hard_key(pixels))  # fixed #FF00FF distances; QA below uses the backdrop key
+        # #FF00FF distances whatever the key; QA below uses the backdrop key
+        keyed = np.asarray(legacy_hard_key(pixels, threshold, edge_threshold))
+        info["thresholds"] = {"threshold": threshold, "edge_threshold": edge_threshold}
     elif resolved == "dominance":
         keyed = dominance_matte(pixels, key_rgb)
     else:
         share = key_material_share(pixels, key_rgb)
         params = KeyParams(**{**STILL_KEY_PARAMS.to_dict(), "interior_despill": share <= KEY_MATERIAL_SHARE_MAX})
-        keyed = soft_matte(pixels, params, key_rgb)
+        keyed = soft_matte_regions(pixels, params, key_rgb)
         info.update({"params": params.to_dict(), "interior_despill": params.interior_despill,
                      "key_material_share": share})
     info["qa"] = matte_qa(keyed, key_rgb)
