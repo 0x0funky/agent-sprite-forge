@@ -47,11 +47,15 @@ choose the loop or one-shot (gait_loop, retime), then package and verify.
 - `apply` writes `frames/`, `registration.json` (mode `construction`) and
   `review-contact.png`. It fails, writing nothing, when the generator cut the subject at
   the frame edge, when the subject leaves the padded canvas, or when the rest pose does
-  not land on the master (anchor or height).
+  not land on the master (anchor or height). Resampling leaves an invisible alpha 1-4
+  halo with invented key-leaning colours; `apply` clears alpha 4 and below and records it
+  (`hygiene` in registration.json), so the packaging residue gate measures real spill.
 - `--lock feet|x|hip` pins the foot line and x to the rest pose in whole output pixels,
   for idles whose feet drift and for actions the game moves (jumps, knockback).
 - A character profile pins one master, scale, anchor and matte setting for every clip of
-  a character; `apply --character-profile` refuses a clip prepared at another scale.
+  a character; `apply --character-profile` refuses a clip prepared at another scale. Its
+  matte block pins `unmix` only for the soft matte (dominance and binary profiles pin it
+  off) and `erode` in whole pixels, as video2dsprite `--matte-profile` reads them.
 
 ## Padding contract
 

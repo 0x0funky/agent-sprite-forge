@@ -7,38 +7,65 @@ Branch `asf/B08-video-packaging` (from `wip/asf-upgrade-20261005` @ 3f9252d). Fi
 [tests/test_engine_export_v3.py](../tests/test_engine_export_v3.py),
 [tests/test_validate_animation.py](../tests/test_validate_animation.py),
 [tests/test_engine_export.py](../tests/test_engine_export.py) (the 13 cfed170 tests A0 copied, decoupled from
-video2dsprite.py), and 34 negative fixtures in [tests/fixtures/animation/negative/](../tests/fixtures/animation/negative/).
+video2dsprite.py), and 39 negative fixtures in [tests/fixtures/animation/negative/](../tests/fixtures/animation/negative/).
+
+Integration status (Phase 3, group video, branch `asf/int-g-video`): the review's three B08 blocking issues and the
+D17, D18, D19, D21 and D26-D30 items are resolved; each resolved item below cites its decision ("per Dn").
 
 ## 1. CLIs
 
 Run from the user's project root; `<skill-dir>` is `${CLAUDE_SKILL_DIR}` in Claude Code.
 
     python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk/frames-clean --output-dir game/hero/walk --name walk --fps 12 --loop --formats png,webm,packed
-    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk/frames-clean --selection work/hero-walk/selection.json --registration work/hero-walk/registration.json --review work/hero-walk/review.json --pipeline-meta work/hero-walk/pipeline-meta.json --output-dir game/hero/walk --name walk --formats png,webm,packed --tiers actor
+    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk-reg/frames --selection work/hero-walk-loop/selection.json --registration work/hero-walk-reg/registration.json --review review.json --output-dir game/hero/walk --name walk --formats png,webm,packed --tiers actor
+    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-attack-reg/frames --selection work/hero-attack-ticks/selection.json --registration jobs/hero-attack/registration_job.json --action-padding 96,80,96,24 --output-dir game/hero/attack --name attack --formats png,webm,packed
     python "<skill-dir>/scripts/engine_export.py" verify --package game/hero/walk
     python "<skill-dir>/scripts/engine_export.py" doctor
     python "<skill-dir>/scripts/validate_animation.py" game/hero --require-states idle,walk,attack --require-verify --static-sprite game/hero/hero.png --static-anchor 224,430
 
-- `package` flags (also exposed as `engine_export.add_package_arguments(parser)` with the cfed170 dest names):
+- `package` flags (also exposed as `engine_export.add_package_arguments(parser)` with the cfed170 dest names;
+  `video2dsprite.py package` and `video2dsprite.py verify` are these verbs, per D20):
   `--clean-dir`, `--output-dir` (alias `--out-dir`), `--name`, `--fps` (number or `num/den`), `--selection`
-  (forge-frame-selection v1/v2), `--registration` (registration_job.v1 or a record with `mode`), `--review`
-  (review_verdict.v1), `--pipeline-meta`, `--source-size`, `--source-anchor`, `--max-side` (384), `--crop-union`,
+  (forge-frame-selection v1/v2), `--registration` (register_clip registration.json, best, or registration_job.v1),
+  `--action-padding L,T,R,B` (with a job: the padding `register_clip.py apply --action-padding` used, per D21),
+  `--review` (review_verdict.v1), `--pipeline-meta`, `--source-size`, `--source-anchor`, `--max-side` (384), `--crop-union`,
   `--formats png,webm,packed`, `--tiers actor|prop|fx|name:EDGE@FPS,...`, `--budget-class`, `--loop`,
   `--loop-policy cycle|pingpong|oneshot`, `--key auto|magenta|green|blue|#rrggbb|none`, `--allow-key-residue`,
   `--pixel-art`, `--sampling`, `--resampler`, `--body-height-px`, `--shadow RX,RY[,OPACITY]`, `--display-scale`,
   `--cadence-ms`, `--stride-world-units`, `--speed-ref`, `--cycles`, `--terminal`, `--art-source`, `--placeholder`,
   `--crf-webm` (28), `--crf-packed` (18).
+- `--key auto` (default) takes the residue gate's key from `<clean-dir>/matte-report.json`, then the
+  `--registration` keyColor, then `--pipeline-meta` `matte.key`, else magenta, and records `keySource`
+  (`matte-report`, `registration`, `pipeline-meta`, `default`, or `flag` for `--key`) in QA, provenance params and
+  the summary; a used matte report is a provenance input with role `matteReport` (per D17). A `matte-report.json`
+  that is not a matte_report.v1 document is an error.
+- The residue gate measures every frame on a copy with alpha <= 16 (forge_core.ALPHA_GEOMETRY_THRESHOLD) cleared and
+  records the floor in `keyResidue.thresholds.alpha_floor` and `method`; a visible (alpha 17-255) key fringe still
+  fails (per D18).
+- Events may sit on the end edge (`0 <= atMs <= duration`) and name the last frame; `impactMs`/`holdMs` stay strictly
+  inside (per D19).
+- Video transports (webm, packed, tiers) expand uneven whole-tick durations into repeated frames at the selection's
+  `tickHz` (with `ticks`), else its source fps, else 60 Hz (at most 60 fps, every authored edge within 1 ms, clip
+  length kept); `tickExpansion` records it (per D21). Durations that are whole ticks of none of these package only as
+  PNG, with an error that says so.
 - `package` refuses an existing output folder, stages beside it and publishes only after every gate, encode and
-  full decode passed. Its one-line JSON reports `output`, `manifest`, `qa`, `provenance`, `status`, `reviewStatus`,
-  `frameCount`, `fps` (num/den), `durationMs` and `inputDigest`.
+  full decode passed. Its one-line JSON reports `output`, `metadata` (animation.json), `manifest`, `qa`,
+  `provenance`, `status`, `reviewStatus`, `frameCount`, `fps` (num/den), `durationMs`, `keySource`, `inputDigest`
+  and, when expanded, `tickExpansion` (per D20).
 - `verify --package <dir> [--report <new file>]` writes `<dir>/verify-qa.json` only when every gate passes; on a
-  failure it prints the failed checks and writes nothing. One-line JSON: `report`, `manifest`, `status`, `checks`,
-  `transports`.
+  failure it prints the failed checks and writes nothing (exit 1). One-line JSON: `output` and `metadata` (the
+  report), `report`, `manifest`, `status`, `checks`, `transports`.
 - `doctor` prints `capabilities()` (forge_av functional probes) as one JSON line.
 - `validate_animation.py PATH... [--require-states A,B] [--static-sprite PNG | --static-size W,H] [--static-anchor X,Y]
-  [--require-verify] [--require-review] [--report <new file>]`: one-line JSON (`status`, `packages`, `manifests`,
-  `skipped`, `report`) on success; otherwise `error: <rule>: <package>: <message>` lines on stderr and exit 1, with
-  no report written.
+  [--require-verify] [--require-review] [--report <new file>]`: one-line JSON (`status`, `output`/`metadata`/`report`
+  (the report or null), `packages`, `manifests`, `skipped`) on success; otherwise `error: <rule>: <package>: <message>`
+  lines on stderr and exit 1, with no report written. The `schema` rule runs the vendored forge_schema evaluator
+  (never skipped, per D31); packed-geometry enforces `width <= halfWidth` and `height <= halfHeight` (per D21); the
+  timing rule checks a `tickExpansion` against `sourceIndices` and `durationsMs`.
+- Exit codes and errors (per D26, D27): usage errors exit 2 (argparse); refused inputs, failed gates and failed rules
+  print `error: ...` and exit 1 with nothing published; anything unexpected prints `error: internal error (<Type>:
+  <message>)` (forge_core.run_cli). JSON inputs are read with forge_core.read_json (BOM-tolerant, strict, per D28).
+  QA envelopes and provenance record `tool.version` 0.4.0 (per D29); `engineExport` 3.0.0 stays in provenance params.
 - `--help` of `engine_export.py` (and of `package`, `verify`, `doctor`) and of `validate_animation.py` is ASCII and
   exits 0 under cp1252 and cp950 (tested).
 
@@ -48,7 +75,7 @@ video2dsprite:
 
 | Need | Route |
 |---|---|
-| Ship a clip to a game (PNG atlas fallback, WebM, iPhone packed MP4, mobile tiers) | `scripts/engine_export.py package --clean-dir <frames-clean> --output-dir <new> --selection <selection.json> --formats png,webm,packed --tiers actor`; then `verify`, then `validate_animation.py` |
+| Ship a clip to a game (PNG atlas fallback, WebM, iPhone packed MP4, mobile tiers) | `scripts/engine_export.py package --clean-dir <apply's frames/> --output-dir <new> --selection <selection.json> --registration <registration.json> --formats png,webm,packed --tiers actor`; then `verify`, then `validate_animation.py` (`video2dsprite.py package`/`verify` are the same verbs) |
 | Package refused for key residue | re-key the frames with the soft matte (video2dsprite clean); `--allow-key-residue` only ships them with a recorded override |
 | Prove the encoded files decode like the atlas (alpha, colour, duration, loop seam) | `scripts/engine_export.py verify --package <dir>` |
 | Check a character's clips before integration | `scripts/validate_animation.py <character folder> --require-states idle,walk,... --require-verify` |
@@ -83,7 +110,12 @@ Acceptance for the video SKILL.md: package, then verify, then validate_animation
   codec, dimensions, packets, decode timestamps, duration, faststart, VP9 alpha tag, decoded loop seam) writing a
   hash-bound `verify-qa.json` (B08-T4).
 - Added: `validate_animation.py` with 27 named rules and hash-bound QA checks: stale, partial or foreign QA is
-  refused (B08-T5, B08-T6).
+  refused (B08-T5, B08-T6); every rule has a negative fixture (39), `schema` and `ffprobe-timestamps` included.
+- Added: `--key auto` reads the key the matte used from `<clean-dir>/matte-report.json`, then the registration
+  keyColor, then pipeline-meta, and records `keySource` (integration D17).
+- Added: uneven whole-tick durations (retime `--ticks`, held frames) package as WebM and packed MP4 by repeating
+  frames at the tick rate (`tickExpansion`, integration D21); `--action-padding` for registration jobs; a job's
+  view box and `sourceSize`/`sourceAnchor` are honoured (integration D21).
 - Changed: loops are encoded as one closed GOP per loop (keyint = frame count); transport rates are exact
   rationals capped at 60 fps; packed halves pad right/bottom to even pixels and `packedAlpha.width/height` is the
   logical content size with `halfWidth/halfHeight` the encoded halves (B08-T3; Dusk iOS transport).
@@ -92,12 +124,21 @@ Acceptance for the video SKILL.md: package, then verify, then validate_animation
   decoded completely before publication (B08-T3).
 - Changed: `package` stages with forge_core.staged_output; output files are written with forge_core.save_png and
   write_json (deterministic, no metadata chunks).
+- Changed: the residue gate ignores alpha <= 16 (invisible resampling halo) and records the floor (integration D18);
+  events may sit on the clip's end edge (integration D19); validate_animation checks the schema with the vendored
+  forge_schema (no optional jsonschema) and `width <= halfWidth` (integration D21, D31).
+- Changed: summaries name `output` and `metadata` (integration D20); `error: internal error (...)` for unexpected
+  failures (D27); BOM-tolerant JSON input (D28); QA `tool.version` is 0.4.0 (D29); forge_core.round_half_up and
+  file_ref (D30). A whole selection `cycles` count stays an integer.
 - BREAKING: `package` fails on key residue (any opaque key pixel, or key spill on more than 1% of the outer ring);
   legacy switch `--allow-key-residue` (plan Appendix H row "video package"). `--key none` skips the gate for
   native-alpha footage.
 - BREAKING: animation.json 3.0 (`registration` is an object, `qa` a QA envelope that still holds the 2.0
   diagnostics; every 2.0 key kept); no legacy switch (plan Appendix H). Runtimes must crop packed alpha at
   `halfWidth` (identical to 2.0 whenever the content size is even).
+- Fixed: registered frames (register_clip apply) were refused by the residue gate at default settings (5.9% ring
+  spill from alpha 1-4 halo); green-keyed clips were measured against magenta (false refusals, missed green
+  residue); tick-row selections with their `end` event could not be packaged (Wave B review, integration D17-D19).
 - Fixed: report v2 P0-3 (the forge-cycle and forge-cycle-31 packages shipped about 70-83% ring spill and 498
   opaque key px; both are now refused). report v2 P1-1 (`run()` decodes UTF-8 with replacement; console text
   ASCII). report v2 P1-7 (pipeline.md lists exact file names, inputs and single-line commands). hd2d seam-codec
@@ -106,10 +147,10 @@ Acceptance for the video SKILL.md: package, then verify, then validate_animation
 
 ## 5. Schema change requests
 
-The documents B08 writes validate against the frozen schemas as they are (animation.json against
-`video/animation_v3`, animation-qa.json and verify-qa.json against `common/qaEnvelope`, provenance.json against
-`common/provenance`). These additions document them; `tests/test_engine_export_v3.py::proposed_errors` applies
-exactly this diff in memory and validates real output against it. Producer B08; consumers B09, Z, games.
+Resolved: integration S1 applied this section to shared/schemas/video.schema.json (commit f3d7eb2, with the D17,
+D18, D19 and D21 descriptions); the tests now validate real output with `assert_valid_contract` against the vendored
+schemas (`animation_v3`, `package_provenance_v1`, `verify_report_v1`, `validation_report_v1`) and the in-memory
+`proposed_errors` helper is gone. Kept for reference:
 
 `shared/schemas/video.schema.json`, add to `$defs.animation_v3.properties`:
 
@@ -156,6 +197,17 @@ exactly this diff in memory and validates real output against it. Producer B08; 
 }
 ```
 
+New request (integration, optional): document `tickExpansion` in `$defs.animation_v3.properties`:
+
+```json
+"tickExpansion": {"description": "Uneven whole-tick durations expanded for video transports (engine_export, D21): each authored frame is repeated ticks[i] times at rate; sourceIndices and durationsMs are the expanded timeline.",
+                  "type": "object", "required": ["rate", "ticks", "authoredSourceIndices", "authoredDurationsMs"],
+                  "properties": {"rate": {"$ref": "common.schema.json#/$defs/fpsValue"},
+                                 "ticks": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+                                 "authoredSourceIndices": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                                 "authoredDurationsMs": {"$ref": "common.schema.json#/$defs/durationsMs"}}}
+```
+
 Optional fields B08 writes inside open objects (no diff needed, listed so they do not drift):
 
 - `registration`: `legacyMode` (the 2.0 string `preserved-source-canvas` or `fixed-union-envelope`),
@@ -165,7 +217,9 @@ Optional fields B08 writes inside open objects (no diff needed, listed so they d
   `adjacentMedianMAE`, `seamToMedianRatio`, `adjacentMaxMAE`, `notes`) plus `keyResidue` (`key`, `framesMeasured`,
   `opaqueKeyPx`, `framesWithOpaqueKey`, `maxOuterRingSpillFraction`, `framesOverRingSpill`,
   `maxSemitransparentFraction`, `minSemitransparentFraction`, `enclosedKeyPockets`, `keyHuedPx`, `limits`,
-  `thresholds`, `method`), `seamReport` (common/seamReport), `allowKeyResidue`, `keySource`.
+  `thresholds` (with `alpha_floor` 16, per D18), `method`), `seamReport` (common/seamReport), `allowKeyResidue`,
+  `keySource` (`matte-report`, `registration`, `pipeline-meta`, `default` or `flag`, per D17); a `tick_expansion`
+  check when timing was expanded.
 - `webm`: `codec`, `pixFmt`, `width`, `height`, `crf`, `keyint`, `keyframes`, `frameCount`, `fps`, `durationMs`,
   `requiresAlphaPlaybackVerification`, `fullDecodePassed`.
 - `packedAlpha`: `codec`, `profile`, `encodedSize`, `requiresCompositor`, `crf`, `keyint`, `keyframes`, `closedGop`,
@@ -176,7 +230,7 @@ Optional fields B08 writes inside open objects (no diff needed, listed so they d
   `requiresCompositor`, `fullDecodePassed`.
 - provenance.json: `schema` (`video2dsprite.provenance.v1`), `inputDigest`, `inputDirectory` (only when a relative
   path exists), `libraries`, `selection`, `registration`, `review`; inputs carry a `role` (frame, selection,
-  registration, review, pipelineMeta).
+  registration, review, pipelineMeta, matteReport); params add `actionPadding`, `tickExpansion` and `engineExport`.
 
 Input documents as B08 reads them (for B06, B07 and Z):
 
@@ -184,9 +238,12 @@ Input documents as B08 reads them (for B06, B07 and Z):
   (a list with one hash per `sourceIndices` entry is accepted too); `durations_ms` are authoritative (a `fps`
   field is kept only when the durations are its forge_core.frame_durations rounding); a `status` starting with
   reject, fail or unusable is refused; optional `speedRef`, `cycles` and `terminal` are read when present.
-- registration: a `video2dsprite.registration_job.v1`, or any record with `mode` (construction, fixed-envelope,
-  preserved) and optional `jobSha256`, `padding`, `baseSize`/`baseAnchor` (or `master.size`/`master.anchor`),
-  `sourceSize`, `sourceAnchor`.
+- registration: a `video2dsprite.registration_job.v1` (base canvas = its `sourceSize`/`sourceAnchor`, else
+  `master.size`/`anchor` cut to `master.viewBox`; padding = `--action-padding` or the job's), or any record with
+  `mode` (construction, fixed-envelope, preserved) and optional `jobSha256`, `padding`, `baseSize`/`baseAnchor` (or
+  `master.size`/`master.anchor`), `sourceSize`, `sourceAnchor`; `keyColor` feeds `--key auto` (per D17, D21).
+- matte-report.json in `--clean-dir`: `schema` video2dsprite.matte_report.v1, `key` (RGB) and `mode` (`none` skips
+  the gate), per D17.
 - review_verdict_v1: `reviewedSha256` is the sha256 of the selection file, or the package `inputDigest` (sha256 of
   the newline-terminated list of frame sha256s in playback order).
 - pipeline-meta.json: `matte.key` (name, `#rrggbb` or RGB triple, rounded) and `matte.mode` (`none` skips the
@@ -194,9 +251,8 @@ Input documents as B08 reads them (for B06, B07 and Z):
 
 ## 6. Shared-helper promotion requests
 
-- `engine_export._local_round_half_up(value)` (engine_export.py, "small helpers"): floor(value + 1/2), exact for
-  Fractions. forge_core has the private `_round_half_up(float)`; promote a public `forge_core.round_half_up` that
-  also accepts Fractions. Covered by `test_timeline_helpers` and the duration tests.
+- Resolved (per D30): `engine_export._local_round_half_up` is gone; `engine_export.round_half_up` is
+  forge_core.round_half_up (Fraction-exact), and packaged-file refs use forge_core.file_ref.
 - Candidates for shared timing (forge_core), used by retime (B07) and the clip builder (B02) as well:
   `engine_export.constant_timeline`, `duration_timeline`, `cap_timeline` (at most N fps without changing the clip
   length, nearest frame start, ties to the later frame) and `bake_pingpong`. Tests: `test_timeline_helpers`,
@@ -207,28 +263,32 @@ Input documents as B08 reads them (for B06, B07 and Z):
 
 ## 7. Cross-module links that Z must add
 
-- video2dsprite.py (B05): its `package` subparser should call `engine_export.add_package_arguments(pk)` instead of
-  its own ten `add_argument` lines (the dest names match), so `--selection`, `--registration`, `--review`,
-  `--tiers`, `--key`, `--allow-key-residue` and the runtime hints reach `video2dsprite.py package`; add a `verify`
-  verb that calls `engine_export.cmd_verify` (or document `engine_export.py verify`). Until then those flags exist
-  only on `engine_export.py package`; the cfed170 namespace still works and gets the 3.0 defaults (residue gate on).
-- B05 pipeline-meta.json: `package --key auto` reads `matte.key`/`matte.mode`; keep those names.
-- B07 gait_loop/retime: video transports need durations within 1 ms of each other (holds as repeated
-  `sourceIndices`); package refuses video formats otherwise and says so.
+- Resolved (per D20): `video2dsprite.py package` uses `engine_export.add_package_arguments` and `cmd_package`, and
+  `video2dsprite.py verify` uses `add_verify_arguments` and `cmd_verify`.
+- Resolved (per D17): `package --key auto` reads `<clean-dir>/matte-report.json` first, then the registration
+  keyColor, then pipeline-meta `matte.key`/`matte.mode`; B05 keeps those names.
+- Resolved (per D21): uneven whole-tick durations from gait_loop/retime package as video by repeated frames; B07
+  needs no holds-as-repeats option.
 - B09 runtime export and packed-alpha-runtime.js: crop alpha at `halfWidth` and expect a `2 * halfWidth` video
   (pipeline.md says so); read `durationsMs`, `events`, `fpsRational`, `mobilePackedAlpha`, the registration object.
-- Video SKILL.md: link references/pipeline.md; acceptance order package, verify, validate_animation; matte.md (B05)
-  should link the residue gate section of pipeline.md; animation-review.md (B07) should say the selection file is
-  what `--selection` and a review verdict bind.
+- Video SKILL.md: link references/pipeline.md; acceptance order package, verify, validate_animation; package the
+  registered `frames/` with `--registration <registration.json>` (the key and the canvas come from it). matte.md
+  (B05) now links pipeline.md for the gate; animation-review.md (B07) says how tick rows package; Z may still add
+  that the selection file is what `--selection` and a review verdict bind.
 - CHANGELOG (Z): the entries in section 4; Appendix H rows "video package" are implemented as stated.
-- tests: `tests/test_video2dsprite.py` still holds the 13 originals B05 deletes (B05-T1); they pass against this
-  engine_export, so the merge order does not matter.
+- tests: the 13 cfed170 originals live only in tests/test_engine_export.py (B05-T1 done).
+- shared/schemas (integration): the optional `tickExpansion` description of section 5.
 
 ## 8. Known limitations and what is not proven
 
-- Thresholds: the residue gate (opaque key px 0, ring spill 1%) comes from report v2 on one clip; matte_qa counts
-  key-dominant edge colours (crimson, pink, purple outlines) as spill, so such designs need `--key` with another key
-  colour or `--allow-key-residue`. The verify gates are Dusk's iOS transport gates (one game) plus synthetic clips.
+- Thresholds: the residue gate (opaque key px 0, ring spill 1%, alpha floor 16) comes from report v2 on one clip
+  and the Wave B review's registration measurements (registered frames: 5.9% ring spill at floor 0, 0.10% at
+  floor 16; a real alpha-255 fringe stays at 100%); matte_qa counts key-dominant edge colours (crimson, pink, purple
+  outlines) as spill, so such designs need a key the matte report or `--key` names, or `--allow-key-residue`. The
+  verify gates are Dusk's iOS transport gates (one game) plus synthetic clips.
+- Tick expansion tries the selection's tickHz (with `ticks`), its fps, then 60 Hz; durations from `retime --duration`
+  or a three-key map that are whole ticks of none of these stay PNG-only (no wider rate search, so the transport
+  rate is always one the selection names or the forge 60 Hz grid). An expanded atlas holds one cell per tick.
 - The decoded-seam rule is relative: decoded seam / adjacent p95 may exceed max(1, source ratio) by 10%. It fails a
   pop the codec added (the hd2d single-GOP case: 1.47 on a subtle ambient loop) but reports a pop already in the
   source as `source_seam` warn, not as a transport failure. Large motion masks small codec pops (correctly).
@@ -255,5 +315,9 @@ Input documents as B08 reads them (for B06, B07 and Z):
   - The residue gate measures the full-resolution source frames (stricter than the downscaled media).
   - `verify` writes its report into the package folder (a no-replace sidecar); `validate_animation` reads it there.
   - `validate_animation --require-states` matches the manifests' `name`.
-- Not covered by tests: `ffprobe-timestamps` has no negative fixture (forge_av's own tests cover non-monotonic DTS);
-  a WebM container whose duration metadata disagrees with its packets.
+- Not covered by tests: a WebM container whose duration metadata disagrees with its packets. (The
+  `ffprobe-timestamps` and `schema` negative fixtures now exist, per D21.)
+- Canonical chain (integration): key-plan, prepare_i2v_input, take, process, qc, register_clip apply, gait_loop
+  select, retime `--ticks` with its end event, package png+webm+packed (+ actor tier), verify, validate_animation
+  pass at default settings on a synthetic 64-frame 1280x720 take (44 s), and in `test_canonical_chain` on a
+  320x180 canvas (about 20 s).

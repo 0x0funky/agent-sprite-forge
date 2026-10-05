@@ -8,15 +8,20 @@ into the project, never into the skill folder.
 ## Files, in pipeline order
 
 ```text
-work/<clip>/                       video2dsprite.py process --out-dir work/<clip>
+work/<clip>/                       video2dsprite.py process --output-dir work/<clip> (a new folder)
   frames-raw/frame_000000.png ...  decoded source frames, 0-based, original timing
-  frames-clean/clean_*.png         keyed straight-alpha RGBA frames: the package input
+  frames-clean/clean_0000.png ...  keyed straight-alpha RGBA frames (the package input without registration)
+  frames-clean/matte-report.json   matte report: the key the matte used (package --key auto reads it)
   sprite/                          sampled comparison sprites, strips and preview GIFs
-  pipeline-meta.json               processing record; its "matte" block names the key
+  pipeline-meta.json               processing record; its "matte" block repeats the matte report
   README.txt
-work/<clip>/selection.json         frame selection (forge-frame-selection v1 or v2)
-work/<clip>/registration.json      registration job or registration record (optional)
-work/<clip>/review.json            review verdict (video2dsprite.review_verdict.v1, optional)
+work/<clip>-reg/                   register_clip.py apply --output-dir (a new folder)
+  frames/frame_000000.png ...      registered frames on the master canvas: the package input
+  registration.json                registration record (package --registration; it names keyColor)
+  review-contact.png
+work/<clip>-loop/selection.json    gait_loop.py select --output-dir (a new folder); retime.py and
+                                   animation_review.py select write selection.json the same way
+review.json                        review verdict (video2dsprite.review_verdict.v1, optional)
 game/<character>/<state>/          engine_export.py package --output-dir (a new folder)
   animation.json                   runtime manifest, schemaVersion 3.0
   animation-qa.json                the manifest's QA envelope as its own file
@@ -29,21 +34,29 @@ game/<character>/<state>/          engine_export.py package --output-dir (a new 
   verify-qa.json                   engine_export.py verify, written only when it passes
 ```
 
-The selection comes from the motion tools (gait_loop select, retime, or animation_review);
-the registration file from prepare_i2v_input (a `video2dsprite.registration_job.v1`) or
-register_clip (a record with `mode`). Contracts for every file are in
+Every tool writes into a new folder and refuses an existing one, so each step gets its own
+folder. The selection comes from the motion tools (gait_loop select, retime, or
+animation_review select); run them on apply's `frames/`. The registration file is
+register_clip's `registration.json` (best: it records the padding apply used) or the
+prepare_i2v_input job (`video2dsprite.registration_job.v1`). Keying is explained in
+[matte.md](matte.md). Contracts for every file are in
 [schemas/video.schema.json](schemas/video.schema.json) and
 [schemas/common.schema.json](schemas/common.schema.json).
 
 ## Package
 
-The smallest call packages every clean frame at a fixed rate:
+The smallest call packages every clean frame at a fixed rate (the key comes from
+`frames-clean/matte-report.json`):
 
     python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk/frames-clean --output-dir game/hero/walk --name walk --fps 12 --loop --formats png,webm,packed
 
-A reviewed loop with timing, registration and a mobile tier:
+The canonical call packages registered frames with their selection, registration and review,
+plus a mobile tier:
 
-    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk/frames-clean --selection work/hero-walk/selection.json --registration work/hero-walk/registration.json --review work/hero-walk/review.json --pipeline-meta work/hero-walk/pipeline-meta.json --output-dir game/hero/walk --name walk --formats png,webm,packed --tiers actor --body-height-px 300 --speed-ref 3.65
+    python "<skill-dir>/scripts/engine_export.py" package --clean-dir work/hero-walk-reg/frames --selection work/hero-walk-loop/selection.json --registration work/hero-walk-reg/registration.json --review review.json --output-dir game/hero/walk --name walk --formats png,webm,packed --tiers actor --body-height-px 300 --speed-ref 3.65
+
+`python "<skill-dir>/scripts/video2dsprite.py" package ...` and `video2dsprite.py verify ...`
+are the same verbs with the same flags (`--out-dir` stays the old name of `--output-dir`).
 
 Inputs and rules:
 
@@ -54,31 +67,50 @@ Inputs and rules:
   (repeats are holds), `durations_ms`, `loopPolicy`, `events`, `impactMs`, `holdMs`,
   `cadenceMs` and `strideWorldUnits`. Its `sourceHashes` must still match the frames, or the
   selection is stale and refused.
+- Events may sit anywhere from 0 to the clip's end edge (`atMs` equal to the duration, as the
+  `end` event of `retime.py --ticks`); an event on the end edge names the last frame.
+  `impactMs` and `holdMs` must lie strictly inside the clip.
 - `--loop` (or `--loop-policy cycle`) loops; `--loop-policy pingpong` is baked into one cycle
   (`0 1 2 3 2 1`, recorded as `pingpongBaked`); `oneshot` plays once.
 - Rates above 60 fps are reduced to at most 60 fps without changing the clip length
-  (`fpsCapped`, `inputFps`). Video transports play one constant rate, so durations that differ
-  by more than 1 ms package only as PNG; express holds as repeated frames instead.
-- `--registration` with a registration job means registration by construction: the master
-  canvas plus `padding` [left, top, right, bottom] is `sourceSize` and the master anchor moves
-  by (left, top). Conflicting `--source-size`/`--source-anchor` values are refused.
+  (`fpsCapped`, `inputFps`).
+- Video transports play one constant rate. Uneven durations that are whole ticks (`retime.py
+  --ticks` rows at the selection's `tickHz`, or held frames that `gait_loop` merged at the
+  source fps) are expanded into repeated frames at that rate, at most 60 fps, keeping every
+  frame edge within 1 ms and the clip length to the millisecond; `tickExpansion` records the
+  authored frames and ticks. A PNG-only package keeps the uneven durations. Durations that are
+  whole ticks of no such rate package only as PNG; retime them onto a tick grid
+  (`retime.py --ticks`).
+- `--registration`: register_clip's `registration.json` carries the padded canvas
+  (`sourceSize`, `sourceAnchor`), the base canvas and the padding apply used. A registration
+  job means registration by construction: the job's base canvas (its `sourceSize` and
+  `sourceAnchor`; for a `--view-box` job that is the view, not the whole sheet) plus `padding`
+  [left, top, right, bottom] is `sourceSize`, and the base anchor moves by (left, top). If
+  `register_clip.py apply` ran with `--action-padding`, pass the same `--action-padding` with
+  the job (or pass registration.json). Conflicting `--source-size`/`--source-anchor` values
+  are refused.
 - `--review`: the verdict's `reviewedSha256` must be the sha256 of the selection file, or the
   `inputDigest` that package prints (sha256 of the newline-terminated list of frame sha256s in
   playback order). `accepted` gives reviewStatus accepted and lets QA pass;
   `accept_with_mask` gives a warn; `fail_regenerate` refuses the package.
-- Key-residue gate: every packaged frame is measured with forge_matte.matte_qa against the key
-  (`--key auto` reads `matte.key` from `--pipeline-meta`, else magenta; `--key none` for
-  native-alpha footage). Any opaque key pixel, or key-coloured spill on more than 1% of the
-  outer ring, refuses the package and publishes nothing. `--allow-key-residue` ships it anyway
-  and records the override (QA status warn). Re-keying with the soft matte is the fix.
+- Key-residue gate: every packaged frame is measured with forge_matte.matte_qa against the key,
+  on a copy with alpha <= 16 cleared (registration's resampling leaves invisible alpha 1-4
+  halo with invented key-leaning colours; a visible key fringe still counts). `--key auto`
+  takes the key from `<clean-dir>/matte-report.json`, then from the `--registration` keyColor
+  (registered frames), then from `--pipeline-meta`, else magenta, and records `keySource`;
+  `--key green` (or `#rrggbb`) forces one, `--key none` skips the gate for native-alpha
+  footage. Any opaque key pixel, or key-coloured spill on more than 1% of the outer ring,
+  refuses the package and publishes nothing. `--allow-key-residue` ships it anyway and records
+  the override (QA status warn). Re-keying with the soft matte is the fix.
 - Resizing is one crop (full canvas, or `--crop-union` over the whole clip) and one resize on
   premultiplied channels to at most `--max-side` px; it never upscales. `--pixel-art` samples
   nearest and only reduces by whole factors.
 - The output folder must not exist. Everything is written to a staging folder beside it and
   published only after every encode and decode check passed.
 
-The command prints one JSON line with the output, manifest, QA and provenance paths, the QA
-status, reviewStatus, frame count, rational fps, duration and inputDigest.
+The command prints one JSON line with the output folder, the metadata file (animation.json,
+also as `manifest`), the QA and provenance paths, the QA status, reviewStatus, frame count,
+rational fps, duration, keySource and inputDigest.
 
 ## animation.json 3.0
 
@@ -91,7 +123,7 @@ QA envelope that still carries the 2.0 diagnostics). 3.0 adds:
 | `sourceIndices` | 0-based source frame per packaged frame |
 | `durationsMs` | whole milliseconds per frame; the timeline |
 | `loopPolicy` | `cycle` or `oneshot` (pingpong is baked into a cycle) |
-| `events` | `{name, atMs, frame, data?}`; `frame` is the frame shown at `atMs` |
+| `events` | `{name, atMs, frame, data?}`; `frame` is the frame shown at `atMs` (the last frame on the end edge) |
 | `impactMs`, `holdMs` | gameplay instants inside the clip |
 | `terminal` | the clip ends its state and holds the last frame |
 | `cadenceMs`, `strideWorldUnits`, `speedRef`, `cycles` | walk phase from distance travelled |
@@ -100,6 +132,7 @@ QA envelope that still carries the 2.0 diagnostics). 3.0 adds:
 | `packedAlpha` | `layout`, `width`, `height` (content), `halfWidth`, `halfHeight` (even halves), `fps`, `keyframes`, `fullDecodePassed` |
 | `mobilePackedAlpha` | one record per tier (below) |
 | `fpsCapped`, `inputFps`, `pingpongBaked` | present when they apply |
+| `tickExpansion` | `{rate, ticks, authoredSourceIndices, authoredDurationsMs}`: uneven whole-tick timing repeated at one rate for video |
 | `provenanceFile`, `artSource`, `placeholder` | provenance.json, `video`, false |
 
 `hitEvents` (2.0) lists the `hit` events. File names in the manifest are bare names inside the
@@ -153,7 +186,8 @@ and hitboxes are gameplay data; never derive them from animation alpha.
 
     python "<skill-dir>/scripts/engine_export.py" verify --package game/hero/walk
 
-Decodes every encoded file completely and compares each frame with the lossless atlas:
+(or `video2dsprite.py verify --package ...`). Decodes every encoded file completely and compares
+each frame with the lossless atlas:
 
 | Check | Gate |
 |---|---|
@@ -178,10 +212,13 @@ or `--crf-webm`, not a different GOP.
     python "<skill-dir>/scripts/validate_animation.py" game/hero --require-states idle,walk,attack --require-verify --static-sprite game/hero/hero.png --static-anchor 224,430
 
 Accepts package folders, animation.json files or a folder of packages. Each failure names its
-rule: schema, paths, files, timing, anchor, impact-hold, events, loop-flag, states, poster,
-padding-embed, packed-geometry, tiers, static-sprite, ffprobe-dimensions, ffprobe-timestamps,
-ffprobe-duration (2 ms), ffprobe-packets, vp9-alpha, the hash-bound QA rules (qa-incomplete,
-qa-inconsistent, qa-failed, qa-stale, qa-partial, qa-foreign), verify and review. QA that misses
+rule: schema (the vendored animation_v3 schema, always checked), paths, files, timing (with a
+`tickExpansion` that must repeat into `sourceIndices`), anchor, impact-hold, events (end edge
+allowed), loop-flag, states, poster, padding-embed, packed-geometry (logical `width`/`height`
+never above `halfWidth`/`halfHeight`), tiers, static-sprite, ffprobe-dimensions,
+ffprobe-timestamps, ffprobe-duration (2 ms), ffprobe-packets, vp9-alpha, the hash-bound QA rules
+(qa-incomplete, qa-inconsistent, qa-failed, qa-stale, qa-partial, qa-foreign), verify and
+review. Every rule has a negative fixture in tests/fixtures/animation/negative/. QA that misses
 a file, lists a foreign one, or judged other bytes than the files now on disk is refused, so
 edit nothing after packaging: repackage. `--report <new file>` writes a QA envelope when every
 rule passes. Acceptance order: package, then verify, then validate_animation.
@@ -228,3 +265,5 @@ actions.
 - The key-residue thresholds were set on one clip; the verify gates come from one game's iOS
   transport and synthetic clips. Game code decides when an attack lands; never trigger damage
   from video `ended` or decoded frame counts.
+- Exit codes: usage errors exit 2; a refused input or failed gate prints `error: ...` and exits
+  1 with nothing published; an unexpected failure prints `error: internal error (...)`.
