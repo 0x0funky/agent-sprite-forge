@@ -1,8 +1,12 @@
-"""Regression tests for engine_export packaging (copied from test_video2dsprite.py by A0-T3)."""
+"""cfed170 engine_export behaviour that 3.0 keeps (copied from test_video2dsprite.py by A0-T3).
+
+Geometry, staged no-clobber publishing, the PNG fallback without ffmpeg and the packed/VP9
+round trip still hold for the old ``package(args)`` namespace of video2dsprite.py. The new
+3.0 behaviour is tested in test_engine_export_v3.py.
+"""
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 import shutil
 import tempfile
@@ -13,18 +17,10 @@ from unittest.mock import patch
 import numpy as np
 from PIL import Image
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "skills/video2dsprite/scripts"
+from forge_testutils import load_script
 
-
-def load(name):
-    spec = importlib.util.spec_from_file_location(name, SCRIPTS / f"{name}.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-V = load("video2dsprite")
-E = load("engine_export")
+E = load_script("video2dsprite", "engine_export")
+AV = load_script("video2dsprite", "forge_av")
 
 
 def frame(box=(10, 10, 22, 28), color=(40, 160, 210, 255), size=(32, 32)):
@@ -160,9 +156,9 @@ class PackageTests(unittest.TestCase):
             E.run([caps["ffmpeg"], "-hide_banner", "-loglevel", "error", "-c:v", "libvpx-vp9", "-i",
                    str(out/meta["webm"]["file"]), "-frames:v", "1", "-vf", "alphaextract", str(alpha)])
             self.assertEqual(Image.open(alpha).getextrema(), (0, 255))
-            decoded_alpha = V.extract_frames(out/meta["webm"]["file"], Path(tmp)/"webm-extract", decoder="libvpx-vp9")
+            decoded_alpha = AV.extract_frames(out/meta["webm"]["file"], Path(tmp)/"webm-extract", alpha="on")
             self.assertEqual(Image.open(decoded_alpha[0]).getchannel("A").getextrema(), (0, 255))
-            frames = V.extract_frames(packed, Path(tmp)/"extract", fps=12, start=1/12, duration=2/12)
+            frames = AV.extract_frames(packed, Path(tmp)/"extract", fps=12, start=1/12, duration=2/12)
             self.assertEqual(len(frames), 2)
             self.assertTrue(all(v["fullDecodePassed"] for v in [meta["webm"], meta["packedAlpha"]]))
 

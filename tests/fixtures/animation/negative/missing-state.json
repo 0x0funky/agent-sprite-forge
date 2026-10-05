@@ -1,0 +1,11 @@
+{
+  "rule": "states",
+  "why": "a character needs every authored state",
+  "base": "png",
+  "args": [
+    "--require-states",
+    "idle,walk"
+  ],
+  "ops": [],
+  "alsoFails": []
+}

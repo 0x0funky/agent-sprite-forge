@@ -1,0 +1,16 @@
+{
+  "rule": "loop-flag",
+  "why": "the loop flag is an explicit boolean",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/loop",
+      "value": "yes"
+    }
+  ],
+  "alsoFails": [
+    "schema"
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "rule": "anchor",
+  "why": "the runtime anchor must lie on the source canvas",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/sourceAnchor",
+      "value": [
+        999,
+        10
+      ]
+    }
+  ],
+  "alsoFails": []
+}

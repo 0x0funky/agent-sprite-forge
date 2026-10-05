@@ -1,0 +1,20 @@
+{
+  "rule": "vp9-alpha",
+  "why": "WebM without the VP9 alpha tag plays on black",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "encode",
+      "file": "idle.webm",
+      "kind": "opaque-webm",
+      "size": [
+        48,
+        48
+      ],
+      "frames": 8,
+      "fps": "12/1"
+    }
+  ],
+  "alsoFails": []
+}

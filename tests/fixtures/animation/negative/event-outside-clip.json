@@ -1,0 +1,14 @@
+{
+  "rule": "events",
+  "why": "event times are clip milliseconds",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/events/1/atMs",
+      "value": 900
+    }
+  ],
+  "alsoFails": []
+}

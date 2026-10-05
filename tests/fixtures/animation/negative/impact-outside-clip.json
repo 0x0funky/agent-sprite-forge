@@ -1,0 +1,14 @@
+{
+  "rule": "impact-hold",
+  "why": "an impact after the last frame never fires",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/impactMs",
+      "value": 500
+    }
+  ],
+  "alsoFails": []
+}

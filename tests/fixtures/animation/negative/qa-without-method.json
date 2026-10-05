@@ -1,0 +1,15 @@
+{
+  "rule": "qa-incomplete",
+  "why": "QA states its method",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "remove",
+      "path": "/qa/method"
+    }
+  ],
+  "alsoFails": [
+    "schema"
+  ]
+}

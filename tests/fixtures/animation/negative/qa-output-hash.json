@@ -1,0 +1,14 @@
+{
+  "rule": "qa-stale",
+  "why": "QA judged other bytes",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/qa/outputs/0/sha256",
+      "value": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "alsoFails": []
+}

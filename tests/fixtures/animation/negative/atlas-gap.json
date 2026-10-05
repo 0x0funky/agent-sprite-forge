@@ -1,0 +1,14 @@
+{
+  "rule": "timing",
+  "why": "atlas pages start at frame 0 without gaps",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/fallback/pages/0/firstFrame",
+      "value": 1
+    }
+  ],
+  "alsoFails": []
+}

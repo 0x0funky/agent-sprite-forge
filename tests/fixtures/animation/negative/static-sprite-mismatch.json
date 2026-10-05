@@ -1,0 +1,13 @@
+{
+  "rule": "static-sprite",
+  "why": "video geometry must match the static world sprite",
+  "base": "png",
+  "args": [
+    "--static-size",
+    "64,64",
+    "--static-anchor",
+    "24,47"
+  ],
+  "ops": [],
+  "alsoFails": []
+}

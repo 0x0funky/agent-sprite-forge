@@ -1,0 +1,21 @@
+{
+  "rule": "qa-inconsistent",
+  "why": "a pass cannot contain a failed check",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/qa/status",
+      "value": "pass"
+    },
+    {
+      "op": "set",
+      "path": "/qa/checks/0/status",
+      "value": "fail"
+    }
+  ],
+  "alsoFails": [
+    "schema"
+  ]
+}

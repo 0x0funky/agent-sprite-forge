@@ -1,0 +1,13 @@
+{
+  "rule": "qa-partial",
+  "why": "QA must cover every packaged file",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "remove",
+      "path": "/qa/outputs/0"
+    }
+  ],
+  "alsoFails": []
+}

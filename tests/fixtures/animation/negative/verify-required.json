@@ -1,0 +1,10 @@
+{
+  "rule": "verify",
+  "why": "no verify-qa.json with --require-verify",
+  "base": "png",
+  "args": [
+    "--require-verify"
+  ],
+  "ops": [],
+  "alsoFails": []
+}

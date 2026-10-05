@@ -1,0 +1,30 @@
+{
+  "rule": "padding-embed",
+  "why": "action padding must embed the unscaled base canvas",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/registration",
+      "value": {
+        "mode": "construction",
+        "baseSize": [
+          40,
+          40
+        ],
+        "baseAnchor": [
+          20,
+          30
+        ],
+        "padding": [
+          3,
+          0,
+          5,
+          8
+        ]
+      }
+    }
+  ],
+  "alsoFails": []
+}
