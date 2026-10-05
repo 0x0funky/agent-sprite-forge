@@ -46,8 +46,12 @@ One integrated release of the five skills (plugin version `0.4.0`). Not yet tagg
 - `cli_media.py`: local routes `codex-cli` (image), `grok-cli` (image, edit), `grok-acp` (image-to-video), `--route auto`, dry run by default, provenance checks, `resume --adopt`, `adopt --codex-thread` (supersedes draft PR #5; thanks to its author), `batch`.
 - Spend ledger `.forge/ledger.jsonl` and `media_ledger.py`; caps `--budget-usd`, `--max-calls`, `FORGE_MAX_PAID_REQUESTS`; local session cap (8 images, 2 videos per 12 hours); consent block with estimates from `references/prices.json`; job.json receipts; `batch` for paid jobs; `--base-url` with `--allow-custom-base-url`; `--upload-url` for xAI zero data retention (field name unverified).
 
+- `prepare_i2v_input prepare --master-key` keys an opaque master on a flat magenta, green or blue backdrop (recorded as `masterKeying`); `video2dsprite.py clean` also accepts `raw_*.png`.
+- `render_pixelspec` warns when a walk/run clip's half-cycle frames are near-duplicates (`half_cycle_duplicates`, silhouette IoU >= 0.95; override `--allow-duplicate-half-cycle`); the summary lists `warned_checks`.
+
 ### Changed
 
+- `render_pixelspec --strict-qc` refuses only a `fail` status; a `warn` still publishes and is reported verbatim.
 - Five SKILL.md files rewritten with art-source rules (code art first inside its envelope, then local agent first), host notes for Codex, Claude Code and Grok, and a capability check. `codeart2d` and `generate2dmedia` are explicit-only in Codex.
 - Requirements: Python 3.10+, Pillow >= 10.1, numpy >= 1.26, scipy >= 1.11 (with a numpy fallback); `requirements-codeart.txt`; `requirements-dev.txt` adds jsonschema.
 - Every CLI writes a new output folder through staged, no-replace publication, prints one ASCII JSON line, exits 1 on failure with one `error:` line and 2 on usage errors, and runs under cp1252/cp950 consoles. QA envelopes record `tool.version` 0.4.0. Manifests store relative paths; JSON inputs may carry a UTF-8 BOM.
@@ -101,6 +105,7 @@ Each new default has a legacy switch where one is possible; v1 documents remain 
 
 ### Fixed
 
+- Found by the 2026-10-06 live validation: `prepare_i2v_input` refused an opaque master; the image-to-video prompt contract took the last noun of `--subject` ("everything behind the scarf"); an agent summarised a WARN QA envelope as "all checks passed" (SKILL.md now requires WARN/FAIL to be reported verbatim).
 - Purple fringe and enclosed key pockets (report v2 P0-1, P0-2): on Ryo frames 57-87 visible fringe 8,504 to 0 px per frame, leak 15.3 to 0; frames with pockets 16 of 145 to 0; flicker 9.6 to 3.5 flips per frame pair.
 - Packages shipped key residue (P0-3): residue is now refused; the old forge-cycle packages (70-83% ring spill) fail the gate.
 - Invalid loop candidates (P0-4): six of eight old helper candidates on the report clip are listed as rejected with reasons.

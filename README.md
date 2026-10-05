@@ -23,7 +23,11 @@ Languages: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体�
   <a href="#suggested-prompts">Prompts</a>
 </p>
 
-<!-- PROMO -->
+<p align="center">
+  <img src="./src/promo/asf-v040-teaser.gif" alt="Agent Sprite Forge 0.4 launch teaser: purple fringe removed, a code-drawn slime, a map with collision" width="720" />
+  <br />
+  <em>0.4.0 teaser. Every frame comes from the live validation runs, nothing is mocked up.</em>
+</p>
 
 ## What's new in 0.4.0
 

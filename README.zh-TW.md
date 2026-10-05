@@ -23,7 +23,11 @@
   <a href="#建議-prompt">Prompt</a>
 </p>
 
-<!-- PROMO -->
+<p align="center">
+  <img src="./src/promo/asf-v040-teaser.gif" alt="Agent Sprite Forge 0.4 宣傳預告：紫邊消失、程式碼繪製的史萊姆、含碰撞的地圖" width="720" />
+  <br />
+  <em>0.4.0 預告：每一幀都來自實機驗證的真實輸出，不是示意圖。</em>
+</p>
 
 ## 0.4.0 新功能
 
