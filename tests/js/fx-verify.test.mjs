@@ -13,7 +13,9 @@ import { fileURLToPath } from 'node:url';
 import { RecordingContext, scanSource, stripComments, verifyFxModule } from '../../skills/codeart2d/scripts/fx_verify.mjs';
 
 const TEMPLATE = fileURLToPath(new URL('../../skills/codeart2d/references/runtime/fx-template.mjs', import.meta.url));
-const SOURCE = readFileSync(TEMPLATE, 'utf8');
+// Mutants match multi-line snippets of the template: normalise CRLF first, so a checkout with
+// core.autocrlf=true (the template arrives as CRLF) builds the same mutants as an LF checkout (D32).
+const SOURCE = readFileSync(TEMPLATE, 'utf8').replace(/\r\n/g, '\n');
 const WORK = mkdtempSync(path.join(tmpdir(), 'fx-verify-'));
 after(() => rmSync(WORK, { recursive: true, force: true }));
 

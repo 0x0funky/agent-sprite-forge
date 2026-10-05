@@ -1,13 +1,15 @@
-"""codeart2d layout_build: vertex-grid terrain, corner-Wang tiles, seeded scatter, exact collision
-rectangles, Appendix C reachability and the map_bundle.v2 it writes (plan B21-T1).
+"""codeart2d layout_build: vertex-grid terrain, corner-Wang tiles, seeded scatter, collision rectangles,
+reachability with the shared forge_nav rules and the map_bundle.v2 it writes (plan B21-T1; integration
+decisions D2-D8).
 
-Everything is synthetic: the meadow example's props are inline PixelSpecs and the Wang tilesets are
-built here from flat quadrant colours. Independent re-implementations of the Appendix C validity
-test and of the blocked raster cross-check the tool instead of trusting its own QA.
+Everything is synthetic: the meadow example's props are inline PixelSpecs, the Wang tilesets are built
+here from flat quadrant colours or by autotile_build from a small material spec. An independent
+re-implementation of the Appendix C validity test and of the D2 blocking set (collision solids and
+rects, object footprints mirrored and scaled per D6/D7) cross-checks the tool and forge_nav instead of
+trusting either one's own QA.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import itertools
 import json
@@ -25,169 +27,15 @@ from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract,
 SKILL = "codeart2d"
 SCRIPT = script_path(SKILL, "layout_build")
 MEADOW = SKILLS_DIR / SKILL / "examples" / "meadow-layout.json"
-SCHEMAS = SKILLS_DIR / SKILL / "references" / "schemas"
 layout_build = load_script(SKILL, "layout_build")
-
-# --------------------------------------------------------------------------- proposed schema additions
-# Handoff section 5 requests these additions; tests validate against the vendored schemas with them
-# applied in memory (additionalProperties is already true, so the frozen schemas accept the documents).
-PROPOSED_MAP_DEFS = {
-    "vertex_grid_v1": {
-        "description": "Terrain materials on the (W+1) x (H+1) vertex grid of a tile map (map_bundle_v2 "
-                       "terrain.vertex_grid). data[row][column] indexes materials; tile (x, y) has corners "
-                       "[data[y][x], data[y][x+1], data[y+1][x], data[y+1][x+1]] = [top_left, top_right, "
-                       "bottom_left, bottom_right], the tileset_v1 wang order. Each vertex owns the tile-sized "
-                       "square centred on it.",
-        "type": "object",
-        "required": ["schema", "size", "materials", "data"],
-        "properties": {
-            "schema": {"const": "generate2dmap.vertex_grid.v1"},
-            "size": {"$ref": "common.schema.json#/$defs/size2"},
-            "tile_size": {"anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/size2"}]},
-            "materials": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-            "base": {"type": "string", "minLength": 1},
-            "data": {"type": "array", "minItems": 2,
-                     "items": {"type": "array", "minItems": 2, "items": {"type": "integer", "minimum": 0}}},
-        },
-    },
-}
-PROPOSED_BUNDLE_PROPERTIES = {
-    "id": {"type": "string", "minLength": 1},
-    "props": {"type": "object", "additionalProperties": {"$ref": "#/$defs/propItem"}},
-    "roads": {"type": "array", "items": {
-        "type": "object", "required": ["id", "polyline"],
-        "properties": {"id": {"type": "string", "minLength": 1}, "material": {"type": "string", "minLength": 1},
-                       "width": {"type": "number", "exclusiveMinimum": 0},
-                       "polyline": {"type": "array", "minItems": 2,
-                                    "items": {"$ref": "common.schema.json#/$defs/point2"}}}}},
-    "provenance": {"$ref": "common.schema.json#/$defs/provenance"},
-}
-PROPOSED_COLLISION_PROPERTIES = {"rectCell": {"type": "number", "exclusiveMinimum": 0}}
-PROPOSED_OBJECT_PROPERTIES = {"kind": {"type": "string", "minLength": 1}, "flip_x": {"type": "boolean"},
-                              "group": {"type": "string", "minLength": 1}}
-PROPOSED_PORTAL_PROPERTIES = {"edge": {"enum": ["west", "east", "north", "south"]}}
-PROPOSED_SOLID_PROPERTIES = {"material": {"type": "string", "minLength": 1}}
-PROPOSED_CODEART_DEFS = {
-    "layout_spec_v1": {
-        "description": "Input of layout_build.py. size is in tiles; terrain shapes use tile (vertex) "
-                       "coordinates and paint in order; objects, spawns, interactions, scatter regions and "
-                       "clearances are world pixels.",
-        "type": "object",
-        "required": ["schema", "size", "materials"],
-        "properties": {
-            "schema": {"const": "codeart2d.layout_spec.v1"},
-            "map_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
-            "size": {"$ref": "common.schema.json#/$defs/size2"},
-            "tile_size": {"type": "integer", "minimum": 2},
-            "seed": {"type": "integer", "minimum": 0},
-            "materials": {"type": "object", "minProperties": 1, "additionalProperties": {
-                "type": "object", "required": ["color"],
-                "properties": {"color": {"$ref": "common.schema.json#/$defs/hexColor"},
-                               "walkable": {"type": "boolean"}, "priority": {"type": "number"}}}},
-            "base": {"type": "string", "minLength": 1},
-            "terrain": {"type": "array", "items": {
-                "type": "object", "required": ["shape", "material"],
-                "properties": {"id": {"type": "string"}, "shape": {"enum": ["ellipse", "rect", "polygon", "road"]},
-                               "material": {"type": "string"},
-                               "center": {"$ref": "common.schema.json#/$defs/point2"},
-                               "radius": {"anyOf": [{"type": "number", "exclusiveMinimum": 0},
-                                                    {"$ref": "common.schema.json#/$defs/point2"}]},
-                               "rotate": {"type": "number"}, "wobble": {"type": "number", "minimum": 0},
-                               "box": {"type": "array", "items": {"type": "number"}, "minItems": 4, "maxItems": 4},
-                               "points": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/point2"}},
-                               "width": {"type": "number", "exclusiveMinimum": 0}, "smooth": {"type": "boolean"}}}},
-            "hygiene": {"type": "object", "properties": {"saddles": {"type": "boolean"},
-                                                         "specks": {"type": "boolean"}}},
-            "actor": {"type": "object", "properties": {"radius": {"type": "number", "exclusiveMinimum": 0},
-                                                       "ySquash": {"type": "number", "exclusiveMinimum": 0}}},
-            "prop_pack": {"$ref": "common.schema.json#/$defs/relPath"},
-            "props": {"type": "object", "additionalProperties": {
-                "type": "object",
-                "properties": {"image": {"$ref": "common.schema.json#/$defs/relPath"},
-                               "pixelspec": {"anyOf": [{"$ref": "#/$defs/pixelspec_v1"},
-                                                       {"$ref": "common.schema.json#/$defs/relPath"}]},
-                               "pack": {"type": "string"}, "variants": {"type": "array", "minItems": 1},
-                               "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
-                               "size": {"$ref": "common.schema.json#/$defs/size2"},
-                               "color": {"$ref": "common.schema.json#/$defs/hexColor"},
-                               "footprint": {"$ref": "map.schema.json#/$defs/footprint"},
-                               "solid": {"type": "boolean"}, "occlusion": {"enum": ["low", "tall", "foreground"]},
-                               "flip": {"type": "boolean"}, "scale": {"type": "number", "exclusiveMinimum": 0},
-                               "interactions": {"type": "array", "items": {
-                                   "type": "object", "required": ["name"],
-                                   "properties": {"name": {"type": "string"},
-                                                  "offset": {"$ref": "common.schema.json#/$defs/point2"},
-                                                  "reach": {"type": "number", "exclusiveMinimum": 0}}}}}}},
-            "objects": {"type": "array", "items": {
-                "type": "object", "required": ["id", "prop", "x", "y"],
-                "properties": {"id": {"type": "string"}, "prop": {"type": "string"}, "x": {"type": "number"},
-                               "y": {"type": "number"}, "flip_x": {"type": "boolean"},
-                               "scale": {"type": "number", "exclusiveMinimum": 0},
-                               "variant": {"type": "integer", "minimum": 0}}}},
-            "scatter": {"type": "array", "items": {
-                "type": "object", "required": ["kinds", "count", "spacing"],
-                "properties": {"id": {"type": "string"},
-                               "kinds": {"type": "object", "minProperties": 1,
-                                         "additionalProperties": {"type": "number", "exclusiveMinimum": 0}},
-                               "count": {"type": "integer", "minimum": 0},
-                               "spacing": {"type": "number", "exclusiveMinimum": 0},
-                               "attempts": {"type": "integer", "minimum": 1},
-                               "density": {"type": "object"}, "clearance": {"type": "object"},
-                               "near": {"type": "object"},
-                               "region": {"type": "array", "items": {"type": "number"},
-                                          "minItems": 4, "maxItems": 4}}}},
-            "exits": {"type": "array", "items": {
-                "type": "object", "required": ["id", "edge", "to"],
-                "properties": {"id": {"type": "string"}, "edge": {"enum": ["west", "east", "north", "south"]},
-                               "road": {"type": "string"},
-                               "span": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
-                               "to": {"type": "string", "minLength": 1},
-                               "depth": {"type": "number", "exclusiveMinimum": 0},
-                               "radius": {"type": "number", "minimum": 0}, "arrival": {"type": "string"}}}},
-            "spawns": {"type": "array", "items": {"type": "object", "required": ["id", "x", "y"]}},
-            "interactions": {"type": "array", "items": {"type": "object", "required": ["id", "x", "y"]}},
-        },
-    },
-}
-
-
-def _registry(patch):
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in sorted(SCHEMAS.glob("*.schema.json"))}
-    schemas = copy.deepcopy(schemas)
-    patch(schemas)
-    registry = Registry().with_resources(
-        (schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas.values())
-    return schemas, registry
-
-
-def apply_proposed(schemas):
-    defs = schemas["map"]["$defs"]
-    defs.update(copy.deepcopy(PROPOSED_MAP_DEFS))
-    defs["map_bundle_v2"]["properties"].update(copy.deepcopy(PROPOSED_BUNDLE_PROPERTIES))
-    defs["collision"]["properties"].update(copy.deepcopy(PROPOSED_COLLISION_PROPERTIES))
-    defs["mapObject"]["properties"].update(copy.deepcopy(PROPOSED_OBJECT_PROPERTIES))
-    defs["portal"]["properties"].update(copy.deepcopy(PROPOSED_PORTAL_PROPERTIES))
-    defs["solid"]["properties"].update(copy.deepcopy(PROPOSED_SOLID_PROPERTIES))
-    schemas["codeart"]["$defs"].update(copy.deepcopy(PROPOSED_CODEART_DEFS))
-
-
-def assert_valid_proposed(instance, domain, name):
-    from jsonschema import Draft202012Validator
-
-    schemas, registry = _registry(apply_proposed)
-    validator = Draft202012Validator({"$ref": f"{schemas[domain]['$id']}#/$defs/{name}"}, registry=registry)
-    errors = [f"{error.json_path}: {error.message}" for error in validator.iter_errors(instance)]
-    assert not errors, f"{domain}/{name} (with the proposed additions):\n  " + "\n  ".join(errors)
+forge_nav = load_script(SKILL, "forge_nav")
+codeart_core = load_script(SKILL, "codeart_core")
 
 
 # --------------------------------------------------------------------------- independent checks
 
 def contains(solid, xs, ys):
-    """Closed point-in-solid test written independently of layout_build (plan Appendix C solids)."""
+    """Closed point-in-solid test written independently of layout_build and forge_nav (D1 solids)."""
     if solid["shape"] == "rect":
         return ((xs >= solid["x"]) & (xs <= solid["x"] + solid["w"])
                 & (ys >= solid["y"]) & (ys <= solid["y"] + solid["h"]))
@@ -205,18 +53,55 @@ def contains(solid, xs, ys):
     return inside
 
 
-def valid_points(xs, ys, bundle):
-    """Plan Appendix C: the point and 8 samples of the footprint ellipse inside the map, outside every solid."""
+def placed_footprint(obj, prop):
+    """D6/D7, written here independently: the object's (else the prop's) footprint in prop pixels,
+    mirrored around the anchor for flip_x, scaled once by the object scale; None when it does not block."""
+    footprint = obj.get("footprint", prop.get("footprint"))
+    solid = obj.get("solid", prop.get("solid"))
+    if not footprint or footprint["shape"] not in ("ellipse", "rect") or solid is False:
+        return None
+    assert footprint.get("basis", "prop_px") == "prop_px"
+    k = obj.get("scale", 1)
+    ox, oy = footprint.get("offset", [0, 0])
+    rotate = footprint.get("rotate", 0)
+    if obj.get("flip_x"):
+        ox, rotate = -ox, -rotate
+    cx, cy, width, depth = obj["x"] + k * ox, obj["y"] + k * oy, k * footprint["width"], k * footprint["depth"]
+    if footprint["shape"] == "ellipse":
+        return {"shape": "ellipse", "cx": cx, "cy": cy, "rx": width / 2, "ry": depth / 2, "rotate": rotate}
+    assert rotate == 0, "the examples here use axis-aligned rect footprints"
+    return {"shape": "rect", "x": cx - width / 2, "y": cy - depth / 2, "w": width, "h": depth}
+
+
+def blockers(bundle, *, rects=True):
+    """The D2 blocking set of a bundle without tilesets: collision.solids, collision.rects and the
+    footprints of solid objects (nothing else is written by layout_build when it has no tileset)."""
+    collision = bundle["collision"]
+    found = list(collision.get("solids", []))
+    if rects:
+        found += [{"shape": "rect", "x": x, "y": y, "w": w, "h": h} for x, y, w, h in collision.get("rects", [])]
+    for obj in bundle["objects"]:
+        solid = placed_footprint(obj, bundle["props"][obj["prop"]])
+        if solid is not None:
+            found.append(solid)
+    return found
+
+
+def valid_points(xs, ys, bundle, *, rects=True):
+    """Plan Appendix C: the point and 8 samples of the footprint ellipse inside the map, outside every
+    blocker. The samples are the rule book's (forge_nav N2: the diagonal uses Math.SQRT1_2)."""
     collision = bundle["collision"]
     radius, squash = collision["actorRadius"], collision.get("ySquash", 1.0)
     width, height = bundle["world"]["width"], bundle["world"]["height"]
+    shapes = blockers(bundle, rects=rects)
     ok = np.ones(np.shape(xs), bool)
-    offsets = [(0.0, 0.0)] + [(radius * math.cos(k * math.pi / 4), radius * squash * math.sin(k * math.pi / 4))
-                              for k in range(8)]
+    rx, ry, root_half = radius, radius * squash, 0.7071067811865476
+    dx, dy = rx * root_half, ry * root_half
+    offsets = [(0.0, 0.0), (rx, 0.0), (dx, dy), (0.0, ry), (-dx, dy), (-rx, 0.0), (-dx, -dy), (0.0, -ry), (dx, -dy)]
     for dx, dy in offsets:
         sx, sy = xs + dx, ys + dy
         ok &= (sx >= 0) & (sx <= width) & (sy >= 0) & (sy <= height)
-        for solid in collision["solids"]:
+        for solid in shapes:
             ok &= ~contains(solid, sx, sy)
     return ok
 
@@ -226,24 +111,29 @@ def rect_distance(x, y, rect):
     return math.hypot(max(rx - x, 0.0, x - (rx + rw)), max(ry - y, 0.0, y - (ry + rh)))
 
 
-def independent_reachability(bundle, start):
-    """BFS over cell centres (cell = max(1, round_half_up(r / 2))) with the independent validity test."""
-    from scipy import ndimage
-
+def node_lattice(bundle):
     radius = bundle["collision"]["actorRadius"]
     cell = max(1, int(math.floor(radius / 2.0 + 0.5)))
     width, height = bundle["world"]["width"], bundle["world"]["height"]
-    columns, rows = int(math.ceil(width / cell - 0.5)), int(math.ceil(height / cell - 0.5))
+    columns, rows = max(1, math.ceil(width / cell)), max(1, math.ceil(height / cell))  # forge_nav N12
     xs, ys = np.meshgrid((np.arange(columns) + 0.5) * cell, (np.arange(rows) + 0.5) * cell)
+    return cell, xs, ys
+
+
+def independent_reachability(bundle, start):
+    """4-neighbour components of the valid node centres (no segment rule): a superset of forge_nav's reach."""
+    from scipy import ndimage
+
+    cell, xs, ys = node_lattice(bundle)
     valid = valid_points(xs, ys, bundle)
     labels, _ = ndimage.label(valid)
     row, col = int(start[1] // cell), int(start[0] // cell)
-    candidates = [(math.hypot((c + 0.5) * cell - start[0], (r + 0.5) * cell - start[1]), r, c)
+    candidates = [(math.hypot(xs[r, c] - start[0], ys[r, c] - start[1]), r, c)
                   for r in range(row - 2, row + 3) for c in range(col - 2, col + 3)
-                  if 0 <= r < rows and 0 <= c < columns and valid[r, c]]
-    assert candidates, "start point has no valid cell nearby"
+                  if 0 <= r < valid.shape[0] and 0 <= c < valid.shape[1] and valid[r, c]]
+    assert candidates, "start point has no valid node nearby"
     _, r0, c0 = min(candidates)
-    return labels == labels[r0, c0], xs, ys
+    return labels == labels[r0, c0], valid, xs, ys
 
 
 def sha256_of(path: Path) -> str:
@@ -346,11 +236,33 @@ def test_errors_are_one_line_and_ascii(tmp_path):
     for spec, needle in ((dict(small_spec(), schema="other"), "schema"),
                          (small_spec(exits=[{"id": "x", "edge": "west", "to": "a"}]), "road"),
                          (small_spec(terrain=[{"shape": "road", "material": "lava", "points": [[0, 0], [1, 1]]}]),
-                          "unknown material")):
+                          "unknown material"),
+                         (small_spec(scatter=[{"id": "huge", "kinds": {"tree": 1}, "count": 10_000_000,
+                                               "spacing": 20}]), "limited to")):
         result = build(write_spec(tmp_path, spec), tmp_path / "never")
         assert result.returncode == 1 and result.stderr.startswith("error:") and needle in result.stderr
         assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
         assert not (tmp_path / "never").exists()
+
+
+def test_usage_errors_exit_2_and_malformed_specs_never_trace_back(tmp_path):
+    """D26: argument errors are argparse usage errors (exit 2); D27: malformed input is one error line."""
+    spec = write_spec(tmp_path, small_spec())
+    for extra in (["--seed", "-1"], ["--seed", "x"], ["--rect-cell", "0"], ["--rect-cell", "nan"]):
+        result = build(spec, tmp_path / "never", *extra)
+        assert result.returncode == 2 and "usage:" in result.stderr and "error:" in result.stderr, extra
+    bom = tmp_path / "bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + json.dumps(small_spec(scatter=[])).encode("utf-8"))
+    assert build(bom, tmp_path / "bom").returncode == 0, "D28: a spec with a UTF-8 BOM is read"
+    for index, text in enumerate(['[1, 2]', '{"schema": "codeart2d.layout_spec.v1", "size": "big"}',
+                                  json.dumps(small_spec(props={"tree": {"footprint": [1, 2]}})),
+                                  json.dumps(small_spec(objects=[{"id": "o", "prop": "tree", "x": "1", "y": 0}])),
+                                  json.dumps(small_spec(spawns=[{"id": "s", "x": None, "y": 0}])), "{", "\xff"]):
+        path = tmp_path / f"bad-{index}.json"
+        path.write_bytes(text.encode("latin-1"))
+        result = build(path, tmp_path / f"out-{index}")
+        assert result.returncode == 1 and "Traceback" not in result.stderr, (index, result.stderr)
+        assert result.stderr.startswith("error:") and "internal error" not in result.stderr, (index, result.stderr)
 
 
 def test_reference_commands_are_single_line_and_use_real_flags():
@@ -376,7 +288,7 @@ def test_meadow_passes_and_every_exit_is_reachable(meadow):
     assert qa["status"] == "pass", [c for c in qa["checks"] if c["status"] != "pass"]
     assert {portal["id"] for portal in bundle["portals"]} == {"exit-west", "exit-east", "exit-north"}
     spawns = {spawn["id"]: spawn for spawn in bundle["spawns"]}
-    reach, xs, ys = independent_reachability(bundle, (spawns["start"]["x"], spawns["start"]["y"]))
+    reach, _, xs, ys = independent_reachability(bundle, (spawns["start"]["x"], spawns["start"]["y"]))
     for portal in bundle["portals"]:
         assert portal["activation"] == "intent" and portal["latch"] and portal["requiresMovement"]
         near = [rect_distance(x, y, portal["rect"]) <= portal["radius"]
@@ -393,32 +305,42 @@ def test_meadow_passes_and_every_exit_is_reachable(meadow):
         assert np.any(np.hypot(xs[reach] - item["x"], ys[reach] - item["y"]) <= item["reach"]), item["id"]
 
 
-def test_nav_is_never_more_permissive_than_appendix_c(tmp_path, meadow):
-    """The tool also checks move midpoints, so its reachable cells are a subset of the independent BFS."""
-    bundle = load_output(meadow["a"])["map-bundle.json"]
-    reach, _, _ = independent_reachability(bundle, (300, 216))
-    solids = layout_build.SolidSet(bundle["collision"]["solids"])
-    walker = layout_build.Walker(solids, (bundle["world"]["width"], bundle["world"]["height"]),
-                                 bundle["collision"]["actorRadius"], bundle["collision"]["ySquash"])
-    lattice = walker.lattice()
-    cells_valid = lattice[0::2, 0::2]
-    xs, ys = np.meshgrid((np.arange(cells_valid.shape[1]) + 0.5) * walker.cell,
-                         (np.arange(cells_valid.shape[0]) + 0.5) * walker.cell)
-    np.testing.assert_array_equal(cells_valid, valid_points(xs, ys, bundle))
+def test_forge_nav_reads_the_bundle_exactly_as_layout_build_proved_it(meadow):
+    """D3/D4, the codeart review's meadow comparison rerun: layout_build's proof is forge_nav on the full
+    blocking set, so a consumer reading the published bundle (map_nav, the runtime, the exporters) gets
+    the same valid nodes and the same reachable nodes. The independent Appendix C test agrees node for
+    node, and forge_nav never reaches more than the 4-neighbour components of the valid nodes."""
+    bundle_path = meadow["a"] / "map-bundle.json"
+    bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
     reported = bundle["provenance"]["params"]["navigation"]
-    assert reported["reachable_cells"] <= int(reach.sum())
-    assert reported["cell"] == walker.cell == 3
+    blocking = forge_nav.read_blocking_set(bundle_path)
+    assert len(blocking.rects) == len(bundle["collision"]["rects"]) and blocking.tiles == []
+    assert len(blocking.footprints) == sum(1 for obj in bundle["objects"] if obj["solid"] and "footprint" in obj)
+    model = blocking.model()
+    grid = forge_nav.build_grid(model)
+    start = next(spawn for spawn in bundle["spawns"] if spawn["id"] == reported["origin"] == "start")
+    nav = forge_nav.navigate(model, [(start["x"], start["y"])], grid)
+    assert int(grid.valid.sum()) == reported["valid_cells"] == bundle["qa"]["reachability"]["valid_cells"]
+    assert int(nav.reachable.sum()) == reported["reachable_cells"]
+    assert grid.cell == reported["cell"] == 3
+    reach, valid, _, _ = independent_reachability(bundle, (start["x"], start["y"]))
+    np.testing.assert_array_equal(grid.valid, valid)
+    assert not np.any(nav.reachable & ~reach)
+    assert reported["reachable_fraction"] >= 0.99
 
 
 def test_rect_union_equals_blocked_set(meadow):
+    """D3: collision.rects cover exactly the rectCell cells whose centre an exact blocker covers (terrain
+    solids and object footprints), are disjoint and merged; they are exact on the vertex squares."""
     bundle = load_output(meadow["a"])["map-bundle.json"]
     collision = bundle["collision"]
     cell = collision["rectCell"]
+    assert cell == bundle["tile_size"] / 2 == bundle["provenance"]["params"]["rect_cell"]
     width, height = bundle["world"]["width"], bundle["world"]["height"]
     columns, rows = math.ceil(width / cell), math.ceil(height / cell)
     xs, ys = np.meshgrid((np.arange(columns) + 0.5) * cell, (np.arange(rows) + 0.5) * cell)
     blocked = np.zeros((rows, columns), bool)
-    for solid in collision["solids"]:
+    for solid in blockers(bundle, rects=False):
         blocked |= contains(solid, xs, ys)
     cover = np.zeros((rows, columns), np.int32)
     for x, y, w, h in collision["rects"]:
@@ -427,6 +349,35 @@ def test_rect_union_equals_blocked_set(meadow):
     assert cover.max() == 1, "rectangles overlap"
     assert sum(w * h for _, _, w, h in collision["rects"]) == int(blocked.sum()) * cell * cell
     assert len(collision["rects"]) < int(blocked.sum()) / 3, "rectangles were not merged"
+    # on the terrain the rects add nothing: every terrain pixel they cover is a vertex-square pixel
+    px, py = np.meshgrid(np.arange(width) + 0.5, np.arange(height) + 0.5)
+    terrain = np.zeros((height, width), bool)
+    for solid in collision["solids"]:
+        terrain |= contains(solid, px, py)
+    footprint = np.zeros((height, width), bool)
+    for solid in blockers(bundle, rects=False)[len(collision["solids"]):]:
+        footprint |= contains(solid, px, py)
+    rect_px = np.zeros((height, width), bool)
+    for x, y, w, h in collision["rects"]:
+        rect_px |= (px >= x) & (px <= x + w) & (py >= y) & (py <= y + h)
+    assert np.all(terrain <= rect_px)
+    extra = rect_px & ~terrain & ~footprint
+    near_footprint = layout_build.forge_core.dilate_square(footprint, int(cell))
+    assert extra.any() and np.all(extra <= near_footprint), "the rects approximate the footprints, cell by cell"
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_raster_rects_union_is_exact(seed):
+    """The rects are forge_core.merge_rects of the raster: disjoint, and their union is the raster."""
+    rng = np.random.default_rng(seed)
+    mask = rng.random((37, 53)) < (0.15 + 0.1 * seed)
+    mask[5:20, 10:30] = True
+    cell = 4.0
+    rects = layout_build.raster_rects(mask, (53 * 4 - 2, 37 * 4), cell)  # the last column is clipped
+    coverage = layout_build.rect_coverage(rects, mask.shape, cell)
+    np.testing.assert_array_equal(coverage > 0, mask)
+    assert coverage.max() <= 1
+    assert all(x + w <= 53 * 4 - 2 for x, _, w, _ in rects)
 
 
 def test_terrain_solids_are_the_exact_vertex_squares(meadow):
@@ -441,15 +392,17 @@ def test_terrain_solids_are_the_exact_vertex_squares(meadow):
     expected = data[np.ix_(pixel_rows, pixel_cols)] == water
     xs, ys = np.meshgrid(np.arange(world_w) + 0.5, np.arange(world_h) + 0.5)
     actual = np.zeros((world_h, world_w), bool)
-    terrain = [solid for solid in bundle["collision"]["solids"] if solid["id"].startswith("terrain-")]
-    assert terrain and all(solid["shape"] == "rect" and solid["material"] == "water" for solid in terrain)
+    terrain = bundle["collision"]["solids"]
+    assert terrain and all(solid["id"].startswith("terrain-") and solid["shape"] == "rect"
+                           and solid["material"] == "water" for solid in terrain)
     for solid in terrain:
         actual |= contains(solid, xs, ys)
     np.testing.assert_array_equal(actual, expected)
 
 
 def test_output_is_seeded(meadow):
-    names = ["map-bundle.json", "terrain-vertices.json", "layout-qa.json", "codeart-meta.json", "preview.png"]
+    names = ["map-bundle.json", "terrain-vertices.json", "layout-qa.json", "codeart-meta.json", "preview.png",
+             "debug.png"]
     names += sorted(f"props/{p.name}" for p in (meadow["a"] / "props").iterdir())
     for name in names:
         assert (meadow["a"] / name).read_bytes() == (meadow["b"] / name).read_bytes(), name
@@ -461,28 +414,35 @@ def test_output_is_seeded(meadow):
 
 
 def test_bundle_and_sidecars_validate(meadow):
+    """D8: the bundle, its props registry (bundleProp, a propItem superset), the vertex grid, the spec and
+    the sidecars validate against the real vendored schemas (no in-memory additions any more)."""
     out = load_output(meadow["a"])
     bundle = out["map-bundle.json"]
     assert_valid_contract(bundle, "map", "map_bundle_v2", skill=SKILL)
-    assert_valid_proposed(bundle, "map", "map_bundle_v2")
     for item in bundle["props"].values():
+        assert_valid_contract(item, "map", "bundleProp", skill=SKILL)
         assert_valid_contract(item, "map", "propItem", skill=SKILL)
         image = meadow["a"] / item["image"]
         assert sha256_of(image) == item["sha256"]
     assert_valid_contract(out["layout-qa.json"], "common", "qaEnvelope", skill=SKILL)
     assert_valid_contract(out["codeart-meta.json"], "codeart", "codeart_meta_v1", skill=SKILL)
-    assert_valid_proposed(out["terrain-vertices.json"], "map", "vertex_grid_v1")
-    assert_valid_proposed(json.loads(MEADOW.read_text(encoding="utf-8")), "codeart", "layout_spec_v1")
+    assert_valid_contract(out["terrain-vertices.json"], "map", "vertex_grid_v1", skill=SKILL)
+    assert_valid_contract(json.loads(MEADOW.read_text(encoding="utf-8")), "codeart", "layout_spec_v1", skill=SKILL)
     for ref in out["layout-qa.json"]["outputs"] + out["codeart-meta.json"]["outputs"]:
         assert sha256_of(meadow["a"] / ref["path"]) == ref["sha256"], ref["path"]
     assert bundle["art_source"] == "code" and bundle["placeholder"] is True  # flat-colour ground, no tileset
     assert out["codeart-meta.json"]["placeholder"] is True
+    assert out["layout-qa.json"]["tool"] == {"name": "layout_build", "version": "0.4.0"}  # D29
+    assert bundle["provenance"]["version"] == "0.4.0"
     assert bundle["layers"][0] == {"name": "ground", "kind": "image", "image": "ground.png",
                                    "sha256": sha256_of(meadow["a"] / "ground.png")}
+    assert re.fullmatch(r"[^:]+", bundle["id"])
     assert not any(re.match(r"[A-Za-z]:|/|\\\\", str(value)) for value in path_values(bundle))
 
 
 def test_prop_variety_mirroring_and_footprints(meadow):
+    """D6/D7: objects carry the prop's footprint unmirrored (basis prop_px) with flip_x and scale; every
+    reader mirrors and scales it once. collision.solids hold only terrain, so nothing blocks twice."""
     bundle = load_output(meadow["a"])["map-bundle.json"]
     scatter = {item["id"]: item for item in bundle["provenance"]["params"]["scatter"]}
     assert scatter["forest"]["placed"] == 70
@@ -490,22 +450,19 @@ def test_prop_variety_mirroring_and_footprints(meadow):
     forest = [o for o in bundle["objects"] if o.get("group") == "forest"]
     assert {o["kind"] for o in forest} == {"tree", "pine"}
     assert {o["flip_x"] for o in forest} == {True, False}
-    solids = {solid["id"]: solid for solid in bundle["collision"]["solids"]}
+    ids = {obj["id"] for obj in bundle["objects"]}
+    assert not ids & {solid.get("id") for solid in bundle["collision"]["solids"]}
     for obj in bundle["objects"]:
-        footprint = obj.get("footprint")
-        if not obj["solid"]:
-            assert obj["id"] not in solids
+        prop = bundle["props"][obj["prop"]]
+        if prop["footprint"]["shape"] == "none":
+            assert "footprint" not in obj and not obj["solid"]
             continue
-        solid = solids[obj["id"]]
-        prop = bundle["props"][obj["prop"]]["footprint"]
-        sign = -1 if obj["flip_x"] else 1
-        assert footprint["offset"] == [sign * prop["offset"][0] if prop["offset"][0] else 0, prop["offset"][1]]
-        if solid["shape"] == "ellipse":
-            assert solid["cx"] == pytest.approx(obj["x"] + footprint["offset"][0] * obj["scale"])
-            assert solid["rx"] == pytest.approx(footprint["width"] * obj["scale"] / 2)
-            assert solid["ry"] == pytest.approx(footprint["depth"] * obj["scale"] / 2)
-        else:
-            assert solid["w"] == pytest.approx(footprint["width"] * obj["scale"])
+        assert obj["footprint"] == prop["footprint"] and obj["footprint"]["basis"] == "prop_px"
+        mine = placed_footprint(obj, prop)
+        theirs = forge_nav.object_solid(obj, prop)
+        for key in ("cx", "cy", "rx", "ry", "x", "y", "w", "h"):
+            if key in mine:
+                assert theirs[key] == pytest.approx(mine[key], abs=1e-12), (obj["id"], key)
     # ground-line draw order data: sortY is the anchor line
     assert all(obj["sortY"] == obj["y"] for obj in bundle["objects"])
 
@@ -533,7 +490,7 @@ QUADRANT_COLOURS = {"grass": (90, 163, 68), "path": (199, 157, 98), "water": (44
 
 def write_wang_tileset(folder: Path, materials, tile: int = 16, variants: int = 3) -> Path:
     """A complete corner-Wang tileset whose tile quadrants take their corner's colour (exact seams by
-    construction); full tiles get interior variants marked by a centre dot."""
+    construction); full tiles get interior variants marked by a centre dot. It states no collision."""
     images, tiles = [], []
     half = tile // 2
     for combo in itertools.product(range(len(materials)), repeat=4):
@@ -560,7 +517,8 @@ def write_wang_tileset(folder: Path, materials, tile: int = 16, variants: int = 
     folder.mkdir(parents=True, exist_ok=True)
     Image.fromarray(atlas).save(folder / f"{name}.png")
     manifest = {"schema": "generate2dmap.tileset.v1", "image": f"{name}.png", "tile_size": tile, "columns": columns,
-                "kind": "wang_corner", "materials": list(materials), "tiles": tiles, "seamless_verified": False}
+                "kind": "wang_corner", "materials": list(materials), "tiles": tiles, "seamless_verified": False,
+                "qa": "missing-qa.json"}
     assert_valid_contract(manifest, "map", "tileset_v1", skill=SKILL)
     path = folder / f"{name}.tileset.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -596,6 +554,8 @@ def test_two_wang_sets_autotile_hygiene_and_seams(tmp_path):
         entry = next(t for t in bundle["tilesets"] if t["id"] == layer["tileset"])
         manifest = json.loads((out / entry["manifest"]).read_text(encoding="utf-8"))
         assert sha256_of(out / entry["manifest"]) == entry["sha256"]
+        assert "qa" not in manifest  # D5: the source's qa reference does not travel with the copy
+        assert_valid_contract(manifest, "map", "tileset_v1", skill=SKILL)
         atlas = np.asarray(Image.open(out / Path(entry["manifest"]).parent / manifest["image"]).convert("RGBA"))
         by_index = {tile["index"]: tile for tile in manifest["tiles"]}
         indices = np.array(layer["data"])
@@ -624,6 +584,138 @@ def test_two_wang_sets_autotile_hygiene_and_seams(tmp_path):
     assert bundle["art_source"] == "mixed"
 
 
+def test_tiles_without_collision_get_the_vertex_square_rule_in_the_copy(tmp_path):
+    """D5 fallback: a tileset that states no per-tile collision gets each non-walkable corner's quadrant
+    written into the bundle's copy. The bundle then has no terrain solids, forge_nav's tile collision is
+    exactly the vertex squares, and the rects are exact on them."""
+    tiles = write_wang_tileset(tmp_path / "tiles", ["grass", "water"], variants=1)
+    spec = small_spec(terrain=[{"id": "pond", "shape": "ellipse", "material": "water", "center": [10, 6],
+                                "radius": [3.5, 2.5]}],
+                      exits=[{"id": "west", "edge": "west", "span": [4, 8], "to": "a"}], scatter=[],
+                      materials={"grass": {"color": "#5aa344"}, "water": {"color": "#2c62ab", "walkable": False}})
+    out = tmp_path / "map"
+    result = build(write_spec(tmp_path, spec), out, "--tiles", tiles, "--strict-qc")
+    assert result.returncode == 0, result.stderr
+    bundle = json.loads((out / "map-bundle.json").read_text(encoding="utf-8"))
+    assert bundle["collision"]["solids"] == []
+    report = bundle["provenance"]["params"]["tile_collision"]
+    assert report == {"grass-water": {"source": "derived", "stated": 0, "derived": 16, "conflicts": []}}
+    qa = json.loads((out / "layout-qa.json").read_text(encoding="utf-8"))
+    assert any("state no per-tile collision" in text for text in qa["notProven"])
+    manifest = json.loads((out / bundle["tilesets"][0]["manifest"]).read_text(encoding="utf-8"))
+    full = next(tile for tile in manifest["tiles"] if tile["wang"] == [1, 1, 1, 1])
+    assert full["collision"] == [{"shape": "rect", "x": 0, "y": 0, "w": 16, "h": 16}]
+    assert full["properties"] == {"walkable": False}
+    blocking = forge_nav.read_blocking_set(out / "map-bundle.json")
+    grid = json.loads((out / "terrain-vertices.json").read_text(encoding="utf-8"))
+    data = np.array(grid["data"])
+    world_w, world_h = bundle["world"]["width"], bundle["world"]["height"]
+    pixel_cols = np.floor((np.arange(world_w) + 0.5) / 16 + 0.5).astype(int)
+    pixel_rows = np.floor((np.arange(world_h) + 0.5) / 16 + 0.5).astype(int)
+    expected = data[np.ix_(pixel_rows, pixel_cols)] == grid["materials"].index("water")
+    xs, ys = np.meshgrid(np.arange(world_w) + 0.5, np.arange(world_h) + 0.5)
+    actual = np.zeros((world_h, world_w), bool)
+    for solid in blocking.tiles:
+        actual |= contains(solid, xs, ys)
+    np.testing.assert_array_equal(actual, expected)
+    assert bundle["collision"]["rectCell"] == 8 and not blocking.footprints
+    rect_px = np.zeros((world_h, world_w), bool)
+    for x, y, w, h in bundle["collision"]["rects"]:
+        rect_px |= (xs >= x) & (xs <= x + w) & (ys >= y) & (ys <= y + h)
+    np.testing.assert_array_equal(rect_px, expected)
+
+
+SHORE_SPEC = {
+    "schema": "codeart2d.material_spec.v1", "tile_size": 16, "variants": 1, "seed": 3,
+    "materials": {
+        "water": {"ramp": ["#1d3d73", "#2c62ab", "#4b98dc", "#a5dcf5"], "walkable": False,
+                  "texture": {"base": 1}},
+        "grass": {"ramp": ["#23502f", "#377a3b", "#5aa344", "#8cc657"], "texture": {"base": 2}},
+    },
+    "sets": [{"kind": "wang_corner", "materials": ["water", "grass"]}],
+}
+
+
+def test_autotile_collision_is_the_bundle_collision(tmp_path):
+    """D5 with real autotile_build output: the placed tiles' own collision (blended shore at the set's
+    collision_cell) is the terrain collision for forge_nav, the runtime and export_tiled alike. No vertex
+    square is written, rectCell is the collision cell, the rects reproduce the tile collision exactly,
+    and the copied manifest drops its qa fileRef while the QA file joins the provenance inputs."""
+    spec_path = tmp_path / "shore.material.json"
+    spec_path.write_text(json.dumps(SHORE_SPEC), encoding="utf-8")
+    tiles_out = tmp_path / "tiles"
+    made = run_cli([script_path(SKILL, "autotile_build"), "--material-spec", spec_path, "--output-dir", tiles_out,
+                    "--preview-map", "none", "--strict-qc"], timeout=600)
+    assert made.returncode == 0, made.stderr
+    (manifest_path,) = sorted(tiles_out.glob("*.tileset.json"))
+    source = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert source["qa"]["path"] == "autotile-qa.json"
+    layout = small_spec(materials={"grass": {"color": "#5aa344"}, "water": {"color": "#2c62ab", "walkable": False}},
+                        terrain=[{"id": "pond", "shape": "ellipse", "material": "water", "center": [10, 6],
+                                  "radius": [4.2, 3.1], "wobble": 0.5}],
+                        exits=[{"id": "west", "edge": "west", "span": [4, 8], "to": "a"},
+                               {"id": "east", "edge": "east", "span": [4, 8], "to": "b"}], scatter=[],
+                        spawns=[{"id": "start", "x": 30, "y": 96}])
+    out = tmp_path / "map"
+    result = build(write_spec(tmp_path, layout), out, "--tiles", manifest_path, "--preview", "--strict-qc")
+    assert result.returncode == 0, result.stderr
+    bundle = json.loads((out / "map-bundle.json").read_text(encoding="utf-8"))
+    assert_valid_contract(bundle, "map", "map_bundle_v2", skill=SKILL)
+    assert bundle["collision"]["solids"] == []
+    report = bundle["provenance"]["params"]["tile_collision"]
+    (entry,) = report.values()
+    assert entry["source"] == "manifest" and entry["conflicts"] == [] and entry["derived"] == 0
+    copy = json.loads((out / bundle["tilesets"][0]["manifest"]).read_text(encoding="utf-8"))
+    assert "qa" not in copy and copy["tiles"] == source["tiles"]
+    inputs = {Path(ref["path"]).name for ref in bundle["provenance"]["inputs"]}
+    assert {"autotile-qa.json", manifest_path.name} <= inputs
+    cell = bundle["collision"]["rectCell"]
+    assert cell == 4  # autotile_build's collision_cell (tile // 4)
+    blocking = forge_nav.read_blocking_set(out / "map-bundle.json")
+    world_w, world_h = bundle["world"]["width"], bundle["world"]["height"]
+    xs, ys = np.meshgrid(np.arange(world_w) + 0.5, np.arange(world_h) + 0.5)
+    tile_px = np.zeros((world_h, world_w), bool)
+    layer = next(layer for layer in bundle["layers"] if layer["kind"] == "tiles")
+    by_index = {tile["index"]: tile for tile in copy["tiles"]}
+    for (row, col), index in np.ndenumerate(np.array(layer["data"])):
+        for shape in by_index[int(index)]["collision"]:
+            tile_px[row * 16 + shape["y"]:row * 16 + shape["y"] + shape["h"],
+                    col * 16 + shape["x"]:col * 16 + shape["x"] + shape["w"]] = True
+    forge_px = np.zeros((world_h, world_w), bool)
+    for solid in blocking.tiles:
+        forge_px |= contains(solid, xs, ys)
+    np.testing.assert_array_equal(forge_px, tile_px)
+    rect_px = np.zeros((world_h, world_w), bool)
+    for x, y, w, h in bundle["collision"]["rects"]:
+        rect_px |= (xs >= x) & (xs <= x + w) & (ys >= y) & (ys <= y + h)
+    np.testing.assert_array_equal(rect_px, tile_px)
+    assert tile_px.any() and not tile_px.all()
+
+
+def test_tile_collision_that_contradicts_the_layout_warns(tmp_path):
+    """The tileset stays authoritative (D5), but a full water tile that does not block while the layout
+    calls water non-walkable is reported as a warning."""
+    tiles = write_wang_tileset(tmp_path / "tiles", ["grass", "water"], variants=1)
+    manifest = json.loads(tiles.read_text(encoding="utf-8"))
+    for tile in manifest["tiles"]:
+        tile["collision"] = []  # states that nothing blocks, water included
+    tiles.write_text(json.dumps(manifest), encoding="utf-8")
+    spec = small_spec(materials={"grass": {"color": "#5aa344"}, "water": {"color": "#2c62ab", "walkable": False}},
+                      terrain=[{"id": "pond", "shape": "ellipse", "material": "water", "center": [10, 6],
+                                "radius": [3.5, 2.5]}],
+                      exits=[{"id": "west", "edge": "west", "span": [4, 8], "to": "a"}], scatter=[])
+    out = tmp_path / "map"
+    assert build(write_spec(tmp_path, spec), out, "--tiles", tiles).returncode == 0
+    qa = json.loads((out / "layout-qa.json").read_text(encoding="utf-8"))
+    check = next(check for check in qa["checks"] if check["id"] == "tile_collision")
+    assert check["status"] == "warn" and qa["status"] == "warn"
+    (conflict,) = check["value"]["grass-water"]["conflicts"]
+    assert "'water' is not walkable" in conflict and "blocks none" in conflict
+    assert forge_nav.read_blocking_set(out / "map-bundle.json").tiles == []
+    bundle = json.loads((out / "map-bundle.json").read_text(encoding="utf-8"))
+    assert bundle["collision"]["rectCell"] == 8, "never coarser than the half-tile grid of a map without tiles"
+
+
 def test_hygiene_saddles_specks_and_drawability():
     spec = layout_build.Layout(
         spec_path=Path("x.json"), spec_bytes=b"", map_id="t", width=8, height=8, tile=16, seed=0,
@@ -649,19 +741,12 @@ def test_hygiene_saddles_specks_and_drawability():
     assert np.isin(layout_build._cell_keys(grid, 3), np.array(sorted(keys))).all()
 
 
-def test_distance_fields_without_scipy_are_identical(monkeypatch):
-    rng = np.random.default_rng(5)
-    for trial in range(4):
-        mask = rng.random((41, 67)) < 0.02 * (trial + 1)
-        cap = 9.5
-        monkeypatch.setenv("FORGE_CORE_NO_SCIPY", "1")
-        fallback = layout_build._distance_field(mask, cap)
-        monkeypatch.delenv("FORGE_CORE_NO_SCIPY")
-        np.testing.assert_array_equal(fallback, layout_build._distance_field(mask, cap))
-        ys, xs = np.nonzero(mask)
-        grid_y, grid_x = np.mgrid[0:41, 0:67]
-        brute = np.hypot(grid_x[..., None] - xs, grid_y[..., None] - ys).min(axis=-1)
-        np.testing.assert_array_equal(np.where(brute <= cap, brute, np.inf), fallback)
+def test_scatter_uses_the_shared_distance_field():
+    """The clearance fields come from codeart_core.distance_field (the one Euclidean capped distance of
+    the skill; layout_build and ambient_bake no longer carry their own copies)."""
+    assert layout_build.codeart_core.distance_field is not None
+    assert not any(hasattr(layout_build, name) for name in
+                   ("_local_capped_edt", "_distance_field", "_run_rects", "SolidSet", "Walker", "navigate"))
 
 
 def test_meadow_without_scipy_is_byte_identical(tmp_path, meadow):
@@ -671,19 +756,6 @@ def test_meadow_without_scipy_is_byte_identical(tmp_path, meadow):
     for name in ("map-bundle.json", "terrain-vertices.json"):
         assert (tmp_path / "noscipy" / name).read_bytes() == (meadow["a"] / name).read_bytes().replace(
             b'"preview": true', b'"preview": false'), name
-
-
-@pytest.mark.parametrize("seed", range(6))
-def test_run_rects_union_is_exact(seed):
-    rng = np.random.default_rng(seed)
-    mask = rng.random((37, 53)) < (0.15 + 0.1 * seed)
-    mask[5:20, 10:30] = True
-    rects = layout_build._run_rects(mask)
-    cover = np.zeros(mask.shape, np.int32)
-    for x, y, w, h in rects:
-        cover[y:y + h, x:x + w] += 1
-    np.testing.assert_array_equal(cover > 0, mask)
-    assert cover.max() <= 1
 
 
 def test_thin_gap_follows_actor_size(tmp_path):
@@ -735,8 +807,9 @@ def test_props_from_images_and_pixelspec_keep_anchors(tmp_path):
     assert bundle["props"]["stump"]["anchor_px"] == [5, 11] and bundle["props"]["stump"]["origin"] == "image"
     assert bundle["props"]["berry"]["anchor_px"] == [2.5, 4] and bundle["props"]["berry"]["origin"] == "pixelspec"
     np.testing.assert_array_equal(np.asarray(Image.open(out / "props" / "stump.png").convert("RGBA")), sprite)
-    solids = {solid["id"]: solid for solid in bundle["collision"]["solids"]}
-    assert solids["stump-1"] == {"id": "stump-1", "shape": "rect", "x": 97, "y": 57, "w": 6, "h": 3}
+    stump = next(obj for obj in bundle["objects"] if obj["id"] == "stump-1")
+    assert forge_nav.object_solid(stump, bundle["props"]["stump"]) == {
+        "shape": "rect", "x": 97, "y": 57, "w": 6, "h": 3, "source": "object:stump-1"}
     preview = np.asarray(Image.open(out / "preview.png").convert("RGBA"))
     # sprite top-left = anchor position - anchor_px = (95, 49); its opaque block is rows 2-10, columns 2-7
     np.testing.assert_array_equal(preview[51:60, 97:103, :3], np.broadcast_to((120, 80, 40), (9, 6, 3)))
@@ -747,6 +820,8 @@ def test_props_from_images_and_pixelspec_keep_anchors(tmp_path):
 
 
 def test_fixed_object_mirroring_moves_footprint_and_interaction(tmp_path):
+    """D6: the object stores the prop's footprint (offset [4, -6]) and flip_x; the reader mirrors it, so
+    the blocking rect sits left of the anchor. The door interaction is mirrored by layout_build itself."""
     spec = small_spec(props={"house": {"occlusion": "tall", "size": [40, 36],
                                        "footprint": {"shape": "rect", "width": 30, "depth": 12, "offset": [4, -6]},
                                        "interactions": [{"name": "door", "offset": [6, 2], "reach": 10}]}},
@@ -754,7 +829,10 @@ def test_fixed_object_mirroring_moves_footprint_and_interaction(tmp_path):
     out = tmp_path / "map"
     assert build(write_spec(tmp_path, spec), out).returncode == 0
     bundle = json.loads((out / "map-bundle.json").read_text(encoding="utf-8"))
-    solid = next(s for s in bundle["collision"]["solids"] if s["id"] == "h")
-    assert solid == {"id": "h", "shape": "rect", "x": 160 - 4 - 15, "y": 90 - 6 - 6, "w": 30, "h": 12}
+    house = next(obj for obj in bundle["objects"] if obj["id"] == "h")
+    assert house["flip_x"] is True and house["footprint"]["offset"] == [4, -6]
+    (solid,) = forge_nav.read_blocking_set(out / "map-bundle.json").footprints
+    assert solid == {"shape": "rect", "x": 160 - 4 - 15, "y": 90 - 6 - 6, "w": 30, "h": 12, "source": "object:h"}
+    assert placed_footprint(house, bundle["props"]["house"]) == {k: v for k, v in solid.items() if k != "source"}
     door = next(item for item in bundle["interactions"] if item["id"] == "h.door")
     assert (door["x"], door["y"]) == (154, 92)

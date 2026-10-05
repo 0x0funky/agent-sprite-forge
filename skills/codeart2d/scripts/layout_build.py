@@ -13,17 +13,27 @@ The map is data first. For one spec and seed every output is byte-identical:
 3. objects: fixed placements plus seeded scatter groups (weighted kinds,
    variants, mirroring, Poisson-disk spacing, density noise and clearance from
    roads, blocked terrain, objects, exits and spawns);
-4. collision: blocked terrain as exact half-tile rectangles, prop footprints
-   (scaled once) as ellipse/rect solids, and merged rectangles whose union equals
-   the blocked cell raster;
-5. navigation (plan Appendix C): the actor footprint ellipse is tested at cell
-   centres (cell = max(1, round(r / 2))) and on the midpoint of every
-   4-neighbour move; every exit, spawn and interaction must be reachable from
-   the first spawn, and every exit gets an arrival spawn outside its trigger;
+4. collision, one blocking set for every consumer (integration decisions D2-D5):
+   - terrain: with tilesets, the placed tiles' own per-tile collision
+     (tileset_v1 tiles[].collision, authoritative per D5; a tileset that carries
+     none gets it derived from the layout's material walkability, each corner
+     owning its quadrant, in the bundle's copy of the manifest); without a
+     tileset, the blocked vertex squares as exact rectangles in collision.solids;
+   - props: each object's footprint in prop pixels (written unmirrored, with
+     flip_x and scale, so every reader mirrors and scales it once, D6/D7);
+   - collision.rects: the cells of a rectCell raster whose centre is blocked,
+     merged into disjoint rectangles (forge_core.merge_rects); rectCell defaults
+     to the tile collision grid (exact on terrain) or half a tile (D3);
+5. navigation through the vendored forge_nav (D4) on the bundle's full blocking
+   set, read back the way every consumer reads it: N9 validity at grid nodes
+   (cell = max(1, round(r / 2))), 4-neighbour moves with segmentClear and the
+   thin-gap rule, N14 joins and targets; every exit, spawn and interaction must
+   be reachable from the first spawn, and every exit gets an arrival spawn
+   outside its trigger;
 6. output: map-bundle.json (generate2dmap.map_bundle.v2), terrain-vertices.json,
-   copied tilesets, prop images, optional preview.png and debug.png,
-   layout-qa.json (QA envelope) and codeart-meta.json, staged and published only
-   when complete.
+   copied tilesets (their qa reference dropped, D5), prop images, optional
+   preview.png and debug.png, layout-qa.json (QA envelope) and codeart-meta.json,
+   staged and published only when complete.
 
 Run from the project root:
   python "<skill-dir>/scripts/layout_build.py" --spec meadow-layout.json --output-dir out/map-v1 --seed 7 --preview --strict-qc
@@ -51,10 +61,11 @@ except ImportError as _missing:  # an environment problem: report it without a t
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import codeart_core  # noqa: E402
 import forge_core  # noqa: E402
+import forge_nav  # noqa: E402  (the vendored canonical collision and navigation rules, D4)
 
 
 TOOL = "layout_build"
-TOOL_VERSION = "1.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29
 SPEC_SCHEMA = "codeart2d.layout_spec.v1"
 BUNDLE_SCHEMA = "generate2dmap.map_bundle.v2"
 VERTEX_GRID_SCHEMA = "generate2dmap.vertex_grid.v1"
@@ -70,11 +81,12 @@ CLEARANCE_KEYS = ("road", "blocked", "object", "exit", "spawn", "edge")
 CLEARANCE_DEFAULTS = {"road": 12.0, "blocked": 10.0, "object": 6.0, "exit": 24.0, "spawn": 20.0, "edge": 0.0}
 PLACEHOLDER_COLOURS = {"tall": "#3f7a3a", "low": "#6a9a48", "foreground": "#4d7f3c", "rect": "#9a6b4a"}
 PLACEHOLDER_SIZES = {"tall": (24, 32), "low": (16, 12), "foreground": (16, 10), "rect": (32, 32)}
-SAMPLE_ANGLES = tuple(k * math.pi / 4.0 for k in range(8))
 VARIETY_WARN_SHARE = 0.35
 POCKET_MIN_CELLS = 8
 HYGIENE_MAX_PASSES = 10
 MAX_WORLD_PIXELS = 4096 * 4096
+MAX_RECT_CELLS = 4096 * 4096  # cells of the collision.rects raster (rectCell px each)
+MAX_SCATTER_ATTEMPTS = 250_000  # candidate points per scatter group; bounds memory whatever count says
 FIELD_TARGET_CELLS = 4_000_000
 ID_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
@@ -89,8 +101,7 @@ class LayoutQAError(ValueError):
 
 # ----------------------------------------------------------------------------- small helpers
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
+_round_half_up = forge_core.round_half_up  # floor(x + 0.5), never banker's rounding (D30)
 
 
 def _num(value: float) -> int | float:
@@ -158,24 +169,18 @@ def _hex(colour: Sequence[int]) -> str:
     return codeart_core.rgba_to_hex(tuple(int(v) for v in colour))
 
 
-def _relative(path: Path, base: Path) -> str:
-    """POSIX path of `path` relative to `base`; a file on another drive keeps its name only."""
-    try:
-        return Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:
-        return path.name
-
-
 def _file_ref(path: Path, base: Path) -> dict:
-    return {"path": _relative(path, base), "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+    """forge_core.file_ref: a manifest-relative POSIX path, or the file name across drives (D30)."""
+    return forge_core.file_ref(path, base)
 
 
 def _load_json(path: Path, label: str) -> Any:
+    """UTF-8 JSON with an optional BOM (forge_core.read_json, D28)."""
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        return forge_core.read_json(path)
     except FileNotFoundError:
         raise LayoutError(f"{label} not found: {path}") from None
-    except json.JSONDecodeError as error:
+    except ValueError as error:  # JSONDecodeError and UnicodeDecodeError
         raise LayoutError(f"{label} {path.name} is not valid JSON: {error}") from None
 
 
@@ -194,21 +199,6 @@ def _shade(colour: Sequence[int], factor: float) -> tuple[int, int, int, int]:
 
 
 # ----------------------------------------------------------------------------- geometry
-
-def _inside_polygon(xs: np.ndarray, ys: np.ndarray, polygon: Sequence[Sequence[float]]) -> np.ndarray:
-    """Even-odd point-in-polygon test, vectorised over the points."""
-    inside = np.zeros(np.broadcast(xs, ys).shape, bool)
-    count = len(polygon)
-    for index in range(count):
-        x0, y0 = polygon[index]
-        x1, y1 = polygon[(index + 1) % count]
-        if y0 == y1:
-            continue
-        crosses = (ys >= min(y0, y1)) & (ys < max(y0, y1))
-        x_cross = x0 + (ys - y0) * (x1 - x0) / (y1 - y0)
-        inside ^= crosses & (xs < x_cross)
-    return inside
-
 
 def _catmull_rom(points: Sequence[tuple[float, float]], smooth: bool) -> np.ndarray:
     """Uniform Catmull-Rom spline through `points` (end points repeated), or the polyline itself."""
@@ -244,71 +234,6 @@ def _distance_to_polyline(xs: np.ndarray, ys: np.ndarray, polyline: np.ndarray) 
         distance = np.hypot(px - (a[:, 0] + t * dx), py - (a[:, 1] + t * dy)).min(axis=1)
         np.minimum(flat, distance, out=flat)
     return best
-
-
-def _run_rects(mask: np.ndarray) -> list[tuple[int, int, int, int]]:
-    """Disjoint (column, row, width, height) cell rectangles whose union is exactly `mask`.
-
-    Each row splits into maximal runs; a run with the same span as a rectangle that
-    ended on the previous row extends it downwards. Deterministic, loops over runs only."""
-    rects: list[list[int]] = []
-    open_spans: dict[tuple[int, int], int] = {}
-    padded = np.zeros(mask.shape[1] + 2, np.int8)
-    for row in range(mask.shape[0]):
-        padded[1:-1] = mask[row]
-        edges = np.flatnonzero(np.diff(padded))
-        current: dict[tuple[int, int], int] = {}
-        for start, end in zip(edges[0::2].tolist(), edges[1::2].tolist()):
-            index = open_spans.get((start, end))
-            if index is None:
-                rects.append([start, row, end - start, 1])
-                index = len(rects) - 1
-            else:
-                rects[index][3] += 1
-            current[(start, end)] = index
-        open_spans = current
-    return [tuple(rect) for rect in rects]
-
-
-def _distance_field(mask: np.ndarray, cap: float) -> np.ndarray:
-    """Euclidean distance (in mask cells) from every cell to the nearest True cell, exact up to `cap`
-    and infinity beyond it (or when the mask is empty).
-
-    scipy.ndimage when available (honouring FORGE_CORE_NO_SCIPY), otherwise _local_capped_edt; both
-    give identical values, because every distance compared against a threshold is at most `cap`."""
-    if not mask.any():
-        return np.full(mask.shape, np.inf)
-    ndimage = None
-    if os.environ.get("FORGE_CORE_NO_SCIPY", "") in ("", "0"):
-        try:
-            from scipy import ndimage
-        except ImportError:
-            ndimage = None
-    if ndimage is None:
-        return _local_capped_edt(mask, cap)
-    distance = ndimage.distance_transform_edt(~mask)
-    distance[distance > cap] = np.inf
-    return distance
-
-
-def _local_capped_edt(target: np.ndarray, cap: float) -> np.ndarray:
-    """Exact Euclidean distance to the nearest True cell where it is at most `cap`, else infinity (numpy).
-
-    d^2 = min over columns k of (nearest target in column k)^2 + (x - k)^2; a distance <= cap needs
-    only |x - k| <= cap, so the second pass shifts at most floor(cap) columns each way."""
-    rows = target.shape[0]
-    limit = int(math.floor(cap))
-    index = np.arange(rows, dtype=np.float64)[:, None]
-    above = index - np.maximum.accumulate(np.where(target, index, -np.inf), axis=0)
-    below = np.minimum.accumulate(np.where(target, index, np.inf)[::-1], axis=0)[::-1] - index
-    vertical = np.minimum(above, below)
-    vertical = np.where(vertical <= limit, vertical * vertical, np.inf)
-    best = vertical.copy()
-    for shift in range(1, min(limit, target.shape[1] - 1) + 1):
-        cost = float(shift * shift)
-        np.minimum(best[:, shift:], vertical[:, :-shift] + cost, out=best[:, shift:])
-        np.minimum(best[:, :-shift], vertical[:, shift:] + cost, out=best[:, :-shift])
-    return np.where(best <= cap * cap, np.sqrt(best), np.inf)
 
 
 # ----------------------------------------------------------------------------- spec model
@@ -375,14 +300,6 @@ class Instance:
         left = _round_half_up(self.x - anchor_x * self.scale)
         top = _round_half_up(self.y - self.prop.anchor[1] * self.scale)
         return left, top, width, height
-
-    def footprint(self) -> dict:
-        """The prop footprint as placed: mirrored with the sprite, in prop image pixels."""
-        print_ = dict(self.kind.footprint)
-        if self.flip and print_["shape"] != "none":
-            print_["offset"] = [-print_["offset"][0], print_["offset"][1]]
-            print_["rotate"] = -print_["rotate"]
-        return print_
 
 
 @dataclass
@@ -716,11 +633,16 @@ def _parse_scatter(raw: Any, kinds: dict[str, PropKind], world: tuple[int, int])
                 raise LayoutError(f"{label}.near.{key} must be ordered [min, max]")
             near[key] = (low, high)
         count = _integer(item.get("count"), f"{label}.count", minimum=0)
+        attempts = _integer(item.get("attempts", min(max(200, 40 * count), MAX_SCATTER_ATTEMPTS)),
+                            f"{label}.attempts", minimum=1)
+        if count > MAX_SCATTER_ATTEMPTS or attempts > MAX_SCATTER_ATTEMPTS:
+            raise LayoutError(f"{label}: count and attempts are limited to {MAX_SCATTER_ATTEMPTS} per scatter group "
+                              "(split the scatter into groups with their own regions)")
         groups.append({
             "id": group_id, "kinds": {name: float(weight) for name, weight in weights.items()},
             "count": count,
             "spacing": _finite(item.get("spacing"), f"{label}.spacing", positive=True),
-            "attempts": _integer(item.get("attempts", max(200, 40 * count)), f"{label}.attempts", minimum=1),
+            "attempts": attempts,
             "density": {"scale": _finite(density.get("scale", 96), f"{label}.density.scale", positive=True),
                         "octaves": _integer(density.get("octaves", 2), f"{label}.density.octaves", minimum=1),
                         "threshold": _finite(density.get("threshold", 0.0), f"{label}.density.threshold"),
@@ -809,8 +731,8 @@ def load_layout(spec_path: Path, seed_override: int | None) -> Layout:
     except FileNotFoundError:
         raise LayoutError(f"spec not found: {spec_path}") from None
     try:
-        spec = json.loads(raw_bytes.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        spec = forge_core.parse_json(raw_bytes)  # UTF-8 with an optional BOM (D28)
+    except ValueError as error:  # JSONDecodeError and UnicodeDecodeError
         raise LayoutError(f"spec {spec_path.name} is not valid UTF-8 JSON: {error}") from None
     spec = _mapping(spec, "spec")
     if spec.get("schema") != SPEC_SCHEMA:
@@ -900,7 +822,7 @@ def paint_vertices(layout: Layout) -> tuple[np.ndarray, list[dict]]:
             x0, y0, x1, y1 = op["box"]
             mask = (vx >= x0) & (vx <= x1) & (vy >= y0) & (vy <= y1)
         elif op["shape"] == "polygon":
-            mask = _inside_polygon(vx, vy, op["points"])
+            mask = codeart_core.inside_polygon(vx, vy, op["points"])
         else:
             line = _catmull_rom(op["points"], op["smooth"])
             mask = _distance_to_polyline(vx, vy, line) <= op["width"] / 2.0
@@ -1218,8 +1140,9 @@ def build_fields(layout: Layout, materials_px: np.ndarray, road_materials: set[i
     reach = [value for group in layout.scatter for value in group["clearance"].values()]
     reach += [band[1] for group in layout.scatter for band in group["near"].values()]
     cap = (max(reach, default=0.0) + 2.0 * step) / step  # every compared distance stays below the cap
-    return Fields(step, _distance_field(road, cap), _distance_field(blocked, cap), _distance_field(objects, cap),
-                  _distance_field(exits_mask, cap), _distance_field(spawn, cap), (world_w, world_h))
+    distance = codeart_core.distance_field  # exact Euclidean up to the cap; scipy optional
+    return Fields(step, distance(road, cap), distance(blocked, cap), distance(objects, cap),
+                  distance(exits_mask, cap), distance(spawn, cap), (world_w, world_h))
 
 
 def _value_noise(xs: np.ndarray, ys: np.ndarray, world: tuple[int, int], scale: float, octaves: int,
@@ -1335,8 +1258,9 @@ def _same_look_share(instances: Sequence[Instance], reach: float) -> float | Non
 # ----------------------------------------------------------------------------- collision
 
 def terrain_solids(grid: np.ndarray, layout: Layout) -> list[dict]:
-    """Blocked terrain as exact rectangles: the union of tile-sized squares centred on vertices of
-    non-walkable materials, merged per material on the half-tile grid and clipped to the map."""
+    """Blocked terrain of a map without tilesets: the union of tile-sized squares centred on vertices
+    of non-walkable materials, as exact rectangles merged per material on the half-tile grid
+    (forge_core.merge_rects) and clipped to the map."""
     half = layout.tile / 2.0
     rows = (np.arange(2 * layout.height) + 1) // 2
     cols = (np.arange(2 * layout.width) + 1) // 2
@@ -1345,103 +1269,155 @@ def terrain_solids(grid: np.ndarray, layout: Layout) -> list[dict]:
     for material in layout.materials:
         if material.walkable:
             continue
-        for number, (col, row, width, height) in enumerate(_run_rects(halves == material.index), 1):
+        for number, (col, row, width, height) in enumerate(forge_core.merge_rects(halves == material.index), 1):
             solids.append({"id": f"terrain-{material.name}-{number}", "shape": "rect", "x": _num(col * half),
                            "y": _num(row * half), "w": _num(width * half), "h": _num(height * half),
                            "material": material.name})
     return solids
 
 
-def object_solid(instance: Instance) -> dict | None:
-    """The placed footprint of a solid prop in world pixels (scaled once by the instance scale)."""
-    if not instance.kind.solid:
+def _states_collision(tile: Mapping) -> bool:
+    """A tile states its own collision: a collision list, or a properties.walkable flag (N7)."""
+    properties = tile.get("properties")
+    return isinstance(tile.get("collision"), list) or (
+        isinstance(properties, Mapping) and isinstance(properties.get("walkable"), bool))
+
+
+def _tile_corners(tile: Mapping, manifest: Mapping, layout: Layout) -> list[int] | None:
+    """Layout material indices of a tile's corners [tl, tr, bl, br]; None when it has none."""
+    materials = manifest["materials"]
+    names = {material.name: material.index for material in layout.materials}
+    corners = ([0, 0, 0, 0] if len(materials) == 1 else None) if manifest.get("kind") == "flat" else tile.get("wang")
+    if not isinstance(corners, list) or len(corners) != 4 or \
+            not all(isinstance(c, int) and not isinstance(c, bool) and 0 <= c < len(materials) for c in corners):
         return None
-    footprint = instance.footprint()
-    scale = instance.scale
-    cx = instance.x + footprint["offset"][0] * scale
-    cy = instance.y + footprint["offset"][1] * scale
-    width, depth, rotate = footprint["width"] * scale, footprint["depth"] * scale, footprint["rotate"]
-    if footprint["shape"] == "ellipse":
-        solid = {"id": instance.id, "shape": "ellipse", "cx": _num(cx), "cy": _num(cy), "rx": _num(width / 2.0),
-                 "ry": _num(depth / 2.0)}
-        if rotate:
-            solid["rotate"] = _num(rotate)
-        return solid
-    if not rotate:
-        return {"id": instance.id, "shape": "rect", "x": _num(cx - width / 2.0), "y": _num(cy - depth / 2.0),
-                "w": _num(width), "h": _num(depth)}
-    angle = math.radians(rotate)
-    corners = []
-    for sx, sy in ((-1, -1), (1, -1), (1, 1), (-1, 1)):
-        dx, dy = sx * width / 2.0, sy * depth / 2.0
-        corners.append([_num(cx + dx * math.cos(angle) - dy * math.sin(angle)),
-                        _num(cy + dx * math.sin(angle) + dy * math.cos(angle))])
-    return {"id": instance.id, "shape": "polygon", "points": corners}
+    local = [names.get(materials[c]) for c in corners]
+    return None if any(value is None for value in local) else local
 
 
-class SolidSet:
-    """Closed point-in-solid tests (plan Appendix C solids), vectorised over points."""
-
-    def __init__(self, solids: Sequence[Mapping]):
-        self.solids = [dict(solid) for solid in solids]
-        self.boxes = [self._bbox(solid) for solid in self.solids]
-
-    @staticmethod
-    def _bbox(solid: Mapping) -> tuple[float, float, float, float]:
-        if solid["shape"] == "rect":
-            return solid["x"], solid["y"], solid["x"] + solid["w"], solid["y"] + solid["h"]
-        if solid["shape"] == "ellipse":
-            reach = max(solid["rx"], solid["ry"]) if solid.get("rotate") else None
-            rx, ry = (reach, reach) if reach is not None else (solid["rx"], solid["ry"])
-            return solid["cx"] - rx, solid["cy"] - ry, solid["cx"] + rx, solid["cy"] + ry
-        xs = [point[0] for point in solid["points"]]
-        ys = [point[1] for point in solid["points"]]
-        return min(xs), min(ys), max(xs), max(ys)
-
-    @staticmethod
-    def contains(solid: Mapping, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
-        if solid["shape"] == "rect":
-            return (xs >= solid["x"]) & (xs <= solid["x"] + solid["w"]) & (ys >= solid["y"]) & \
-                (ys <= solid["y"] + solid["h"])
-        if solid["shape"] == "ellipse":
-            if solid["rx"] <= 0 or solid["ry"] <= 0:
-                return np.zeros(np.broadcast(xs, ys).shape, bool)
-            dx, dy = xs - solid["cx"], ys - solid["cy"]
-            if solid.get("rotate"):
-                angle = math.radians(solid["rotate"])
-                dx, dy = dx * math.cos(angle) + dy * math.sin(angle), -dx * math.sin(angle) + dy * math.cos(angle)
-            return (dx / solid["rx"]) ** 2 + (dy / solid["ry"]) ** 2 <= 1.0
-        return _inside_polygon(xs, ys, solid["points"])
-
-    def any_contains(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
-        hit = np.zeros(np.broadcast(xs, ys).shape, bool)
-        for solid, (x0, y0, x1, y1) in zip(self.solids, self.boxes):
-            near = (xs >= x0) & (xs <= x1) & (ys >= y0) & (ys <= y1)
-            if near.any():
-                hit[near] |= self.contains(solid, xs[near], ys[near])
-        return hit
+def derived_tile_collision(corners: Sequence[int], layout: Layout) -> tuple[list[dict], bool]:
+    """The vertex-square rule inside one tile: each corner owns its quadrant, which blocks when the
+    corner's material is not walkable. Returns (rect shapes in tile pixels, walkable), walkable
+    meaning that less than half the tile blocks (autotile_build's rule)."""
+    blocked = np.array([[not layout.materials[corners[0]].walkable, not layout.materials[corners[1]].walkable],
+                        [not layout.materials[corners[2]].walkable, not layout.materials[corners[3]].walkable]])
+    half = layout.tile / 2.0
+    rects = [{"shape": "rect", "x": _num(x * half), "y": _num(y * half), "w": _num(w * half), "h": _num(h * half)}
+             for x, y, w, h in forge_core.merge_rects(blocked)]
+    return rects, int(blocked.sum()) < 2
 
 
-def blocked_raster(solids: SolidSet, world: tuple[int, int], cell: float) -> np.ndarray:
-    """Cells of the collision raster whose centre lies inside a solid (closed test)."""
+def _blocks(tile: Mapping, size: int) -> str:
+    """Whether a tile's stated collision blocks all of it, none of it, or part of it."""
+    shapes = [shape for shape in tile.get("collision") or [] if isinstance(shape, Mapping)]
+    if not shapes:
+        return "all" if (tile.get("properties") or {}).get("walkable") is False else "none"
+    mask = np.zeros((size, size), bool)
+    for shape in shapes:
+        values = [shape.get(key) for key in ("x", "y", "w", "h")]
+        if shape.get("shape") != "rect" or not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                                   and float(v).is_integer() for v in values):
+            return "part"
+        x, y, w, h = (int(v) for v in values)
+        mask[max(0, y):max(0, y + h), max(0, x):max(0, x + w)] = True
+    return "all" if mask.all() else "none" if not mask.any() else "part"
+
+
+def bundle_tilesets(tilesets: Sequence[Tileset], layout: Layout) -> tuple[list[dict], dict]:
+    """The bundle's copies of the tileset manifests and a report of where their collision comes from.
+
+    D5: a placed tile's own collision (tileset_v1 tiles[].collision, or properties.walkable false
+    for the whole tile) is the bundle's terrain collision, read by forge_nav, the runtime and the
+    engine exporters alike. A tile that states none gets the vertex-square rule of the layout's
+    materials written into the copy, so every consumer still sees the same blocking set. The
+    copy's qa reference (a QA file beside the source manifest, not copied) is dropped (D5); the QA
+    file joins the provenance inputs instead. Full tiles whose stated collision contradicts the
+    layout's material walkability are reported (the tileset stays authoritative)."""
+    copies, report = [], {}
+    for tileset in tilesets:
+        manifest = json.loads(json.dumps(tileset.manifest))
+        manifest["image"] = tileset.image_path.name
+        qa = manifest.pop("qa", None)
+        qa_path = qa if isinstance(qa, str) else qa.get("path") if isinstance(qa, Mapping) else None
+        if isinstance(qa_path, str) and qa_path:
+            evidence = (tileset.manifest_path.parent / qa_path).resolve()
+            if evidence.is_file():
+                layout.inputs.append(evidence)
+        stated = derived = 0
+        conflicts: dict[str, str] = {}
+        for tile in manifest["tiles"]:
+            corners = _tile_corners(tile, manifest, layout)
+            if _states_collision(tile):
+                stated += 1
+                if corners is not None and len(set(corners)) == 1:
+                    material = layout.materials[corners[0]]
+                    expected = "none" if material.walkable else "all"
+                    found = _blocks(tile, layout.tile)
+                    if found != expected and material.name not in conflicts:
+                        conflicts[material.name] = (f"layout material {material.name!r} is "
+                                                    f"{'walkable' if material.walkable else 'not walkable'}, but "
+                                                    f"its full tile {tile['index']} blocks {found}")
+                continue
+            if corners is None:
+                continue  # a tile layout_build never places (no usable wang key)
+            shapes, walkable = derived_tile_collision(corners, layout)
+            tile["collision"] = shapes
+            properties = tile.get("properties")
+            tile["properties"] = {**(properties if isinstance(properties, Mapping) else {}), "walkable": walkable}
+            derived += 1
+        source = "manifest" if not derived else "derived" if not stated else "manifest+derived"
+        report[tileset.id] = {"source": source, "stated": stated, "derived": derived,
+                              "conflicts": [conflicts[name] for name in sorted(conflicts)]}
+        copies.append(manifest)
+    return copies, report
+
+
+def default_rect_cell(layout: Layout, copies: Sequence[Mapping]) -> float:
+    """The collision.rects raster cell, chosen so the rects are exact on the terrain (D3).
+
+    Without tilesets the vertex squares sit on the half-tile grid: tile / 2 (a whole tile for odd
+    sizes, as before). With tilesets: the largest whole number of px that divides that cell and
+    every edge of the tiles' whole-pixel rect collision (autotile_build tilesets: their
+    collision_cell), so the raster reproduces the tile collision exactly and is never coarser than
+    without tilesets; geometry off whole pixels falls back to the half-tile rule."""
+    tile = layout.tile
+    fallback = tile / 2.0 if tile % 2 == 0 else float(tile)
+    if not copies:
+        return fallback
+    cell = int(fallback)
+    for manifest in copies:
+        for item in manifest["tiles"]:
+            for shape in item.get("collision") or []:
+                values = [shape.get(key) for key in ("x", "y", "w", "h")]
+                if shape.get("shape") != "rect" or not all(isinstance(v, (int, float)) and not isinstance(v, bool)
+                                                           and float(v).is_integer() for v in values):
+                    return fallback
+                for value in values:
+                    cell = math.gcd(cell, abs(int(value)))
+    return float(cell)
+
+
+def rect_raster(blockers: Sequence[Mapping], world: tuple[int, int], cell: float) -> np.ndarray:
+    """Cells of the collision.rects raster whose centre lies on a blocker (closed sets, forge_nav N5).
+
+    Cells whose centre falls beyond the map edge are never blocked: the world box bounds the walk
+    area anyway (N3)."""
     columns, rows = int(math.ceil(world[0] / cell)), int(math.ceil(world[1] / cell))
-    centres_x = (np.arange(columns) + 0.5) * cell
-    centres_y = (np.arange(rows) + 0.5) * cell
-    raster = np.zeros((rows, columns), bool)
-    for solid, (x0, y0, x1, y1) in zip(solids.solids, solids.boxes):
-        c0, c1 = max(0, int(math.floor(x0 / cell - 0.5))), min(columns, int(math.ceil(x1 / cell + 0.5)) + 1)
-        r0, r1 = max(0, int(math.floor(y0 / cell - 0.5))), min(rows, int(math.ceil(y1 / cell + 0.5)) + 1)
-        if c0 >= c1 or r0 >= r1:
-            continue
-        xs, ys = np.meshgrid(centres_x[c0:c1], centres_y[r0:r1])
-        raster[r0:r1, c0:c1] |= SolidSet.contains(solid, xs, ys)
-    return raster
+    if columns * rows > MAX_RECT_CELLS:
+        raise LayoutError(f"--rect-cell {_num(cell)} px gives {columns}x{rows} raster cells; at most "
+                          f"{MAX_RECT_CELLS} are supported (use a larger --rect-cell)")
+    xs = (np.arange(columns) + 0.5) * cell
+    ys = (np.arange(rows) + 0.5) * cell
+    model = forge_nav.CollisionModel(world[0], world[1], 0.0, 1.0, (), blockers)
+    inside = (xs <= world[0])[None, :] & (ys <= world[1])[:, None]
+    return ~model.valid_lattice(xs, ys) & inside
 
 
 def raster_rects(raster: np.ndarray, world: tuple[int, int], cell: float) -> list[list[int | float]]:
-    """Merged [x, y, w, h] rectangles (world px, clipped to the map) covering exactly the raster."""
+    """Merged [x, y, w, h] rectangles (world px, clipped to the map) covering exactly the raster
+    (forge_core.merge_rects, the cover forge_nav and map_bundle use too)."""
     rects = []
-    for col, row, width, height in _run_rects(raster):
+    for col, row, width, height in forge_core.merge_rects(raster):
         x, y = col * cell, row * cell
         rects.append([_num(x), _num(y), _num(min(width * cell, world[0] - x)), _num(min(height * cell, world[1] - y))])
     return rects
@@ -1459,190 +1435,94 @@ def rect_coverage(rects: Sequence[Sequence[float]], shape: tuple[int, int], cell
     return cover
 
 
+def published(document: Any) -> Any:
+    """`document` exactly as a reader of the published JSON file gets it (lists, ints and floats only)."""
+    return json.loads(json.dumps(document, ensure_ascii=False, allow_nan=False))
+
+
+def read_blocking_set(document: Mapping, base: Path) -> forge_nav.BlockingSet:
+    """The D2 blocking set of a bundle document whose files live under `base`, read by forge_nav the
+    way map_nav, the runtime and the exporters read it (D4)."""
+    try:
+        return forge_nav.blocking_set_from_document(published(document), base)
+    except forge_nav.NavError as error:
+        raise LayoutError(f"the map's collision cannot be read: {error}") from None
+
+
 # ----------------------------------------------------------------------------- navigation
 
-@dataclass
-class Navigation:
-    cell: int
-    lattice_valid: np.ndarray
-    labels: np.ndarray
-    primary: int  # component label of the first spawn (0 when it is blocked)
-    origin: str
-
-    @property
-    def cells_valid(self) -> np.ndarray:
-        return self.lattice_valid[0::2, 0::2]
-
-    @property
-    def cells_reachable(self) -> np.ndarray:
-        return (self.labels[0::2, 0::2] == self.primary) & (self.primary > 0)
-
-    def centres(self) -> tuple[np.ndarray, np.ndarray]:
-        rows, cols = self.cells_valid.shape
-        return (np.arange(cols) + 0.5) * self.cell, (np.arange(rows) + 0.5) * self.cell
-
-
-class Walker:
-    """Plan Appendix C validity for one actor footprint ellipse (rx = r, ry = r * ySquash)."""
-
-    def __init__(self, solids: SolidSet, world: tuple[int, int], radius: float, squash: float):
-        self.solids, self.world, self.radius, self.squash = solids, world, radius, squash
-        self.offsets = [(0.0, 0.0)] + [(radius * math.cos(a), radius * squash * math.sin(a)) for a in SAMPLE_ANGLES]
-        self.cell = max(1, _round_half_up(radius / 2.0))
-
-    def valid(self, xs: np.ndarray, ys: np.ndarray) -> np.ndarray:
-        xs, ys = np.asarray(xs, np.float64), np.asarray(ys, np.float64)
-        ok = np.ones(np.broadcast(xs, ys).shape, bool)
-        for dx, dy in self.offsets:
-            sx, sy = xs + dx, ys + dy
-            ok &= (sx >= 0) & (sx <= self.world[0]) & (sy >= 0) & (sy <= self.world[1])
-            ok &= ~self.solids.any_contains(sx, sy)
-        return ok
-
-    def segment_clear(self, a: tuple[float, float], b: tuple[float, float]) -> bool:
-        steps = max(1, int(math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / (self.cell / 2.0))))
-        t = np.linspace(0.0, 1.0, steps + 1)
-        return bool(self.valid(a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t).all())
-
-    def lattice(self) -> np.ndarray:
-        """Validity on the half-cell lattice: (even, even) are cell centres, mixed parity the
-        midpoints of 4-neighbour moves, (odd, odd) are never valid (no diagonal moves)."""
-        cell, half = self.cell, self.cell / 2.0
-        columns = max(1, int(math.ceil(self.world[0] / cell - 0.5)))
-        rows = max(1, int(math.ceil(self.world[1] / cell - 0.5)))
-        xs = (np.arange(2 * columns - 1) + 1) * half
-        ys = (np.arange(2 * rows - 1) + 1) * half
-        valid = np.ones((len(ys), len(xs)), bool)
-        reach_x, reach_y = self.radius, self.radius * self.squash
-        grid_x, grid_y = np.meshgrid(xs, ys)
-        for dx, dy in self.offsets:
-            sx, sy = grid_x + dx, grid_y + dy
-            valid &= (sx >= 0) & (sx <= self.world[0]) & (sy >= 0) & (sy <= self.world[1])
-        for solid, (x0, y0, x1, y1) in zip(self.solids.solids, self.solids.boxes):
-            a0 = max(0, int(math.floor((x0 - reach_x) / half)) - 1)
-            a1 = min(len(xs), int(math.ceil((x1 + reach_x) / half)) + 1)
-            b0 = max(0, int(math.floor((y0 - reach_y) / half)) - 1)
-            b1 = min(len(ys), int(math.ceil((y1 + reach_y) / half)) + 1)
-            if a0 >= a1 or b0 >= b1:
-                continue
-            wx, wy = np.meshgrid(xs[a0:a1], ys[b0:b1])
-            hit = np.zeros(wx.shape, bool)
-            for dx, dy in self.offsets:
-                hit |= SolidSet.contains(solid, wx + dx, wy + dy)
-            valid[b0:b1, a0:a1] &= ~hit
-        valid[1::2, 1::2] = False
-        return valid
-
-
-def _rect_distance(xs: np.ndarray, ys: np.ndarray, rect: Sequence[float]) -> np.ndarray:
-    x, y, w, h = rect
-    return np.hypot(np.maximum.reduce([x - xs, np.zeros_like(xs), xs - (x + w)]),
-                    np.maximum.reduce([y - ys, np.zeros_like(ys), ys - (y + h)]))
-
-
-def entry_cell(walker: Walker, nav: Navigation, point: tuple[float, float]) -> tuple[int, int] | None:
-    """The nearest valid cell centre within 1.5 cells of a valid point, joined by a clear segment."""
-    if not bool(walker.valid(np.array([point[0]]), np.array([point[1]]))[0]):
-        return None
-    cell = nav.cell
-    valid = nav.cells_valid
-    col0, row0 = int(point[0] // cell), int(point[1] // cell)
-    candidates = []
-    for row in range(row0 - 2, row0 + 3):
-        for col in range(col0 - 2, col0 + 3):
-            if 0 <= row < valid.shape[0] and 0 <= col < valid.shape[1] and valid[row, col]:
-                cx, cy = (col + 0.5) * cell, (row + 0.5) * cell
-                distance = math.hypot(cx - point[0], cy - point[1])
-                if distance <= 1.5 * cell:
-                    candidates.append((distance, row, col, cx, cy))
-    for _, row, col, cx, cy in sorted(candidates):
-        if walker.segment_clear(point, (cx, cy)):
-            return row, col
-    return None
-
-
-def navigate(layout: Layout, walker: Walker, exits: list[dict], spawns: list[dict],
-             interactions: Sequence[dict]) -> tuple[Navigation, dict]:
-    """Reachability per plan Appendix C; places one arrival spawn per exit and reports every target."""
-    lattice = walker.lattice()
-    labels, _ = forge_core.label_components(lattice, connectivity=4)
-    nav = Navigation(walker.cell, lattice, labels, 0, "")
-    centres_x, centres_y = nav.centres()
-    grid_x, grid_y = np.meshgrid(centres_x, centres_y)
-    cell_labels = labels[0::2, 0::2]
-    report: dict[str, Any] = {"cell": walker.cell, "spawn_problems": [], "unreachable_exits": [], "no_arrival": [],
+def check_reachability(layout: Layout, model: forge_nav.CollisionModel, exits: list[dict], spawns: Sequence[dict],
+                       interactions: Sequence[dict]) -> tuple[forge_nav.NavGrid, forge_nav.Navigation, dict]:
+    """Reachability with forge_nav (N12-N14) from the first spawn, or from the first exit's arrival
+    when the layout has no spawn. Places one arrival spawn per exit (a reached node outside the
+    exit's trigger radius, near the trigger) and reports every start and target."""
+    grid = forge_nav.build_grid(model)
+    centre_x, centre_y = np.meshgrid(grid.xs, grid.ys)
+    report: dict[str, Any] = {"cell": grid.cell, "spawn_problems": [], "unreachable_exits": [], "no_arrival": [],
                               "unreachable_interactions": [], "pockets": []}
 
-    def arrival_for(entry: dict, component: int | None) -> dict | None:
+    def arrival_for(entry: dict, reached: np.ndarray | None) -> dict | None:
         x, y, w, h = entry["rect"]
         dx, dy = entry["direction"]
-        mid_x, mid_y = x + w / 2.0, y + h / 2.0
-        reach = entry["depth"] + entry["radius"] + 1.5 * walker.cell
-        ideal_x, ideal_y = mid_x - dx * reach, mid_y - dy * reach
+        reach = entry["depth"] + entry["radius"] + 1.5 * grid.cell
+        ideal_x, ideal_y = x + w / 2.0 - dx * reach, y + h / 2.0 - dy * reach
         if dx:
-            ideal_x = (x + w if dx < 0 else x) - dx * (entry["radius"] + 1.5 * walker.cell)
+            ideal_x = (x + w if dx < 0 else x) - dx * (entry["radius"] + 1.5 * grid.cell)
         if dy:
-            ideal_y = (y + h if dy < 0 else y) - dy * (entry["radius"] + 1.5 * walker.cell)
-        distance = _rect_distance(grid_x, grid_y, entry["rect"])
-        usable = (nav.cells_valid & (distance > entry["radius"] + 1e-6)
-                  & (distance <= entry["radius"] + 4.0 * walker.cell))
-        if component is not None:
-            usable &= cell_labels == component
+            ideal_y = (y + h if dy < 0 else y) - dy * (entry["radius"] + 1.5 * grid.cell)
+        distance = forge_nav.Trigger(rect=(x, y, w, h)).distance(centre_x, centre_y)
+        usable = grid.valid & (distance > entry["radius"] + 1e-6) & (distance <= entry["radius"] + 4.0 * grid.cell)
+        if reached is not None:
+            usable &= reached
         lo, hi = entry["span_tiles"][0] * layout.tile, entry["span_tiles"][1] * layout.tile
-        along = grid_y if dx else grid_x
+        along = centre_y if dx else centre_x
         usable &= (along >= lo) & (along <= hi)
         if not usable.any():
             return None
-        score = np.where(usable, np.hypot(grid_x - ideal_x, grid_y - ideal_y), np.inf)
+        score = np.where(usable, np.hypot(centre_x - ideal_x, centre_y - ideal_y), np.inf)
         row, col = np.unravel_index(int(np.argmin(score)), score.shape)
-        return {"id": entry["arrival"], "x": _num(centres_x[col]), "y": _num(centres_y[row]),
-                "facing": OPPOSITE_FACING[entry["edge"]], "cell": (int(row), int(col))}
+        return {"id": entry["arrival"], "x": _num(grid.xs[col]), "y": _num(grid.ys[row]),
+                "facing": OPPOSITE_FACING[entry["edge"]]}
 
     if spawns:
-        first = entry_cell(walker, nav, (spawns[0]["x"], spawns[0]["y"]))
-        if first is None:
-            report["spawn_problems"].append(spawns[0]["id"])
-        else:
-            nav.primary = int(cell_labels[first])
-        nav.origin = spawns[0]["id"]
+        origin, start = spawns[0]["id"], (spawns[0]["x"], spawns[0]["y"])
     else:
-        arrival = arrival_for(exits[0], None)
-        if arrival is not None:
-            nav.primary = int(cell_labels[arrival["cell"]])
-        nav.origin = exits[0]["arrival"]
+        first = arrival_for(exits[0], None)
+        origin, start = exits[0]["arrival"], None if first is None else (first["x"], first["y"])
+    nav = forge_nav.navigate(model, [start] if start is not None else [], grid)
+    if start is None or not nav.starts[0].reachable:
+        report["spawn_problems"].append(origin)
+    reached = nav.reachable
     for spawn in spawns[1:]:
-        cell = entry_cell(walker, nav, (spawn["x"], spawn["y"]))
-        if cell is None or int(cell_labels[cell]) != nav.primary or nav.primary == 0:
+        if not nav.point_target((spawn["x"], spawn["y"])).reachable:
             report["spawn_problems"].append(spawn["id"])
-    reachable = nav.cells_reachable
     for entry in exits:
-        near = _rect_distance(grid_x, grid_y, entry["rect"]) <= entry["radius"] + 1e-9
-        if not (near & reachable).any():
+        trigger = forge_nav.Trigger(rect=tuple(float(v) for v in entry["rect"]))
+        if not nav.exit_target(trigger, "intent", entry["radius"]).reachable:
             report["unreachable_exits"].append(entry["id"])
-        arrival = arrival_for(entry, nav.primary if nav.primary else -1)
+        arrival = arrival_for(entry, reached)
         if arrival is None:
             report["no_arrival"].append(entry["id"])
-            entry["arrival_spawn"] = None
-        else:
-            entry["arrival_spawn"] = arrival
+        entry["arrival_spawn"] = arrival
     for item in interactions:
-        near = np.hypot(grid_x - item["x"], grid_y - item["y"]) <= item["reach"]
-        if not (near & reachable).any():
+        if not nav.reach_target((item["x"], item["y"]), item["reach"]).reachable:
             report["unreachable_interactions"].append(item["id"])
-    counts = np.bincount(cell_labels[nav.cells_valid].ravel(), minlength=labels.max() + 1)
-    for label in np.flatnonzero(counts >= POCKET_MIN_CELLS).tolist():
-        if label == 0 or label == nav.primary:
+    labels, count = forge_core.label_components(grid.valid & ~reached, connectivity=4)
+    sizes = np.bincount(labels.ravel(), minlength=count + 1)
+    for label in np.flatnonzero(sizes >= POCKET_MIN_CELLS).tolist():
+        if label == 0:
             continue
-        rows, cols = np.nonzero(cell_labels == label)
-        report["pockets"].append({"cells": int(counts[label]),
-                                  "bbox_px": [_num(cols.min() * walker.cell), _num(rows.min() * walker.cell),
-                                              _num((cols.max() + 1) * walker.cell),
-                                              _num((rows.max() + 1) * walker.cell)]})
-    valid_count = int(nav.cells_valid.sum())
+        rows, cols = np.nonzero(labels == label)
+        report["pockets"].append({"cells": int(sizes[label]),
+                                  "bbox_px": [_num(cols.min() * grid.cell), _num(rows.min() * grid.cell),
+                                              _num((cols.max() + 1) * grid.cell), _num((rows.max() + 1) * grid.cell)]})
+    valid_count = int(grid.valid.sum())
+    report["origin"] = origin
     report["valid_cells"] = valid_count
-    report["reachable_cells"] = int(reachable.sum())
-    report["reachable_fraction"] = round(int(reachable.sum()) / valid_count, 4) if valid_count else 0.0
-    return nav, report
+    report["reachable_cells"] = int(reached.sum())
+    report["reachable_fraction"] = round(int(reached.sum()) / valid_count, 4) if valid_count else 0.0
+    report["thin_gaps"] = len(grid.thin_gaps)
+    return grid, nav, report
 
 
 # ----------------------------------------------------------------------------- rendering
@@ -1707,17 +1587,18 @@ def render_preview(ground: np.ndarray, instances: Sequence[Instance]) -> np.ndar
     return np.asarray(canvas).copy()
 
 
-def render_debug(preview: np.ndarray, layout: Layout, nav: Navigation, solids: Sequence[dict],
-                 rects: Sequence[Sequence[float]], exits: Sequence[dict], spawns: Sequence[dict],
-                 interactions: Sequence[dict], roads: Sequence[dict], scale: int) -> np.ndarray:
-    """Preview upscaled by `scale` with navigation and collision drawn over it."""
+def render_debug(preview: np.ndarray, layout: Layout, grid: forge_nav.NavGrid, reached: np.ndarray,
+                 blocking: forge_nav.BlockingSet, rects: Sequence[Sequence[float]], exits: Sequence[dict],
+                 spawns: Sequence[dict], interactions: Sequence[dict], roads: Sequence[dict], scale: int) -> np.ndarray:
+    """Preview upscaled by `scale` with navigation (forge_nav grid nodes) and the blocking set drawn
+    over it: terrain and tile collision in blue, prop footprints in yellow, collision.rects in red."""
     world_w, world_h = layout.world
     base = codeart_core.upscale_nearest(preview, scale)
     tint = np.zeros((world_h, world_w, 4), np.uint8)
-    cell_state = np.zeros(nav.cells_valid.shape, np.uint8)
-    cell_state[~nav.cells_valid] = 1
-    cell_state[nav.cells_valid & ~nav.cells_reachable] = 2
-    states = np.repeat(np.repeat(cell_state, nav.cell, axis=0), nav.cell, axis=1)
+    cell_state = np.zeros(grid.valid.shape, np.uint8)
+    cell_state[~grid.valid] = 1
+    cell_state[grid.valid & ~reached] = 2
+    states = np.repeat(np.repeat(cell_state, grid.cell, axis=0), grid.cell, axis=1)
     states = np.pad(states, ((0, max(0, world_h - states.shape[0])), (0, max(0, world_w - states.shape[1]))),
                     constant_values=1)[:world_h, :world_w]
     tint[states == 1] = (16, 16, 32, 96)
@@ -1733,8 +1614,8 @@ def render_debug(preview: np.ndarray, layout: Layout, nav: Navigation, solids: S
 
     for x, y, w, h in rects:
         draw.rectangle(box(x, y, x + w, y + h), fill=(255, 60, 40, 48), outline=(255, 60, 40, 150))
-    for solid in solids:
-        colour = (60, 140, 255, 230) if str(solid.get("id", "")).startswith("terrain-") else (255, 230, 40, 230)
+    terrain = [(solid, (60, 140, 255, 230)) for solid in blocking.collision_solids + blocking.tiles]
+    for solid, colour in terrain + [(solid, (255, 230, 40, 230)) for solid in blocking.footprints]:
         if solid["shape"] == "rect":
             draw.rectangle(box(solid["x"], solid["y"], solid["x"] + solid["w"], solid["y"] + solid["h"]),
                            outline=colour)
@@ -1784,39 +1665,37 @@ def _status(checks: Sequence[dict]) -> str:
     return "fail" if "fail" in states else "warn" if "warn" in states else "pass"
 
 
+def bundle_footprint(footprint: Mapping) -> dict:
+    """A footprint as the bundle writes it: prop-image pixels (basis prop_px, D7), unmirrored.
+
+    Readers mirror it for flip_x objects and scale it once by the object scale (D6, forge_nav N6)."""
+    if footprint["shape"] == "none":
+        return {"shape": "none"}
+    return {"shape": footprint["shape"], "width": _num(footprint["width"]), "depth": _num(footprint["depth"]),
+            "offset": [_num(v) for v in footprint["offset"]], "rotate": _num(footprint["rotate"]), "basis": "prop_px"}
+
+
 def prop_item(kind: PropKind, variant: PropVariant, image_path: str, sha256: str) -> dict:
-    """A propItem (map.schema.json) describing one prop image of the bundle."""
-    footprint = dict(kind.footprint)
-    item = {"label": variant.prop_id, "display_name": kind.name, "image": image_path, "sha256": sha256,
+    """A bundleProp (map.schema.json, a propItem superset; D8) describing one prop image of the bundle."""
+    return {"label": variant.prop_id, "display_name": kind.name, "image": image_path, "sha256": sha256,
             "anchor_px": [_num(variant.anchor[0]), _num(variant.anchor[1])],
-            "footprint": {key: ([_num(v) for v in value] if isinstance(value, list) else
-                                _num(value) if isinstance(value, float) else value)
-                          for key, value in footprint.items()},
-            "solid": kind.solid, "occlusion_class": kind.occlusion,
+            "footprint": bundle_footprint(kind.footprint), "solid": kind.solid, "occlusion_class": kind.occlusion,
             "status": "placeholder" if variant.origin == "placeholder" else "accepted",
             "size": [int(variant.image.shape[1]), int(variant.image.shape[0])], "origin": variant.origin}
-    if footprint["shape"] == "none":
-        item["footprint"] = {"shape": "none"}
+
+
+def object_entry(instance: Instance) -> dict:
+    """One mapObject: the anchor point, the unmirrored prop footprint, flip_x and scale (D6, D7)."""
+    item = {"id": instance.id, "prop": instance.prop.prop_id, "kind": instance.kind.name,
+            "x": _num(instance.x), "y": _num(instance.y),
+            "anchor_px": [_num(instance.prop.anchor[0]), _num(instance.prop.anchor[1])],
+            "solid": instance.kind.solid, "sortY": _num(instance.y), "occlusion": instance.kind.occlusion,
+            "scale": _num(instance.scale), "flip_x": instance.flip}
+    if instance.kind.footprint["shape"] != "none":
+        item["footprint"] = bundle_footprint(instance.kind.footprint)
+    if instance.group:
+        item["group"] = instance.group
     return item
-
-
-def _local_write_codeart_meta(path: Path, *, placeholder: bool, **kwargs: Any) -> dict:
-    """codeart_core.write_codeart_meta that records `placeholder` honestly.
-
-    The A3 writer always writes placeholder false and refuses it as an extra field, so a
-    placeholder meta is written through the library to a scratch name (all its checks
-    run) and then stored under `path` with placeholder true. Remove once the writer
-    takes a placeholder keyword (handoff section 6)."""
-    if not placeholder:
-        return codeart_core.write_codeart_meta(path, **kwargs)
-    scratch = path.with_name(f".{path.name}.partial")
-    try:
-        meta = codeart_core.write_codeart_meta(scratch, **kwargs)
-    finally:
-        scratch.unlink(missing_ok=True)
-    meta["placeholder"] = True
-    forge_core.write_json(path, meta)
-    return meta
 
 
 def build(args: argparse.Namespace) -> dict:
@@ -1824,10 +1703,6 @@ def build(args: argparse.Namespace) -> dict:
     layout = load_layout(spec_path, args.seed)
     tilesets = load_tilesets([Path(path) for path in args.tiles or []], layout)
     world = layout.world
-    rect_cell = float(args.rect_cell) if args.rect_cell else \
-        (layout.tile / 2.0 if layout.tile % 2 == 0 else float(layout.tile))
-    if rect_cell <= 0:
-        raise LayoutError("--rect-cell must be a positive number of pixels")
 
     grid, roads = paint_vertices(layout)
     hygiene = run_hygiene(grid, allowed_keys(tilesets), layout)
@@ -1855,79 +1730,30 @@ def build(args: argparse.Namespace) -> dict:
     fields = build_fields(layout, materials_px, road_materials, fixed, layout.exits, points)
     scattered, scatter_report = scatter_props(layout, fields)
     instances = fixed + scattered
+    copies, tile_report = bundle_tilesets(tilesets, layout)
+    rect_cell = float(args.rect_cell) if args.rect_cell else default_rect_cell(layout, copies)
 
-    solids = terrain_solids(grid, layout)
-    solids += [solid for solid in (object_solid(instance) for instance in instances) if solid is not None]
-    solid_set = SolidSet(solids)
-    raster = blocked_raster(solid_set, world, rect_cell)
-    rects = raster_rects(raster, world, rect_cell)
-    coverage = rect_coverage(rects, raster.shape, rect_cell)
-    walker = Walker(solid_set, world, layout.actor_radius, layout.y_squash)
-    nav, nav_report = navigate(layout, walker, layout.exits, layout.spawns, interactions)
-
+    # Published values: every point the proof uses is the rounded value the bundle stores.
     spawns_out = [{"id": spawn["id"], "x": _num(spawn["x"]), "y": _num(spawn["y"]), "facing": spawn["facing"]}
                   for spawn in layout.spawns]
-    portals = []
+    interactions_out = [{"id": item["id"], "x": _num(item["x"]), "y": _num(item["y"]), "reach": _num(item["reach"])}
+                        for item in interactions]
     for entry in layout.exits:
-        arrival = entry.get("arrival_spawn")
-        target_map = entry["to"].split(":", 1)[0]
-        portal = {"id": entry["id"], "rect": [_num(v) for v in entry["rect"]], "to": entry["to"],
-                  "activation": "intent", "travelDirection": [_num(v) for v in entry["direction"]],
-                  "radius": _num(entry["radius"]), "latch": True, "requiresMovement": True, "edge": entry["edge"]}
-        if arrival is not None:
-            portal["entranceByFrom"] = {target_map: arrival["id"]}
-            spawns_out.append({key: arrival[key] for key in ("id", "x", "y", "facing")})
-        portals.append(portal)
-
-    variety = [item["same_look_neighbour_share"] for item in scatter_report
-               if item["looks"] > 1 and item["same_look_neighbour_share"] is not None]
-    short = [item["id"] for item in scatter_report if item["placed"] < item["requested"]]
-    checks = [
-        _check("tiles_drawable", ("pass" if missing_tiles == 0 else "fail") if tilesets else "skipped",
-               missing_tiles, 0),
-        _check("rect_union_equals_blocked", "pass" if np.array_equal(coverage > 0, raster) else "fail",
-               int(np.count_nonzero((coverage > 0) != raster)), 0),
-        _check("rects_disjoint", "pass" if int((coverage > 1).sum()) == 0 else "fail", int((coverage > 1).sum()), 0),
-        _check("spawns_reachable", "pass" if not nav_report["spawn_problems"] else "fail",
-               nav_report["spawn_problems"], []),
-        _check("exits_reachable", "pass" if not nav_report["unreachable_exits"] else "fail",
-               nav_report["unreachable_exits"], []),
-        _check("arrivals_outside_triggers", "pass" if not nav_report["no_arrival"] else "fail",
-               nav_report["no_arrival"], []),
-        _check("interactions_reachable", "pass" if not nav_report["unreachable_interactions"] else "fail",
-               nav_report["unreachable_interactions"], []),
-        _check("enclosed_pockets", "pass" if not nav_report["pockets"] else "warn", len(nav_report["pockets"]), 0),
-        _check("prop_variety", "skipped" if not variety else ("pass" if max(variety) <= VARIETY_WARN_SHARE else "warn"),
-               max(variety) if variety else None, VARIETY_WARN_SHARE),
-        _check("scatter_filled", "pass" if not short else "warn", short, []),
-        _check("hygiene_converged", "pass" if hygiene["converged"] else "warn", hygiene["passes"], HYGIENE_MAX_PASSES),
-    ]
-    status = _status(checks)
-    if args.strict_qc and status == "fail":
-        failed = "; ".join(f"{check['id']}={check['value']}" for check in checks if check["status"] == "fail")
-        raise LayoutQAError(f"layout QA failed ({failed}); nothing was published")
+        entry["rect"] = [_num(v) for v in entry["rect"]]
+    objects = [object_entry(instance) for instance in instances]
+    solids = [] if tilesets else terrain_solids(grid, layout)
 
     with forge_core.staged_output(Path(args.output_dir)) as stage:
         outputs: list[Path] = []
-        vertex_doc = {"schema": VERTEX_GRID_SCHEMA, "size": [layout.width + 1, layout.height + 1],
-                      "tile_size": layout.tile, "materials": [material.name for material in layout.materials],
-                      "base": layout.base.name, "data": grid.astype(int).tolist()}
-        forge_core.write_json(stage / "terrain-vertices.json", vertex_doc)
-        outputs.append(stage / "terrain-vertices.json")
-
         tileset_entries = []
-        for tileset in tilesets:
+        for tileset, manifest in zip(tilesets, copies):
             folder = stage / "tilesets" / tileset.id
             folder.mkdir(parents=True)
-            image_name = tileset.image_path.name
-            forge_core.publish_file_no_replace(tileset.image_path, folder / image_name)
-            manifest = dict(tileset.manifest)
-            manifest["image"] = image_name
+            forge_core.publish_file_no_replace(tileset.image_path, folder / manifest["image"])
             forge_core.write_json(folder / tileset.manifest_path.name, manifest)
-            outputs += [folder / image_name, folder / tileset.manifest_path.name]
+            outputs += [folder / manifest["image"], folder / tileset.manifest_path.name]
             tileset_entries.append({"id": tileset.id, "manifest": f"tilesets/{tileset.id}/{tileset.manifest_path.name}",
                                     "sha256": forge_core.sha256_file(folder / tileset.manifest_path.name)})
-
         props_out = {}
         (stage / "props").mkdir()
         for kind in layout.kinds.values():
@@ -1937,8 +1763,6 @@ def build(args: argparse.Namespace) -> dict:
                 outputs.append(path)
                 props_out[variant.prop_id] = prop_item(kind, variant, f"props/{variant.prop_id}.png",
                                                        forge_core.sha256_file(path))
-
-        ground = render_ground(layout, grid, tilesets, layers)
         bundle_layers: list[dict] = []
         if tilesets:
             for tileset, indices in zip(tilesets, layers):
@@ -1946,57 +1770,104 @@ def build(args: argparse.Namespace) -> dict:
                     name = "ground" if not bundle_layers else f"ground-{tileset.id}"
                     bundle_layers.append({"name": name, "kind": "tiles", "tileset": tileset.id,
                                           "data": indices.astype(int).tolist()})
-        else:
+        ground = render_ground(layout, grid, tilesets, layers)
+        if not tilesets:
             codeart_core.save_png(ground, stage / "ground.png")
             outputs.append(stage / "ground.png")
             bundle_layers.append({"name": "ground", "kind": "image", "image": "ground.png",
                                   "sha256": forge_core.sha256_file(stage / "ground.png")})
         bundle_layers.append({"name": "props", "kind": "objects"})
 
+        # The blocking set every consumer reads (D2): collision.solids (terrain without tilesets), object
+        # footprints and the placed tiles' collision. collision.rects are the cells of the rectCell raster
+        # whose centre it blocks (D3); the proof below then runs on everything, rects included (D4).
+        bundle = {"schema": BUNDLE_SCHEMA, "id": layout.map_id, "tile_size": layout.tile,
+                  "world": {"width": world[0], "height": world[1], "unit": "px"},
+                  "terrain": {"vertex_grid": "terrain-vertices.json",
+                              "materials": [material.name for material in layout.materials]}}
+        if tileset_entries:
+            bundle["tilesets"] = tileset_entries
+        bundle.update({"layers": bundle_layers, "props": props_out, "objects": objects,
+                       "collision": {"actorRadius": _num(layout.actor_radius), "ySquash": _num(layout.y_squash),
+                                     "solids": solids}})
+        unrasterised = read_blocking_set(bundle, stage)
+        raster = rect_raster(unrasterised.solids, world, rect_cell)
+        rects = raster_rects(raster, world, rect_cell)
+        coverage = rect_coverage(rects, raster.shape, rect_cell)
+        bundle["collision"].update({"rects": rects, "rectCell": _num(rect_cell)})
+        blocking = read_blocking_set(bundle, stage)
+        model = blocking.model()
+        nav_grid, nav, nav_report = check_reachability(layout, model, layout.exits, spawns_out, interactions_out)
+
+        portals = []
+        for entry in layout.exits:
+            arrival = entry.get("arrival_spawn")
+            target_map = entry["to"].split(":", 1)[0]
+            portal = {"id": entry["id"], "rect": entry["rect"], "to": entry["to"], "activation": "intent",
+                      "travelDirection": [_num(v) for v in entry["direction"]], "radius": _num(entry["radius"]),
+                      "latch": True, "requiresMovement": True, "edge": entry["edge"]}
+            if arrival is not None:
+                portal["entranceByFrom"] = {target_map: arrival["id"]}
+                spawns_out.append({key: arrival[key] for key in ("id", "x", "y", "facing")})
+            portals.append(portal)
+
+        variety = [item["same_look_neighbour_share"] for item in scatter_report
+                   if item["looks"] > 1 and item["same_look_neighbour_share"] is not None]
+        short = [item["id"] for item in scatter_report if item["placed"] < item["requested"]]
+        conflicts = [text for report in tile_report.values() for text in report["conflicts"]]
+        checks = [
+            _check("tiles_drawable", ("pass" if missing_tiles == 0 else "fail") if tilesets else "skipped",
+                   missing_tiles, 0),
+            _check("tile_collision", ("warn" if conflicts else "pass") if tilesets else "skipped",
+                   {name: {"source": report["source"], "conflicts": report["conflicts"]}
+                    for name, report in tile_report.items()} if tilesets else None, []),
+            _check("rect_union_equals_blocked", "pass" if np.array_equal(coverage > 0, raster) else "fail",
+                   int(np.count_nonzero((coverage > 0) != raster)), 0),
+            _check("rects_disjoint", "pass" if int((coverage > 1).sum()) == 0 else "fail",
+                   int((coverage > 1).sum()), 0),
+            _check("spawns_reachable", "pass" if not nav_report["spawn_problems"] else "fail",
+                   nav_report["spawn_problems"], []),
+            _check("exits_reachable", "pass" if not nav_report["unreachable_exits"] else "fail",
+                   nav_report["unreachable_exits"], []),
+            _check("arrivals_outside_triggers", "pass" if not nav_report["no_arrival"] else "fail",
+                   nav_report["no_arrival"], []),
+            _check("interactions_reachable", "pass" if not nav_report["unreachable_interactions"] else "fail",
+                   nav_report["unreachable_interactions"], []),
+            _check("enclosed_pockets", "pass" if not nav_report["pockets"] else "warn", len(nav_report["pockets"]), 0),
+            _check("prop_variety", "skipped" if not variety else
+                   ("pass" if max(variety) <= VARIETY_WARN_SHARE else "warn"),
+                   max(variety) if variety else None, VARIETY_WARN_SHARE),
+            _check("scatter_filled", "pass" if not short else "warn", short, []),
+            _check("hygiene_converged", "pass" if hygiene["converged"] else "warn", hygiene["passes"],
+                   HYGIENE_MAX_PASSES),
+        ]
+        status = _status(checks)
+        if args.strict_qc and status == "fail":
+            failed = "; ".join(f"{check['id']}={check['value']}" for check in checks if check["status"] == "fail")
+            raise LayoutQAError(f"layout QA failed ({failed}); nothing was published")
+
+        vertex_doc = {"schema": VERTEX_GRID_SCHEMA, "size": [layout.width + 1, layout.height + 1],
+                      "tile_size": layout.tile, "materials": [material.name for material in layout.materials],
+                      "base": layout.base.name, "data": grid.astype(int).tolist()}
+        forge_core.write_json(stage / "terrain-vertices.json", vertex_doc)
+        outputs.insert(0, stage / "terrain-vertices.json")
         if args.preview:
             preview = render_preview(ground, instances)
             codeart_core.save_png(preview, stage / "preview.png")
             scale = args.debug_scale or (2 if max(world) <= 1024 else 1)
-            debug = render_debug(preview, layout, nav, solids, rects, layout.exits, spawns_out, interactions, roads,
-                                 scale)
+            debug = render_debug(preview, layout, nav_grid, nav.reachable, blocking, rects, layout.exits, spawns_out,
+                                 interactions_out, roads, scale)
             codeart_core.save_png(debug, stage / "debug.png")
             outputs += [stage / "preview.png", stage / "debug.png"]
-
-        objects = []
-        for instance in instances:
-            item = {"id": instance.id, "prop": instance.prop.prop_id, "kind": instance.kind.name,
-                    "x": _num(instance.x), "y": _num(instance.y),
-                    "anchor_px": [_num(instance.prop.anchor[0]), _num(instance.prop.anchor[1])],
-                    "solid": instance.kind.solid, "sortY": _num(instance.y), "occlusion": instance.kind.occlusion,
-                    "scale": _num(instance.scale), "flip_x": instance.flip}
-            footprint = instance.footprint()
-            if footprint["shape"] != "none":
-                item["footprint"] = {"shape": footprint["shape"], "width": _num(footprint["width"]),
-                                     "depth": _num(footprint["depth"]),
-                                     "offset": [_num(v) for v in footprint["offset"]],
-                                     "rotate": _num(footprint["rotate"])}
-            if instance.group:
-                item["group"] = instance.group
-            objects.append(item)
 
         placeholder = not tilesets or any(kind.placeholder for kind in layout.kinds.values())
         external_art = bool(tilesets) or any(variant.origin in ("image", "pack")
                                              for kind in layout.kinds.values() for variant in kind.variants)
-        bundle = {
-            "schema": BUNDLE_SCHEMA, "id": layout.map_id, "tile_size": layout.tile,
-            "world": {"width": world[0], "height": world[1], "unit": "px"},
-            "terrain": {"vertex_grid": "terrain-vertices.json",
-                        "materials": [material.name for material in layout.materials]},
-        }
-        if tileset_entries:
-            bundle["tilesets"] = tileset_entries
+        derived = [name for name, report in tile_report.items() if report["derived"]]
+        reachability = {key: nav_report[key] for key in ("cell", "valid_cells", "reachable_cells",
+                                                         "reachable_fraction")}
         bundle.update({
-            "layers": bundle_layers, "props": props_out, "objects": objects,
-            "collision": {"actorRadius": _num(layout.actor_radius), "ySquash": _num(layout.y_squash),
-                          "solids": solids, "rects": rects, "rectCell": _num(rect_cell)},
-            "portals": portals, "spawns": spawns_out,
-            "interactions": [{"id": item["id"], "x": _num(item["x"]), "y": _num(item["y"]),
-                              "reach": _num(item["reach"])} for item in interactions],
+            "portals": portals, "spawns": spawns_out, "interactions": interactions_out,
             "roads": [{"id": road["id"], "material": road["material"],
                        "width": _num(road["width"] * layout.tile),
                        "polyline": [[_num(x * layout.tile), _num(y * layout.tile)] for x, y in road["line"]]}
@@ -2004,37 +1875,42 @@ def build(args: argparse.Namespace) -> dict:
             "camera": {"bounds": [0, 0, world[0], world[1]]},
             "art_source": "mixed" if external_art else "code", "placeholder": placeholder,
             "qa": {"status": status, "report": "layout-qa.json",
-                   "checks": {check["id"]: check["status"] for check in checks},
-                   "reachability": {key: nav_report[key] for key in ("cell", "valid_cells", "reachable_cells",
-                                                                     "reachable_fraction")}},
+                   "checks": {check["id"]: check["status"] for check in checks}, "reachability": reachability},
         })
         inputs = [layout.spec_path.resolve()] + list(dict.fromkeys(path.resolve() for path in layout.inputs))
         bundle["provenance"] = {
             "tool": TOOL, "version": TOOL_VERSION,
             "params": {"seed": layout.seed, "rect_cell": _num(rect_cell), "preview": bool(args.preview),
-                       "strict_qc": bool(args.strict_qc), "hygiene": hygiene,
+                       "strict_qc": bool(args.strict_qc), "hygiene": hygiene, "tile_collision": tile_report,
                        "scatter": scatter_report, "navigation": nav_report},
             "inputs": [_file_ref(path, stage) for path in inputs],
         }
         forge_core.write_json(stage / "map-bundle.json", bundle)
         outputs.insert(0, stage / "map-bundle.json")
 
+        not_proven = [
+            "How the map looks: open preview.png and debug.png (magenta = walkable but unreachable, dark = too "
+            "tight for the actor).",
+            f"collision.rects are the {_num(rect_cell)} px cells whose centre the exact blockers cover; an engine "
+            "that collides with the rects alone gets that cell approximation of prop footprints (the proof covers "
+            "the rects together with the exact shapes).",
+            "Reachability is proven for one actor size; larger actors, jumping, doors that open and moving objects "
+            "are not simulated.",
+            "Tile seams: layout_build trusts the tileset manifest's seam proof.",
+        ]
+        if derived:
+            not_proven.append(f"Tileset(s) {', '.join(derived)} state no per-tile collision; the bundle's copies "
+                              "carry the vertex-square rule of the layout's materials instead (D5 fallback).")
         envelope = {
             "status": status,
             "method": (f"{TOOL}: vertex-grid painting and hygiene, corner-Wang tile lookup, seeded scatter; "
-                       f"collision rectangles re-rasterised on the {_num(rect_cell)} px blocked raster; "
-                       f"plan Appendix C footprint validity (r={_num(layout.actor_radius)}, "
-                       f"ySquash={_num(layout.y_squash)}) at {walker.cell} px cell centres and 4-neighbour move "
-                       "midpoints, components labelled from the first spawn"),
-            "notProven": [
-                "How the map looks: open preview.png and debug.png (magenta = walkable but unreachable, dark = "
-                "too tight for the actor).",
-                f"Engines that collide with collision.rects only get the {_num(rect_cell)} px cell approximation of "
-                "prop footprints; the solids are exact.",
-                "Reachability is proven for one actor size; larger actors, jumping, doors that open and moving "
-                "objects are not simulated.",
-                "Tile seams: layout_build trusts the tileset manifest's seam proof.",
-            ],
+                       f"collision.rects re-rasterised on the {_num(rect_cell)} px raster of the blocking set; "
+                       f"reachability with the vendored forge_nav (D4) on the bundle's full blocking set (D2: "
+                       f"collision.solids and rects, object footprints, the placed tiles' collision), read back as "
+                       f"every consumer reads it: footprint validity (r={_num(layout.actor_radius)}, "
+                       f"ySquash={_num(layout.y_squash)}) at {nav_grid.cell} px grid nodes, 4-neighbour moves with "
+                       "segmentClear and the thin-gap rule, BFS from the first spawn, N14 targets"),
+            "notProven": not_proven,
             "checks": checks,
             "inputs": [_file_ref(path, stage) for path in inputs],
             "outputs": [_file_ref(path, stage) for path in outputs],
@@ -2042,47 +1918,68 @@ def build(args: argparse.Namespace) -> dict:
         }
         forge_core.write_json(stage / "layout-qa.json", envelope)
         palette = {f"material-{material.name}": _hex(material.colour) for material in layout.materials}
-        _local_write_codeart_meta(
-            stage / "codeart-meta.json", placeholder=placeholder, generator=TOOL,
-            spec_sha256=forge_core.sha256_bytes(layout.spec_bytes),
-            renderer={"name": TOOL, "version": TOOL_VERSION}, palette=palette, outputs=outputs, qa=envelope)
+        codeart_core.write_codeart_meta(
+            stage / "codeart-meta.json", generator=TOOL, spec_sha256=forge_core.sha256_bytes(layout.spec_bytes),
+            renderer={"name": TOOL, "version": TOOL_VERSION}, palette=palette, outputs=outputs, qa=envelope,
+            placeholder=placeholder)
     final = Path(args.output_dir).resolve()
     return {"status": status, "output": final.as_posix(), "bundle": (final / "map-bundle.json").as_posix(),
             "metadata": (final / "codeart-meta.json").as_posix(), "qa": (final / "layout-qa.json").as_posix(),
-            "objects": len(objects), "solids": len(solids), "rects": len(rects), "portals": len(portals),
-            "reachable_fraction": nav_report["reachable_fraction"]}
+            "objects": len(objects), "solids": len(blocking.collision_solids) + len(blocking.footprints)
+            + len(blocking.tiles), "rects": len(rects), "portals": len(portals),
+            "valid_cells": nav_report["valid_cells"], "reachable_fraction": nav_report["reachable_fraction"]}
+
+
+def _seed_arg(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or greater")
+    return value
+
+
+def _cell_arg(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number of pixels, got {text!r}") from None
+    if not math.isfinite(value) or value <= 0:
+        raise argparse.ArgumentTypeError("must be a positive number of pixels")
+    return value
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a playable top-down map (map_bundle.v2) from a codeart2d layout spec: vertex-grid "
                     "terrain, spline roads, corner-Wang tiles, seeded prop scatter, exact collision rectangles, "
-                    "exits with arrival spawns and a reachability gate. No image model is used.",
+                    "exits with arrival spawns and a reachability gate run with the shared forge_nav rules. "
+                    "No image model is used.",
         epilog="Example: python layout_build.py --spec meadow-layout.json --output-dir out/map-v1 --seed 7 "
                "--preview --strict-qc")
     parser.add_argument("--spec", required=True, help="codeart2d.layout_spec.v1 JSON file")
     parser.add_argument("--output-dir", required=True, help="new folder to create; an existing path is refused")
     parser.add_argument("--tiles", action="append", metavar="MANIFEST",
-                        help="tileset_v1 manifest (wang_corner or flat); repeat for several sets. Without it the "
-                             "ground is a flat-colour placeholder image")
-    parser.add_argument("--seed", type=int, help="override the spec seed (scatter, wobble and tile variants)")
+                        help="tileset_v1 manifest (wang_corner or flat); repeat for several sets. Its per-tile "
+                             "collision is the terrain collision. Without it the ground is a flat-colour "
+                             "placeholder image")
+    parser.add_argument("--seed", type=_seed_arg, help="override the spec seed (scatter, wobble and tile variants)")
     parser.add_argument("--preview", action="store_true", help="also write preview.png and debug.png")
     parser.add_argument("--strict-qc", action="store_true",
                         help="exit 1 and publish nothing when a QA check fails (unreachable exit, spawn or "
                              "interaction, missing tile, inexact rectangles)")
-    parser.add_argument("--rect-cell", type=float,
-                        help="cell size in px of the blocked raster behind collision.rects (default: half a tile)")
+    parser.add_argument("--rect-cell", type=_cell_arg,
+                        help="cell size in px of the raster behind collision.rects (default: the tile collision "
+                             "grid with --tiles, else half a tile)")
     parser.add_argument("--debug-scale", type=int, choices=(1, 2, 3, 4),
                         help="integer upscale of debug.png (default 2, or 1 for maps wider than 1024 px)")
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _run(argv: Sequence[str] | None = None) -> int:
     forge_core.utf8_stdio()
     args = parse_args(argv)
-    if args.seed is not None and args.seed < 0:
-        print("error: --seed must be 0 or greater", file=sys.stderr)
-        return 1
     if os.path.lexists(args.output_dir):
         print(f"error: output directory already exists: {forge_core.ascii_text(str(args.output_dir))}",
               file=sys.stderr)
@@ -2094,6 +1991,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI behind forge_core.run_cli (D26/D27): usage errors exit 2 from argparse, expected errors print
+    one "error: ..." line and exit 1, and anything unexpected is one "error: internal error (Type: message)"
+    line with exit 1, also when main() is called in-process."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

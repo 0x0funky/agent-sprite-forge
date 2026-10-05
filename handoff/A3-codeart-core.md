@@ -4,6 +4,17 @@ Module: `skills/codeart2d/scripts/codeart_core.py`, the library behind the codea
 Tests: [`tests/test_codeart2d_core.py`](../tests/test_codeart2d_core.py), with fixtures in `tests/fixtures/codeart/`.
 Library source: [`codeart_core.py`](../skills/codeart2d/scripts/codeart_core.py).
 
+## Phase 3 integration status: API 1.1 (branch asf/int-g-codeart)
+
+`CODEART_CORE_API_VERSION` is `"1.1"`. Every 1.0 name and behaviour is kept; additions (integration decisions cited as Dn):
+
+- **D30, forge_core.** codeart_core imports the vendored `forge_core.py` beside it (it inserts its own folder into `sys.path`, as forge_nav does). `_local_sha256_file` is `forge_core.sha256_file` and `_local_write_json` is `forge_core.write_json` (same bytes: indent 2, `ensure_ascii=False`, one LF newline, no clobbering; `write_codeart_meta` still creates missing parent folders).
+- **B21 request (D30):** `write_codeart_meta(..., placeholder=False)` is a keyword-only bool; `placeholder: true` records stand-in art (layout_build's flat-colour ground). Anything but a bool is refused before a file exists.
+- **D29:** `FORGE_PACKAGE_VERSION` (= `forge_core.FORGE_PACKAGE_VERSION`, `"0.4.0"`) is the `tool.version` of the envelope `write_codeart_meta` wraps around `qa_pixels` metrics (before: the library API version).
+- **D28:** palette files are read as UTF-8 with an optional BOM (`.json` through `forge_core.parse_json`).
+- **Masks:** `inside_polygon(xs, ys, polygon)` (the even-odd test layout_build and ambient_bake each carried) and `distance_field(mask, cap)` (exact capped Euclidean distance, scipy when available and identical without it; the `_local_capped_edt` both tools carried). forge_core's `distance_to` is the capped Chebyshev distance, so the Euclidean one lives here, codeart2d only.
+- **Lint:** the portable profile has a `reference` code: an `href`/`xlink:href` that is not `#id` of an element in the document (a file, a URL or a missing id). `compile_svg` already refused such a `<use>`, so `svg_render lint` on the raw file now fails where render would (codeart review, B18 note). Elements already reported as forbidden (`<image>`, `<text>`) are not reported twice; no doctor lint case changes.
+
 ## 1. CLIs
 
 A3 ships no CLI. The CLIs in B18 to B21 import the library by path:
@@ -27,7 +38,8 @@ Entry points, as single-line Python calls:
 - Review: `codeart_core.review_sheet(frames, palette=..., qa=..., anchor=(16, 31)).save("review.png")`.
 - Output:
   - `codeart_core.save_png(rgba, path)`
-  - `codeart_core.write_codeart_meta(path, generator=..., spec_sha256=..., renderer=..., palette=..., outputs=[...], qa=..., inputs=[spec_path])`
+  - `codeart_core.write_codeart_meta(path, generator=..., spec_sha256=..., renderer=..., palette=..., outputs=[...], qa=..., inputs=[spec_path], placeholder=False)`
+- Masks (API 1.1): `codeart_core.inside_polygon(xs, ys, points)`, `codeart_core.distance_field(mask, cap)`.
 
 Contracts that B18 to B21 depend on:
 
@@ -62,7 +74,7 @@ Contracts that B18 to B21 depend on:
     - `status` is the worst measured check;
     - `method` is `QA_PIXELS_METHOD`; `notProven` is `QA_PIXELS_NOT_PROVEN` plus the skipped measurements;
     - `outputs` are the meta's outputs; `inputs` are the given source files (paths or fileRefs; a file on another drive is recorded by file name);
-    - `tool` is `{"name": "codeart_core", "version": CODEART_CORE_API_VERSION}`, and the raw metrics stay under `qa.metrics`.
+    - `tool` is `{"name": "codeart_core", "version": FORGE_PACKAGE_VERSION}` (`"0.4.0"`, D29), and the raw metrics stay under `qa.metrics`.
   - Any other `qa`, and an empty `outputs`, raise `CodeArtError`. Nothing is written then.
   - `rgba_sha256(rgba)` hashes the canonical pixel bytes, independent of PNG encoding.
 
@@ -215,6 +227,8 @@ Notes:
 
 ## 6. Shared-helper promotion requests
 
+**Status: done in Phase 3 (D30).** Both stand-ins below are replaced by forge_core; `save_png` keeps its own encoder (compress_level 9, so existing golden bytes stay valid). The record follows.
+
 No promotions into `forge_*` are needed. Once `skills/codeart2d/scripts/forge_core.py` (A1) is vendored, replace these private stand-ins:
 
 - `_local_sha256_file(path)` becomes `forge_core.sha256_file(path)`.
@@ -233,7 +247,7 @@ Optional, for B04 or later: `detect_grid` and `qa_pixels` are free of image-mode
   - link `scripts/codeart_core.py` as the implementation of the SVG profile, the backends and the doctor;
   - the doctor corpus is `codeart_core.doctor_cases()`;
   - the test goldens live in `tests/fixtures/codeart/raster/goldens.json`.
-- `references/svg-profile.md` (B18): each lint code (`viewbox`, `css-transform`, `transform-origin`, `var`, `text`, `image`, `feTurbulence`, `feDisplacementMap`, `mix-blend-mode`, `foreignObject`, `number`, plus pixel-profile codes `crisp-edges`, `gradient`, `mask`, `filter`, `opacity`) should be listed with its fix.
+- `references/svg-profile.md` (B18): each lint code (`viewbox`, `css-transform`, `transform-origin`, `var`, `text`, `image`, `feTurbulence`, `feDisplacementMap`, `mix-blend-mode`, `foreignObject`, `number`, `reference` (API 1.1), plus pixel-profile codes `crisp-edges`, `gradient`, `mask`, `filter`, `opacity`) is listed with its fix.
 - `references/pixelspec.md` (B18): document the fields in section 5 and the RLE `segments` syntax. Use `tests/fixtures/codeart/slime.pixelspec.json` as the known-good example; it is the design prototype output.
 - CONTRIBUTING (Z): to regenerate the raster goldens, run `codeart_core.rasterize(case.svg, zoom, backend)` for each render case of `doctor_cases()`. Record the backend versions in `goldens.json`. Pinned resvg hashes also live in `codeart_core._DOCTOR_PINNED` and must be updated together.
 - `pytest.ini` (A0) must register the `perf` and `resvg` markers used here. Until then pytest prints three `PytestUnknownMarkWarning`s.
@@ -268,10 +282,9 @@ Optional, for B04 or later: `detect_grid` and `qa_pixels` are free of image-mode
   - The gates are pixel counts per image. The `l_corners` limit of 10 comes from one synthetic 64 px biped.
 - **`review_sheet`** text uses Pillow's default font, so glyphs differ between Pillow/FreeType builds while sheet sizes do not.
 - **`save_png`** gives identical bytes for a given Pillow/zlib build only. Cross-version tests compare pixel sha256 instead.
-- **Not runnable in this worktree:**
-  - `tools/vendor_sync.py --check` (A0's file is absent);
-  - the `test_skill_packages.py` codeart2d case, which fails until Z adds `SKILL.md`, as expected.
+- **Not runnable in the Wave A worktree** (both run in the integrated tree): `tools/vendor_sync.py --check`; the `test_skill_packages.py` codeart2d case, which fails until Z adds `SKILL.md`, as expected.
 - **No CLI** in A3, so the cp1252 `--help` gate does not apply. The module imports and runs under `PYTHONIOENCODING=cp1252`.
+- **forge_core dependency (API 1.1):** codeart_core needs the vendored `forge_core.py` beside it (it always ships there; tests load the module by path and it adds its own folder to `sys.path`).
 - **Fixtures.**
   - The SVGs in `tests/fixtures/codeart/raster/` are byte-identical to the design raster-test corpus. t06A and t13 are its portable subsets.
   - The three `*.chrome.png` references are synthetic renders made by `rasterize(..., "chrome")`.

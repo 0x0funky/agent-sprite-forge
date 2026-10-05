@@ -80,6 +80,7 @@ there is any. The `portable` profile:
 | `mix-blend-mode` | blend modes | blend layers in Python |
 | `foreignObject` | HTML inside SVG | browsers only; draw it as SVG shapes |
 | `number` | NaN, infinity, a complex number or a stray character in geometry | write finite decimals, e.g. `round(float(v.real), 3)` |
+| `reference` | an `href` (or `xlink:href`) that is not `#id` of an element in the same document: a file, a URL or a missing id | copy the shape into the SVG and reference it as `#id`; render refuses such a `<use>` too |
 
 The `pixel` profile (used by `render --crisp`) adds:
 

@@ -210,6 +210,8 @@ def test_parse_palette_formats(tmp_path):
     ("viewbox", '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 16 16"/>'),
     ("viewbox", '<svg xmlns="http://www.w3.org/2000/svg" width="16.5" height="16" viewBox="0 0 16.5 16"/>'),
     ("viewbox", '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"/>'),
+    ("reference", SVG_HEAD + '<use href="file:///C:/art/arm.svg#arm"/></svg>'),
+    ("reference", SVG_HEAD + '<use xmlns:xlink="http://www.w3.org/1999/xlink" xlink:href="#missing"/></svg>'),
 ])
 def test_lint_rejects_each_forbidden_construct(code, svg):
     problems = core.lint_portable_svg(svg)
@@ -233,6 +235,23 @@ def test_lint_messages_are_specific_and_clean_svgs_pass():
     soft = SVG_HEAD + '<defs><linearGradient id="g"/></defs><rect width="4" height="4" opacity="0.5"/></svg>'
     assert [p.split(":")[0] for p in core.lint_portable_svg(soft, "pixel")] == ["crisp-edges", "gradient", "opacity"]
     assert core.lint_portable_svg("<svg")[0].startswith("xml:")
+
+
+def test_lint_reference_matches_what_compile_refuses():
+    """API 1.1 (codeart review, B18 note): an external <use> passed lint as written and then failed in
+    render's compile step. Lint now names it; a reference inside the document stays clean."""
+    reused = SVG_HEAD + '<defs><rect id="dot" width="2" height="2"/></defs><use href="#dot" x="4"/></svg>'
+    assert core.lint_portable_svg(reused) == []
+    assert core.lint_portable_svg(core.compile_svg(reused)) == []
+    external = SVG_HEAD + '<use href="file:///C:/art/arm.svg#arm"/></svg>'
+    (problem,) = core.lint_portable_svg(external)
+    assert problem.startswith("reference:") and "file:///C:/art/arm.svg#arm" in problem and problem.isascii()
+    with pytest.raises(core.CodeArtError, match="must reference an element of this document"):
+        core.compile_svg(external)
+    # every doctor lint case keeps its own code (the new rule adds nothing to them)
+    for case in CASES.values():
+        if case.kind == "lint":
+            assert not any(p.startswith("reference:") for p in core.lint_portable_svg(case.svg)), case.id
 
 
 # ----------------------------------------------------------------------------- A3-T3 rasterize + doctor
@@ -702,7 +721,7 @@ def slime_meta_case(tmp_path: Path, spec_dir: str = "") -> tuple[np.ndarray, Pat
     spec = tmp_path / spec_dir / "slime.pixelspec.json"
     spec.parent.mkdir(parents=True, exist_ok=True)
     spec.write_bytes((FIXTURES / "slime.pixelspec.json").read_bytes())
-    kwargs = {"generator": "test", "spec_sha256": core._local_sha256_file(spec), "renderer": META_RENDERER,
+    kwargs = {"generator": "test", "spec_sha256": core.forge_core.sha256_file(spec), "renderer": META_RENDERER,
               "palette": {"colors": SLIME["palette"], "variants": SLIME["variants"]}, "outputs": [png]}
     return frame, spec, kwargs
 
@@ -802,7 +821,8 @@ def test_meta_wraps_qa_pixels_metrics_in_an_envelope(tmp_path):
     assert qa["notProven"] == list(core.QA_PIXELS_NOT_PROVEN)
     assert qa["outputs"] == meta["outputs"] == [file_ref(kwargs["outputs"][0], tmp_path)]
     assert qa["inputs"] == [file_ref(spec, tmp_path)] and qa["inputs"][0]["sha256"] == meta["spec_sha256"]
-    assert qa["tool"] == {"name": "codeart_core", "version": core.CODEART_CORE_API_VERSION}
+    assert qa["tool"] == {"name": "codeart_core", "version": core.FORGE_PACKAGE_VERSION} == {
+        "name": "codeart_core", "version": "0.4.0"}  # D29: the package version, not the library API version
     assert qa["metrics"] == metrics  # the raw metrics ride along; the qaEnvelope is open
 
     # Gates qa_pixels could not measure (no palette, no outline colour) are skipped, not passed,
@@ -879,3 +899,78 @@ def test_meta_validates_against_schema(tmp_path):
         written = json.loads(path.read_text(encoding="utf-8"))
         errors = [f"{error.json_path}: {error.message}" for error in validator.iter_errors(written)]
         assert not errors, f"{path.name}: {errors}"
+
+
+# ----------------------------------------------------------------------------- API 1.1 (Phase 3 integration)
+
+def test_meta_placeholder_keyword_and_package_version(tmp_path):
+    """B21 request (D30): write_codeart_meta(placeholder=True) records stand-in art without a scratch file;
+    the default stays false; anything but a bool is refused before a file exists. D29: the package version."""
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    metrics = core.qa_pixels(frame, SLIME_COLOURS, SLIME["palette"]["k"])
+    plain = core.write_codeart_meta(tmp_path / "plain.json", qa=metrics, **kwargs)
+    stand_in = core.write_codeart_meta(tmp_path / "stand-in.json", qa=metrics, placeholder=True, **kwargs)
+    assert plain["placeholder"] is False and stand_in["placeholder"] is True
+    assert {key: value for key, value in stand_in.items() if key != "placeholder"} == \
+        {key: value for key, value in plain.items() if key != "placeholder"}
+    for value in (1, "true", None):
+        with pytest.raises(core.CodeArtError, match="placeholder must be true or false"):
+            core.write_codeart_meta(tmp_path / "never.json", qa=metrics, placeholder=value, **kwargs)
+    assert not (tmp_path / "never.json").exists()
+    validator = vendored_codeart_validator("codeart_meta_v1")
+    if validator is not None:
+        assert not list(validator.iter_errors(stand_in))
+    vendored = (ROOT / "skills" / "codeart2d" / "scripts" / "forge_core.py").read_text(encoding="utf-8")
+    assert core.FORGE_PACKAGE_VERSION == core.forge_core.FORGE_PACKAGE_VERSION == "0.4.0"
+    assert 'FORGE_PACKAGE_VERSION = "0.4.0"' in vendored and core.CODEART_CORE_API_VERSION == "1.1"
+
+
+def test_meta_is_written_by_forge_core_write_json(tmp_path):
+    """D30: the meta goes through forge_core.write_json: indent 2, ensure_ascii off, one trailing newline,
+    LF only, no clobbering, missing parent folders created as before."""
+    frame, spec, kwargs = slime_meta_case(tmp_path)
+    target = tmp_path / "deep" / "er" / "codeart-meta.json"
+    meta = core.write_codeart_meta(target, qa=core.qa_pixels(frame, SLIME_COLOURS), **{
+        **kwargs, "outputs": [kwargs["outputs"][0]], "extra": {"note": "caf\u00e9"}})
+    data = target.read_bytes()
+    assert data == (json.dumps(meta, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    assert b"\r\n" not in data and "caf\u00e9".encode("utf-8") in data
+    with pytest.raises(FileExistsError):
+        core.write_codeart_meta(target, qa=core.qa_pixels(frame, SLIME_COLOURS), **kwargs)
+
+
+def test_distance_field_matches_brute_force_with_and_without_scipy(monkeypatch):
+    """The one Euclidean capped distance of codeart2d (layout_build clearances, ambient_bake feathers)."""
+    rng = np.random.default_rng(11)
+    for trial in range(5):
+        mask = rng.random((37, 59)) < 0.01 * (trial + 1)
+        cap = 7.5 + trial
+        ys, xs = np.nonzero(mask)
+        grid_y, grid_x = np.mgrid[0:37, 0:59]
+        brute = np.hypot(grid_x[..., None] - xs, grid_y[..., None] - ys).min(axis=-1)
+        expected = np.where(brute <= cap, brute, np.inf)
+        monkeypatch.setenv("FORGE_CORE_NO_SCIPY", "1")
+        numpy_path = core.distance_field(mask, cap)
+        monkeypatch.delenv("FORGE_CORE_NO_SCIPY")
+        np.testing.assert_array_equal(numpy_path, expected)
+        np.testing.assert_array_equal(core.distance_field(mask, cap), expected)
+        assert numpy_path.dtype == np.float64
+    assert np.isinf(core.distance_field(np.zeros((3, 4), bool), 5.0)).all()
+    np.testing.assert_array_equal(core.distance_field(np.ones((3, 4), bool), 5.0), np.zeros((3, 4)))
+    for bad in (-1, float("nan")):
+        with pytest.raises(core.CodeArtError, match="cap"):
+            core.distance_field(np.ones((2, 2), bool), bad)
+    with pytest.raises(core.CodeArtError, match="2-D"):
+        core.distance_field(np.ones(4, bool), 1.0)
+
+
+def test_inside_polygon_is_even_odd_with_left_and_top_edges_inside():
+    square = [(1.0, 1.0), (3.0, 1.0), (3.0, 3.0), (1.0, 3.0)]
+    xs = np.array([1.0, 2.0, 3.0, 2.0, 2.0, 0.5])
+    ys = np.array([2.0, 1.0, 2.0, 3.0, 2.0, 2.0])
+    assert core.inside_polygon(xs, ys, square).tolist() == [True, True, False, False, True, False]
+    ring = [(0, 0), (6, 0), (6, 6), (0, 6), (0, 0), (2, 2), (2, 4), (4, 4), (4, 2), (2, 2)]  # a square with a hole
+    grid_y, grid_x = np.mgrid[0:6, 0:6] + 0.5
+    inside = core.inside_polygon(grid_x, grid_y, ring)
+    assert inside.sum() == 36 - 4 and not inside[2:4, 2:4].any()
+    assert core.inside_polygon(np.float32(2.5), np.float32(2.5), square).dtype == bool

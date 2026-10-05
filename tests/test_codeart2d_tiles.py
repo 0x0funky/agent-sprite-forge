@@ -16,8 +16,8 @@ import numpy as np
 from PIL import Image
 import pytest
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
-                             script_path)
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script,
+                             run_cli, script_path)
 
 
 at = load_script("codeart2d", "autotile_build")
@@ -383,12 +383,22 @@ def test_outputs_validate_against_the_contracts(examples):
         qa = json.loads((out / "autotile-qa.json").read_text(encoding="utf-8"))
         assert_valid_contract(qa, "common", "qaEnvelope", skill="codeart2d")
         assert qa["notProven"] and qa["method"] and qa["inputs"][0]["path"].endswith(".material.json")
+        assert qa["tool"] == {"name": "codeart2d/autotile_build", "version": "0.4.0"}  # D29
         for ref in qa["outputs"] + meta["outputs"]:
             file = out / ref["path"]
             assert hashlib.sha256(file.read_bytes()).hexdigest() == ref["sha256"]
-        for manifest_path in sorted(out.glob("*.tileset.json")):
+        manifests = sorted(out.glob("*.tileset.json"))
+        listed = {ref["path"] for ref in meta["outputs"]}
+        assert {path.name for path in manifests} | {"autotile-qa.json"} <= listed
+        assert not {path.name for path in manifests} & {ref["path"] for ref in qa["outputs"]}
+        qa_ref = {"path": "autotile-qa.json", "sha256": hashlib.sha256((out / "autotile-qa.json").read_bytes()).hexdigest(),
+                  "bytes": (out / "autotile-qa.json").stat().st_size}
+        for manifest_path in manifests:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
             assert_valid_contract(manifest, "map", "tileset_v1", skill="codeart2d")
+            assert manifest["qa"] == qa_ref  # D5: a fileRef of the QA file, bound to its bytes
+            assert_valid_contract(manifest["qa"], "common", "fileRef", skill="codeart2d")
+            assert manifest["generator"] == {"name": "codeart2d/autotile_build", "version": "0.4.0"}
             atlas = out / manifest["image"]
             assert hashlib.sha256(atlas.read_bytes()).hexdigest() == manifest["sha256"]
             assert manifest["seamless_verified"] is True and manifest["seam_proof"]["mismatches"] == 0
@@ -399,106 +409,22 @@ def test_outputs_validate_against_the_contracts(examples):
             assert [t["index"] for t in manifest["tiles"]] == list(range(manifest["tilecount"]))
 
 
-# The optional fields autotile_build writes or reads, as requested in handoff/B20-codeart-autotile.md
-# section 5. Applied in memory to the vendored schemas, they must accept every output and both examples.
-TILESET_ADDITIONS = {
-    "id": {"type": "string", "minLength": 1},
-    "tilecount": {"type": "integer", "minimum": 1},
-    "variants": {"type": "integer", "minimum": 1},
-    "plateau": {"type": "integer", "minimum": 0},
-    "wangset": {"type": "object", "required": ["type", "colors"], "properties": {
-        "type": {"enum": ["corner", "edge", "mixed"]},
-        "colors": {"type": "array", "minItems": 1, "items": {
-            "type": "object", "required": ["name", "color"],
-            "properties": {"name": {"type": "string", "minLength": 1},
-                           "color": {"$ref": "common.schema.json#/$defs/hexColor"}}}}}},
-    "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
-    "generator": {"$ref": "common.schema.json#/$defs/toolInfo"},
-    "spec_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
-    "qa": {"$ref": "common.schema.json#/$defs/relPath"},
-}
-TILE_ADDITIONS = {"wangid": {"type": "array", "minItems": 8, "maxItems": 8, "items": {"type": "integer", "minimum": 0}}}
-RULE = {"type": "object", "required": ["colors"], "properties": {
-    "colors": {"type": "array", "minItems": 1, "maxItems": 8,
-               "items": {"anyOf": [{"type": "integer", "minimum": 0}, {"$ref": "common.schema.json#/$defs/hexColor"}]}},
-    "against": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
-    "from": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}}}
-MATERIAL_ADDITIONS = {
-    "walkable": {"type": "boolean"},
-    "edge": {"anyOf": [RULE, {"type": "array", "items": RULE}]},
-    "shadow": {"anyOf": [RULE, {"type": "array", "items": RULE}]},
-    "bevel": {"type": "object", "propertyNames": {"enum": ["top", "bottom", "left", "right"]},
-              "additionalProperties": {"type": "array", "maxItems": 8, "items": {"type": "integer"}}},
-}
-TEXTURE_OBJECT = {"type": "object", "properties": {
-    "base": {"type": "integer", "minimum": 0},
-    "noise": {"type": "object", "required": ["levels"], "properties": {
-        "frequency": {"type": "integer", "minimum": 1, "maximum": 8},
-        "levels": {"type": "array", "minItems": 1, "items": {
-            "type": "array", "minItems": 3, "maxItems": 3, "prefixItems": [
-                {"type": "number", "minimum": 0}, {"type": "number", "minimum": 0},
-                {"type": "integer", "minimum": 0}]}}}},
-    "marks": {"type": "array", "items": {"type": "object", "required": ["rows"], "properties": {
-        "rows": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[0-9. ]*$"}},
-        "weight": {"type": "number", "exclusiveMinimum": 0}}}},
-    "marks_per_tile": {"anyOf": [{"type": "integer", "minimum": 0},
-                                 {"type": "array", "minItems": 2, "maxItems": 2,
-                                  "items": {"type": "integer", "minimum": 0}}]},
-    "mark_margin": {"type": "integer", "minimum": 1},
-    "image": {"$ref": "common.schema.json#/$defs/relPath"},
-    "quantize": {"type": "boolean"}}}
-SET_ADDITIONS = {
-    "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]{0,47}$"},
-    "plateau": {"type": "integer", "minimum": 0},
-    "wobble": {"type": "number", "minimum": 0, "maximum": 0.9},
-    "margin": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"type": "integer", "minimum": 1}},
-}
-SET_COUNTS = [
-    {"if": {"properties": {"kind": {"const": "blob47"}}, "required": ["kind"]},
-     "then": {"properties": {"materials": {"minItems": 2, "maxItems": 2}}}},
-    {"if": {"properties": {"kind": {"enum": ["bevel", "flat"]}}, "required": ["kind"]},
-     "then": {"properties": {"materials": {"maxItems": 1}}}},
-]
-
-
-def amended_validator(domain: str, name: str):
-    """Validator for the vendored codeart2d schemas with the section 5 additions applied in memory."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / "codeart2d" / "references" / "schemas"
-    schemas = {p.name.removesuffix(".schema.json"): json.loads(p.read_text(encoding="utf-8"))
-               for p in folder.glob("*.schema.json")}
-    tileset = schemas["map"]["$defs"]["tileset_v1"]
-    tileset["properties"].update(TILESET_ADDITIONS)
-    schemas["map"]["$defs"]["tile"]["properties"].update(TILE_ADDITIONS)
-    spec = schemas["codeart"]["$defs"]["material_spec_v1"]
-    material = spec["properties"]["materials"]["additionalProperties"]
-    material["properties"].update(MATERIAL_ADDITIONS)
-    material["properties"]["texture"]["anyOf"][0] = TEXTURE_OBJECT
-    spec["properties"]["collision_cell"] = {"type": "integer", "minimum": 1}
-    spec["properties"]["sets"]["items"]["properties"].update(SET_ADDITIONS)
-    spec["properties"]["sets"]["items"]["allOf"] = SET_COUNTS
-    for schema in schemas.values():
-        Draft202012Validator.check_schema(schema)
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in schemas.values())
-    return Draft202012Validator({"$ref": f"{schemas[domain]['$id']}#/$defs/{name}"}, registry=registry)
-
-
-def test_requested_schema_additions_accept_the_outputs(examples):
-    """The optional fields listed in the handoff (section 5) type-check every manifest and spec."""
+def test_outputs_and_examples_validate_against_the_applied_schema_requests(examples):
+    """The handoff section 5 requests are in the shared schemas now (S1): the real vendored schemas
+    type-check every manifest and both examples, and refuse a three-material blob47 set."""
     _, runs = examples
-    specs = amended_validator("codeart", "material_spec_v1")
     for spec in (WATER_GRASS, DIRT_PATH):
-        assert not list(specs.iter_errors(json.loads(spec.read_text(encoding="utf-8"))))
+        assert_valid_contract(json.loads(spec.read_text(encoding="utf-8")), "codeart", "material_spec_v1",
+                              skill="codeart2d")
     bad = json.loads(WATER_GRASS.read_text(encoding="utf-8"))
     bad["sets"].append({"kind": "blob47", "materials": ["grass", "dirt", "water"]})
-    assert list(specs.iter_errors(bad))
-    tilesets = amended_validator("map", "tileset_v1")
+    assert contract_errors(bad, "codeart", "material_spec_v1", skill="codeart2d")
     for _, out in runs.values():
         for manifest_path in out.glob("*.tileset.json"):
-            assert not list(tilesets.iter_errors(json.loads(manifest_path.read_text(encoding="utf-8"))))
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            assert_valid_contract(manifest, "map", "tileset_v1", skill="codeart2d")
+            for tile in manifest["tiles"]:
+                assert_valid_contract(tile, "map", "tile", skill="codeart2d")
 
 
 def test_outputs_are_deterministic(examples):
@@ -549,12 +475,26 @@ def test_strict_mode_fails_without_a_seam_proof(tmp_path):
     assert_valid_contract(manifest, "map", "tileset_v1", skill="codeart2d")
 
 
-def test_bad_arguments_exit_1_with_an_error_line(tmp_path):
-    for args in (["--material-spec", str(tmp_path / "missing.json"), "--output-dir", str(tmp_path / "o")],
-                 ["--material-spec", str(WATER_GRASS), "--output-dir", str(tmp_path / "o"), "--preview-map", "9"],
-                 ["--material-spec", str(WATER_GRASS), "--output-dir", str(tmp_path / "o"), "--kind", "hex"]):
+def test_bad_arguments_exit_with_an_error_line(tmp_path):
+    """D26: a missing file is a runtime error (exit 1); argument errors are argparse usage errors (exit 2)."""
+    result = cli("--material-spec", tmp_path / "missing.json", "--output-dir", tmp_path / "o", encoding="cp1252")
+    assert result.returncode == 1 and result.stderr.startswith("error: ") and "Traceback" not in result.stderr
+    for args in (["--material-spec", str(WATER_GRASS), "--output-dir", str(tmp_path / "o"), "--preview-map", "9"],
+                 ["--material-spec", str(WATER_GRASS), "--output-dir", str(tmp_path / "o"), "--kind", "hex"],
+                 ["--material-spec", str(WATER_GRASS)]):
         result = cli(*args, encoding="cp1252")
-        assert result.returncode == 1 and "error: " in result.stderr and "Traceback" not in result.stderr
+        assert result.returncode == 2 and result.stderr.startswith("usage: autotile_build.py")
+        assert "error: " in result.stderr and "Traceback" not in result.stderr
+    bom = tmp_path / "bom.material.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + WATER_GRASS.read_bytes())
+    result = cli("--material-spec", bom, "--kind", "wang", "--output-dir", tmp_path / "bom", "--preview-map", "none")
+    assert result.returncode == 0, result.stderr  # D28: a spec saved with a UTF-8 BOM is read
+    for index, text in enumerate(["[]", '{"schema": "codeart2d.material_spec.v1", "materials": 3}', "{", "\xff"]):
+        path = tmp_path / f"bad-{index}.json"
+        path.write_bytes(text.encode("latin-1"))
+        result = cli("--material-spec", path, "--output-dir", tmp_path / f"out-{index}")
+        assert result.returncode == 1 and result.stderr.startswith("error: ") and "Traceback" not in result.stderr
+        assert "internal error" not in result.stderr, result.stderr
     assert not (tmp_path / "o").exists()
 
 

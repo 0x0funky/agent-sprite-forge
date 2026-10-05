@@ -5,8 +5,9 @@ Run from the project root; outputs go to a new folder inside the project:
   python "<skill-dir>/scripts/render_pixelspec.py" --spec slime.pixelspec.json --output-dir out/slime-v1 --variants all --build-clips --preview-scale 6 --strict-qc
 
 The spec is checked against references/schemas/codeart.schema.json#/$defs/pixelspec_v1
-and against the cross-references a schema cannot express (pose, layer, frame and clip
-names, palette characters, timing lengths) before anything is rendered.
+(with the vendored forge_schema evaluator, no jsonschema needed) and against the
+cross-references a schema cannot express (pose, layer, frame and clip names, palette
+characters, timing lengths) before anything is rendered.
 
 Output folder (written to a stage beside it, checked, then published in one step):
   codeart-meta.json            art_source "code", spec sha256, palette, every output file
@@ -15,6 +16,7 @@ Output folder (written to a stage beside it, checked, then published in one step
                                the same pixels in every variant share one file
   <variant>/clips.json          --clips-manifest or --build-clips: manifest for
                                generate2dsprite's build_animation_clips.py
+                               (animation_clips.v2; --clips-schema v1 for old builders)
   <variant>/bundle/             --build-clips: that builder's output for the variant
   preview-x<N>.png              --preview-scale N: variants x frames, integer nearest
 
@@ -31,7 +33,6 @@ With --strict-qc nothing is published unless every frame has 0 partial-alpha and
 from __future__ import annotations
 
 import argparse
-from functools import lru_cache
 import json
 import os
 from pathlib import Path
@@ -39,10 +40,10 @@ import re
 import subprocess
 import sys
 from typing import Any, Mapping, Sequence
-from urllib.parse import urljoin
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPTS_DIR))
+import forge_schema  # noqa: E402  (standard library only: the vendored contract evaluator, D31)
 try:
     import numpy as np
     import codeart_core
@@ -53,7 +54,7 @@ else:
     _MISSING = None
 
 TOOL_NAME = "render_pixelspec.py"
-TOOL_VERSION = "0.4.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.4.0"  # D29: the package version
 SKILL_DIR = SCRIPTS_DIR.parent
 SCHEMA_DIR = SKILL_DIR / "references" / "schemas"
 DEFAULT_CLIPS_BUILDER = SKILL_DIR.parent / "generate2dsprite" / "scripts" / "build_animation_clips.py"
@@ -61,8 +62,9 @@ META_NAME = "codeart-meta.json"
 BASE_VARIANT = "base"
 CLIPS_V1 = "generate2dsprite.animation_clips.v1"
 CLIPS_V2 = "generate2dsprite.animation_clips.v2"
-# Clip fields that only the v2 clips manifest knows (plan Appendix B); a spec clip using any
-# of them is written to a v2 manifest, otherwise the v1 manifest every builder accepts.
+CLIPS_SCHEMAS = {"v1": CLIPS_V1, "v2": CLIPS_V2}
+# Clip fields that only the v2 clips manifest knows (plan Appendix B). Manifests are v2 by default (D11);
+# --clips-schema v1 (for builders that predate the v2 reader) refuses clips that use any of them.
 CLIP_V2_FIELDS = frozenset({"ticks", "tick_hz", "loop_policy", "events", "keys", "entry_frame", "stride_px_per_frame",
                             "cadence_ms", "speed_ref", "transitions", "hitstop_ticks", "role"})
 BUILDER_TIMEOUT_S = 600
@@ -85,257 +87,31 @@ class QAFailure(Exception):
 
 
 # ----------------------------------------------------------------------------- contract validation
-# A Draft 2020-12 validator for the keywords the vendored contracts use, so a spec is checked
-# against references/schemas itself without needing jsonschema at run time. tests compare it
-# with jsonschema on every contract fixture; an unsupported keyword raises instead of passing.
 
-_ANNOTATIONS = frozenset({"$schema", "$id", "$defs", "$comment", "title", "description", "default", "examples",
-                          "format", "deprecated", "readOnly", "writeOnly"})
-_ASSERTIONS = frozenset({"$ref", "type", "enum", "const", "pattern", "minLength", "maxLength", "minimum", "maximum",
-                         "exclusiveMinimum", "exclusiveMaximum", "required", "properties", "additionalProperties",
-                         "propertyNames", "minProperties", "maxProperties", "items", "prefixItems", "minItems",
-                         "maxItems", "contains", "allOf", "anyOf", "oneOf", "not", "if", "then", "else"})
-
-
-def _brief(value: Any) -> str:
-    text = json.dumps(value, ensure_ascii=True, sort_keys=False)
-    return text if len(text) <= 60 else text[:57] + "..."
-
-
-def _depth(error: str) -> int:
-    path = error.split(": ", 1)[0]
-    return path.count(".") + path.count("[")
-
-
-def _is_type(value: Any, name: Any) -> bool:
-    if isinstance(name, list):
-        return any(_is_type(value, item) for item in name)
-    if name == "object":
-        return isinstance(value, dict)
-    if name == "array":
-        return isinstance(value, list)
-    if name == "string":
-        return isinstance(value, str)
-    if name == "boolean":
-        return isinstance(value, bool)
-    if name == "null":
-        return value is None
-    if isinstance(value, bool):
-        return False
-    if name == "integer":
-        return isinstance(value, int) or (isinstance(value, float) and value.is_integer())
-    if name == "number":
-        return isinstance(value, (int, float))
-    raise RuntimeError(f"contract validator: unknown type {name!r}")
-
-
-def _json_equal(a: Any, b: Any) -> bool:
-    """JSON equality: booleans never equal numbers; 1 equals 1.0."""
-    if isinstance(a, bool) or isinstance(b, bool):
-        return isinstance(a, bool) and isinstance(b, bool) and a == b
-    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-        return a == b
-    if isinstance(a, list) and isinstance(b, list):
-        return len(a) == len(b) and all(_json_equal(x, y) for x, y in zip(a, b))
-    if isinstance(a, dict) and isinstance(b, dict):
-        return a.keys() == b.keys() and all(_json_equal(a[key], b[key]) for key in a)
-    return type(a) is type(b) and a == b
-
-
-def _hint(schema: Mapping) -> str:
-    """The first sentences of a schema's description, to explain an anyOf/oneOf failure."""
-    text = str(schema.get("description") or "")
-    if not text:
-        return ""
-    cut = text if len(text) <= 200 else text[:200].rsplit(". ", 1)[0] + "."
-    return f" ({cut})"
-
-
-class _LocalContracts:
-    """The vendored *.schema.json documents of a skill, addressed by file stem (common, codeart, ...)."""
-
-    def __init__(self, directory: Path) -> None:
-        self.documents: dict[str, dict] = {}
-        self.ids: dict[str, str] = {}
-        for path in sorted(directory.glob("*.schema.json")):
-            document = json.loads(path.read_text(encoding="utf-8"))
-            self.documents[document["$id"]] = document
-            self.ids[path.name[:-len(".schema.json")]] = document["$id"]
-        if not self.ids:
-            raise codeart_core.CodeArtError(f"no contract schemas in {directory}; reinstall the codeart2d skill")
-
-    def errors(self, instance: Any, domain: str, definition: str) -> list[str]:
-        """Violations of <domain>.schema.json#/$defs/<definition> as "$.json.path: message" lines."""
-        if domain not in self.ids:
-            raise codeart_core.CodeArtError(f"no {domain}.schema.json among the vendored contracts")
-        found: list[str] = []
-        self._check(instance, {"$ref": f"#/$defs/{definition}"}, self.ids[domain], "$", found)
-        return found
-
-    def _resolve(self, reference: str, base: str) -> tuple[Any, str]:
-        url = urljoin(base, reference)
-        document_url, _, fragment = url.partition("#")
-        if document_url not in self.documents:
-            raise RuntimeError(f"contract validator: cannot resolve $ref {reference!r} from {base}")
-        node: Any = self.documents[document_url]
-        for part in fragment.split("/")[1:] if fragment else []:
-            part = part.replace("~1", "/").replace("~0", "~")
-            node = node[int(part)] if isinstance(node, list) else node[part]
-        return node, document_url
-
-    def _errors(self, value: Any, schema: Any, base: str, path: str) -> list[str]:
-        found: list[str] = []
-        self._check(value, schema, base, path, found)
-        return found
-
-    def _check(self, value: Any, schema: Any, base: str, path: str, out: list[str]) -> None:
-        if schema is True:
-            return
-        if schema is False:
-            out.append(f"{path}: {_brief(value)} is not allowed here")
-            return
-        unknown = set(schema) - _ANNOTATIONS - _ASSERTIONS
-        if unknown:
-            raise RuntimeError(f"contract validator does not support {sorted(unknown)}")
-        if "$ref" in schema:
-            target, target_base = self._resolve(schema["$ref"], base)
-            self._check(value, target, target_base, path, out)
-        if "type" in schema and not _is_type(value, schema["type"]):
-            out.append(f"{path}: {_brief(value)} is not of type {schema['type']!r}")
-            return
-        if "enum" in schema and not any(_json_equal(value, item) for item in schema["enum"]):
-            out.append(f"{path}: {_brief(value)} is not one of {_brief(schema['enum'])}")
-        if "const" in schema and not _json_equal(value, schema["const"]):
-            out.append(f"{path}: {_brief(schema['const'])} was expected")
-        if isinstance(value, str):
-            self._check_string(value, schema, path, out)
-        elif isinstance(value, (int, float)) and not isinstance(value, bool):
-            self._check_number(value, schema, path, out)
-        elif isinstance(value, dict):
-            self._check_object(value, schema, base, path, out)
-        elif isinstance(value, list):
-            self._check_array(value, schema, base, path, out)
-        for sub in schema.get("allOf", ()):
-            self._check(value, sub, base, path, out)
-        for keyword in ("anyOf", "oneOf"):
-            if keyword not in schema:
-                continue
-            branches = [self._errors(value, sub, base, path) for sub in schema[keyword]]
-            passing = sum(1 for branch in branches if not branch)
-            if passing == 0:
-                deepest = max((error for branch in branches for error in branch), key=_depth)
-                out.append(deepest if _depth(deepest) > _depth(path + ": ") else
-                           f"{path}: {_brief(value)} is not valid under any of the given schemas{_hint(schema)}")
-            elif keyword == "oneOf" and passing > 1:
-                out.append(f"{path}: {_brief(value)} is valid under more than one of the given schemas{_hint(schema)}")
-        if "not" in schema and not self._errors(value, schema["not"], base, path):
-            out.append(f"{path}: {_brief(value)} should not be valid under {_brief(schema['not'])}")
-        if "if" in schema:
-            branch = "then" if not self._errors(value, schema["if"], base, path) else "else"
-            if branch in schema:
-                self._check(value, schema[branch], base, path, out)
-
-    @staticmethod
-    def _check_string(value: str, schema: Mapping, path: str, out: list[str]) -> None:
-        if "pattern" in schema and not _pattern(schema["pattern"]).search(value):
-            out.append(f"{path}: {_brief(value)} does not match {schema['pattern']!r}")
-        if "minLength" in schema and len(value) < schema["minLength"]:
-            out.append(f"{path}: {_brief(value)} is too short")
-        if "maxLength" in schema and len(value) > schema["maxLength"]:
-            out.append(f"{path}: {_brief(value)} is too long")
-
-    @staticmethod
-    def _check_number(value: float, schema: Mapping, path: str, out: list[str]) -> None:
-        if "minimum" in schema and value < schema["minimum"]:
-            out.append(f"{path}: {value} is less than the minimum of {schema['minimum']}")
-        if "maximum" in schema and value > schema["maximum"]:
-            out.append(f"{path}: {value} is greater than the maximum of {schema['maximum']}")
-        if "exclusiveMinimum" in schema and value <= schema["exclusiveMinimum"]:
-            out.append(f"{path}: {value} is less than or equal to the minimum of {schema['exclusiveMinimum']}")
-        if "exclusiveMaximum" in schema and value >= schema["exclusiveMaximum"]:
-            out.append(f"{path}: {value} is greater than or equal to the maximum of {schema['exclusiveMaximum']}")
-
-    def _check_object(self, value: dict, schema: Mapping, base: str, path: str, out: list[str]) -> None:
-        for name in schema.get("required", ()):
-            if name not in value:
-                out.append(f"{path}: {name!r} is a required property")
-        properties = schema.get("properties", {})
-        for key, sub in properties.items():
-            if key in value:
-                self._check(value[key], sub, base, f"{path}.{key}", out)
-        extra = schema.get("additionalProperties", True)
-        others = [key for key in value if key not in properties]
-        if extra is False and others:
-            out.append(f"{path}: additional properties are not allowed ({', '.join(map(repr, others))} unexpected)")
-        elif isinstance(extra, dict):
-            for key in others:
-                self._check(value[key], extra, base, f"{path}.{key}", out)
-        if "propertyNames" in schema:
-            for key in value:
-                problems = self._errors(key, schema["propertyNames"], base, path)
-                if problems:
-                    out.append(f"{path}: property name {key!r} is not allowed ({problems[0].split(': ', 1)[1]})")
-        if "minProperties" in schema and len(value) < schema["minProperties"]:
-            out.append(f"{path}: {_brief(value)} does not have enough properties")
-        if "maxProperties" in schema and len(value) > schema["maxProperties"]:
-            out.append(f"{path}: {_brief(value)} has too many properties")
-
-    def _check_array(self, value: list, schema: Mapping, base: str, path: str, out: list[str]) -> None:
-        prefix = schema.get("prefixItems", [])
-        for index, sub in enumerate(prefix[:len(value)]):
-            self._check(value[index], sub, base, f"{path}[{index}]", out)
-        if "items" in schema:
-            for index in range(len(prefix), len(value)):
-                self._check(value[index], schema["items"], base, f"{path}[{index}]", out)
-        if "minItems" in schema and len(value) < schema["minItems"]:
-            out.append(f"{path}: {_brief(value)} is too short")
-        if "maxItems" in schema and len(value) > schema["maxItems"]:
-            out.append(f"{path}: {_brief(value)} is too long")
-        if "contains" in schema and not any(not self._errors(item, schema["contains"], base, path) for item in value):
-            out.append(f"{path}: {_brief(value)} does not contain items matching the given schema")
-
-
-@lru_cache(maxsize=None)
-def _pattern(text: str) -> re.Pattern:
-    return re.compile(text)
-
-
-@lru_cache(maxsize=None)
-def _local_contracts(directory: str = str(SCHEMA_DIR)) -> _LocalContracts:
-    return _LocalContracts(Path(directory))
-
-
-def _local_contract_errors(instance: Any, domain: str, definition: str) -> list[str]:
-    """Violations of a vendored contract, as "$.json.path: message" lines (empty when valid)."""
-    return _local_contracts().errors(instance, domain, definition)
+def contract_errors(instance: Any, domain: str, definition: str) -> list[str]:
+    """Violations of <domain>.schema.json#/$defs/<definition> among the skill's vendored contracts, as
+    "$.json.path: message" lines (empty when valid). forge_schema (D31) evaluates exactly the Draft
+    2020-12 keywords the contracts use and raises on any other, so a schema update it cannot read
+    fails loudly instead of passing; it replaces this tool's former private _LocalContracts."""
+    return forge_schema.schema_set(SCHEMA_DIR).contract_errors(instance, domain, definition)
 
 
 # ----------------------------------------------------------------------------- spec loading and checks
 
-def _unique_object(pairs: list[tuple[str, Any]]) -> dict:
-    result: dict = {}
-    for key, value in pairs:
-        if key in result:
-            raise codeart_core.CodeArtError(f"duplicate key {key!r} in the spec JSON")
-        result[key] = value
-    return result
-
-
-def _reject_constant(name: str) -> Any:
-    raise codeart_core.CodeArtError(f"the spec contains {name}, which is not JSON; use finite numbers")
-
-
 def load_spec(path: Path) -> tuple[dict, bytes]:
-    """Read a PixelSpec file strictly: UTF-8 JSON object, no duplicate keys, no NaN or Infinity."""
+    """Read a PixelSpec file strictly through forge_core.parse_json (D28): UTF-8 with an optional BOM,
+    one JSON object, no duplicate keys, no NaN or Infinity."""
     if not path.is_file():
         raise codeart_core.CodeArtError(f"spec file not found: {path}")
     raw = path.read_bytes()
     try:
-        spec = json.loads(raw.decode("utf-8-sig"), object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+        spec = forge_core.parse_json(raw, strict=True)
     except UnicodeDecodeError:
         raise codeart_core.CodeArtError(f"{path.name} is not UTF-8 text") from None
     except json.JSONDecodeError as error:
         raise codeart_core.CodeArtError(f"{path.name} is not valid JSON: {error}") from None
+    except ValueError as error:  # a duplicate key, NaN or a number that overflows to infinity
+        raise codeart_core.CodeArtError(f"{path.name}: {error}; use unique keys and finite numbers") from None
     if not isinstance(spec, dict):
         raise codeart_core.CodeArtError(f"{path.name} must hold one JSON object (a PixelSpec)")
     return spec, raw
@@ -363,7 +139,7 @@ def validate_spec(spec: dict) -> None:
     layer and frame names are unique; every character is in the palette; every rendered
     layer has pixels; clip timing lists match their frames; event and key positions fit.
     """
-    errors = _local_contract_errors(spec, "codeart", "pixelspec_v1")
+    errors = contract_errors(spec, "codeart", "pixelspec_v1")
     if errors:
         more = f" (and {len(errors) - 4} more)" if len(errors) > 4 else ""
         raise codeart_core.CodeArtError(
@@ -586,19 +362,19 @@ def qa_envelope(records: list[dict], inputs: list[dict], outputs: list[dict], ha
                         **{key: record["metrics"][key] for key in keep}} for record in records]}
 
 
-def _local_file_ref(path: Path, base: Path) -> dict:
-    """fileRef relative to `base` (POSIX); a file on another drive is recorded by its name."""
-    try:
-        relative = Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:  # Windows: another drive has no relative path
-        relative = path.name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+def _file_ref(path: Path, base: Path) -> dict:
+    """fileRef relative to `base` (POSIX); a file on another drive is recorded by its name (forge_core.file_ref)."""
+    return forge_core.file_ref(path, base)
 
 
 # ----------------------------------------------------------------------------- clips
 
-def clips_manifests(spec: Mapping, plan: Mapping) -> tuple[dict, dict]:
+def clips_manifests(spec: Mapping, plan: Mapping, schema: str = "v2") -> tuple[dict, dict]:
     """The clips manifest shared by every variant (frame files are per variant) and a report.
+
+    schema "v2" (the default, D11) writes generate2dsprite.animation_clips.v2, so events, ticks and
+    the top-level sampling/pixel_art/art_source reach every builder; "v1" is for builders that
+    predate the v2 reader and refuses clips that use v2-only fields.
 
     Clip frame references become indices into the manifest's frames, which list each
     distinct referenced frame once (repeated poses reuse one file). Empty frames at the
@@ -651,8 +427,12 @@ def clips_manifests(spec: Mapping, plan: Mapping) -> tuple[dict, dict]:
             out["transitions"] = [
                 {**item, "entry_frame": min(item["entry_frame"], len(clips[item["to"]]["frames"]) - 1)}
                 if "entry_frame" in item else item for item in out["transitions"]]
-    v2 = any(CLIP_V2_FIELDS & set(clip) or not {"duration_ms", "loop"} <= set(clip) for clip in clips.values())
-    manifest: dict[str, Any] = {"schema": CLIPS_V2 if v2 else CLIPS_V1, "frames": manifest_frames,
+    needs_v2 = sorted(name for name, clip in clips.items()
+                      if CLIP_V2_FIELDS & set(clip) or not {"duration_ms", "loop"} <= set(clip))
+    if schema == "v1" and needs_v2:
+        raise codeart_core.CodeArtError(f"clip(s) {', '.join(map(repr, needs_v2))} use animation_clips.v2 fields "
+                                        "(ticks, loop_policy, events, keys, ...); drop --clips-schema v1")
+    manifest: dict[str, Any] = {"schema": CLIPS_SCHEMAS[schema], "frames": manifest_frames,
                                 "anchor_px": spec["anchor_px"], "clips": clips}
     if spec.get("states"):
         manifest["states"] = dict(spec["states"])
@@ -736,7 +516,7 @@ def run(args: argparse.Namespace) -> dict:
     plan = frame_plan(spec, variants)
     manifest = clip_report = None
     if want_clips:
-        manifest, clip_report = clips_manifests(spec, plan)
+        manifest, clip_report = clips_manifests(spec, plan, args.clips_schema)
         check_builder_frames(spec, plan, clip_report["manifest_frames"], variants)
 
     used_dirs: set[str] = set()
@@ -756,8 +536,8 @@ def run(args: argparse.Namespace) -> dict:
                 records.append({"file": target.relative_to(stage).as_posix(), "variant": label,
                                 "frame": frames[position]["name"] if frames[position]["name"] is not None
                                 else frames[position]["stem"], "metrics": frame_qa(target, colours, outline)})
-        inputs = [_local_file_ref(spec_path, stage)]
-        frame_refs = [_local_file_ref(path, stage) for path in outputs]
+        inputs = [_file_ref(spec_path, stage)]
+        frame_refs = [_file_ref(path, stage) for path in outputs]
         qa = qa_envelope(records, inputs, frame_refs, spec.get("outline", {}).get("mode", "none") != "none")
         if args.strict_qc and qa["status"] != "pass":
             failing = [f"{check['id']} {check['value']} > {check['threshold']} in {', '.join(check['failing'][:3])}"
@@ -766,7 +546,7 @@ def run(args: argparse.Namespace) -> dict:
 
         bundles = {}
         if manifest is not None:
-            problems = _local_contract_errors(manifest, "sprite", "clips_input")
+            problems = contract_errors(manifest, "sprite", "clips_input")
             if problems:  # a defect of this tool, never of the spec
                 raise RuntimeError("the clips manifest breaks clips_input: " + "; ".join(problems[:3]))
             for label, _ in variants:
@@ -838,6 +618,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="also run build_animation_clips on each manifest into <variant>/bundle")
     parser.add_argument("--clips-builder", default=None,
                         help="path of build_animation_clips.py (default: the generate2dsprite skill beside this one)")
+    parser.add_argument("--clips-schema", choices=tuple(CLIPS_SCHEMAS), default="v2",
+                        help="clips manifest schema: v2 (default; events and ticks reach the builder) or v1 for "
+                             "builders that predate the v2 reader")
     parser.add_argument("--preview-scale", type=int, default=None, metavar="N",
                         help="write preview-xN.png: every variant and distinct frame, integer nearest upscale")
     parser.add_argument("--strict-qc", action="store_true",
@@ -881,8 +664,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     except (QAFailure, codeart_core.CodeArtError, ValueError, OSError) as error:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
-    except Exception as error:  # never a traceback for the user; the stage is already removed
-        print(f"error: internal error ({type(error).__name__}): {forge_core.ascii_text(str(error))}", file=sys.stderr)
+    except Exception as error:  # D27: never a traceback for the user; the stage is already removed
+        print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0

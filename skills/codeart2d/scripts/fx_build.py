@@ -39,12 +39,13 @@ import sys
 from typing import Any, Callable, Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import rig_animate as rig  # noqa: E402  (also checks numpy and Pillow first)
+import rig_animate as rig  # noqa: E402  (imports without numpy too; rig.missing_modules_message() reports it)
 
-import numpy as np  # noqa: E402
+if rig.missing_modules_message() is None:
+    import numpy as np  # noqa: E402
 
-import codeart_core as core  # noqa: E402
-import forge_core  # noqa: E402
+    import codeart_core as core  # noqa: E402
+    import forge_core  # noqa: E402
 
 
 TOOL = "codeart2d/fx_build.py"
@@ -56,7 +57,7 @@ VERIFIER = Path(__file__).resolve().parent / "fx_verify.mjs"
 DATA_START, DATA_END = "/*FX-DATA*/", "/*END-FX-DATA*/"
 DEFAULT_FRAME_MS = 50  # 3 ticks at 60 Hz
 MAX_PARTICLES = 256
-CodeArtError = core.CodeArtError
+CodeArtError = rig.CodeArtError
 
 M32 = 0xFFFFFFFF
 DEG = math.pi / 180.0
@@ -303,6 +304,9 @@ class FxSpec:
             raise CodeArtError(f"{label}: canvas must be [width, height] in whole pixels (4..1024)")
         self.canvas = canvas
         self.origin = _pair(data.get("origin", [canvas[0] / 2, canvas[1] / 2]), f"{label} origin")
+        routes = data.get("routes")
+        if routes is not None and not (isinstance(routes, list) and all(isinstance(r, str) and r for r in routes)):
+            raise CodeArtError(f"{label}: routes must be a list of route names, for example [\"pixel\", \"runtime\"]")
         self.palette = self._palette(data.get("palette"), base, label)
         effects = data.get("effects")
         if not isinstance(effects, list) or not effects:
@@ -856,7 +860,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--zoom", type=int, help="vector route integer zoom (default 4); the pixel route is 1")
     parser.add_argument("--ss", type=int, default=8, help="pixel route coverage supersampling (default 8)")
     parser.add_argument("--coverage", type=float, default=0.5, help="pixel route coverage threshold (default 0.5)")
-    parser.add_argument("--backend", choices=("auto",) + core.RASTER_BACKENDS, default="auto",
+    parser.add_argument("--backend", choices=("auto",) + rig.RASTER_BACKENDS, default="auto",
                         help="SVG rasterizer (default auto: resvg-py, then resvg-js CLI, then Chrome)")
     parser.add_argument("--margin", type=int, default=1, help="minimum transparent margin in canvas pixels (default 1)")
     parser.add_argument("--seam-range", type=rig._seam_range, default=rig.SEAM_RANGE,
@@ -865,8 +869,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run generate2dsprite build_animation_clips.py on clips.json (into compiled-clips/)")
     parser.add_argument("--clips-builder", default=str(rig.DEFAULT_BUILDER),
                         help="path to build_animation_clips.py (default: the sibling generate2dsprite skill)")
-    parser.add_argument("--clips-schema", choices=tuple(rig.CLIPS_SCHEMAS), default="v1",
-                        help="clips.json schema id (default v1; v2 for clips v2 builders)")
+    parser.add_argument("--clips-schema", choices=tuple(rig.CLIPS_SCHEMAS), default="v2",
+                        help="clips.json schema id (default v2, so hit events reach events_ms; v1 for builders "
+                             "that predate the v2 reader)")
     parser.add_argument("--export-runtime", action="store_true",
                         help="also write fx-runtime.mjs (fx.v1 canvas runtime with the same geometry)")
     parser.add_argument("--no-verify", action="store_true", help="do not run fx_verify.mjs on the exported runtime")
@@ -874,8 +879,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         summary = build(args)
@@ -884,6 +888,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """argparse first (so --help and usage errors work everywhere, exit 2), then the run inside
+    forge_core.run_cli: anything unexpected becomes one "error: internal error (...)" line, exit 1 (D27)."""
+    problem = rig.missing_modules_message()
+    if problem:
+        build_parser().parse_args(argv)
+        print(problem, file=sys.stderr)
+        return 1
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

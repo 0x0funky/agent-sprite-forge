@@ -73,7 +73,7 @@ except ImportError as missing:  # numpy or Pillow is not installed
 
 
 TOOL_NAME = "codeart2d/autotile_build"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29: the package version in every QA envelope
 SPEC_SCHEMA = "codeart2d.material_spec.v1"
 TILESET_SCHEMA = "generate2dmap.tileset.v1"
 KINDS = ("wang_corner", "blob47", "bevel", "flat")
@@ -516,8 +516,8 @@ def load_spec(path: Path, *, kinds: tuple[str, ...] = KINDS, tile_size: int | No
     _check(path.is_file(), f"material spec not found: {path}")
     raw = path.read_bytes()
     try:
-        data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        data = forge_core.parse_json(raw)  # UTF-8 with an optional BOM (D28)
+    except ValueError as exc:  # JSONDecodeError and UnicodeDecodeError
         raise SpecError(f"material spec {path.name} is not valid UTF-8 JSON: {exc}") from None
     _check(isinstance(data, Mapping), "the material spec must be a JSON object")
     _check(data.get("schema") == SPEC_SCHEMA, f"the material spec needs \"schema\": \"{SPEC_SCHEMA}\"")
@@ -1715,19 +1715,14 @@ def preview_map(results: list[dict], spec: Spec, width: int, height: int) -> np.
 # ----------------------------------------------------------------------------- outputs
 
 def _file_ref(path: Path, base: Path) -> dict:
-    """fileRef for an output inside the output folder (relative POSIX path, sha256, bytes)."""
-    return {"path": path.relative_to(base).as_posix(), "sha256": forge_core.sha256_file(path),
-            "bytes": path.stat().st_size}
+    """fileRef for an output inside the output folder (relative POSIX path, sha256, bytes; D30)."""
+    return forge_core.file_ref(path, base)
 
 
 def _input_ref(path: Path, base: Path, sha256: str) -> dict:
-    """fileRef for an input: relative to the output folder when possible, else its file name
-    (an input on another drive is recorded by name and sha256, never by absolute path)."""
-    try:
-        relative = Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:
-        relative = path.name
-    return {"path": relative, "sha256": sha256, "bytes": path.stat().st_size}
+    """fileRef for an input: relative to the output folder when possible, else its file name (an input
+    on another drive is recorded by name and sha256, never by absolute path; forge_core.file_ref, D30)."""
+    return forge_core.file_ref(path, base, sha256=sha256)
 
 
 def proof_method(proof: dict) -> str:
@@ -1741,9 +1736,10 @@ def proof_method(proof: dict) -> str:
             "look-ups read at their true positions across tile edges. Cases: " + "; ".join(cases) + ".")
 
 
-def tileset_manifest(result: dict, spec: Spec, image_name: str, image_path: Path) -> dict:
+def tileset_manifest(result: dict, spec: Spec, image_name: str, image_path: Path, qa_ref: dict) -> dict:
     """generate2dmap.tileset.v1 for one set (extra fields: id, tilecount, variants, wangset, plateau,
-    art_source, generator, spec_sha256, qa, and per tile wangid)."""
+    art_source, generator, spec_sha256, qa, and per tile wangid). qa is a fileRef of autotile-qa.json
+    beside the manifest (D5): a consumer that copies the manifest elsewhere rewrites or drops it."""
     builder, art = result["builder"], result["builder"].art
     blocked = builder.blocked(result["planes"])
     tiles = []
@@ -1776,7 +1772,7 @@ def tileset_manifest(result: dict, spec: Spec, image_name: str, image_path: Path
     if art.spec.kind == "wang_corner":
         manifest["plateau"] = art.spec.plateau
     manifest.update({"art_source": "code", "generator": {"name": TOOL_NAME, "version": TOOL_VERSION},
-                     "spec_sha256": spec.sha256, "qa": QA_FILE, "tiles": tiles})
+                     "spec_sha256": spec.sha256, "qa": qa_ref, "tiles": tiles})
     return manifest
 
 
@@ -1833,13 +1829,14 @@ def build(args: argparse.Namespace) -> dict:
         raise QCFailure("strict QC failed: " + ", ".join(failed))
     manifests: list[Path] = []
     with forge_core.staged_output(output) as stage:
+        # Order (D5): the art and the review sheets, then autotile-qa.json over them, then the manifests,
+        # whose qa is a fileRef (sha256) of that QA file, then codeart-meta.json over everything. The QA
+        # envelope cannot list the manifests: each manifest carries the QA file's hash.
         written: list[Path] = []
         for result in results:
             set_id = result["builder"].art.spec.id
             image_path = stage / f"{set_id}.png"
             forge_core.save_png(result["atlas"], image_path)
-            manifest_path = stage / f"{set_id}.tileset.json"
-            forge_core.write_json(manifest_path, tileset_manifest(result, spec, image_path.name, image_path))
             review_path = stage / f"review-{set_id}.png"
             sheet = codeart_core.review_sheet(
                 [result["atlas"]], scales=(2, 4) if result["atlas"].shape[0] <= 128 else (2,),
@@ -1849,8 +1846,7 @@ def build(args: argparse.Namespace) -> dict:
                     "pixels compared": result["proof"]["pixels_compared"],
                     "repetition index": result["metrics"]["repetition_index"]})
             forge_core.save_png(np.asarray(sheet), review_path)
-            written += [image_path, manifest_path, review_path]
-            manifests.append(manifest_path)
+            written += [image_path, review_path]
         if args.preview_map is not None:
             preview_path, review_path = stage / PREVIEW_FILE, stage / REVIEW_FILE
             preview = preview_map(results, spec, *args.preview_map)
@@ -1877,13 +1873,20 @@ def build(args: argparse.Namespace) -> dict:
         qa_path = stage / QA_FILE
         forge_core.write_json(qa_path, {**envelope, "metrics": {r["builder"].art.spec.id: r["metrics"]
                                                                 for r in results}})
+        qa_ref = _file_ref(qa_path, stage)
+        for result in results:
+            set_id = result["builder"].art.spec.id
+            image_path = stage / f"{set_id}.png"
+            manifest_path = stage / f"{set_id}.tileset.json"
+            forge_core.write_json(manifest_path, tileset_manifest(result, spec, image_path.name, image_path, qa_ref))
+            manifests.append(manifest_path)
         palette = {}
         for result in results:
             palette.update(result["builder"].art.palette)
         codeart_core.write_codeart_meta(
             stage / META_FILE, generator=TOOL_NAME, spec_sha256=spec.sha256,
             renderer={"name": TOOL_NAME, "version": TOOL_VERSION}, palette={"colors": palette},
-            outputs=written + [qa_path], qa=envelope,
+            outputs=written + manifests + [qa_path], qa=envelope,
             extra={"params": spec.params, "tilesets": [p.name for p in manifests]})
     return {
         "status": status,
@@ -1929,17 +1932,9 @@ def _ratio_arg(value: str) -> float:
     return number
 
 
-class _Parser(argparse.ArgumentParser):
-    """argparse with the repository's error convention: `error: ...` on stderr and exit status 1."""
-
-    def error(self, message: str) -> None:  # type: ignore[override]
-        self.print_usage(sys.stderr)
-        print("error: " + forge_core.ascii_text(message), file=sys.stderr)
-        raise SystemExit(1)
-
-
 def make_parser() -> argparse.ArgumentParser:
-    parser = _Parser(
+    """argparse with its own usage-error convention (D26): usage line, `...: error: ...`, exit status 2."""
+    parser = argparse.ArgumentParser(
         prog="autotile_build.py",
         description=("Build seam-proven Wang-16, three-material Wang (81), blob-47, bevel and flat tilesets from a "
                      "codeart2d material spec (code-drawn, no image model). Writes atlases, "
@@ -1975,7 +1970,7 @@ def make_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run(argv: list[str] | None = None) -> int:
     forge_core.utf8_stdio()
     args = make_parser().parse_args(argv)
     try:
@@ -1989,6 +1984,13 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     print(json.dumps(summary))
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """The CLI behind forge_core.run_cli (D26/D27): usage errors exit 2 from argparse, expected errors print
+    one "error: ..." line and exit 1, and anything unexpected is one "error: internal error (Type: message)"
+    line with exit 1, also when main() is called in-process."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

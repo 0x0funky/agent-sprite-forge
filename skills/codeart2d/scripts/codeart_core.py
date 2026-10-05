@@ -13,16 +13,25 @@ Sections:
   pixelspec  render_pixelspec
   qa         qa_pixels, detect_grid
   review     upscale_nearest, review_sheet
+  masks      inside_polygon, distance_field (shared by the codeart2d map and plate tools)
   output     save_png, write_codeart_meta
 
-Only numpy and Pillow are required. Rasterizing SVG needs one backend: resvg-py
+Only numpy and Pillow are required (scipy is optional and only speeds up
+distance_field). Rasterizing SVG needs one backend: resvg-py
 (python -m pip install "resvg-py>=0.5,<0.6"), the resvg-js CLI on PATH, or a
 headless Chrome/Edge/Chromium. PyMuPDF, skia-python and cairosvg are never used:
 they silently ignore crispEdges, <style>, clipPath or gradients.
 
+API 1.1 (Phase 3 integration) adds, without changing any 1.0 name or behaviour:
+write_codeart_meta(placeholder=...) (B21 request, D30), FORGE_PACKAGE_VERSION as the
+QA envelope tool version (D29), inside_polygon and distance_field, and the lint code
+"reference" (an href that does not point inside the document). Hashing and JSON
+writing go through the vendored forge_core (D30).
+
 Sibling scripts load this file by path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
     import codeart_core
+It imports the forge_core.py beside it (the skill's vendored copy).
 """
 
 from __future__ import annotations
@@ -47,8 +56,14 @@ import xml.etree.ElementTree as ET
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)  # the sibling forge_core.py (this skill's vendored copy)
+import forge_core  # noqa: E402
 
-CODEART_CORE_API_VERSION = "1"
+
+CODEART_CORE_API_VERSION = "1.1"
+FORGE_PACKAGE_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29: the tool.version of every codeart2d QA envelope
 PIXELSPEC_SCHEMA = "codeart2d.pixelspec.v1"
 PIXELSPEC_SCHEMA_ALIASES = ("codeart.pixelspec.v1",)  # spelling used by roadmap 4.5 and the prototype
 CODEART_META_SCHEMA = "codeart2d.codeart_meta.v1"
@@ -253,11 +268,14 @@ def _colour_overrides(overrides: Any, base: Mapping[str, Any], label: str) -> di
 def _read_palette_file(path: Path) -> Palette:
     if not path.is_file():
         raise CodeArtError(f"palette file not found: {path}")
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_bytes().decode("utf-8-sig")  # a BOM is tolerated (D28)
+    except UnicodeDecodeError:
+        raise CodeArtError(f"palette file {path.name} is not UTF-8 text") from None
     suffix = path.suffix.lower()
     if suffix == ".json":
         try:
-            return parse_palette(json.loads(text))
+            return parse_palette(forge_core.parse_json(text))
         except json.JSONDecodeError as exc:
             raise CodeArtError(f"palette file {path.name} is not valid JSON: {exc}") from None
     if suffix == ".hex":
@@ -739,9 +757,12 @@ def lint_portable_svg(svg: str, profile: str = "portable") -> list[str]:
     Each problem is one ASCII line "<code>: <message>". Profile "portable" checks the
     root viewBox (integers, equal to width/height: 1 unit = 1 logical pixel), CSS
     transform, transform-origin, var(), <text>, <image>, feTurbulence,
-    feDisplacementMap, mix-blend-mode, <foreignObject> and non-finite or complex
-    numbers. Profile "pixel" adds what breaks exact palettes: a root without
-    shape-rendering="crispEdges", gradients, masks, filters and opacity below 1.
+    feDisplacementMap, mix-blend-mode, <foreignObject>, non-finite or complex
+    numbers, and hrefs that do not name an element of the document as #id (a file,
+    a URL or a missing id; compile_svg refuses such <use> references, so the raw
+    file fails lint where render would fail). Profile "pixel" adds what breaks
+    exact palettes: a root without shape-rendering="crispEdges", gradients, masks,
+    filters and opacity below 1.
     An empty list means the SVG is inside the profile.
     """
     if profile not in ("portable", "pixel"):
@@ -770,6 +791,16 @@ def lint_portable_svg(svg: str, profile: str = "portable") -> list[str]:
         found = [element for element in elements if _local(element.tag) in tags]
         if found:
             problems.append(f"{code}: {message} ({len(found)} found, first {_describe(found[0])})")
+    ids = {element.get("id") for element in elements if element.get("id")}
+    forbidden_tags = {tag for _, tags, _ in _FORBIDDEN_ELEMENTS for tag in tags}  # already reported above
+    outside = [(element, value) for element in elements if _local(element.tag) not in forbidden_tags
+               for key, value in element.attrib.items()
+               if _local(key) == "href" and not (value.startswith("#") and value[1:] in ids)]
+    if outside:
+        element, value = outside[0]
+        problems.append(f"reference: href must name an element of this document as #id; files, URLs and missing "
+                        f"ids render differently or not at all ({len(outside)} found, first {_describe(element)} "
+                        f"href={_ascii(value[:80])!r})")
     css = [element.text or "" for element in elements if _local(element.tag) == "style"]
     css += [element.get("style") for element in elements if element.get("style")]
     for code, attribute, pattern, message in _LINT_CSS:
@@ -1934,6 +1965,85 @@ def review_sheet(frames: Any, *, scales: Sequence[int] = (1, 2, 4),
     return image
 
 
+# ----------------------------------------------------------------------------- masks
+
+def inside_polygon(xs: Any, ys: Any, polygon: Sequence[Sequence[float]]) -> np.ndarray:
+    """Even-odd point-in-polygon test, vectorised over the points (API 1.1).
+
+    An edge counts for a point when ys lies in [min(y0, y1), max(y0, y1)) and xs lies left of
+    the edge's crossing, so left and top boundaries are inside and right and bottom ones are
+    not. Horizontal edges never count. Arrays keep their dtype. The one copy behind
+    layout_build's terrain polygons and ambient_bake's effect regions (it was duplicated in both)."""
+    xs, ys = np.asarray(xs), np.asarray(ys)
+    inside = np.zeros(np.broadcast(xs, ys).shape, bool)
+    count = len(polygon)
+    for index in range(count):
+        x0, y0 = polygon[index]
+        x1, y1 = polygon[(index + 1) % count]
+        if y0 == y1:
+            continue
+        crosses = (ys >= min(y0, y1)) & (ys < max(y0, y1))
+        inside ^= crosses & (xs < x0 + (ys - y0) * (x1 - x0) / (y1 - y0))
+    return inside
+
+
+def _scipy_ndimage() -> Any:
+    """scipy.ndimage, or None when scipy is missing or FORGE_CORE_NO_SCIPY is set (as forge_core does)."""
+    if os.environ.get("FORGE_CORE_NO_SCIPY", "") not in ("", "0"):
+        return None
+    try:
+        from scipy import ndimage
+    except ImportError:
+        return None
+    return ndimage
+
+
+def _capped_edt(target: np.ndarray, cap: float) -> np.ndarray:
+    """The numpy path of distance_field (two separable passes; at most floor(cap) column shifts).
+
+    d^2 = min over columns k of (nearest target in column k)^2 + (x - k)^2; a distance <= cap needs
+    only |x - k| <= cap, so the second pass shifts at most floor(cap) columns each way."""
+    rows = target.shape[0]
+    limit = int(math.floor(cap))
+    index = np.arange(rows, dtype=np.float64)[:, None]
+    above = index - np.maximum.accumulate(np.where(target, index, -np.inf), axis=0)
+    below = np.minimum.accumulate(np.where(target, index, np.inf)[::-1], axis=0)[::-1] - index
+    vertical = np.minimum(above, below)
+    vertical = np.where(vertical <= limit, vertical * vertical, np.inf)
+    best = vertical.copy()
+    for shift in range(1, min(limit, target.shape[1] - 1) + 1):
+        cost = float(shift * shift)
+        np.minimum(best[:, shift:], vertical[:, :-shift] + cost, out=best[:, shift:])
+        np.minimum(best[:, :-shift], vertical[:, shift:] + cost, out=best[:, :-shift])
+    return np.where(best <= cap * cap, np.sqrt(best), np.inf)
+
+
+def distance_field(target: Any, cap: float) -> np.ndarray:
+    """Exact Euclidean distance (in cells) from every cell to the nearest True cell of a 2-D mask,
+    where it is at most ``cap``; infinity beyond the cap and everywhere when the mask is empty
+    (API 1.1). True cells get 0.
+
+    scipy.ndimage.distance_transform_edt when scipy is installed (FORGE_CORE_NO_SCIPY=1 forces
+    the numpy path), otherwise two separable numpy passes; both give identical float64 values,
+    because every distance kept is at most ``cap``. forge_core.distance_to is the capped
+    Chebyshev distance; this Euclidean one serves layout_build's scatter clearances and
+    ambient_bake's feather (the one copy of what both tools carried as _local_capped_edt)."""
+    target = np.asarray(target, bool)
+    if target.ndim != 2:
+        raise CodeArtError(f"distance_field needs a 2-D mask; got shape {target.shape}")
+    cap = float(cap)
+    if not math.isfinite(cap) or cap < 0:
+        raise CodeArtError(f"distance_field cap must be a finite number >= 0; got {cap!r}")
+    if not target.any():
+        return np.full(target.shape, np.inf)
+    ndimage = _scipy_ndimage()
+    if ndimage is None:
+        return _capped_edt(target, cap)
+    distance = ndimage.distance_transform_edt(~target)
+    distance[distance > cap] = np.inf
+    return distance
+
+
 # ----------------------------------------------------------------------------- output
 
 def save_png(image: Any, path: str | os.PathLike) -> None:
@@ -1943,14 +2053,6 @@ def save_png(image: Any, path: str | os.PathLike) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(_as_rgba(image)).save(target, format="PNG", compress_level=9)
-
-
-def _local_sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for chunk in iter(lambda: handle.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _json_default(value: Any) -> Any:
@@ -1971,17 +2073,6 @@ def _json_data(value: Any, label: str) -> Any:
         return json.loads(_json_text(value))
     except (TypeError, ValueError) as exc:
         raise CodeArtError(f"{label} must be JSON data without NaN or infinity: {_ascii(exc)}") from None
-
-
-def _local_write_json(path: Path, data: Any) -> None:
-    """UTF-8 JSON, indent 2, trailing newline; refuses to replace an existing file.
-
-    As in forge_core.write_json, numpy values are converted, NaN and infinity are refused,
-    and data that cannot be encoded raises before the file is created."""
-    text = _json_text(data, indent=2) + "\n"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "x", encoding="utf-8", newline="\n") as handle:
-        handle.write(text)
 
 
 # common.schema.json (A0): qaStatus, qaCheck status, the required qaEnvelope keys, sha256, relPath, timestamp.
@@ -2041,7 +2132,7 @@ def _file_ref(item: Any, base: Path, kind: str = "output") -> dict:
         if kind != "input":
             raise CodeArtError(f"{kind} file {file} is not on the drive of the meta file") from None
         relative = file.name
-    ref = {"path": relative, "sha256": _local_sha256_file(file), "bytes": file.stat().st_size}
+    ref = {"path": relative, "sha256": forge_core.sha256_file(file), "bytes": file.stat().st_size}
     _check_file_ref(ref, f"{kind} file {_ascii(file)}")
     return ref
 
@@ -2102,7 +2193,7 @@ def _qa_from_metrics(metrics: dict, inputs: list, outputs: list) -> dict:
     envelope = {"status": max((check["status"] for check in checks if check["status"] != "skipped"),
                               key=_QA_SEVERITY.__getitem__),
                 "method": QA_PIXELS_METHOD, "notProven": not_proven, "checks": checks, "inputs": inputs,
-                "outputs": outputs, "tool": {"name": "codeart_core", "version": CODEART_CORE_API_VERSION},
+                "outputs": outputs, "tool": {"name": "codeart_core", "version": FORGE_PACKAGE_VERSION},
                 "metrics": metrics}
     _check_qa_envelope(envelope)
     return envelope
@@ -2125,7 +2216,7 @@ def _codeart_qa(qa: Any, inputs: Any, outputs: list, base: Path) -> dict:
 
 def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: str, renderer: Mapping,
                        palette: Any, outputs: Sequence, qa: Mapping, extra: Mapping | None = None,
-                       inputs: Sequence | None = None) -> dict:
+                       inputs: Sequence | None = None, placeholder: bool = False) -> dict:
     """Write codeart-meta (codeart_meta_v1, art_source "code") and return it.
 
     renderer: {"name", "version", ...}, e.g. the info dict from rasterize() or
@@ -2133,8 +2224,11 @@ def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: 
     outputs: one or more file paths (recorded relative to the meta file, POSIX, with
     sha256 and bytes) or ready fileRef dicts. palette: anything parse_palette reads,
     written as {"colors": {name: hex}, "variants": {...}}. extra: more top-level fields;
-    they may not replace core ones. Refuses to overwrite. No timestamps, so identical
-    inputs give identical bytes.
+    they may not replace core ones. placeholder (API 1.1): true when the outputs
+    contain stand-in art (for example layout_build's flat-colour ground); common
+    artSource keeps art_source "code" and records placeholder separately. Refuses to
+    overwrite (forge_core.write_json). No timestamps, so identical inputs give
+    identical bytes.
 
     qa is stored as a common qaEnvelope {status, method, notProven, checks, inputs,
     outputs, tool, createdAt?}:
@@ -2145,11 +2239,13 @@ def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: 
         QA_PIXELS_METHOD, notProven QA_PIXELS_NOT_PROVEN plus the skipped measurements,
         outputs = this meta's outputs, inputs = `inputs` (the spec and other source files
         as paths or fileRefs; one on another drive records its file name), tool
-        {"name": "codeart_core", "version": CODEART_CORE_API_VERSION}, and the raw
+        {"name": "codeart_core", "version": FORGE_PACKAGE_VERSION} (D29), and the raw
         metrics under "metrics".
     Any other qa, and `inputs` given with a ready envelope, raise CodeArtError.
     """
     target = Path(path)
+    if not isinstance(placeholder, bool):
+        raise CodeArtError("placeholder must be true or false")
     if not isinstance(generator, str) or not generator.strip():
         raise CodeArtError("generator must name the tool that made the art")
     if not isinstance(spec_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", spec_sha256):
@@ -2163,7 +2259,7 @@ def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: 
     meta = {
         "schema": CODEART_META_SCHEMA,
         "art_source": "code",
-        "placeholder": False,
+        "placeholder": placeholder,
         "disclosure": DISCLOSURE,
         "generator": generator,
         "spec_sha256": spec_sha256,
@@ -2179,5 +2275,6 @@ def write_codeart_meta(path: str | os.PathLike, *, generator: str, spec_sha256: 
         raise CodeArtError(f"extra fields may not replace core codeart-meta fields: {', '.join(clashes)}")
     meta.update(extra or {})
     meta = _json_data(meta, "codeart-meta")
-    _local_write_json(target, meta)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    forge_core.write_json(target, meta)
     return meta

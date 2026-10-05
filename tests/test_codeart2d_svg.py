@@ -292,6 +292,9 @@ def test_doctor_passes_on_resvg_py_and_writes_a_qa_envelope(tmp_path, capsys):
                        "report": str(report.resolve())}
     data = read_json(report)
     assert_valid_contract(data, "common", "qaEnvelope", skill="codeart2d")
+    assert data["schema"] == "codeart2d.doctor_report.v1"
+    assert_valid_contract(data, "codeart", "doctor_report_v1", skill="codeart2d")
+    assert data["tool"] == {"name": "svg_render.py doctor", "version": "0.4.0"}  # D29
     assert {"cases", "backends", "primary", "lint"} <= set(data), "the codeart_core.run_doctor shape is kept"
     ids = {check["id"]: check["status"] for check in data["checks"]}
     assert ids["primary"] == "pass" and ids["resvg_py:t01@4x"] == "pass" and ids["resvg_py:t17@1x"] == "pass"
@@ -381,3 +384,13 @@ def test_oversized_renders_are_refused_before_rasterizing(tmp_path, capsys):
     code, _, stderr = svg_cli(capsys, "render", "--svg", POTIONS, "--palette", PALETTE, "--output-dir",
                               tmp_path / "out", "--zoom", "200")
     assert code == 1 and "lower --zoom" in stderr and not (tmp_path / "out").exists()
+
+
+def test_lint_flags_an_external_use_reference_before_render_refuses_it(tmp_path, capsys):
+    """Codeart review (B18): `lint` without --compile passed a <use> pointing at file:///..., which render then
+    refused at compile time. The portable lint now reports it as a reference problem."""
+    svg = tmp_path / "external.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">'
+                   '<use href="file:///C:/art/arm.svg#arm"/></svg>', encoding="utf-8")
+    code, stdout, stderr = svg_cli(capsys, "lint", "--svg", svg)
+    assert code == 1 and summary_of(stdout)["status"] == "fail" and "reference:" in stderr

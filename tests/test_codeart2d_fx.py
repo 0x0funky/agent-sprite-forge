@@ -13,7 +13,8 @@ import pytest
 from PIL import Image
 
 from forge_testutils import (
-    REPO_ROOT, SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, require_resvg, run_cli, script_path,
+    REPO_ROOT, SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script, require_resvg, run_cli,
+    script_path,
 )
 
 fx = load_script("codeart2d", "fx_build")
@@ -22,92 +23,6 @@ SCRIPT = script_path("codeart2d", "fx_build")
 EXAMPLE = REPO_ROOT / "skills" / "codeart2d" / "examples" / "slash.fx.json"
 SCHEMA_DIR = SKILLS_DIR / "codeart2d" / "references" / "schemas"
 PALETTE = {"white": "#ffffff", "gold": "#ffcd75", "ember": "#ef7d57", "red": "#b13e53", "ink": "#1a1c2c"}
-
-# Schema additions requested in handoff/B19-codeart-rig-fx.md section 5 (codeart.schema.json): the optional
-# fields fx_build reads, one $def per preset, and the fx-report.json document. Applied in memory here.
-NUM = {"type": "number"}
-NONNEG = {"type": "number", "minimum": 0}
-PAIR = {"$ref": "common.schema.json#/$defs/point2"}
-START = {"anyOf": [{"const": "impact"}, NONNEG]}
-COMMON_PRIMITIVE = {"ramp": {"type": "string", "minLength": 1},
-                    "colors": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}}
-PRESET_PARAMETERS = {
-    "slash": {"center": PAIR, "radius": NONNEG, "from": NUM, "to": NUM, "width": NONNEG, "squash": NONNEG,
-              "trail": {"type": "number", "minimum": 0, "maximum": 1}, "startMs": START, "endMs": START,
-              "fadeMs": NONNEG},
-    "sparks": {"origin": PAIR, "atMs": START, "count": {"type": "integer", "minimum": 1, "maximum": 256},
-               "angle": NUM, "spread": NONNEG, "speed": NONNEG, "lifeMs": NONNEG, "length": NONNEG, "width": NONNEG,
-               "gravity": NUM},
-    "ring": {"origin": PAIR, "atMs": START, "lifeMs": NONNEG, "radius": PAIR, "width": PAIR, "squash": NONNEG},
-    "flash": {"origin": PAIR, "atMs": START, "lifeMs": NONNEG, "radius": NONNEG,
-              "rays": {"type": "integer", "minimum": 1, "maximum": 16}, "rayLength": NONNEG, "rotation": NUM},
-    "dust": {"origin": PAIR, "atMs": START, "count": {"type": "integer", "minimum": 1, "maximum": 256},
-             "spread": NONNEG, "rise": NONNEG, "drift": NUM, "radius": PAIR, "lifeMs": NONNEG},
-    "projectile": {"origin": PAIR, "angle": NUM, "radius": NONNEG, "trail": NONNEG,
-                   "orbiters": {"type": "integer", "minimum": 0, "maximum": 16}, "periodMs": NONNEG},
-}
-FX_ADDITIONS = {
-    "$defs": {
-        **{f"fx_{name}": {"type": "object", "required": ["type"],
-                          "properties": {"type": {"const": name}, **COMMON_PRIMITIVE, **parameters},
-                          "additionalProperties": False}
-           for name, parameters in PRESET_PARAMETERS.items()},
-        "fx_report_v1": {
-            "description": "fx-report.json written by fx_build.py: per effect the frames (start, duration and "
-                           "sample ms, QA metrics, margin), durations, hit frame, dropped tail frames, events and "
-                           "loop seam; slash arc progress per frame; the build and runtime records; qa is the "
-                           "envelope of codeart-meta.json.",
-            "type": "object", "required": ["schema", "route", "canvas", "origin", "effects", "qa"],
-            "properties": {
-                "schema": {"const": "codeart2d.fx_report.v1"}, "route": {"enum": ["pixel", "vector"]},
-                "canvas": {"$ref": "common.schema.json#/$defs/size2"}, "origin": PAIR,
-                "effects": {"type": "object", "minProperties": 1, "additionalProperties": {
-                    "type": "object", "required": ["frames", "duration_ms", "hit_frame", "events"],
-                    "properties": {
-                        "frames": {"type": "array", "minItems": 1, "items": {
-                            "type": "object", "required": ["id", "start_ms", "duration_ms", "sample_ms", "file", "qa"],
-                            "properties": {"file": {"$ref": "common.schema.json#/$defs/relPath"}}}},
-                        "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-                        "hit_frame": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
-                        "events": {"type": "array", "items": {"$ref": "sprite.schema.json#/$defs/clipEvent"}},
-                        "seam": {"anyOf": [{"$ref": "common.schema.json#/$defs/seamReport"}, {"type": "null"}]}}}},
-                "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}}},
-    },
-    "fx_v1_properties": {"canvas": {"$ref": "common.schema.json#/$defs/size2"}, "origin": PAIR},
-    "effect_properties": {
-        "frameMs": {"type": "integer", "minimum": 1}, "loop": {"type": "boolean"},
-        "outline": {"type": "string", "minLength": 1},
-        "events": {"type": "array", "items": {"type": "object", "required": ["atMs", "name"], "properties": {
-            "atMs": {"type": "integer", "minimum": 0}, "name": {"$ref": "common.schema.json#/$defs/eventName"}}}}},
-    # Added to primitives.items (kept open): a known preset type must match its $def exactly.
-    "primitive_items_allOf": [{"if": {"properties": {"type": {"const": name}}, "required": ["type"]},
-                               "then": {"$ref": f"#/$defs/fx_{name}"}} for name in PRESET_PARAMETERS],
-}
-
-
-def patched_validator(definition: str):
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in SCHEMA_DIR.glob("*.schema.json")}
-    codeart = schemas["codeart"]
-    codeart["$defs"].update(copy.deepcopy(FX_ADDITIONS["$defs"]))
-    fx_v1 = codeart["$defs"]["fx_v1"]
-    fx_v1["properties"].update(copy.deepcopy(FX_ADDITIONS["fx_v1_properties"]))
-    effect = fx_v1["properties"]["effects"]["items"]
-    effect["properties"].update(copy.deepcopy(FX_ADDITIONS["effect_properties"]))
-    effect["properties"]["primitives"]["items"]["allOf"] = copy.deepcopy(FX_ADDITIONS["primitive_items_allOf"])
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema))
-                                         for schema in schemas.values())
-    return Draft202012Validator({"$ref": f"{codeart['$id']}#/$defs/{definition}"}, registry=registry)
-
-
-def assert_patched_valid(document, definition: str) -> None:
-    errors = [f"{error.json_path}: {error.message}" for error in patched_validator(definition).iter_errors(document)]
-    assert not errors, "\n".join(errors)
-
 
 def read_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -272,6 +187,10 @@ def test_spec_errors_name_the_problem():
         normalised(spec(effect("x", {"type": "slash"}, impact=0)))
     with pytest.raises(core.CodeArtError, match="palette is required"):
         normalised({"schema": "codeart2d.fx.v1", "effects": [effect("x", {"type": "ring", "colors": ["#ffffff"]})]})
+    for routes in ("pixel", [1], [""], {"pixel": True}):  # codeart review: a plain string was accepted
+        with pytest.raises(core.CodeArtError, match="routes must be a list"):
+            normalised(dict(spec(effect("x", {"type": "ring"})), routes=routes))
+    assert normalised(dict(spec(effect("x", {"type": "ring"})), routes=["pixel", "runtime"]))
 
 
 def test_particles_are_seeded_and_the_hash_is_pinned():
@@ -353,20 +272,67 @@ def test_example_outputs_validate_against_the_contracts(tmp_path):
     result = run_fx(EXAMPLE, output, "--build-clips", "--no-verify", "--export-runtime", "--strict-qc")
     assert result.returncode == 0, result.stderr
     assert_valid_contract(read_json(EXAMPLE), "codeart", "fx_v1", skill="codeart2d")
-    assert_patched_valid(read_json(EXAMPLE), "fx_v1")
     clips = read_json(output / "clips.json")
     assert_valid_contract(clips, "sprite", "clips_input", skill="codeart2d")
+    assert clips["schema"] == "generate2dsprite.animation_clips.v2"  # D11
     assert all(clip["role"] == "fx" for clip in clips["clips"].values())
     meta = read_json(output / "codeart-meta.json")
     assert_valid_contract(meta, "codeart", "codeart_meta_v1", skill="codeart2d")
     assert_valid_contract(meta["qa"], "common", "qaEnvelope", skill="codeart2d")
     assert meta["qa"]["status"] == "pass" and meta["generator"] == "codeart2d/fx_build.py"
-    assert_patched_valid(read_json(output / "fx-report.json"), "fx_report_v1")
-    assert_valid_contract(read_json(output / "compiled-clips" / "animation-clips.json"), "sprite",
-                          "animation_clips_v2", skill="codeart2d")
+    report = read_json(output / "fx-report.json")
+    assert_valid_contract(report, "codeart", "fx_report_v1", skill="codeart2d")
+    assert report["qa"]["tool"] == {"name": "codeart2d/fx_build.py", "version": "0.4.0"}  # D29
+    built = read_json(output / "compiled-clips" / "animation-clips.json")
+    assert_valid_contract(built, "sprite", "animation_clips_v2", skill="codeart2d")
+    assert any(event["name"] == "hit" for event in built["clips"]["slash"]["events_ms"])  # D11: hits reach events_ms
     unknown = copy.deepcopy(read_json(EXAMPLE))
     unknown["effects"][0]["primitives"][0]["spin"] = 3
-    assert not patched_validator("fx_v1").is_valid(unknown)  # a preset's parameters are a closed set
-    # The additions are additive: A0's contract fixture (other primitive types) stays valid.
-    assert_patched_valid(read_json(REPO_ROOT / "tests" / "fixtures" / "contracts" / "codeart.fx_v1.valid.json"),
-                         "fx_v1")
+    assert contract_errors(unknown, "codeart", "fx_v1", skill="codeart2d")  # a preset's parameters are closed
+    # The schema requests are applied in shared/schemas now; A0's fixture (other primitive types) stays valid.
+    assert_valid_contract(read_json(REPO_ROOT / "tests" / "fixtures" / "contracts" / "codeart.fx_v1.valid.json"),
+                          "codeart", "fx_v1", skill="codeart2d")
+
+
+@pytest.mark.resvg
+def test_fuzzed_specs_never_escape_main(tmp_path, monkeypatch):
+    """D27: malformed fx.v1 specs give one error line and exit 1, never an exception out of main(); a defect
+    still reads as one 'internal error' line."""
+    import contextlib
+    import io
+
+    require_resvg()
+    example = read_json(EXAMPLE)
+
+    def call(argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            try:
+                code = fx.main(argv)
+            except SystemExit as exit_:
+                code = exit_.code
+        return code, err.getvalue()
+
+    mutations = [(["effects"], {"a": 1}), (["effects", 0, "primitives"], {"a": 1}), (["effects", 0, "primitives"], ["x"]),
+                 (["effects", 0, "primitives", 0, "type"], 5), (["effects", 0, "ramps"], [1]), (["palette"], ["#fff"]),
+                 (["canvas"], "x"), (["canvas"], [100000, 100000]), (["origin"], [1]), (["effects", 0, "seed"], 1.5),
+                 (["effects", 0, "seed"], 2 ** 70), (["effects", 0, "id"], "../evil"), (["routes"], "pixel"),
+                 (["effects", 0, "events"], {"a": 1}), (["effects", 0, "durationMs"], "x")]
+    for index, (path, value) in enumerate(mutations):
+        document = copy.deepcopy(example)
+        node = document
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = value
+        spec_path = tmp_path / f"m{index}.fx.json"
+        spec_path.write_text(json.dumps(document), encoding="utf-8")
+        code, err = call(["--spec", str(spec_path), "--output-dir", str(tmp_path / f"o{index}")])
+        assert code == 1 and err.startswith("error:") and "internal error" not in err, (path, value, err)
+        assert not (tmp_path / f"o{index}").exists()
+
+    def broken(_args):
+        raise IndexError("boom")
+
+    monkeypatch.setattr(fx, "build", broken)
+    code, err = call(["--spec", str(EXAMPLE), "--output-dir", str(tmp_path / "never")])
+    assert code == 1 and err.strip() == "error: internal error (IndexError: boom)"

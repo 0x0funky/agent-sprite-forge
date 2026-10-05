@@ -179,13 +179,15 @@ def test_slime_example_builds_four_frames_in_three_variants(tmp_path, capsys):
                                   core.render_pixelspec(spec, name, variant))
         manifest = read_json(out / variant / "clips.json")
         assert_valid_contract(manifest, "sprite", "clips_input", skill="codeart2d")
-        assert manifest["schema"] == "generate2dsprite.animation_clips.v1"
+        assert manifest["schema"] == "generate2dsprite.animation_clips.v2"  # D11: v2 by default
         assert [frame["file"] for frame in manifest["frames"]] == [
             "frames/rest.png", "frames/squash.png", "frames/stretch.png"]
         assert manifest["clips"]["idle"] == {"frames": [0, 1, 0, 2], "duration_ms": [180, 120, 140, 160], "loop": True}
         assert manifest["anchor_px"] == [16, 31] and manifest["art_source"] == "code"
         assert manifest["sampling"] == "nearest" and manifest["pixel_art"] is True
         built = read_json(out / variant / "bundle" / "animation-clips.json")
+        assert_valid_contract(built, "sprite", "animation_clips_v2", skill="codeart2d")
+        assert built["sampling"] == "nearest" and built["art_source"] == "code"  # the codeart review's D11 finding
         assert built["clips"]["idle"]["frames"] == [0, 1, 0, 2]
         assert built["clips"]["idle"]["duration_ms"] == [180, 120, 140, 160]
         assert built["anchor_px"] == [16, 31]
@@ -399,8 +401,9 @@ def test_empty_tail_merge_feeds_the_v1_builder(tmp_path, capsys):
     del spec["clips"]["hit"]["events"]
     out = tmp_path / "fx"
     code, _, stderr = render(capsys, "--spec", write_spec(tmp_path, spec), "--output-dir", out, "--variants",
-                             "sapphire", "--build-clips")
+                             "sapphire", "--build-clips", "--clips-schema", "v1")
     assert code == 0, stderr
+    assert read_json(out / "sapphire" / "clips.json")["schema"] == "generate2dsprite.animation_clips.v1"
     built = read_json(out / "sapphire" / "bundle" / "animation-clips.json")
     assert built["clips"]["hit"]["frames"] == [0, 1] and built["clips"]["hit"]["duration_ms"] == [50, 210]
 
@@ -469,7 +472,7 @@ def test_the_default_builder_is_the_sibling_generate2dsprite_script():
 
 # ----------------------------------------------------------------------------- contract validator
 
-_KEYWORDS = RENDER._ANNOTATIONS | RENDER._ASSERTIONS
+_KEYWORDS = RENDER.forge_schema.KEYWORDS  # D31: the vendored forge_schema evaluates the contracts now
 
 
 def _keywords(node, found: set) -> set:
@@ -533,7 +536,7 @@ def test_validator_agrees_with_jsonschema_on_every_vendored_contract_fixture():
     checked, disagreements = 0, []
     for domain, name, document, label in _fixture_documents():
         expected = not contract_errors(document, domain, name, skill="codeart2d")
-        actual = not RENDER._local_contract_errors(document, domain, name)
+        actual = not RENDER.contract_errors(document, domain, name)
         checked += 1
         if expected != actual:
             disagreements.append(f"{label}: jsonschema {'accepts' if expected else 'rejects'}")
@@ -568,7 +571,7 @@ def test_validator_agrees_with_jsonschema_on_pixelspec_mutations():
         spec = copy.deepcopy(base)
         change(spec)
         expected = contract_errors(spec, "codeart", "pixelspec_v1", skill="codeart2d")
-        actual = RENDER._local_contract_errors(spec, "codeart", "pixelspec_v1")
+        actual = RENDER.contract_errors(spec, "codeart", "pixelspec_v1")
         assert bool(expected) == bool(actual), (label, expected, actual)
         assert (label in ("ok", "short-colour", "colour-without-hash", "float-canvas", "float-z", "segments-ok",
                           "selout-ok", "clip-ticks", "clip-custom-event")) == (not actual), (label, actual)
@@ -615,9 +618,12 @@ def test_pixel_qa_strict_fails_on_off_palette_pixels_and_writes_nothing(tmp_path
     assert "strict QA failed" in stderr and "off_palette 1 (limit 0) in squash.png" in stderr
     assert not report.exists() and not review.exists()
     assert not [path for path in tmp_path.iterdir() if path.name.endswith(".tmp")]
-    # Without --strict the failure is reported, not fatal.
-    code, stdout, stderr = pixel_qa(capsys, "--input", *frames, "--palette", SLIME, "--variant", "blue")
-    assert code == 0 and summary_of(stdout)["failed"] == ["off_palette"] and "warning: QA failed" in stderr
+    # Without --strict the report is written, and the failed QA still exits 1 (D26).
+    code, stdout, stderr = pixel_qa(capsys, "--input", *frames, "--palette", SLIME, "--variant", "blue",
+                                    "--report", report)
+    assert code == 1 and summary_of(stdout)["failed"] == ["off_palette"]
+    assert stderr.startswith("error: QA failed: off_palette (report written)") and "--strict" in stderr
+    assert read_json(report)["status"] == "fail"
 
 
 def test_pixel_qa_writes_a_review_sheet_and_a_qa_envelope(tmp_path, capsys):
@@ -773,3 +779,18 @@ def test_oversized_previews_and_review_sheets_are_refused(tmp_path, capsys):
     frames = slime_frames(tmp_path / "frames")
     code, _, stderr = pixel_qa(capsys, "--input", *frames, "--review", tmp_path / "review.png", "--scales", "128")
     assert code == 1 and "smaller --scales" in stderr and not (tmp_path / "review.png").exists()
+
+
+def test_clips_schema_v1_refuses_v2_fields_and_the_validator_is_forge_schema(tmp_path, capsys):
+    """D11: --clips-schema v1 is only for builders that predate the v2 reader, so clips that need v2
+    fields are refused instead of silently losing them. D31: no private evaluator is left."""
+    code, _, stderr = render(capsys, "--spec", write_spec(tmp_path, fx_spec()), "--output-dir", tmp_path / "out",
+                             "--variants", "ruby", "--clips-manifest", "--clips-schema", "v1")
+    assert code == 1 and "'hit'" in stderr and "drop --clips-schema v1" in stderr
+    assert not (tmp_path / "out").exists()
+    assert not hasattr(RENDER, "_LocalContracts") and not hasattr(RENDER, "_local_contract_errors")
+    assert RENDER.contract_errors({"schema": "codeart2d.pixelspec.v1"}, "codeart", "pixelspec_v1")
+    bom = tmp_path / "bom.json"
+    bom.write_bytes(b"\xef\xbb\xbf" + SLIME.read_bytes())
+    code, _, stderr = render(capsys, "--spec", bom, "--output-dir", tmp_path / "bom-out")
+    assert code == 0, stderr  # D28: a spec saved with a UTF-8 BOM is read

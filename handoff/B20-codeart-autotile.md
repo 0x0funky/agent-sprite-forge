@@ -2,6 +2,19 @@
 
 Branch `asf/B20-codeart-autotile` (from `wip/asf-upgrade-20261005` @ 3f9252d). Files: [autotile_build.py](../skills/codeart2d/scripts/autotile_build.py), [water-grass.material.json](../skills/codeart2d/examples/water-grass.material.json), [dirt-path.material.json](../skills/codeart2d/examples/dirt-path.material.json), [tiles-and-maps.md](../skills/codeart2d/references/tiles-and-maps.md), [test_codeart2d_tiles.py](../tests/test_codeart2d_tiles.py).
 
+## Phase 3 integration status (branch asf/int-g-codeart)
+
+Resolved in the codeart group fix pass (integration decisions cited as Dn):
+
+- **D5, `qa` is a fileRef.** Each manifest's `qa` is `{path: "autotile-qa.json", sha256, bytes}`. The write order is: atlases and review images, then `autotile-qa.json` (its envelope's `outputs` are those images), then the manifests (each carrying the QA file's hash), then `codeart-meta.json`, which lists every file, manifests and QA file included. The QA envelope cannot list the manifests any more: a manifest holding the QA file's hash and a QA file holding the manifest's hash cannot both exist. Consumers that copy a manifest rewrite or drop `qa` (layout_build drops it and records the QA file in its provenance). With this, the relPath branch of `tileset_v1.qa` can be dropped from the schema (S1 follow-up).
+- **D5, collision authority.** The per-tile `collision` and `properties.walkable` written here are the authoritative terrain collision of tile maps; layout_build (B21) now uses them instead of its vertex-square rule.
+- **D26.** The `_Parser` override is gone: argument errors are argparse usage errors (`usage: autotile_build.py ...`, `error: ...`, exit 2). Runtime errors (a missing spec, a failed strict QC) stay exit 1.
+- **D27.** `main()` runs through `forge_core.run_cli`: anything outside the narrow exception tuple is one `error: internal error (Type: message)` line, exit 1 (the codeart review's residual risk). `fuzz_b20.py` reports 0 problems.
+- **D28.** The material spec is read through `forge_core.parse_json` (a UTF-8 BOM is accepted).
+- **D29.** `TOOL_VERSION` is `forge_core.FORGE_PACKAGE_VERSION` (`0.4.0`): QA envelope `tool`, manifest `generator`, codeart-meta renderer.
+- **D30.** `_file_ref` / `_input_ref` are `forge_core.file_ref`.
+- **Schemas.** Section 5's requests are applied (S1, f3d7eb2); the tests validate against the real vendored schemas, and the in-memory `amended_validator` is gone.
+
 ## 1. CLIs
 
 One verb (no subcommands). Run from the user's project root; outputs stay in the project:
@@ -13,9 +26,9 @@ One verb (no subcommands). Run from the user's project root; outputs stay in the
 
 Flags: `--material-spec` (codeart2d.material_spec.v1), `--output-dir` (must not exist), `--kind all|both|wang_corner|blob47|bevel|flat` (`wang`, `blob` aliases; `both` = wang_corner + blob47), `--tile-size 8-64`, `--variants 1-16`, `--seed` (these three override the spec), `--material-texture NAME=PATH` (repeatable; a one-tile image that wraps), `--quantize-textures`, `--preview-map WxH|none` (default 24x16), `--max-repetition R` (fail above R; default warn above 0.35), `--max-seam-ratio R` (default 1.0), `--skip-seam-proof`, `--strict-qc`.
 
-- `--help` is ASCII and exits 0 under cp1252 and cp950 (`test_help_works_under_cp1252_and_cp950`). Usage errors print `error: ...` and exit 1 (argparse exit 2 is overridden).
+- `--help` is ASCII and exits 0 under cp1252 and cp950 (`test_help_works_under_cp1252_and_cp950`). Usage errors are argparse's (`usage: ...`, exit 2, D26); runtime errors print `error: ...` and exit 1 (D27 catch-all through `forge_core.run_cli`).
 - Success prints one ASCII JSON line: `status`, `output`, `metadata` (`<out>/codeart-meta.json`), `qa` (`<out>/autotile-qa.json`), `tilesets` (one `<set-id>.tileset.json` per set), `preview` (`<out>/preview-map.png` or null), `sets[]` (`id`, `kind`, `tiles`, `seamless_verified`, `pixels_compared`, `mismatches`, `repetition_index`), `repetition_index` (worst set) and `failed_checks`. Paths are POSIX, as given.
-- Output folder: `<set-id>.png` (atlas), `<set-id>.tileset.json`, `review-<set-id>.png`, `preview-map.png`, `review.png`, `autotile-qa.json`, `codeart-meta.json`. Work happens in `forge_core.staged_output`; a failed check under `--strict-qc` raises before the stage exists, so nothing is published. An existing `--output-dir` is refused before any work.
+- Output folder: `<set-id>.png` (atlas), `<set-id>.tileset.json` (its `qa` is a fileRef of autotile-qa.json, D5), `review-<set-id>.png`, `preview-map.png`, `review.png`, `autotile-qa.json`, `codeart-meta.json`. Work happens in `forge_core.staged_output`; a failed check under `--strict-qc` raises before the stage exists, so nothing is published. An existing `--output-dir` is refused before any work.
 - Timing on this machine (Windows 11, 4 BLAS threads): water-grass example 2.3 s; dirt-path example 9 s (the 81-tile set compares 80.8 million pixels).
 
 ## 2. SKILL.md routing rows
@@ -64,6 +77,8 @@ generate2dmap `SKILL.md` (Z note from the plan), map routing table:
 - Fixed: two two-material sets forced a grass strip between a road and water, and once a dead-end road (roadmap 4.9, map probe); the three-material set removes the need.
 
 ## 5. Schema change requests
+
+**Status: applied** by S1 (f3d7eb2), with `tileset_v1.qa` as `anyOf [fileRef, relPath]` per D5. Follow-up for the schema owner now that this module writes a fileRef: drop the relPath branch of `tileset_v1.qa` (S1's own note). The record of the requests follows.
 
 None blocks this module: every document it writes validates against the frozen schemas (`test_outputs_validate_against_the_contracts`). The requests below document the optional fields the producer adds or reads, so they do not drift. They are applied in memory by `amended_validator()` in tests/test_codeart2d_tiles.py, and `test_requested_schema_additions_accept_the_outputs` checks every manifest and both example specs against them (and that a three-material blob47 set is refused). Producer: B20. Consumers: B13 export_tiled (TSX wangsets, per-tile collision), B14 Godot/LDtk exporters (terrain peering bits), B21 layout_build (tileset manifests on a vertex grid), Z docs.
 
@@ -170,7 +185,7 @@ Optional candidates if other modules need them (no request filed):
 - generate2dmap SKILL.md: the section 2 row; generate2dmap references map-strategies.md should gain an "Autotile sets" paragraph pointing to codeart2d tiles-and-maps.md (roadmap P1-2 docs).
 - B13 export_tiled: read `wangset` and per-tile `wangid` from tileset.v1 to write TSX wangsets (`corner` for wang_corner, `mixed` with two colours for blob47, `edge` for bevel), per-tile `collision` rects as objectgroups and `properties.walkable`; variants share a wangid, so give them equal `probability`. tiles-and-maps.md "Next steps" names these exporters in plain text; Z can turn that into links once B13/B14 land.
 - B14 Godot/LDtk exporters: terrain peering bits from `wang` (corners) and `blob_mask` (bit i = N, NE, E, SE, S, SW, W, NW).
-- B21 layout_build: Wang tile rank = `((tl * n + tr) * n + bl) * n + br` over material indices of the set (`materials` order); blob rank = position of the canonical mask in the manifest's sorted `blob_mask` values; tile index = variant * keys + rank. Its map_bundle.v2 `tilesets[].manifest` should point at these `*.tileset.json` files.
+- B21 layout_build: Wang tile rank = `((tl * n + tr) * n + bl) * n + br` over material indices of the set (`materials` order); blob rank = position of the canonical mask in the manifest's sorted `blob_mask` values; tile index = variant * keys + rank. Its map_bundle.v2 `tilesets[].manifest` points at copies of these `*.tileset.json` files, and the placed tiles' `collision` is the bundle's terrain collision (D5, done).
 - The integration e2e map pipeline (Appendix I step 4) starts with `autotile_build`; `--kind both` on water-grass.material.json is the fast choice (2.3 s).
 - README tool table: section 3 row. CHANGELOG: section 4.
 - `tests/test_skill_packages.py` keeps failing for codeart2d until Z adds `skills/codeart2d/SKILL.md` (unchanged by this module).
@@ -196,6 +211,7 @@ Other limits:
 
 - Not opened in Tiled, Godot or LDtk: `wangid` follows Tiled's documented order; terrain-brush behaviour and Godot peering are unverified.
 - Boundary shapes repeat every tile along long straight shores (variants vary only marks); a stronger wobble turns shores into zig-zags, so the default stays 0.6.
+- `autotile-qa.json`'s envelope covers the atlases and review images, not the manifests (they carry its hash; D5); codeart-meta.json covers everything.
 - Square tiles 8-64 px, one size per spec. The exhaustive proof is capped at 400 million pixel comparisons (`seam_proof` warns, or fails under `--strict-qc`, above it).
 - Weights are float32 and noise uses `np.sin`; tile and global paths agree bit for bit on one machine (that is what the proof needs), but atlas bytes may differ across numpy builds or CPUs. Determinism is tested on one machine only (`test_outputs_are_deterministic`).
 - Platforms: run only on Windows 11, Python 3.13.2, numpy 2.5.3, Pillow 12.3.0, scipy 1.18.1. Python 3.10, Pillow 10.1, Linux and macOS were not run; the code avoids newer APIs.
