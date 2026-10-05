@@ -44,7 +44,7 @@ import forge_core  # noqa: E402
 
 
 TOOL = "parallax_build"
-TOOL_VERSION = "1.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29
 SPEC_SCHEMA = "codeart2d.parallax_spec.v1"
 PLAN_SCHEMA = "generate2dmap.parallax_plan.v1"
 KINDS = ("sky", "ridge", "clouds", "foreground", "image")
@@ -52,6 +52,8 @@ ROLE_DEFAULTS = {"sky": "sky", "ridge": "far", "clouds": "far", "foreground": "f
 SUPERSAMPLE = 4
 LOOP_STEP_LIMIT = 1.0  # wrap step / p95 of the layer's own column steps
 SHEET_MAX_WIDTH = 2048
+MAX_CANVAS_PIXELS = 4096 * 4096  # any one layer canvas, displayed image layer or sweep composite
+MAX_SWEEP_PIXELS = 128 * 1024 * 1024  # sweep frames x viewport pixels, all held for the animated WebP
 BAYER4 = np.array([[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]], np.float64) / 16.0 + 1.0 / 32.0
 VALIDATOR = Path(__file__).resolve().parents[2] / "generate2dmap" / "scripts" / "validate_parallax.py"
 
@@ -66,8 +68,7 @@ class ParallaxQAError(ValueError):
 
 # ----------------------------------------------------------------------------- helpers
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
+_round_half_up = forge_core.round_half_up  # floor(x + 0.5), never banker's rounding (D30)
 
 
 def _num(value: float) -> int | float:
@@ -119,15 +120,9 @@ def _colour(value: Any, label: str) -> tuple[int, int, int, int]:
         raise ParallaxError(f"{label}: {error}") from None
 
 
-def _relative(path: Path, base: Path) -> str:
-    try:
-        return Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:
-        return path.name
-
-
 def _file_ref(path: Path, base: Path) -> dict:
-    return {"path": _relative(path, base), "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+    """forge_core.file_ref: a manifest-relative POSIX path, or the file name across drives (D30)."""
+    return forge_core.file_ref(path, base)
 
 
 def _block_mean(fine: np.ndarray, scale: int) -> np.ndarray:
@@ -190,8 +185,8 @@ def load_spec(path: Path, sweep_override: int | None) -> Spec:
     except FileNotFoundError:
         raise ParallaxError(f"spec not found: {path}") from None
     try:
-        data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        data = forge_core.parse_json(raw)  # UTF-8 with an optional BOM (D28)
+    except ValueError as error:  # JSONDecodeError and UnicodeDecodeError
         raise ParallaxError(f"spec {path.name} is not valid UTF-8 JSON: {error}") from None
     data = _mapping(data, "spec")
     if data.get("schema") != SPEC_SCHEMA:
@@ -260,6 +255,10 @@ def load_spec(path: Path, sweep_override: int | None) -> Spec:
                 raise ParallaxError(f"{label}.image is not a readable image: {source}") from None
             layer.source, layer.image = source, np.asarray(image).copy()
             layer.scale = _finite(item.get("scale", 1), f"{label}.scale", positive=True)
+            if pixel_art and not float(layer.scale).is_integer():
+                raise ParallaxError(f"{label}.scale {_num(layer.scale)}: pixel-art image layers are scaled by "
+                                    "nearest neighbour, which needs a whole-number scale (a fractional one gives "
+                                    "uneven pixels); use 1, 2, 3 ... or set pixel_art false for a smooth resample")
             layer.anchor = _pair(item.get("anchor_px", [0, 0]), f"{label}.anchor_px")
             layer.offset = _pair(item.get("offset", [0, 0]), f"{label}.offset")
             coverage = item.get("require_canvas_coverage", True)
@@ -305,6 +304,32 @@ def size_canvases(spec: Spec) -> None:
             layer.width = int(math.ceil(vw / zoom_min + max(0.0, max(shifts_x)) + layer.pad_left))
         layer.offset = (-float(layer.pad_left), -float(layer.pad_top))
         layer.alpha = "opaque" if layer.kind == "sky" else "transparent"
+    check_resources(spec)
+
+
+def check_resources(spec: Spec) -> None:
+    """Refuse specs whose canvases or sweep would not fit in memory, before anything is rendered
+    (a 100000 px viewport or a tiny minimum zoom used to allocate gigabytes)."""
+    vw, vh = spec.viewport
+    zoom_min = spec.camera["zoom"][0]
+    composite = math.ceil(vw / zoom_min) * math.ceil(vh / zoom_min)
+    if composite > MAX_CANVAS_PIXELS:
+        raise ParallaxError(f"the viewport {vw}x{vh} at the minimum zoom {_num(zoom_min)} needs a "
+                            f"{composite}-pixel composite; at most {MAX_CANVAS_PIXELS} are supported")
+    if spec.sweep_frames * vw * vh > MAX_SWEEP_PIXELS:
+        raise ParallaxError(f"a {spec.sweep_frames}-frame sweep of a {vw}x{vh} viewport holds "
+                            f"{spec.sweep_frames * vw * vh} pixels; at most {MAX_SWEEP_PIXELS} are supported "
+                            "(lower --sweep-frames or the viewport)")
+    for layer in spec.layers:
+        if layer.kind == "image":
+            height, width = layer.image.shape[:2]
+            width = max(1, _round_half_up(width * layer.scale))
+            height = max(1, _round_half_up(height * layer.scale))
+        else:
+            width, height = layer.width * (2 if layer.repeat[0] else 1), layer.height
+        if width * height > MAX_CANVAS_PIXELS:
+            raise ParallaxError(f"layer {layer.id}: a {width}x{height} canvas is larger than "
+                                f"{MAX_CANVAS_PIXELS} pixels; shrink the viewport, period, camera range or scale")
 
 
 # ----------------------------------------------------------------------------- generators
@@ -810,7 +835,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validate", action=argparse.BooleanOptionalAction, default=None,
                         help="run generate2dmap/scripts/validate_parallax.py on the plan (default: when found)")
     parser.add_argument("--validator", help="path to validate_parallax.py when generate2dmap is installed elsewhere")
-    parser.add_argument("--sweep-frames", type=int, help="camera sweep frames (default: spec sweep_frames or 49; "
+    parser.add_argument("--sweep-frames", type=_frames_arg, help="camera sweep frames (default: spec sweep_frames or 49; "
                                                          "0 turns the sweep off)")
     parser.add_argument("--strict-qc", action="store_true",
                         help="exit 1 and publish nothing when a QA check fails (periodicity, loop step, validator, "
@@ -818,12 +843,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _frames_arg(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if value < 0:
+        raise argparse.ArgumentTypeError("must be 0 or more")
+    return value
+
+
+def _run(argv: Sequence[str] | None = None) -> int:
     forge_core.utf8_stdio()
-    args = parse_args(argv)
-    if args.sweep_frames is not None and args.sweep_frames < 0:
-        print("error: --sweep-frames must be 0 or more", file=sys.stderr)
-        return 1
+    args = parse_args(argv)  # usage errors (a negative --sweep-frames too) exit 2 with argparse's message (D26)
     if os.path.lexists(args.output_dir):
         print(f"error: output directory already exists: {forge_core.ascii_text(str(args.output_dir))}",
               file=sys.stderr)
@@ -836,6 +868,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI behind forge_core.run_cli (D26/D27): usage errors exit 2 from argparse, expected errors print
+    one "error: ..." line and exit 1, and anything unexpected is one "error: internal error (Type: message)"
+    line with exit 1, also when main() is called in-process."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

@@ -6,7 +6,6 @@ drawn here with numpy.
 """
 from __future__ import annotations
 
-import copy
 import hashlib
 import json
 import math
@@ -25,128 +24,7 @@ EXAMPLES = SKILLS_DIR / SKILL / "examples"
 SCHEMAS = SKILLS_DIR / SKILL / "references" / "schemas"
 parallax_build = load_script(SKILL, "parallax_build")
 ambient_bake = load_script(SKILL, "ambient_bake")
-
-# --------------------------------------------------------------------------- proposed schema additions
-# Handoff section 5 asks for these codeart.schema.json $defs; tests validate with them applied in memory.
-PROPOSED_CODEART_DEFS = {
-    "parallax_spec_v1": {
-        "description": "Input of parallax_build.py: viewport and camera envelope as in parallax_plan, and "
-                       "layers back to front. Generated kinds (sky, ridge, clouds, foreground) are periodic in "
-                       "their period; image layers bring their own PNG.",
-        "type": "object",
-        "required": ["schema", "viewport", "layers"],
-        "properties": {
-            "schema": {"const": "codeart2d.parallax_spec.v1"},
-            "viewport": {"$ref": "common.schema.json#/$defs/size2"},
-            "camera": {"type": "object", "properties": {
-                "x": {"$ref": "common.schema.json#/$defs/point2"},
-                "y": {"$ref": "common.schema.json#/$defs/point2"},
-                "zoom": {"type": "array", "minItems": 2, "maxItems": 2,
-                         "items": {"type": "number", "exclusiveMinimum": 0}}}},
-            "seed": {"type": "integer", "minimum": 0},
-            "pixel_art": {"type": "boolean"},
-            "sweep_frames": {"type": "integer", "minimum": 0},
-            "layers": {"type": "array", "minItems": 1, "items": {
-                "type": "object", "required": ["id", "kind"],
-                "properties": {
-                    "id": {"type": "string", "pattern": "^[A-Za-z0-9_.-]+$"},
-                    "kind": {"enum": ["sky", "ridge", "clouds", "foreground", "image"]},
-                    "role": {"type": "string", "minLength": 1},
-                    "scroll": {"anyOf": [{"type": "number"}, {"$ref": "common.schema.json#/$defs/point2"}]},
-                    "repeat": {"type": "array", "items": {"type": "boolean"}, "minItems": 2, "maxItems": 2},
-                    "period": {"type": "integer", "minimum": 8},
-                    "seed": {"type": "integer", "minimum": 0},
-                    "colors": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
-                    "fill": {"$ref": "common.schema.json#/$defs/hexColor"},
-                    "rim": {"$ref": "common.schema.json#/$defs/hexColor"},
-                    "shade": {"$ref": "common.schema.json#/$defs/hexColor"},
-                    "image": {"$ref": "common.schema.json#/$defs/relPath"},
-                    "alpha": {"enum": ["opaque", "transparent"]}},
-                "if": {"properties": {"kind": {"const": "image"}}, "required": ["kind"]},
-                "then": {"required": ["image", "role", "scroll"]}}},
-        },
-    },
-    "plate_effects_v1": {
-        "description": "Input of ambient_bake.py: effects in feathered polygons of a static plate. Every effect "
-                       "period must divide the loop period_ms (default: their least common multiple).",
-        "type": "object",
-        "required": ["schema", "effects"],
-        "properties": {
-            "schema": {"const": "codeart2d.plate_effects.v1"},
-            "plate": {"$ref": "common.schema.json#/$defs/relPath"},
-            "units": {"enum": ["uv", "px"]},
-            "period_ms": {"type": "integer", "minimum": 1},
-            "frames": {"type": "integer", "minimum": 2},
-            "fps": {"type": "number", "exclusiveMinimum": 0},
-            "sampling": {"enum": ["bilinear", "nearest"]},
-            "effects": {"type": "array", "minItems": 1, "items": {
-                "type": "object", "required": ["id", "kind", "polygon"],
-                "properties": {
-                    "id": {"type": "string", "minLength": 1},
-                    "kind": {"enum": ["ripple", "shimmer", "sway", "glow"]},
-                    "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
-                    "period": {"type": "number", "exclusiveMinimum": 0},
-                    "amplitude": {"type": "number", "minimum": 0},
-                    "wavelength": {"type": "number", "exclusiveMinimum": 0},
-                    "axis": {"enum": ["x", "y"]},
-                    "feather": {"type": "number", "minimum": 0},
-                    "opacity": {"type": "number", "minimum": 0, "maximum": 1},
-                    "color": {"$ref": "common.schema.json#/$defs/hexColor"}}}},
-            "protected": {"type": "array", "items": {
-                "type": "object", "properties": {"id": {"type": "string"},
-                                                 "polygon": {"$ref": "common.schema.json#/$defs/polygon"},
-                                                 "box": {"type": "array", "items": {"type": "number"},
-                                                         "minItems": 4, "maxItems": 4}},
-                "oneOf": [{"required": ["polygon"]}, {"required": ["box"]}]}},
-        },
-    },
-    "ambient_loop_v1": {
-        "description": "ambient-loop.json from ambient_bake.py: a cycle loop of frame_count PNG frames lasting "
-                       "period_ms; durations_ms sum to period_ms; frame N would equal frame 0. art_source is "
-                       "code only when the plate itself is code art.",
-        "type": "object",
-        "required": ["schema", "plate", "size", "period_ms", "frame_count", "durations_ms", "fps", "frames",
-                     "mask", "effects", "art_source"],
-        "properties": {
-            "schema": {"const": "codeart2d.ambient_loop.v1"},
-            "plate": {"$ref": "common.schema.json#/$defs/fileRef"},
-            "size": {"$ref": "common.schema.json#/$defs/size2"},
-            "period_ms": {"type": "integer", "minimum": 1},
-            "frame_count": {"type": "integer", "minimum": 2},
-            "durations_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-            "fps": {"$ref": "common.schema.json#/$defs/fpsValue"},
-            "loop": {"type": "object", "properties": {"policy": {"const": "cycle"}, "exact": {"type": "boolean"}}},
-            "sampling": {"enum": ["bilinear", "nearest"]},
-            "frames": {"type": "array", "minItems": 2, "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
-            "mask": {"$ref": "common.schema.json#/$defs/fileRef"},
-            "effects": {"type": "array", "minItems": 1, "items": {
-                "type": "object", "required": ["id", "kind", "cycles", "polygon"],
-                "properties": {"id": {"type": "string"}, "kind": {"enum": ["ripple", "shimmer", "sway", "glow"]},
-                               "cycles": {"type": "integer", "minimum": 1},
-                               "polygon": {"$ref": "common.schema.json#/$defs/polygon"}}}},
-            "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
-            "plate_art_source": {"$ref": "common.schema.json#/$defs/artSource"},
-            "motion_source": {"const": "code"},
-            "provenance": {"$ref": "common.schema.json#/$defs/provenance"},
-        },
-    },
-}
-
-
-def assert_valid_proposed(instance, name):
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in sorted(SCHEMAS.glob("*.schema.json"))}
-    schemas = copy.deepcopy(schemas)
-    schemas["codeart"]["$defs"].update(copy.deepcopy(PROPOSED_CODEART_DEFS))
-    registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in schemas.values())
-    validator = Draft202012Validator({"$ref": f"{schemas['codeart']['$id']}#/$defs/{name}"}, registry=registry)
-    errors = [f"{error.json_path}: {error.message}" for error in validator.iter_errors(instance)]
-    assert not errors, f"codeart/{name} (with the proposed additions):\n  " + "\n  ".join(errors)
-
+codeart_core = load_script(SKILL, "codeart_core")
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -257,7 +135,10 @@ def test_parallax_outputs_validate_and_are_deterministic(backdrop):
     assert_valid_contract(meta, "codeart", "codeart_meta_v1", skill=SKILL)
     for ref in meta["outputs"]:
         assert sha256(a / ref["path"]) == ref["sha256"]
-    assert_valid_proposed(json.loads((EXAMPLES / "parallax-gen.json").read_text(encoding="utf-8")), "parallax_spec_v1")
+    assert_valid_contract(json.loads((EXAMPLES / "parallax-gen.json").read_text(encoding="utf-8")), "codeart",
+                          "parallax_spec_v1", skill=SKILL)
+    qa = json.loads((a / "parallax-qa.json").read_text(encoding="utf-8"))
+    assert qa["tool"] == {"name": "parallax_build", "version": "0.4.0"}  # D29
 
 
 def test_parallax_pixel_art_layers_use_only_spec_colours(backdrop):
@@ -426,8 +307,10 @@ def test_ambient_outputs_validate(harbour):
     root, _ = harbour
     out = root / "out"
     document = json.loads((out / "ambient-loop.json").read_text(encoding="utf-8"))
-    assert_valid_proposed(document, "ambient_loop_v1")
-    assert_valid_proposed(json.loads((EXAMPLES / "plate-effects.json").read_text(encoding="utf-8")), "plate_effects_v1")
+    assert_valid_contract(document, "codeart", "ambient_loop_v1", skill=SKILL)
+    assert_valid_contract(json.loads((EXAMPLES / "plate-effects.json").read_text(encoding="utf-8")), "codeart",
+                          "plate_effects_v1", skill=SKILL)
+    assert document["provenance"]["version"] == "0.4.0"  # D29
     assert document["art_source"] == "mixed" and document["plate_art_source"] == "existing"
     assert not (out / "codeart-meta.json").exists()
     qa = json.loads((out / "ambient-qa.json").read_text(encoding="utf-8"))
@@ -469,15 +352,18 @@ def test_ambient_reads_stage_documents_and_nearest_sampling(tmp_path):
 
 
 def test_feather_distance_without_scipy_is_identical(monkeypatch):
+    """The feather is codeart_core.distance_field of the region's complement (the copy ambient_bake and
+    layout_build each carried is gone); scipy and the numpy path agree with brute force."""
+    assert not hasattr(ambient_bake, "_local_capped_edt") and not hasattr(ambient_bake, "_inside_polygon")
     rng = np.random.default_rng(9)
     ys, xs = np.mgrid[0:50, 0:70]
     for trial in range(3):
         cx, cy, r = rng.uniform(15, 55), rng.uniform(10, 40), rng.uniform(6, 20)
         inside = np.hypot(xs - cx, ys - cy) <= r
         monkeypatch.setenv("FORGE_CORE_NO_SCIPY", "1")
-        fallback = ambient_bake._local_inside_distance(inside, 8.0)
+        fallback = ambient_bake._inside_distance(inside, 8.0)
         monkeypatch.delenv("FORGE_CORE_NO_SCIPY")
-        np.testing.assert_array_equal(fallback, ambient_bake._local_inside_distance(inside, 8.0))
+        np.testing.assert_array_equal(fallback, ambient_bake._inside_distance(inside, 8.0))
         oy, ox = np.nonzero(~inside)
         brute = np.hypot(xs[..., None] - ox, ys[..., None] - oy).min(axis=-1)
         expected = np.where(inside, np.where(brute <= 8.0, brute, np.inf), 0.0)
@@ -508,3 +394,60 @@ def test_dusk_style_phase_drift_would_break_the_loop():
     ys = np.linspace(0, 100, 7)
     np.testing.assert_allclose(ambient_bake.displacement(effect, 0.0, ys * 0, ys),
                                ambient_bake.displacement(effect, 2 * math.pi, ys * 0, ys), atol=1e-12)
+
+
+# =========================================================================== conventions and limits
+
+def test_usage_errors_exit_2_and_json_with_a_bom_is_read(tmp_path):
+    """D26: argument errors are argparse usage errors (exit 2); D28: specs saved with a BOM are read."""
+    textured_plate(tmp_path / "plate.png", (160, 90))
+    for extra in (["--frames", "1"], ["--frames", "x"], ["--fps", "0"], ["--fps", "nan"]):
+        result = ambient(tmp_path / "plate.png", EXAMPLES / "plate-effects.json", tmp_path / "never", *extra)
+        assert result.returncode == 2 and "usage:" in result.stderr, extra
+    result = parallax(EXAMPLES / "parallax-gen.json", tmp_path / "never", "--sweep-frames", "-1")
+    assert result.returncode == 2 and "usage:" in result.stderr and not (tmp_path / "never").exists()
+    for name in ("parallax-gen.json", "plate-effects.json"):
+        (tmp_path / name).write_bytes(b"\xef\xbb\xbf" + (EXAMPLES / name).read_bytes())
+    result = parallax(tmp_path / "parallax-gen.json", tmp_path / "bg", "--no-validate", "--sweep-frames", "0")
+    assert result.returncode == 0, result.stderr
+    result = ambient(tmp_path / "plate.png", tmp_path / "plate-effects.json", tmp_path / "amb", "--frames", "12")
+    assert result.returncode == 0, result.stderr
+    for index, text in enumerate(["[]", "{", '{"schema": "codeart2d.parallax_spec.v1", "viewport": "wide"}']):
+        path = tmp_path / f"bad-{index}.json"
+        path.write_text(text, encoding="utf-8")
+        for result in (parallax(path, tmp_path / f"p{index}"), ambient(tmp_path / "plate.png", path, tmp_path / f"a{index}")):
+            assert result.returncode == 1 and result.stderr.startswith("error:") and "Traceback" not in result.stderr
+            assert "internal error" not in result.stderr
+
+
+def test_parallax_refuses_canvases_that_would_not_fit_in_memory(tmp_path):
+    """The codeart review grew a viewport [100000, 100000] to 10 GB: the canvas and sweep caps refuse it
+    (and a tiny minimum zoom) before anything is allocated."""
+    spec = json.loads((EXAMPLES / "parallax-gen.json").read_text(encoding="utf-8"))
+    for change, needle in ((lambda s: s.update(viewport=[100000, 100000]), "composite"),
+                           (lambda s: s.update(camera={**s.get("camera", {}), "zoom": [0.01, 1]}), "composite"),
+                           (lambda s: s.update(viewport=[3840, 2160]), "sweep")):
+        changed = json.loads(json.dumps(spec))
+        change(changed)
+        result = parallax(write_json(tmp_path / "huge.json", changed), tmp_path / "never", "--no-validate")
+        assert result.returncode == 1 and needle in result.stderr and "at most" in result.stderr, result.stderr
+        assert not (tmp_path / "never").exists()
+
+
+def test_pixel_art_image_layers_need_a_whole_number_scale(tmp_path):
+    """Nearest neighbour at a fractional scale gives uneven pixels (codeart review): refused for pixel art,
+    smooth resampling when pixel_art is false."""
+    tile = np.zeros((32, 48, 4), np.uint8)
+    tile[16:, :, :] = (90, 140, 60, 255)
+    Image.fromarray(tile).save(tmp_path / "hill.png")
+    spec = {"schema": "codeart2d.parallax_spec.v1", "viewport": [96, 64], "sweep_frames": 0,
+            "layers": [{"id": "sky", "kind": "sky", "colors": ["#203050", "#8090a0"]},
+                       {"id": "hill", "kind": "image", "image": "hill.png", "role": "near", "scroll": 1.0,
+                        "scale": 1.5, "repeat": [False, False], "require_canvas_coverage": False}]}
+    result = parallax(write_json(tmp_path / "spec.json", spec), tmp_path / "px", "--no-validate")
+    assert result.returncode == 1 and "whole-number scale" in result.stderr
+    spec["layers"][1]["scale"] = 2
+    assert parallax(write_json(tmp_path / "spec.json", spec), tmp_path / "px2", "--no-validate").returncode == 0
+    spec["layers"][1]["scale"] = 1.5
+    spec["pixel_art"] = False
+    assert parallax(write_json(tmp_path / "spec.json", spec), tmp_path / "smooth", "--no-validate").returncode == 0

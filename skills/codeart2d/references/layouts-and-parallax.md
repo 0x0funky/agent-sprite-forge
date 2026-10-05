@@ -4,11 +4,11 @@ Three codeart2d tools make map data and stylised backgrounds as code. None of th
 
 | Tool | Makes | Proves |
 |---|---|---|
-| [layout_build.py](../scripts/layout_build.py) | A playable top-down map: `map-bundle.json` (map_bundle.v2), terrain, props, collision, exits, spawns, previews | Every exit, spawn and interaction is reachable for the actor footprint; the collision rectangles cover exactly the blocked cells |
+| [layout_build.py](../scripts/layout_build.py) | A playable top-down map: `map-bundle.json` (map_bundle.v2), terrain, props, collision, exits, spawns, previews | Every exit, spawn and interaction is reachable for the actor footprint, judged by the shared forge_nav rules on the bundle's full blocking set; the collision rectangles cover exactly the blocked cells |
 | [parallax_build.py](../scripts/parallax_build.py) | Periodic parallax layers, a parallax plan and a camera sweep | Each repeating layer is exactly periodic and its loop step is at most the p95 of its own column steps; the plan passes the generate2dmap validator |
 | [ambient_bake.py](../scripts/ambient_bake.py) | A frame loop of ripples, haze, swaying foliage or glows on a static plate | The loop has an exact period; pixels outside the effect polygons never change |
 
-Run every command from your project root. `<skill-dir>` is the codeart2d folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs go to a new `--output-dir` inside your project: the tool refuses an existing path, works in a hidden stage folder beside it and publishes only a complete result. With `--strict-qc` a failed check exits 1 and leaves nothing behind; without it the output is published with a failing QA envelope, so you can open the debug images. Errors print one `error: ...` line; success prints one JSON line with the output, metadata and QA paths.
+Run every command from your project root. `<skill-dir>` is the codeart2d folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs go to a new `--output-dir` inside your project: the tool refuses an existing path, works in a hidden stage folder beside it and publishes only a complete result. With `--strict-qc` a failed check exits 1 and leaves nothing behind; without it the output is published with a failing QA envelope, so you can open the debug images. Errors print one `error: ...` line and exit 1; a wrong argument is a usage error (argparse's `usage: ...` and exit 2). Success prints one JSON line with the output, metadata and QA paths. Spec files may be saved with a UTF-8 BOM.
 
 ## Playable maps: layout_build.py
 
@@ -32,10 +32,13 @@ Start from [examples/meadow-layout.json](../examples/meadow-layout.json): a 40x2
    - a diagonal-only pair of corners (a saddle) gets its top corner filled;
    - a lone vertex with no same-material neighbour becomes the base.
    `hygiene.saddles` and `hygiene.specks` switch the last two off.
-3. **Tiles.** Every cell gets exactly one tile, from the first tileset that has its corner tuple. Interior variants are chosen by a seeded hash and avoid repeating the left and upper neighbour. With several tilesets the bundle gets one tiles layer per set (`ground`, `ground-<id>`), each cell in exactly one of them; the tilesets are copied into `tilesets/<id>/`. Without `--tiles` the ground is a flat-colour image (`ground.png`) and the bundle says `placeholder: true`.
+3. **Tiles.** Every cell gets exactly one tile, from the first tileset that has its corner tuple. Interior variants are chosen by a seeded hash and avoid repeating the left and upper neighbour. With several tilesets the bundle gets one tiles layer per set (`ground`, `ground-<id>`), each cell in exactly one of them; the tilesets are copied into `tilesets/<id>/`. A copied manifest drops its `qa` reference (the QA file stays with the tileset; the bundle's provenance lists it). Without `--tiles` the ground is a flat-colour image (`ground.png`) and the bundle says `placeholder: true`.
 4. **Props.** Fixed `objects` first, then each `scatter` group (see below).
-5. **Collision.** Non-walkable terrain becomes exact rectangle solids (the merged vertex squares, per material). Solid props add their footprint as an ellipse or rect solid. `collision.rects` are disjoint rectangles whose union is exactly the blocked raster: the `rectCell` px cells (default half a tile) whose centre lies inside a solid.
-6. **Reachability** (plan Appendix C). A point is valid when it and 8 samples of the actor ellipse (`rx = r`, `ry = r * ySquash`) lie inside the map and outside every solid. Validity is tested at cell centres (`cell = max(1, round_half_up(r / 2))`) and at the midpoint of every 4-neighbour move. Every exit, spawn and interaction must be reachable from the first spawn (or, without spawns, from the first exit's arrival point).
+5. **Collision.** One blocking set, the same for every reader of the bundle (generate2dmap map_nav.py and the engine exporters, the scene preview and its runtime):
+   - **Terrain.** With tilesets, each placed tile blocks with its own `collision` shapes (a tile with no shapes whose `properties.walkable` is false blocks whole). autotile_build tilesets carry these shapes, measured from the art. A tileset that has none gets the vertex-square rule of your materials (each corner owns its quadrant) written into the bundle's copy. Without tilesets, non-walkable terrain becomes exact rectangle solids in `collision.solids` (the merged vertex squares, per material).
+   - **Props.** Each object keeps its prop's footprint as authored (in prop pixels, `basis: prop_px`) with `flip_x` and `scale`; readers mirror and scale it once.
+   - **`collision.rects`.** Disjoint rectangles whose union is exactly a raster of `rectCell` px cells: the cells whose centre a blocker covers. `rectCell` defaults to the tile collision grid with tilesets (an autotile_build set's `collision_cell`) and to half a tile without, so the rects are exact on the terrain and approximate only prop footprints. They are part of the blocking set too.
+6. **Reachability**, with the shared forge_nav rules (the code generate2dmap's map_nav.py runs) on the blocking set read back from the bundle. A point is valid when it and 8 samples of the actor ellipse (`rx = r`, `ry = r * ySquash`) lie inside the map and outside every blocker (a boundary counts as blocked). Validity is tested at grid nodes (`cell = max(1, round_half_up(r / 2))`); a 4-neighbour move is open when the straight segment between the two nodes stays clear, thin walls between samples included. Every exit, spawn and interaction must be reachable from the first spawn (or, without spawns, from the first exit's arrival point).
 7. **Output**, staged and published together (see below).
 
 ### Spec (`codeart2d.layout_spec.v1`)
@@ -55,11 +58,11 @@ Terrain shapes use tile (vertex) coordinates; everything else is in world pixels
 | `exits` | `{id, edge, road \| span, to, depth?, radius?, arrival?}`, see below. |
 | `spawns`, `interactions` | `{id, x, y, facing?}` and `{id, x, y, reach?}`. |
 
-**Footprints** are in the prop's own pixels: the centre is `anchor_px + offset`, `width` runs across and `depth` along the ground, `rotate` is in degrees. They are scaled once by the instance scale, mirrored with the sprite when `flip_x` is set, and never inflated for the actor: the reachability gate accounts for the actor's size. Size the footprint to the trunk, base or walls, not to the whole silhouette, so canopies and roofs do not wall off paths.
+**Footprints** are in the prop's own pixels: the centre is `anchor_px + offset`, `width` runs across and `depth` along the ground, `rotate` is in degrees. The bundle stores them as authored; every reader scales them once by the instance scale, mirrors them with the sprite when `flip_x` is set, and never inflates them for the actor: the reachability gate accounts for the actor's size. Size the footprint to the trunk, base or walls, not to the whole silhouette, so canopies and roofs do not wall off paths.
 
 **Scatter groups** `{id, kinds: {kind: weight}, count, spacing, density?, clearance?, near?, region?, attempts?}`:
 
-- Candidates are drawn uniformly in `region`. They are kept when the value noise (`density.scale`, `octaves`, plus `edge_bonus` within `edge_distance` of the map edge) reaches `density.threshold`, and when every clearance holds. Clearances are distances in px from `road` material, `blocked` terrain, fixed `object` sprites, `exit` approaches, `spawn` and interaction points, and the map `edge`. Each `near` band `{field: [min, max]}` keeps candidates within that distance of the field.
+- Candidates are drawn uniformly in `region` (`attempts` of them, default `40 * count`; `count` and `attempts` are at most 250,000 per group). They are kept when the value noise (`density.scale`, `octaves`, plus `edge_bonus` within `edge_distance` of the map edge) reaches `density.threshold`, and when every clearance holds. Clearances are distances in px from `road` material, `blocked` terrain, fixed `object` sprites, `exit` approaches, `spawn` and interaction points, and the map `edge`. Each `near` band `{field: [min, max]}` keeps candidates within that distance of the field.
 - Accepted props keep Poisson-disk spacing from every earlier scatter prop.
 - **Variety.** A look is (kind, variant, mirror). Looks are drawn by weight, and every same-group neighbour within two spacings penalises its own look, so nearby props rarely repeat one. The `prop_variety` check warns when more than 35% of a group's props have an identical-looking nearest neighbour.
 - Frame paths with low props in a `near.road` band and keep tall ones back with a larger `road` clearance.
@@ -68,22 +71,23 @@ Terrain shapes use tile (vertex) coordinates; everything else is in world pixels
 
 ### Outputs
 
-- `map-bundle.json`: generate2dmap.map_bundle.v2 with `world`, `tile_size`, `terrain` (the vertex grid), `tilesets`, `layers` (tiles or the ground image, then `props` objects), `objects`, `collision`, `portals`, `spawns`, `interactions`, `camera.bounds`, `art_source`, `placeholder`, a `qa` summary and `provenance`. It adds optional fields: `id`, `props` (a propItem per prop image), `roads` (centre lines in px), `collision.rectCell`, per object `kind`, `flip_x` and `group`, per portal `edge`, and per terrain solid `material`.
+- `map-bundle.json`: generate2dmap.map_bundle.v2 with `world`, `tile_size`, `terrain` (the vertex grid), `tilesets`, `layers` (tiles or the ground image, then `props` objects), `objects`, `collision`, `portals`, `spawns`, `interactions`, `camera.bounds`, `art_source`, `placeholder`, a `qa` summary and `provenance` (including where the tile collision came from and the navigation numbers). It also writes `id`, `props` (the props registry, one bundleProp per prop image), `roads` (centre lines in px), `collision.rectCell`, per object `kind`, `flip_x` and `group`, per portal `edge`, and per terrain solid `material`.
 - `terrain-vertices.json`: `generate2dmap.vertex_grid.v1` (`size`, `materials`, `data[row][column]`).
 - `props/<prop>.png`, `tilesets/<id>/...` and, without tiles, `ground.png`.
-- `preview.png` and `debug.png` with `--preview`. In `debug.png`, dark means too tight for the actor and magenta means walkable but unreachable. It also draws solids (blue terrain, yellow props), the merged rectangles (red), exits with their radius (cyan), interactions (yellow) and spawns (white).
+- `preview.png` and `debug.png` with `--preview`. In `debug.png`, dark means too tight for the actor and magenta means walkable but unreachable. It also draws the blockers (blue terrain and tile collision, yellow prop footprints), the merged rectangles (red), exits with their radius (cyan), interactions (yellow) and spawns (white).
 - `layout-qa.json`: the QA envelope. `codeart-meta.json`: art_source code, with `placeholder` set honestly.
 
 | Check | Fails or warns when |
 |---|---|
 | `tiles_drawable` | a cell has no tile (with tilesets) |
+| `tile_collision` (warn) | a full tile of a material blocks differently from that material's `walkable` in your spec (the tileset's collision still wins) |
 | `rect_union_equals_blocked`, `rects_disjoint` | the merged rectangles do not reproduce the blocked raster exactly |
 | `spawns_reachable`, `exits_reachable`, `interactions_reachable` | a target is outside the first spawn's component |
 | `arrivals_outside_triggers` | an exit has no reachable cell just outside its trigger |
 | `enclosed_pockets` (warn) | walkable areas of 8 or more cells cannot be reached |
 | `prop_variety`, `scatter_filled`, `hygiene_converged` (warn) | repeated looks, fewer props than requested, or hygiene still changing after 10 passes |
 
-The bundle's solids are exact; engines that collide with `collision.rects` only get the `rectCell` approximation of prop footprints. Run map_nav.py (generate2dmap) on the bundle for the navigation grid. Then use export_tiled.py and the Godot or LDtk exporters for engines.
+The terrain, tile and footprint shapes are exact; an engine that collides with `collision.rects` alone gets the `rectCell` approximation of prop footprints, and the reachability proof covers both. generate2dmap's map_nav.py reads the bundle with the same rules and finds the same valid and reachable nodes; run it for the navigation grid, then use export_tiled.py and the Godot or LDtk exporters for engines.
 
 ## Parallax backgrounds: parallax_build.py
 
@@ -95,7 +99,7 @@ Start from [examples/parallax-gen.json](../examples/parallax-gen.json): a dither
 
 ### Spec (`codeart2d.parallax_spec.v1`)
 
-`viewport [w, h]`, `camera {x, y, zoom}` (ranges `[min, max]`, as in the parallax plan), `seed`, `pixel_art` (default true; false renders at 4x and box-reduces for soft edges) and `sweep_frames` (default 49). `layers` run back to front:
+`viewport [w, h]`, `camera {x, y, zoom}` (ranges `[min, max]`, as in the parallax plan), `seed`, `pixel_art` (default true; false renders at 4x and box-reduces for soft edges) and `sweep_frames` (default 49). A canvas holds at most 16.7 million pixels (the composite at the minimum zoom included) and a sweep at most 128 million in all, so a huge viewport or a tiny zoom is refused before anything is drawn. `layers` run back to front:
 
 | Kind | Parameters |
 |---|---|
@@ -103,7 +107,7 @@ Start from [examples/parallax-gen.json](../examples/parallax-gen.json): a dither
 | `ridge` | `base_y`, `amplitude`, `cells` (noise cells per period), `octaves`, `fill`, `rim` and `rim_px`, `trees {count, height: [min, max], width_ratio, tiers, color}` |
 | `clouds` | `count`, `y_range`, `size` (puff radius range), `puffs`, `fill`, `shade` |
 | `foreground` | like `ridge`, plus `grass {count, height, color}`; role `foreground` |
-| `image` | your own PNG: `image`, `role`, `scroll`, `repeat`, `alpha`, `scale`, `anchor_px`, `offset`, `require_canvas_coverage` |
+| `image` | your own PNG: `image`, `role`, `scroll`, `repeat`, `alpha`, `scale` (a whole number for pixel art, which is scaled by nearest neighbour), `anchor_px`, `offset`, `require_canvas_coverage` |
 
 Every non-sky layer needs `scroll` (its camera factor: about 0.1 to 0.3 far, 0.5 mid, 1.0 for the play layer, above 1 for foreground). Generated layers repeat horizontally with `period` px (default: the viewport width). Image layers repeat only when `repeat` says so.
 

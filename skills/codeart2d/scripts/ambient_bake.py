@@ -46,7 +46,7 @@ import forge_core  # noqa: E402
 
 
 TOOL = "ambient_bake"
-TOOL_VERSION = "1.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29
 SPEC_SCHEMA = "codeart2d.plate_effects.v1"
 STAGE_SCHEMA = "generate2dmap.stage.v1"
 LOOP_SCHEMA = "codeart2d.ambient_loop.v1"
@@ -98,72 +98,17 @@ def _integer(value: Any, label: str, *, minimum: int | None = None) -> int:
     return int(value)
 
 
-def _relative(path: Path, base: Path) -> str:
-    try:
-        return Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:
-        return path.name
-
-
 def _file_ref(path: Path, base: Path) -> dict:
-    return {"path": _relative(path, base), "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+    """forge_core.file_ref: a manifest-relative POSIX path, or the file name across drives (D30)."""
+    return forge_core.file_ref(path, base)
 
 
-def _inside_polygon(xs: np.ndarray, ys: np.ndarray, polygon: Sequence[Sequence[float]]) -> np.ndarray:
-    """Even-odd point-in-polygon test, vectorised over the points."""
-    inside = np.zeros(np.broadcast(xs, ys).shape, bool)
-    for index in range(len(polygon)):
-        x0, y0 = polygon[index]
-        x1, y1 = polygon[(index + 1) % len(polygon)]
-        if y0 == y1:
-            continue
-        crosses = (ys >= min(y0, y1)) & (ys < max(y0, y1))
-        inside ^= crosses & (xs < x0 + (ys - y0) * (x1 - x0) / (y1 - y0))
-    return inside
-
-
-def _local_inside_distance(inside: np.ndarray, cap: float) -> np.ndarray:
+def _inside_distance(inside: np.ndarray, cap: float) -> np.ndarray:
     """Euclidean distance (px) from each True pixel of `inside` to the nearest False pixel, exact up to
     `cap` and infinity beyond it (and everywhere when there is no False pixel); 0 on False pixels.
     The array border is not an edge, so a region that runs off the image keeps moving up to the edge.
-
-    scipy.ndimage when available (honouring FORGE_CORE_NO_SCIPY), otherwise _local_capped_edt; both
-    give identical values. Candidate for forge_core (handoff section 6)."""
-    if not inside.any():
-        return np.zeros(inside.shape, np.float64)
-    if inside.all():
-        return np.full(inside.shape, np.inf)
-    ndimage = None
-    if os.environ.get("FORGE_CORE_NO_SCIPY", "") in ("", "0"):
-        try:
-            from scipy import ndimage
-        except ImportError:
-            ndimage = None
-    if ndimage is None:
-        return np.where(inside, _local_capped_edt(~inside, cap), 0.0)
-    distance = ndimage.distance_transform_edt(inside)
-    distance[distance > cap] = np.inf
-    return distance
-
-
-def _local_capped_edt(target: np.ndarray, cap: float) -> np.ndarray:
-    """Exact Euclidean distance to the nearest True cell where it is at most `cap`, else infinity (numpy).
-
-    d^2 = min over columns k of (nearest target in column k)^2 + (x - k)^2; a distance <= cap needs
-    only |x - k| <= cap, so the second pass shifts at most floor(cap) columns each way."""
-    rows = target.shape[0]
-    limit = int(math.floor(cap))
-    index = np.arange(rows, dtype=np.float64)[:, None]
-    above = index - np.maximum.accumulate(np.where(target, index, -np.inf), axis=0)
-    below = np.minimum.accumulate(np.where(target, index, np.inf)[::-1], axis=0)[::-1] - index
-    vertical = np.minimum(above, below)
-    vertical = np.where(vertical <= limit, vertical * vertical, np.inf)
-    best = vertical.copy()
-    for shift in range(1, min(limit, target.shape[1] - 1) + 1):
-        cost = float(shift * shift)
-        np.minimum(best[:, shift:], vertical[:, :-shift] + cost, out=best[:, shift:])
-        np.minimum(best[:, :-shift], vertical[:, shift:] + cost, out=best[:, :-shift])
-    return np.where(best <= cap * cap, np.sqrt(best), np.inf)
+    codeart_core.distance_field of the complement: the skill's one Euclidean capped distance."""
+    return codeart_core.distance_field(~inside, cap)
 
 
 # ----------------------------------------------------------------------------- spec
@@ -233,8 +178,10 @@ def load_loop(spec_path: Path, plate_override: Path | None, frames_override: int
     except FileNotFoundError:
         raise AmbientError(f"spec not found: {spec_path}") from None
     try:
-        data = _mapping(json.loads(raw.decode("utf-8")), "spec")
-    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        data = _mapping(forge_core.parse_json(raw), "spec")  # UTF-8 with an optional BOM (D28)
+    except AmbientError:
+        raise
+    except ValueError as error:  # JSONDecodeError and UnicodeDecodeError
         raise AmbientError(f"spec {spec_path.name} is not valid UTF-8 JSON: {error}") from None
     schema = data.get("schema")
     if schema not in (SPEC_SCHEMA, STAGE_SCHEMA):
@@ -360,7 +307,7 @@ def prepare(loop: Loop) -> np.ndarray:
     blocked = np.zeros((height, width), bool)
     ys_all, xs_all = np.mgrid[0:height, 0:width] + 0.5
     for region in loop.protected:
-        blocked |= _inside_polygon(xs_all, ys_all, region["polygon"])
+        blocked |= codeart_core.inside_polygon(xs_all, ys_all, region["polygon"])
     union = np.zeros((height, width), np.float64)
     for effect in loop.effects:
         xs = [p[0] for p in effect.polygon]
@@ -370,9 +317,9 @@ def prepare(loop: Loop) -> np.ndarray:
         x1, y1 = min(width, int(math.ceil(max(xs))) + margin), min(height, int(math.ceil(max(ys))) + margin)
         if max(xs) <= 0 or max(ys) <= 0 or min(xs) >= width or min(ys) >= height or x0 >= x1 or y0 >= y1:
             raise AmbientError(f"effect {effect.id}: its polygon lies outside the {width}x{height} plate")
-        inside = _inside_polygon(xs_all[y0:y1, x0:x1], ys_all[y0:y1, x0:x1], effect.polygon)
+        inside = codeart_core.inside_polygon(xs_all[y0:y1, x0:x1], ys_all[y0:y1, x0:x1], effect.polygon)
         if effect.feather > 0:
-            t = np.clip(_local_inside_distance(inside, effect.feather) / effect.feather, 0.0, 1.0)
+            t = np.clip(_inside_distance(inside, effect.feather) / effect.feather, 0.0, 1.0)
             weight = t * t * (3.0 - 2.0 * t)
         else:
             weight = inside.astype(np.float64)
@@ -600,6 +547,26 @@ def build(args: argparse.Namespace) -> dict:
             "fps": forge_core.rational_fps(loop.frames, loop.period_ms)}
 
 
+def _frames_arg(text: str) -> int:
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a whole number, got {text!r}") from None
+    if value < 2:
+        raise argparse.ArgumentTypeError("must be at least 2")
+    return value
+
+
+def _fps_arg(text: str) -> float:
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a number, got {text!r}") from None
+    if not (math.isfinite(value) and value > 0):
+        raise argparse.ArgumentTypeError("must be a positive number")
+    return value
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Bake periodic ambient motion (ripple, shimmer, sway, glow) inside feathered polygons of a "
@@ -611,8 +578,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--spec", required=True,
                         help="codeart2d.plate_effects.v1 JSON, or a generate2dmap.stage.v1 document with effects")
     parser.add_argument("--output-dir", required=True, help="new folder to create; an existing path is refused")
-    parser.add_argument("--frames", type=int, help="frames in the loop (overrides the spec)")
-    parser.add_argument("--fps", type=float, help="frames per second; frames = period_ms * fps / 1000, rounded")
+    parser.add_argument("--frames", type=_frames_arg, help="frames in the loop, at least 2 (overrides the spec)")
+    parser.add_argument("--fps", type=_fps_arg, help="frames per second; frames = period_ms * fps / 1000, rounded")
     parser.add_argument("--preview", action="store_true", help="also write review.png and preview.webp")
     parser.add_argument("--plate-art-source", default="existing",
                         choices=("code", "host_image", "api", "existing", "video", "mixed"),
@@ -623,15 +590,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def _run(argv: Sequence[str] | None = None) -> int:
     forge_core.utf8_stdio()
-    args = parse_args(argv)
-    if args.frames is not None and args.frames < 2:
-        print("error: --frames must be at least 2", file=sys.stderr)
-        return 1
-    if args.fps is not None and not (math.isfinite(args.fps) and args.fps > 0):
-        print("error: --fps must be a positive number", file=sys.stderr)
-        return 1
+    args = parse_args(argv)  # usage errors (a bad --frames or --fps too) exit 2 with argparse's message (D26)
     if os.path.lexists(args.output_dir):
         print(f"error: output directory already exists: {forge_core.ascii_text(str(args.output_dir))}",
               file=sys.stderr)
@@ -643,6 +604,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI behind forge_core.run_cli (D26/D27): usage errors exit 2 from argparse, expected errors print
+    one "error: ..." line and exit 1, and anything unexpected is one "error: internal error (Type: message)"
+    line with exit 1, also when main() is called in-process."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":
