@@ -17,6 +17,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
+import subprocess
+import sys
 import time
 import warnings
 from pathlib import Path
@@ -355,6 +358,22 @@ def test_merge_rects_is_exact():
     assert fn.merge_rects(np.ones((5, 7), bool)) == [(0, 0, 7, 5)]
     with pytest.raises(ValueError, match="2-D"):
         fn.merge_rects(np.ones(3, bool))
+
+
+def test_merge_rects_is_forge_cores_cover(tmp_path):
+    """D30: forge_nav.merge_rects is the sibling forge_core.merge_rects (one cover for every map
+    tool, rectangle for rectangle B13's); a stale sibling without it is refused by name."""
+    core = load_shared("forge_core")
+    rng = np.random.default_rng(30)
+    for shape, density in (((1, 1), 1.0), ((9, 40), 0.5), ((33, 17), 0.8), ((6, 6), 0.0)):
+        mask = rng.random(shape) < density
+        assert fn.merge_rects(mask) == core.merge_rects(mask) == nav.merge_rects(mask)
+    (tmp_path / "forge_nav.py").write_bytes((REPO_ROOT / "shared" / "forge_nav.py").read_bytes())
+    (tmp_path / "forge_core.py").write_text('FORGE_CORE_API_VERSION = "1"\n', encoding="utf-8")
+    done = subprocess.run([sys.executable, "-c", "import forge_nav; forge_nav.merge_rects([[True]])"],
+                          capture_output=True, text=True, cwd=str(tmp_path),
+                          env={**os.environ, "PYTHONPATH": str(tmp_path), "PYTHONDONTWRITEBYTECODE": "1"})
+    assert done.returncode != 0 and "NavError: merge_rects needs forge_core.merge_rects" in done.stderr
 
 
 # --------------------------------------------------------------------------- the blocking set (map_bundle's tests)

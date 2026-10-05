@@ -3,9 +3,10 @@
 forge_nav is the canonical implementation of plan Appendix C as decided for Phase 3
 (integration decisions D1-D7). It was extracted from B13's map_nav.py and map_bundle.py.
 Canonical copy: shared/forge_nav.py; byte-identical copies ship in
-skills/generate2dmap/scripts and skills/codeart2d/scripts (shared/VENDORED.json). It needs
-only the standard library and numpy; reading a material-map image also uses Pillow through
-the sibling forge_core.py. There is no scipy path: map_nav never had one.
+skills/generate2dmap/scripts and skills/codeart2d/scripts (shared/VENDORED.json). It imports
+only the standard library and numpy. merge_rects (D30) and reading a material-map image use
+the sibling forge_core.py (API 1.1 or later), imported on first use, and through it Pillow.
+There is no scipy path: map_nav never had one.
 
 Consumers (D2, D4): map_nav.py (the CLI and its reports), the compose_layered_preview
 actor-feet audit (--bundle), export_godot / export_ldtk / export_tiled (the blocking set),
@@ -259,28 +260,25 @@ def nav_cell(actor_radius: float) -> int:
 def merge_rects(mask: Any) -> list[tuple[int, int, int, int]]:
     """Cover a boolean grid with disjoint axis-aligned rectangles (x, y, w, h) in cells.
 
-    Greedy: rows are scanned top to bottom; each maximal run of uncovered True cells in a
-    row becomes a rectangle that grows downward while the whole run stays True and
-    uncovered. The rectangles are disjoint and their union is exactly the True cells.
+    This is forge_core.merge_rects (D30), the one cover every map tool shares. Greedy:
+    rows are scanned top to bottom; each maximal run of uncovered True cells in a row
+    becomes a rectangle that grows downward while the whole run stays True and uncovered.
+    The rectangles are disjoint and their union is exactly the True cells. A mask that is
+    not 2-D raises ValueError.
     """
-    blocked = np.asarray(mask, bool)
-    if blocked.ndim != 2:
-        raise ValueError("merge_rects needs a 2-D mask")
-    rows = blocked.shape[0]
-    used = np.zeros_like(blocked)
-    rects: list[tuple[int, int, int, int]] = []
-    for y in range(rows):
-        free = blocked[y] & ~used[y]
-        if not free.any():
-            continue
-        edges = np.flatnonzero(np.diff(np.concatenate(([False], free, [False])).astype(np.int8)))
-        for x0, x1 in zip(edges[0::2], edges[1::2]):
-            y1 = y + 1
-            while y1 < rows and blocked[y1, x0:x1].all() and not used[y1, x0:x1].any():
-                y1 += 1
-            used[y:y1, x0:x1] = True
-            rects.append((int(x0), int(y), int(x1 - x0), int(y1 - y)))
-    return rects
+    return _forge_core("merge_rects", "merge_rects").merge_rects(mask)
+
+
+def _forge_core(purpose: str, needs: str) -> Any:
+    """The sibling forge_core.py (shared/ or the skill's scripts/), imported on first use."""
+    try:
+        import forge_core  # the sibling copy (shared/ or the skill's scripts/)
+    except ImportError as error:
+        raise NavError(f"{purpose} needs forge_core.py beside forge_nav.py ({error})") from None
+    if not callable(getattr(forge_core, needs, None)):
+        raise NavError(f"{purpose} needs forge_core.{needs}, which the forge_core.py beside forge_nav.py "
+                       "lacks (a stale copy: run tools/vendor_sync.py --write)")
+    return forge_core
 
 
 # --------------------------------------------------------------------------- primitive geometry
@@ -1748,10 +1746,7 @@ class _Reader:
 
 def _load_rgba(path: Path) -> np.ndarray:
     """8-bit straight RGBA pixels, decoded exactly as forge_core.load_rgba decodes them."""
-    try:
-        import forge_core  # the sibling copy (shared/ or the skill's scripts/)
-    except ImportError as error:
-        raise NavError(f"reading a colour material map needs forge_core.py beside forge_nav.py ({error})") from None
+    forge_core = _forge_core("reading a colour material map", "load_rgba")
     try:
         return np.asarray(forge_core.load_rgba(path)[0])
     except (OSError, ValueError) as error:
