@@ -1,13 +1,16 @@
-"""map-runtime.mjs (B17-T1) under Node, plus a differential check of its Appendix C collision query.
+"""map-runtime.mjs (B17-T1) under Node, plus a reference comparison of its collision query with forge_nav.
 
-``AppendixC`` below is an independent numpy reading of plan Appendix C with the parity expressions
-documented at the top of map-runtime.mjs. The JS query must agree with it on every sampled point and
-segment of three fixtures. Integration replaces ``AppendixC`` with map_nav.py's query to get the
-JS <-> Python parity test the plan asks for (handoff/B17-map-scene-preview.md sections 6 and 7).
+forge_nav (the generate2dmap vendored copy of shared/forge_nav.py) is the rule book N1-N15 that
+map-runtime.mjs mirrors rule for rule (integration decisions D1, D2, D4). Every fixture below is read
+by forge_nav as a map_bundle.v2 document and by the runtime as the same bundle; the two must agree on
+every lattice point (centre test and 9-sample validity), on random segments (with and without the
+thin-gap rule), on every grid node and 4-neighbour move, on BFS distances from the spawns and on the
+N14 verdict of every target. Material maps are integer-scale with every pixel classified (D4). The
+only exemption is a point within 1e-9 of a rotated shape's edge, where the platform's sin and cos
+(V8 against the C runtime) may differ by one ulp. The full JS/Python parity suite is a later stage.
 """
 from __future__ import annotations
 
-import base64
 import json
 import math
 import subprocess
@@ -23,9 +26,8 @@ from forge_testutils import REPO_ROOT, SKILLS_DIR, load_script, require_node
 
 RUNTIME = SKILLS_DIR / "generate2dmap" / "references" / "runtime" / "map-runtime.mjs"
 NODE_SUITE = REPO_ROOT / "tests" / "js" / "map-runtime.test.mjs"
-SQRT_HALF = math.sqrt(0.5)
-DIRECTIONS = ((1, 0), (SQRT_HALF, SQRT_HALF), (0, 1), (-SQRT_HALF, SQRT_HALF),
-              (-1, 0), (-SQRT_HALF, -SQRT_HALF), (0, -1), (SQRT_HALF, -SQRT_HALF))
+NAV = load_script("generate2dmap", "forge_nav")
+BUNDLE = "generate2dmap.map_bundle.v2"
 
 
 def run_node(code: str, payload) -> dict:
@@ -33,148 +35,17 @@ def run_node(code: str, payload) -> dict:
     completed = subprocess.run([node, "--input-type=module", "-e", f"import * as rt from {json.dumps(RUNTIME.as_uri())};\n"
                                 + "import {readFileSync} from 'node:fs';\nconst job = JSON.parse(readFileSync(0, 'utf8'));\n"
                                 + code], input=json.dumps(payload), capture_output=True, encoding="utf-8",
-                               errors="replace", timeout=300, check=False)
+                               errors="replace", timeout=600, check=False)
     if completed.returncode != 0:
         raise AssertionError(completed.stderr)
     return json.loads(completed.stdout)
 
 
-# --------------------------------------------------------------------------- reference reading of Appendix C
-
-def _inside_polygon(px: np.ndarray, py: np.ndarray, points) -> np.ndarray:
-    inside = np.zeros(px.shape, bool)
-    for i in range(len(points)):
-        (xi, yi), (xj, yj) = points[i], points[i - 1]
-        crosses = (yi > py) != (yj > py)
-        with np.errstate(divide="ignore", invalid="ignore"):
-            inside ^= crosses & (px < xi + (py - yi) * (xj - xi) / (yj - yi))
-    return inside
-
-
-def _footprint_shape(obj: dict):
-    footprint = obj.get("footprint")
-    if not footprint or obj.get("solid") is False or footprint["shape"] == "none":
-        return None
-    s = 1 if footprint.get("basis") == "world_px" else obj.get("scale", 1)
-    ox, oy = footprint.get("offset", [0, 0])
-    w, h = footprint["width"] * s, footprint["depth"] * s
-    cx, cy = obj["x"] + ox * s, obj["y"] + oy * s
-    rotate = footprint.get("rotate", 0)
-    if footprint["shape"] == "ellipse":
-        return {"shape": "ellipse", "cx": cx, "cy": cy, "rx": w / 2, "ry": h / 2, "rotate": rotate}
-    if rotate == 0:
-        return {"shape": "rect", "x": cx - w / 2, "y": cy - h / 2, "w": w, "h": h}
-    theta = rotate * math.pi / 180
-    cos, sin, hw, hh = math.cos(theta), math.sin(theta), w / 2, h / 2
-    return {"shape": "polygon", "rotated": True, "points": [[cx + u * cos - v * sin, cy + u * sin + v * cos]
-                                                            for u, v in ((-hw, -hh), (hw, -hh), (hw, hh), (-hw, hh))]}
-
-
-def _ellipse_value(shape: dict, px: np.ndarray, py: np.ndarray) -> np.ndarray:
-    """(u / rx)^2 + (v / ry)^2 in the ellipse frame; below 1 inside."""
-    u, v = px - shape["cx"], py - shape["cy"]
-    rotate = shape.get("rotate", 0)
-    if rotate != 0:
-        theta = rotate * math.pi / 180
-        cos, sin = math.cos(theta), math.sin(theta)
-        u, v = u * cos + v * sin, -u * sin + v * cos
-    nu, nv = u / shape["rx"], v / shape["ry"]
-    return nu * nu + nv * nv
-
-
-def _near_rotated_edge(shape: dict, px: np.ndarray, py: np.ndarray, tolerance: float) -> np.ndarray:
-    """Points within tolerance of the boundary of a rotated shape, where cos/sin may differ by an ulp
-    between JavaScript engines and C runtimes (V8 and the MSVC CRT disagree on sin(pi / 4))."""
-    if shape["shape"] == "ellipse" and shape.get("rotate", 0) != 0 and shape["rx"] > 0 and shape["ry"] > 0:
-        return np.abs(_ellipse_value(shape, px, py) - 1) < tolerance
-    near = np.zeros(px.shape, bool)
-    if shape.get("rotated"):
-        points = shape["points"]
-        for (ax, ay), (bx, by) in zip(points, points[1:] + points[:1]):
-            dx, dy = bx - ax, by - ay
-            t = np.clip(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0, 1)
-            near |= np.hypot(px - ax - t * dx, py - ay - t * dy) < tolerance
-    return near
-
-
-def _inside_shape(shape: dict, px: np.ndarray, py: np.ndarray) -> np.ndarray:
-    if shape["shape"] == "rect":
-        x1, y1 = shape["x"] + shape["w"], shape["y"] + shape["h"]
-        return (px >= shape["x"]) & (px < x1) & (py >= shape["y"]) & (py < y1)
-    if shape["shape"] == "polygon":
-        return _inside_polygon(px, py, shape["points"])
-    if not (shape["rx"] > 0 and shape["ry"] > 0):
-        return np.zeros(px.shape, bool)
-    return _ellipse_value(shape, px, py) < 1
-
-
-class AppendixC:
-    """Plan Appendix C as numpy, written from the plan text and the parity rules, not from the JS."""
-
-    def __init__(self, bundle: dict, material: dict | None = None) -> None:
-        self.width, self.height = bundle["world"]["width"], bundle["world"]["height"]
-        collision = bundle["collision"]
-        self.r = collision["actorRadius"]
-        self.ry = self.r * collision.get("ySquash", 1)
-        self.cell = max(1, math.floor(self.r / 2 + 0.5))
-        self.regions = collision.get("walkRegions", [])
-        self.shapes = list(collision.get("solids", []))
-        self.shapes += [{"shape": "rect", "x": x, "y": y, "w": w, "h": h} for x, y, w, h in collision.get("rects", [])]
-        self.shapes += [shape for shape in map(_footprint_shape, bundle.get("objects", [])) if shape]
-        self.material = material
-        if material is not None:
-            self.bits = np.unpackbits(np.frombuffer(base64.b64decode(material["bits"]), np.uint8), bitorder="little")
-
-    def point_free(self, px: np.ndarray, py: np.ndarray) -> np.ndarray:
-        if self.regions:
-            free = np.zeros(px.shape, bool)
-            for region in self.regions:
-                inside = _inside_polygon(px, py, region["polygon"])
-                for hole in region.get("holes", []):
-                    inside &= ~_inside_polygon(px, py, hole)
-                free |= inside
-        else:
-            free = (px >= 0) & (px < self.width) & (py >= 0) & (py < self.height)
-        for shape in self.shapes:
-            free &= ~_inside_shape(shape, px, py)
-        if self.material is not None:
-            grid = self.material
-            i, j = np.floor(px / grid["cellWidth"]), np.floor(py / grid["cellHeight"])
-            inside = (i >= 0) & (j >= 0) & (i < grid["width"]) & (j < grid["height"])
-            k = np.where(inside, j * grid["width"] + i, 0).astype(np.int64)
-            free &= ~(inside & (self.bits[k] == 1))
-        return free
-
-    def is_blocked(self, px: np.ndarray, py: np.ndarray) -> np.ndarray:
-        blocked = ~self.point_free(px, py)
-        if self.r > 0:
-            for ux, uy in DIRECTIONS:
-                blocked |= ~self.point_free(px + self.r * ux, py + self.ry * uy)
-        return blocked
-
-    def near_rotated_edge(self, px: np.ndarray, py: np.ndarray, *, footprint: bool, tolerance: float = 1e-9) -> np.ndarray:
-        """Points (or, with footprint, any of their 9 samples) within tolerance of a rotated shape's edge."""
-        samples = [(px, py)]
-        if footprint and self.r > 0:
-            samples += [(px + self.r * ux, py + self.ry * uy) for ux, uy in DIRECTIONS]
-        near = np.zeros(px.shape, bool)
-        for sx, sy in samples:
-            for shape in self.shapes:
-                near |= _near_rotated_edge(shape, sx, sy, tolerance)
-        return near
-
-    def segment_clear(self, ax: float, ay: float, bx: float, by: float) -> bool:
-        dx, dy = bx - ax, by - ay
-        n = max(1, math.ceil(math.sqrt(dx * dx + dy * dy) / (self.cell / 2)))
-        k = np.arange(n + 1, dtype=np.float64)
-        return not self.is_blocked(ax + dx * k / n, ay + dy * k / n).any()
-
-
 # --------------------------------------------------------------------------- fixtures
 
-def walk_fixture() -> tuple[dict, None]:
+def walk_fixture(root: Path) -> tuple[dict, dict | None]:
     return {
-        "world": {"width": 96, "height": 64},
+        "schema": BUNDLE, "world": {"width": 96, "height": 64},
         "collision": {
             "actorRadius": 5, "ySquash": 0.58,
             "walkRegions": [
@@ -185,17 +56,28 @@ def walk_fixture() -> tuple[dict, None]:
                 {"shape": "rect", "x": 50, "y": 40, "w": 8.5, "h": 6},
                 {"shape": "ellipse", "cx": 20, "cy": 45, "rx": 7, "ry": 3.5},
                 {"shape": "ellipse", "cx": 75, "cy": 30, "rx": 8, "ry": 3, "rotate": 30},
-                {"shape": "polygon", "points": [[60, 50], [72, 52], [64, 58.25]]}],
-            "rects": [[80, 50, 6, 4]]},
+                {"shape": "polygon", "points": [[60, 50], [72, 52], [64, 58.25]]},
+                {"shape": "rect", "x": 26, "y": 30, "w": 0.2, "h": 20}],
+            "rects": [[80, 50, 6, 4], [44, 8, 0.3, 10]]},
+        "spawns": [{"id": "west", "x": 8, "y": 40}, {"id": "east", "x": 80, "y": 24}],
+        "interactions": [{"id": "sign", "x": 56, "y": 24, "reach": 8}, {"id": "post", "x": 33, "y": 50}],
+        "anchors": {"well": {"point": [86, 40], "slots": [[84, 44]], "approach": [[78, 44], [96, 70]]}},
+        "portals": [{"id": "gate", "rect": [88, 30, 6, 10], "to": "next", "activation": "intent", "travelDirection": [1, 0],
+                     "radius": 6},
+                    {"id": "hole", "circle": [16, 50, 3], "to": "cave"}],
     }, None
 
 
-def props_fixture() -> tuple[dict, None]:
+def props_fixture(root: Path) -> tuple[dict, dict | None]:
     def tree(ident, x, y, **extra):
         return {"id": ident, "prop": "tree", "x": x, "y": y, "anchor_px": [8, 30], **extra}
     return {
-        "world": {"width": 96, "height": 64},
+        "schema": BUNDLE, "world": {"width": 96, "height": 64},
         "collision": {"actorRadius": 4},
+        "props": {"tree": {"image": "tree.png", "anchor_px": [8, 30],
+                           "footprint": {"shape": "ellipse", "width": 6, "depth": 3, "offset": [2, -1]}},
+                  "rock": {"image": "rock.png", "anchor_px": [4, 8], "solid": False,
+                           "footprint": {"shape": "rect", "width": 6, "depth": 3}}},
         "objects": [
             tree("a", 20, 20, scale=1.5, footprint={"shape": "ellipse", "width": 10, "depth": 5, "offset": [1, -2]}),
             tree("b", 50, 20, footprint={"shape": "rect", "width": 9, "depth": 4.5, "offset": [0.5, -1]}, scale=1.25),
@@ -203,21 +85,68 @@ def props_fixture() -> tuple[dict, None]:
             tree("d", 25, 48, scale=3, footprint={"shape": "ellipse", "width": 6, "depth": 3, "basis": "world_px"}),
             tree("e", 55, 48, footprint={"shape": "ellipse", "width": 10, "depth": 5}, solid=False),
             tree("f", 75, 50, footprint={"shape": "none"}),
-            tree("g", 85, 10, footprint={"shape": "ellipse", "width": 7, "depth": 7, "rotate": 45}, scale=0.5)],
+            tree("g", 85, 10, footprint={"shape": "ellipse", "width": 7, "depth": 7, "rotate": 45}, scale=0.5),
+            tree("h", 40, 40, flip_x=True, scale=2),
+            tree("i", 64, 36, flip_x=True, footprint={"shape": "rect", "width": 8, "depth": 3, "offset": [3, 0],
+                                                      "rotate": 20, "basis": "image_px"}),
+            tree("j", 12, 56),
+            {"id": "k", "prop": "rock", "x": 88, "y": 58, "anchor_px": [4, 8]},
+            {"id": "l", "prop": "rock", "x": 30, "y": 8, "anchor_px": [4, 8], "solid": True}],
+        "spawns": [{"id": "start", "x": 6, "y": 6}],
+        "interactions": [{"id": "rock", "x": 30, "y": 14, "reach": 5}],
     }, None
 
 
-def material_fixture(radius: float) -> tuple[dict, dict]:
-    rng = np.random.default_rng(7)
-    blocked = rng.random((16, 24)) < 0.15
-    bits = base64.b64encode(np.packbits(blocked.ravel(), bitorder="little").tobytes()).decode("ascii")
-    grid = {"width": 24, "height": 16, "cellWidth": 4.0, "cellHeight": 4.0, "bits": bits}
-    return {"world": {"width": 96, "height": 64},
-            "collision": {"actorRadius": radius, "rects": [[10, 10, 3, 30], [40.25, 5, 10, 2.5]]}}, grid
+MATERIAL_CLASSES = {"grass": {"class": "decor", "color": "#40a040"}, "rock": {"class": "solid", "color": "#505050"},
+                    "water": {"class": "liquid", "color": "#2050c0"},
+                    "shallows": {"class": "liquid", "color": "#3070e0", "walkable": True},
+                    "lava": {"class": "hazard", "color": "#e04020"},
+                    "ledge": {"class": "one_way", "color": "#e0e000"}}
+MATERIAL_SHARES = (0.6, 0.08, 0.06, 0.08, 0.04, 0.14)
+
+
+def material_pixels(seed: int, size: tuple[int, int]) -> np.ndarray:
+    """Every pixel classified (D4): an opaque RGBA image of the six material colours."""
+    rng = np.random.default_rng(seed)
+    names = list(MATERIAL_CLASSES)
+    choice = rng.choice(len(names), size=(size[1], size[0]), p=MATERIAL_SHARES)
+    palette = np.array([[int(MATERIAL_CLASSES[n]["color"][k:k + 2], 16) for k in (1, 3, 5)] + [255] for n in names],
+                       np.uint8)
+    return palette[choice]
+
+
+def material_fixture(root: Path, radius: float, seed: int = 7) -> tuple[dict, dict]:
+    pixels = material_pixels(seed, (24, 16))
+    Image.fromarray(pixels).save(root / "materials.png")
+    bundle = {"schema": BUNDLE, "world": {"width": 96, "height": 64},
+              "collision": {"actorRadius": radius, "rects": [[10, 10, 3, 30], [40.25, 5, 10, 2.5]]},
+              "material_map": {"image": "materials.png", "materials": MATERIAL_CLASSES},
+              "spawns": [{"id": "a", "x": 2, "y": 2}, {"id": "b", "x": 60, "y": 40}]}
+    return bundle, {"rgba": pixels.ravel().tolist(), "width": 24, "height": 16}
+
+
+def one_way_fixture(root: Path) -> tuple[dict, dict]:
+    """A side-view room: a one_way ledge row the actor may jump up through but not drop onto (N11)."""
+    pixels = np.zeros((12, 16, 4), np.uint8)
+    pixels[..., :3] = (64, 160, 64)
+    pixels[..., 3] = 255
+    pixels[6, 2:14, :3] = (224, 224, 0)   # ledge
+    pixels[10, 6:9, :3] = (80, 80, 80)    # a rock below it
+    Image.fromarray(pixels).save(root / "materials.png")
+    bundle = {"schema": BUNDLE, "world": {"width": 64, "height": 48},
+              "collision": {"actorRadius": 2},
+              "material_map": {"image": "materials.png", "materials": {
+                  "air": {"class": "decor", "color": "#40a040"}, "ledge": {"class": "one_way", "color": "#e0e000"},
+                  "rock": {"class": "solid", "color": "#505050"}}},
+              "spawns": [{"id": "below", "x": 20, "y": 40}, {"id": "above", "x": 40, "y": 8}],
+              "interactions": [{"id": "top", "x": 30, "y": 10}, {"id": "bottom", "x": 30, "y": 36}]}
+    return bundle, {"rgba": pixels.ravel().tolist(), "width": 16, "height": 12}
 
 
 FIXTURES = {"walk-regions": walk_fixture, "props": props_fixture,
-            "material-point": lambda: material_fixture(0), "material-r3": lambda: material_fixture(3)}
+            "material-point": lambda root: material_fixture(root, 0),
+            "material-r3": lambda root: material_fixture(root, 3, seed=11),
+            "one-way": one_way_fixture}
 
 
 def sample_points(width: float, height: float) -> np.ndarray:
@@ -228,10 +157,134 @@ def sample_points(width: float, height: float) -> np.ndarray:
     return np.column_stack([gx.ravel(), gy.ravel()])
 
 
-def sample_segments(width: float, height: float, count: int = 400) -> list[list[float]]:
-    rng = np.random.default_rng(11)
+def sample_segments(width: float, height: float, count: int = 400, seed: int = 11) -> list[list[float]]:
+    rng = np.random.default_rng(seed)
     ends = rng.uniform([0, 0, 0, 0], [width, height, width, height], (count, 4))
-    return (np.round(ends * 4) / 4).tolist()
+    segments = (np.round(ends * 4) / 4).tolist()
+    # short vertical drops and climbs, where one_way and thin walls decide
+    starts = rng.uniform([0, 0], [width, height], (count // 2, 2))
+    for (x, y), length in zip(np.round(starts * 2) / 2, rng.uniform(1, 12, count // 2)):
+        segments.append([float(x), float(y), float(x), float(round(y + length * rng.choice([-1, 1]), 2))])
+    return segments
+
+
+def _rotated_shapes(blocking) -> list[dict]:
+    """Solids whose geometry used sin and cos: rotated ellipses and rotated rect footprints."""
+    shapes = []
+    for solid in blocking.solids:
+        if solid["shape"] == "ellipse" and solid.get("rotate", 0):
+            shapes.append(solid)
+        elif solid["shape"] == "polygon" and str(solid.get("source", "")).startswith("object:"):
+            shapes.append(solid)
+    return shapes
+
+
+def _near_rotated(shapes: list[dict], px: np.ndarray, py: np.ndarray, tolerance: float = 1e-9) -> np.ndarray:
+    near = np.zeros(px.shape, bool)
+    for shape in shapes:
+        if shape["shape"] == "ellipse":
+            theta = math.radians(shape["rotate"])
+            c, s = math.cos(theta), math.sin(theta)
+            ex, ey = px - shape["cx"], py - shape["cy"]
+            u, v = ex * c + ey * s, ey * c - ex * s
+            near |= np.abs((u / shape["rx"]) ** 2 + (v / shape["ry"]) ** 2 - 1) < 1e-9
+            continue
+        points = shape["points"]
+        for (ax, ay), (bx, by) in zip(points, points[1:] + points[:1]):
+            dx, dy = bx - ax, by - ay
+            t = np.clip(((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy), 0, 1)
+            near |= np.hypot(px - ax - t * dx, py - ay - t * dy) < tolerance
+    return near
+
+
+class Reference:
+    """forge_nav's answers for one fixture."""
+
+    def __init__(self, bundle: dict, root: Path) -> None:
+        self.blocking = NAV.blocking_set_from_document(bundle, root)
+        self.model = self.blocking.model()
+        self.rotated = _rotated_shapes(self.blocking)
+
+    def exempt(self, px: np.ndarray, py: np.ndarray, *, footprint: bool) -> np.ndarray:
+        offsets = self.model.offsets if footprint else self.model.offsets[:1]
+        near = np.zeros(px.shape, bool)
+        for ox, oy in offsets:
+            near |= _near_rotated(self.rotated, px + ox, py + oy)
+        return near
+
+    def material_grid(self) -> dict | None:
+        """The grid build_scene_preview embeds: BLOCK and ONE_WAY bit planes of forge_nav's codes."""
+        import base64
+        codes = self.blocking.material_codes
+        if codes is None:
+            return None
+        plane = lambda mask: base64.b64encode(np.packbits(mask.ravel(), bitorder="little").tobytes()).decode("ascii")
+        scale = self.blocking.material_scale
+        return {"width": int(codes.shape[1]), "height": int(codes.shape[0]), "cellWidth": scale, "cellHeight": scale,
+                "bits": plane(codes == NAV.BLOCK), "oneWay": plane(codes == NAV.ONE_WAY)}
+
+
+_JS_QUERY = """
+const world = rt.createMapRuntime(job.bundle, {materialGrid: job.grid});
+const free = job.points.map(([x, y]) => (rt.pointFree(world, x, y) ? 1 : 0));
+const valid = job.points.map(([x, y]) => (rt.isValid(world, x, y) ? 1 : 0));
+const clear = job.segments.map(([ax, ay, bx, by]) => (rt.segmentClear(world, ax, ay, bx, by) ? 1 : 0));
+const sampled = job.segments.map(([ax, ay, bx, by]) => (rt.segmentClear(world, ax, ay, bx, by, {thinGap: false}) ? 1 : 0));
+const nav = rt.navGrid(world), total = nav.cols * nav.rows;
+const nodes = [], moves = [];
+for (let k = 0; k < total; k++) {
+  nodes.push(rt.cellValid(world, k) ? 1 : 0);
+  const i = k % nav.cols;
+  let bits = 0;
+  if (i + 1 < nav.cols && rt.moveOpen(world, k, k + 1)) bits |= 1;
+  if (k + nav.cols < total && rt.moveOpen(world, k, k + nav.cols)) bits |= 2;
+  if (i > 0 && rt.moveOpen(world, k, k - 1)) bits |= 4;
+  if (k >= nav.cols && rt.moveOpen(world, k, k - nav.cols)) bits |= 8;
+  moves.push(bits);
+}
+const starts = rt.routeStarts(world).map((s) => [s.x, s.y]);
+const field = rt.floodFrom(world, starts);
+const verdicts = {};
+for (const item of world.interactions) {
+  verdicts[`interaction:${item.id}`] = item.reach === null ? rt.pointTarget(world, field, item.x, item.y).node >= 0
+    : rt.reachTarget(world, field, item.x, item.y, item.reach).node >= 0;
+}
+for (const anchor of world.anchors) {
+  anchor.slots.forEach(([x, y], k) => { verdicts[`slot:${anchor.name}/${k}`] = rt.pointTarget(world, field, x, y).node >= 0; });
+  anchor.approach.forEach(([x, y], k) => { verdicts[`approach:${anchor.name}/${k}`] = rt.pointTarget(world, field, x, y).node >= 0; });
+}
+for (const portal of world.portals) verdicts[`exit:${portal.id}`] = rt.exitTarget(world, field, portal).node >= 0;
+const grid = job.rgba ? rt.materialGridFromRGBA(Uint8Array.from(job.rgba), job.width, job.height,
+  job.bundle.material_map, job.bundle.world.width, job.bundle.world.height) : null;
+process.stdout.write(JSON.stringify({free, valid, clear, sampled, nodes, moves, cols: nav.cols, rows: nav.rows,
+  cell: world.cell, dist: [...field.dist], verdicts,
+  rgbaGrid: grid && {bits: [...grid.bits], oneWay: [...grid.oneWay], cell: grid.cellWidth}}));
+"""
+
+
+def _verdicts(reference: Reference, bundle: dict) -> tuple[dict, np.ndarray]:
+    """forge_nav's N14 answers, keyed like the JS job."""
+    starts = [(s["x"], s["y"]) for s in bundle.get("spawns", [])]
+    for portal in bundle.get("portals", []):
+        starts += [tuple(p) for p in (portal.get("entranceByFrom") or {}).values() if isinstance(p, list)]
+    navigation = NAV.navigate(reference.model, starts)
+    verdicts = {}
+    for item in bundle.get("interactions", []):
+        point = (item["x"], item["y"])
+        answer = (navigation.point_target(point) if "reach" not in item
+                  else navigation.reach_target(point, item["reach"]))
+        verdicts[f"interaction:{item['id']}"] = answer.reachable
+    for name, anchor in (bundle.get("anchors") or {}).items():
+        for k, slot in enumerate(anchor.get("slots") or []):
+            verdicts[f"slot:{name}/{k}"] = navigation.point_target(slot).reachable
+        approach = anchor.get("approach") or []
+        approach = [approach] if approach and not isinstance(approach[0], list) else approach
+        for k, point in enumerate(approach):
+            verdicts[f"approach:{name}/{k}"] = navigation.point_target(point).reachable
+    for portal in bundle.get("portals", []):
+        verdicts[f"exit:{portal['id']}"] = navigation.exit_target(
+            NAV.Trigger.from_portal(portal), portal.get("activation", "crossing"), portal.get("radius", 0)).reachable
+    return verdicts, navigation.distance
 
 
 # --------------------------------------------------------------------------- tests
@@ -247,78 +300,93 @@ class NodeSuiteTests(unittest.TestCase):
 
 
 @pytest.mark.node
-class AppendixCParityTests(unittest.TestCase):
-    def test_point_and_footprint_queries_agree_on_every_sample(self):
-        for name, fixture in FIXTURES.items():
-            with self.subTest(fixture=name):
-                bundle, grid = fixture()
-                points = sample_points(bundle["world"]["width"], bundle["world"]["height"])
-                result = run_node(
-                    "const world = rt.createMapRuntime(job.bundle, {materialGrid: job.grid});\n"
-                    "const free = job.points.map(([x, y]) => (rt.pointFree(world, x, y) ? 1 : 0));\n"
-                    "const blocked = job.points.map(([x, y]) => (rt.isBlocked(world, x, y) ? 1 : 0));\n"
-                    "process.stdout.write(JSON.stringify({free, blocked, cell: world.cell}));\n",
-                    {"bundle": bundle, "grid": grid, "points": points.tolist()})
-                reference = AppendixC(bundle, grid)
-                px, py = points[:, 0], points[:, 1]
-                free = reference.point_free(px, py)
-                blocked = reference.is_blocked(px, py)
-                self.assertEqual(result["cell"], reference.cell)
-                self.assertGreater(free.sum(), 100, "the fixture has free space")
-                self.assertGreater((~free).sum(), 100, "the fixture has blocked space")
-                for query, js, expected, footprint in (("pointFree", result["free"], free, False),
-                                                       ("isBlocked", result["blocked"], blocked, True)):
-                    exempt = reference.near_rotated_edge(px, py, footprint=footprint)
-                    self.assertLess(exempt.sum(), 0.002 * len(points), "only boundary points of rotated shapes are exempt")
-                    bad = np.flatnonzero((np.array(js, bool) != expected) & ~exempt)
-                    self.assertEqual(bad.size, 0, f"{query} differs at {points[bad[:5]].tolist()}")
+class ForgeNavReferenceTests(unittest.TestCase):
+    """map-runtime.mjs against forge_nav (D1, D2, D4) on synthetic fixtures."""
 
-    def test_segment_clear_agrees(self):
-        for name, fixture in FIXTURES.items():
-            with self.subTest(fixture=name):
-                bundle, grid = fixture()
-                segments = sample_segments(bundle["world"]["width"], bundle["world"]["height"])
-                result = run_node(
-                    "const world = rt.createMapRuntime(job.bundle, {materialGrid: job.grid});\n"
-                    "process.stdout.write(JSON.stringify(job.segments.map(([ax, ay, bx, by]) =>"
-                    " (rt.segmentClear(world, ax, ay, bx, by) ? 1 : 0))));\n",
-                    {"bundle": bundle, "grid": grid, "segments": segments})
-                reference = AppendixC(bundle, grid)
-                expected = [int(reference.segment_clear(*segment)) for segment in segments]
-                self.assertEqual(result, expected)
+    def compare(self, name: str, fixture) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle, pixels = fixture(root)
+            reference = Reference(bundle, root)
+            width, height = bundle["world"]["width"], bundle["world"]["height"]
+            points = sample_points(width, height)
+            segments = sample_segments(width, height)
+            job = {"bundle": bundle, "grid": reference.material_grid(), "points": points.tolist(), "segments": segments,
+                   **(pixels or {})}
+            result = run_node(_JS_QUERY, job)
+            model = reference.model
+            px, py = points[:, 0], points[:, 1]
+            for query, js, expected, footprint in (("pointFree", result["free"], model.centre_ok(px, py), False),
+                                                   ("isValid", result["valid"], model.valid(px, py), True)):
+                exempt = reference.exempt(px, py, footprint=footprint)
+                self.assertLess(exempt.sum(), 0.002 * len(points), "only boundary points of rotated shapes are exempt")
+                bad = np.flatnonzero((np.array(js, bool) != expected) & ~exempt)
+                self.assertEqual(bad.size, 0, f"{name} {query} differs at {points[bad[:5]].tolist()}")
+            for key, thin in (("clear", True), ("sampled", False)):
+                expected = [int(model.segment_clear(s[:2], s[2:], thin_gap=thin)) for s in segments]
+                bad = [s for s, a, b in zip(segments, result[key], expected) if a != b]
+                self.assertEqual(bad, [], f"{name} segmentClear(thinGap={thin}) differs")
                 self.assertTrue(0 < sum(expected) < len(expected), "both clear and blocked segments are sampled")
+            grid = NAV.build_grid(model)
+            self.assertEqual((result["cell"], result["rows"], result["cols"]), (grid.cell, grid.rows, grid.cols))
+            np.testing.assert_array_equal(np.array(result["nodes"], bool).reshape(grid.rows, grid.cols), grid.valid,
+                                          f"{name}: node validity")
+            np.testing.assert_array_equal(np.array(result["moves"], np.uint8).reshape(grid.rows, grid.cols), grid.moves,
+                                          f"{name}: open moves")
+            verdicts, distance = _verdicts(reference, bundle)
+            np.testing.assert_array_equal(np.array(result["dist"], np.int32).reshape(grid.rows, grid.cols), distance,
+                                          f"{name}: BFS distances from the starts")
+            self.assertEqual(result["verdicts"], verdicts, f"{name}: N14 target verdicts")
+            if pixels is not None:
+                codes = reference.blocking.material_codes
+                bits = np.unpackbits(np.array(result["rgbaGrid"]["bits"], np.uint8), bitorder="little")[:codes.size]
+                one_way = np.unpackbits(np.array(result["rgbaGrid"]["oneWay"], np.uint8), bitorder="little")[:codes.size]
+                np.testing.assert_array_equal(bits.reshape(codes.shape), codes == NAV.BLOCK)
+                np.testing.assert_array_equal(one_way.reshape(codes.shape), codes == NAV.ONE_WAY)
+                self.assertEqual(result["rgbaGrid"]["cell"], reference.blocking.material_scale)
+
+    def test_walk_regions_holes_and_closed_solids(self):
+        self.compare("walk-regions", walk_fixture)
+
+    def test_footprints_props_registry_basis_and_flip_x(self):
+        self.compare("props", props_fixture)
+
+    def test_material_classes_on_points(self):
+        self.compare("material-point", FIXTURES["material-point"])
+
+    def test_material_classes_with_an_actor(self):
+        self.compare("material-r3", FIXTURES["material-r3"])
+
+    def test_one_way_blocks_downward_moves_only(self):
+        self.compare("one-way", one_way_fixture)
+
+    def test_the_fixtures_exercise_every_rule(self):
+        """Sanity: the fixtures hold thin gaps, one_way moves, flipped footprints and unreachable targets."""
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            walk, _ = walk_fixture(root)
+            grid = NAV.build_grid(Reference(walk, root).model)
+            self.assertTrue(grid.thin_gaps, "a wall thinner than half a cell is closed by the thin-gap rule only")
+            one_way, _ = one_way_fixture(root)
+            reference = Reference(one_way, root)
+            self.assertGreater(NAV.build_grid(reference.model).one_way_blocked, 0)
+            verdicts, _ = _verdicts(reference, one_way)
+            self.assertEqual(verdicts, {"interaction:top": True, "interaction:bottom": True})
+            props, _ = props_fixture(root)
+            sources = [s["source"] for s in Reference(props, root).blocking.footprints]
+            self.assertIn("object:h", sources, "a footprint from the props registry, mirrored")
+            self.assertNotIn("object:k", sources, "the registry's solid: false")
+            self.assertIn("object:l", sources, "the object's own solid flag wins")
+            verdicts, _ = _verdicts(Reference(walk, root), walk)
+            self.assertIn(False, verdicts.values(), "some target is unreachable")
+            self.assertIn(True, verdicts.values())
 
     def test_nav_cell_rounds_half_up(self):
         radii = [k / 4 for k in range(0, 81)]
         result = run_node("process.stdout.write(JSON.stringify(job.radii.map((r) => rt.navCellSize(r))));",
                           {"radii": radii})
-        self.assertEqual(result, [max(1, math.floor(r / 2 + 0.5)) for r in radii])
+        self.assertEqual(result, [NAV.nav_cell(r) for r in radii])
         self.assertEqual(result[radii.index(5.0)], 3, "5 / 2 = 2.5 rounds up (Python round() would give 2)")
-
-    def test_material_grid_from_pixels_matches_the_preview_builder(self):
-        preview = load_script("generate2dmap", "build_scene_preview")
-        rng = np.random.default_rng(5)
-        palette = np.array([[59, 93, 201], [10, 10, 10], [200, 0, 0], [0, 120, 255]], np.uint8)
-        choice = rng.integers(0, 5, (12, 20))
-        rgba = np.zeros((12, 20, 4), np.uint8)
-        rgba[choice < 4, :3] = palette[choice[choice < 4]]
-        rgba[choice < 4, 3] = 255
-        materials = {"water": {"class": "liquid", "color": "#3b5dc9"}, "rock": {"class": "solid", "color": [10, 10, 10]},
-                     "flowers": {"class": "decor", "color": "#c80000"},
-                     "shallows": {"class": "liquid", "color": "#0078ff", "walkable": True}}
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            Image.fromarray(rgba).save(root / "materials.png")
-            build = preview.Build(root / "bundle.json", root)
-            grid, _ = preview.compile_material_grid({"material_map": {"image": "materials.png", "materials": materials}},
-                                                    build, (80.0, 48.0))
-        result = run_node(
-            "const grid = rt.materialGridFromRGBA(Uint8Array.from(job.rgba), 20, 12, {materials: job.materials}, 80, 48);\n"
-            "process.stdout.write(JSON.stringify({bytes: [...grid.bytes], cellWidth: grid.cellWidth,"
-            " cellHeight: grid.cellHeight}));\n",
-            {"rgba": rgba.ravel().tolist(), "materials": materials})
-        self.assertEqual(result["bytes"], list(base64.b64decode(grid["bits"])))
-        self.assertEqual((result["cellWidth"], result["cellHeight"]), (grid["cellWidth"], grid["cellHeight"]))
 
 
 class RuntimeSourceTests(unittest.TestCase):
@@ -329,7 +397,15 @@ class RuntimeSourceTests(unittest.TestCase):
             self.assertNotIn(marker, source.lower())
         self.assertNotRegex(source, r"\b(?:fetch|XMLHttpRequest|WebSocket|Math\.random|Date\.now|performance\.now)\b",
                             "the runtime is deterministic and offline")
-        self.assertRegex(source, r'export const RUNTIME_VERSION = "1\.0\.0";')
+        self.assertRegex(source, r'export const RUNTIME_VERSION = "1\.1\.0";')
+
+    def test_runtime_names_the_forge_nav_rule_book(self):
+        source = RUNTIME.read_text(encoding="utf-8")
+        for rule in ("N1", "N2", "N3", "N4", "N5", "N6", "N8", "N9", "N10", "N11", "N12", "N13", "N14", "N15"):
+            self.assertRegex(source, rf"\b{rule}\b", rule)
+        self.assertIn("forge_nav", source)
+        self.assertEqual(NAV.SQRT1_2, 0.7071067811865476)
+        self.assertIn("const SQRT1_2 = 0.7071067811865476;", source)
 
 
 if __name__ == "__main__":
