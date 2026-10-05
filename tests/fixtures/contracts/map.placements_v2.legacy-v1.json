@@ -1,0 +1,19 @@
+{
+  "props": [
+    {
+      "id": "tree-01",
+      "image": "../props/tree/prop.png",
+      "x": 420,
+      "y": 512,
+      "w": 160,
+      "h": 240,
+      "anchorPx": [128, 370],
+      "sortY": 512,
+      "collision": {"shape": "ellipse", "cx": 420, "cy": 510, "rx": 16, "ry": 9},
+      "occlusionClass": "canopy",
+      "occupantPolicy": {"mode": "fade-when-hidden"}
+    }
+  ],
+  "actors": [{"id": "player-preview", "image": "../actors/player.png", "x": 460, "y": 530}],
+  "foreground": []
+}

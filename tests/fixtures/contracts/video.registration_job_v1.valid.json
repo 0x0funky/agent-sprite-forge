@@ -1,0 +1,20 @@
+{
+  "schema": "video2dsprite.registration_job.v1",
+  "master": {
+    "path": "master/traveler.png",
+    "sha256": "fc613b4dfd6736a7bd268c8a0e74ed0d1c04a959f59dd74ef2874983fd443fc9",
+    "size": [448, 448],
+    "anchor": [224, 392]
+  },
+  "referenceCanvas": [1280, 720],
+  "referenceScale": 1.0,
+  "referenceOffset": [416, 136],
+  "keyColor": "#00ff00",
+  "workRegion": [320, 96, 960, 704],
+  "action": "attack",
+  "padding": [96, 80, 96, 24],
+  "prompt": {
+    "sha256": "cf07194ee232eb531e15f690000d19846dea69cf05504782658afcfacb9228a2",
+    "path": "prompt.txt"
+  }
+}

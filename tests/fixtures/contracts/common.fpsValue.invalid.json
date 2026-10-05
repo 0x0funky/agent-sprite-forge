@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "zero fps", "document": 0},
+    {"why": "zero denominator", "document": "24/0"},
+    {"why": "not a rate", "document": "fast"}
+  ]
+}

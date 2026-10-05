@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "anchor is mandatory", "remove": "/anchor_px"},
+    {"why": "threshold above 255", "set": "/occluder/alphaThreshold", "value": 300}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "generate2dmap.placements.v2",
+  "props": [
+    {
+      "id": "tree-01",
+      "image": "props/tree/prop.png",
+      "x": 420,
+      "y": 512,
+      "anchor": "manifest",
+      "sortY": 512,
+      "layer": "props"
+    }
+  ],
+  "actors": [
+    {
+      "id": "hero",
+      "image": "actors/hero.png",
+      "x": 460,
+      "y": 530,
+      "anchor": "px",
+      "anchorPx": [24, 60],
+      "layer": "actors"
+    }
+  ],
+  "foreground": []
+}

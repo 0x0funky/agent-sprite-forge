@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "'.' is reserved for transparency", "set": "/.", "value": "#ffffff"},
+    {"why": "keys are one character", "set": "/kk", "value": "#000000"},
+    {"why": "values are hex colours", "set": "/k", "value": "black"}
+  ]
+}

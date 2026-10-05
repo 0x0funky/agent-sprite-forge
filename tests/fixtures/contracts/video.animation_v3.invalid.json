@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {
+      "why": "3.0 registration is an object",
+      "set": "/registration",
+      "value": "preserved-source-canvas"
+    },
+    {"why": "3.0 carries per-frame durations", "remove": "/durationsMs"},
+    {"why": "3.0 qa is a QA envelope", "set": "/qa", "value": {"status": "needs-visual-review"}},
+    {"why": "3.0 packed alpha records halves", "remove": "/packedAlpha/halfWidth"},
+    {"why": "absolute path", "set": "/poster/file", "value": "C:\\out\\idle-poster.png"},
+    {"why": "unknown version", "set": "/schemaVersion", "value": "4.0"}
+  ]
+}

@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/media.schema.json",
+  "title": "generate2dmedia contracts",
+  "description": "Frozen contracts, version 1, for paid or quota-consuming media requests: the job record, the append-only spend ledger, the readiness doctor and the price table. schemaVersion 1 jobs stay valid and resumable. Objects stay open (additionalProperties true).",
+  "$defs": {
+    "job_v2": {
+      "description": "job.json from generate_media.py. v2 adds the receipt, the cost estimate and the duplicate-guard fingerprint. A done job always records its artifact; status not_sent means the request provably never left the machine.",
+      "type": "object",
+      "required": ["schemaVersion", "provider", "kind", "status"],
+      "properties": {
+        "schemaVersion": {"enum": [1, 2]},
+        "provider": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "endpoint": {"type": "string"},
+        "requestedModel": {"type": "string", "minLength": 1},
+        "options": {"type": "object"},
+        "promptSha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "references": {"type": "array", "items": {"type": "object", "required": ["sha256"], "properties": {"sha256": {"$ref": "common.schema.json#/$defs/sha256"}}}},
+        "execution": {"enum": ["dry-run", "execute"]},
+        "status": {
+          "enum": ["submitting", "pending", "downloading", "processing_result", "done", "failed", "expired", "pending_timeout", "submit_unknown", "interrupted", "not_sent"]
+        },
+        "requestId": {"type": "string", "minLength": 1},
+        "artifact": {
+          "type": "object",
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {"$ref": "common.schema.json#/$defs/relPath"},
+            "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "bytes": {"type": "integer", "minimum": 0}
+          }
+        },
+        "returnedModel": {"type": ["string", "null"]},
+        "errorType": {"type": "string", "minLength": 1},
+        "receipt": {
+          "type": "object",
+          "required": ["startedAt", "attempt", "toolVersion"],
+          "properties": {
+            "startedAt": {"$ref": "common.schema.json#/$defs/timestamp"},
+            "submittedAt": {"anyOf": [{"$ref": "common.schema.json#/$defs/timestamp"}, {"type": "null"}]},
+            "completedAt": {"anyOf": [{"$ref": "common.schema.json#/$defs/timestamp"}, {"type": "null"}]},
+            "wallMs": {"type": ["integer", "null"], "minimum": 0},
+            "providerMs": {"type": ["integer", "null"], "minimum": 0},
+            "attempt": {"type": "integer", "minimum": 1},
+            "purpose": {"type": "string"},
+            "toolVersion": {"type": "string", "minLength": 1},
+            "outcomeCode": {"type": ["string", "null"]}
+          }
+        },
+        "estimate": {
+          "type": "object",
+          "required": ["usd", "basis", "pricesVersion"],
+          "properties": {
+            "usd": {"type": "number", "minimum": 0},
+            "basis": {"type": "string", "minLength": 1},
+            "pricesVersion": {"type": "string", "minLength": 1}
+          }
+        },
+        "fingerprint": {"$ref": "common.schema.json#/$defs/sha256"},
+        "cliRun": {
+          "type": "object",
+          "required": ["tool", "runId", "cwd", "startedAt"],
+          "properties": {
+            "tool": {"type": "string", "minLength": 1},
+            "runId": {"type": "string", "minLength": 1},
+            "cwd": {"type": "string", "minLength": 1},
+            "startedAt": {"$ref": "common.schema.json#/$defs/timestamp"}
+          }
+        }
+      },
+      "allOf": [
+        {"if": {"properties": {"schemaVersion": {"const": 2}}, "required": ["schemaVersion"]}, "then": {"required": ["receipt", "estimate", "fingerprint"]}},
+        {"if": {"properties": {"status": {"const": "done"}}, "required": ["status"]}, "then": {"required": ["artifact"]}}
+      ]
+    },
+    "ledger_line_v1": {
+      "description": "One line of <project>/.forge/ledger.jsonl. A reservation is appended before sending and a later line commits it; an unknown outcome keeps the reservation counted against the caps.",
+      "type": "object",
+      "required": ["ts", "jobDir", "fingerprint", "provider", "model", "kind", "route", "reservedUsd", "status", "quotaCall"],
+      "properties": {
+        "schema": {"const": "generate2dmedia.ledger_line.v1"},
+        "ts": {"$ref": "common.schema.json#/$defs/timestamp"},
+        "jobDir": {"type": "string", "minLength": 1},
+        "fingerprint": {"$ref": "common.schema.json#/$defs/sha256"},
+        "provider": {"type": "string", "minLength": 1},
+        "model": {"type": "string", "minLength": 1},
+        "kind": {"type": "string", "minLength": 1},
+        "route": {"enum": ["rest", "codex-cli", "grok-cli", "grok-acp"]},
+        "reservedUsd": {"type": "number", "minimum": 0},
+        "actualUsd": {"type": ["number", "null"], "minimum": 0},
+        "status": {"enum": ["reserved", "done", "failed", "unknown", "not_sent"]},
+        "quotaCall": {"type": "boolean"},
+        "reservationId": {"type": "string", "minLength": 1}
+      }
+    },
+    "doctor_v1": {
+      "description": "forge_doctor.py --json. Each check climbs the readiness ladder; FAIL and MISSING always carry a remedy. routes says which art routes are usable; proofs holds version-keyed verification records.",
+      "type": "object",
+      "required": ["schema", "checks", "routes"],
+      "properties": {
+        "schema": {"const": "generate2dmedia.doctor.v1"},
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "status"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1},
+              "status": {"enum": ["OK", "WARN", "FAIL", "MISSING", "AGENT", "UNKNOWN"]},
+              "detail": {"type": "string"},
+              "remedy": {"type": "string", "minLength": 1}
+            },
+            "if": {"properties": {"status": {"enum": ["FAIL", "MISSING"]}}, "required": ["status"]},
+            "then": {"required": ["remedy"]}
+          }
+        },
+        "routes": {"type": "object"},
+        "proofs": {"type": "object"}
+      }
+    },
+    "prices_v1": {
+      "description": "prices.json: one row per provider, model and billing unit, each with its source and the date it was verified.",
+      "type": "object",
+      "required": ["schema", "rows"],
+      "properties": {
+        "schema": {"const": "generate2dmedia.prices.v1"},
+        "rows": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["provider", "model", "unit", "usd", "source", "verifiedAt"],
+            "properties": {
+              "provider": {"type": "string", "minLength": 1},
+              "model": {"type": "string", "minLength": 1},
+              "unit": {"type": "string", "minLength": 1},
+              "usd": {"type": "number", "minimum": 0},
+              "source": {"type": "string", "minLength": 1},
+              "verifiedAt": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}(T.*)?$"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

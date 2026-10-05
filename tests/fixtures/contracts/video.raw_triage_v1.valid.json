@@ -1,0 +1,27 @@
+{
+  "schema": "video2dsprite.raw_triage.v1",
+  "size": [960, 960],
+  "fps": "24/1",
+  "frames": 145,
+  "audioStreams": 1,
+  "borderTouchFrames": [102, 103],
+  "keyDrift": {"declared": [255, 0, 255], "estimated": [235, 21, 175], "distance": 33.5},
+  "status": "warn",
+  "method": "ffprobe stream listing plus a border-ring alpha scan at alpha >= 16 on every decoded frame",
+  "notProven": ["A clean border does not prove the subject is complete or on-model."],
+  "checks": [{"id": "border_touch_frames", "status": "warn", "value": [102, 103], "threshold": []}],
+  "inputs": [
+    {
+      "path": "grok-native.mp4",
+      "sha256": "aa621f2edfafa0f35cf23062881d1bd3934d6d8378a8609b1991f5657c76abf9",
+      "bytes": 3211264
+    }
+  ],
+  "outputs": [
+    {
+      "path": "triage-sheet.png",
+      "sha256": "49f0dc15f5c63bdd9191039a9d4b9abee281652c52ca52f064d5d06a90eed5f8"
+    }
+  ],
+  "tool": {"name": "video2dsprite.py triage", "version": "0.4.0"}
+}

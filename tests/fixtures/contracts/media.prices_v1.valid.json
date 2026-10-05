@@ -1,0 +1,13 @@
+{
+  "schema": "generate2dmedia.prices.v1",
+  "rows": [
+    {
+      "provider": "example-provider",
+      "model": "example-image-model",
+      "unit": "image",
+      "usd": 0.04,
+      "source": "https://example.com/pricing",
+      "verifiedAt": "2026-10-05"
+    }
+  ]
+}

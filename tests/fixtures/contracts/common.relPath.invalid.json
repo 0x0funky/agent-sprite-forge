@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "drive letter", "document": "C:/Users/me/tree.png"},
+    {"why": "leading slash", "document": "/abs/tree.png"},
+    {"why": "backslash", "document": "props\\tree.png"},
+    {"why": "URL", "document": "https://example.com/tree.png"},
+    {"why": "empty", "document": ""}
+  ]
+}

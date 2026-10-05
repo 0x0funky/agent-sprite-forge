@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "position is mandatory", "remove": "/at"},
+    {"why": "unknown event", "set": "/name", "value": "boom"},
+    {"why": "negative position", "set": "/at", "value": -1}
+  ]
+}

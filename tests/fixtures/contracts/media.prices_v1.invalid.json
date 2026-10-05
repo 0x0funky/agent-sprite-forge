@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "verifiedAt is a date", "set": "/rows/0/verifiedAt", "value": "yesterday"},
+    {"why": "source is mandatory", "remove": "/rows/0/source"},
+    {"why": "no rows", "set": "/rows", "value": []}
+  ]
+}

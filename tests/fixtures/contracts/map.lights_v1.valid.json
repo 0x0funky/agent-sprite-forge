@@ -1,0 +1,5 @@
+{
+  "schema": "generate2dmap.lights.v1",
+  "lights": [{"u": 0.42, "v": 0.31, "color": "#ffcd75", "radius": 0.06, "flicker": {"hz": 3, "depth": 0.2}}],
+  "cookie": "light-cookie.png"
+}

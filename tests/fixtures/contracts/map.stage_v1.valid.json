@@ -1,0 +1,28 @@
+{
+  "schema": "generate2dmap.stage.v1",
+  "plate": "battle-forest.png",
+  "sourceSize": [1672, 940],
+  "fit": "cover",
+  "reviewedAspectRange": [1.3333, 2.3333],
+  "groundPolygons": [[[0.17, 0.62], [0.83, 0.62], [0.96, 0.98], [0.04, 0.98]]],
+  "slots": {
+    "hero": [[0.69, 0.8], [0.78, 0.88]],
+    "enemy": [[0.25, 0.78], [0.18, 0.86], [0.32, 0.9]],
+    "boss": [0.33, 0.84]
+  },
+  "protectedRegions": [{"id": "stone-arch", "box": [0.56, 0.2, 0.74, 0.55], "appliesTo": ["walk", "motion"]}],
+  "effects": [
+    {
+      "id": "stream-surface",
+      "kind": "ripple",
+      "polygon": [[0.4, 0.66], [0.6, 0.66], [0.62, 0.74], [0.38, 0.74]],
+      "period": 4.4,
+      "amplitude": 1.8,
+      "wavelength": 80,
+      "axis": "x"
+    }
+  ],
+  "playableBand": [0.6, 0.98],
+  "approachPoints": [[0.5, 0.75]],
+  "bakedContent": {"actors": false, "collectibles": false}
+}

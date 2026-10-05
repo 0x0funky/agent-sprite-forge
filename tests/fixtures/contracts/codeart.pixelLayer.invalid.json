@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "rows or segments are mandatory", "remove": "/rows"},
+    {"why": "integer origin", "set": "/origin", "value": [0.5, 1]}
+  ]
+}

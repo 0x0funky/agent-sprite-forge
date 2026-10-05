@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "v2 names its method", "remove": "/method"},
+    {"why": "v2 carries durations", "remove": "/durations_ms"},
+    {"why": "unknown policy", "set": "/loopPolicy", "value": "loop"},
+    {"why": "negative index", "set": "/sourceIndices/0", "value": -1},
+    {"why": "bad hash", "set": "/sourceHashes/0", "value": "abc"}
+  ]
+}

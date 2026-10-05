@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "method is mandatory", "remove": "/method"},
+    {"why": "notProven is mandatory", "remove": "/notProven"},
+    {"why": "inputs are hash-bound", "set": "/inputs/0/sha256", "value": "abc"},
+    {
+      "why": "a pass envelope cannot hold a failed check",
+      "set": "/checks/0/status",
+      "value": "fail"
+    },
+    {"why": "createdAt must be RFC 3339", "set": "/createdAt", "value": "yesterday"}
+  ]
+}

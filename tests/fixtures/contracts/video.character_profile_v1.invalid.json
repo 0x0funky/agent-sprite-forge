@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "unknown matte", "set": "/matte/mode", "value": "chroma"},
+    {"why": "clip padding is mandatory", "remove": "/clips/attack/padding"},
+    {"why": "boolean expected", "set": "/matte/unmix", "value": "yes"}
+  ]
+}

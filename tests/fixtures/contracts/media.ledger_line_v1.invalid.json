@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "unknown route", "set": "/route", "value": "http"},
+    {"why": "unknown status", "set": "/status", "value": "pending"},
+    {"why": "quotaCall is mandatory", "remove": "/quotaCall"}
+  ]
+}

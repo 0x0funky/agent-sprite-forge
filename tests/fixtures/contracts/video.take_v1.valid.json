@@ -1,0 +1,7 @@
+{
+  "schema": "video2dsprite.take.v1",
+  "take": "attack-take-02",
+  "status": "rejected",
+  "reasons": ["camera push-in +12%"],
+  "metrics": {"scaleDrift": 0.12, "identityNcc": 0.91}
+}

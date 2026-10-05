@@ -1,0 +1,5 @@
+{
+  "name": "squash",
+  "layers": {"body": {"rows": "squash", "dy": 19}, "eyes": {"dx": -1, "dy": 23, "hidden": false}},
+  "flip_x": false
+}

@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "v2 items carry anchor_px", "remove": "/accepted/0/anchor_px"},
+    {"why": "rejected is mandatory", "remove": "/rejected"},
+    {"why": "Windows path", "set": "/accepted/0/image", "value": "C:\\props\\tree.png"}
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"why": "v2 needs collision", "remove": "/collision"},
+    {"why": "tiles layers need tile_size", "remove": "/tile_size"},
+    {"why": "unknown version", "set": "/schema", "value": "generate2dmap.map_bundle.v3"},
+    {"why": "world unit is px", "set": "/world/unit", "value": "m"},
+    {"why": "unknown activation", "set": "/portals/0/activation", "value": "teleport"},
+    {
+      "why": "unknown material class",
+      "set": "/material_map/materials/water/class",
+      "value": "deep_water"
+    }
+  ]
+}

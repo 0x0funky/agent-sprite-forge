@@ -1,0 +1,45 @@
+{
+  "schema": "codeart2d.codeart_meta.v1",
+  "art_source": "code",
+  "placeholder": false,
+  "generator": {"name": "render_pixelspec.py", "version": "0.4.0"},
+  "spec_sha256": "168cf777757788c4c669278aa4ab2c39aad78c3c55238b69ed76c47ae3bbbe3e",
+  "renderer": {"name": "numpy", "version": "2.1.0"},
+  "palette": {"k": "#1a1c2c", "g": "#38b764"},
+  "outputs": [
+    {
+      "path": "frames/blue/rest.png",
+      "sha256": "50ed59d16b81c9fc6ad18b18d059c1cffa05738c7e44f20f4f6a9876b50e3f25"
+    },
+    {
+      "path": "frames/blue/squash.png",
+      "sha256": "d7fef778d009854db632ab78546082dd15cdeeaa365dac439417a01ca9e6b213"
+    }
+  ],
+  "qa": {
+    "status": "pass",
+    "method": "pixel_qa: exact palette lookup and alpha census on every output",
+    "notProven": ["Readability and appeal at game scale need a visual review."],
+    "checks": [
+      {"id": "off_palette_px", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "partial_alpha_px", "status": "pass", "value": 0, "threshold": 0}
+    ],
+    "inputs": [
+      {
+        "path": "slime.pixelspec.json",
+        "sha256": "168cf777757788c4c669278aa4ab2c39aad78c3c55238b69ed76c47ae3bbbe3e"
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/blue/rest.png",
+        "sha256": "50ed59d16b81c9fc6ad18b18d059c1cffa05738c7e44f20f4f6a9876b50e3f25"
+      },
+      {
+        "path": "frames/blue/squash.png",
+        "sha256": "d7fef778d009854db632ab78546082dd15cdeeaa365dac439417a01ca9e6b213"
+      }
+    ],
+    "tool": {"name": "pixel_qa.py", "version": "0.4.0"}
+  }
+}

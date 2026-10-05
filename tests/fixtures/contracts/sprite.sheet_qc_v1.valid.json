@@ -1,0 +1,24 @@
+{
+  "schema": "generate2dsprite.sheet_qc.v1",
+  "check": "spill",
+  "grid": {"rows": 2, "cols": 4},
+  "cells": [{"cell": [0, 3], "components_over_line": 1, "pixels_over_line": 58, "overhang_px": 6}],
+  "status": "fail",
+  "method": "8-connected components at alpha >= 16; a component crossing a cell line belongs to the cell holding most of its area",
+  "notProven": ["Whether an overhang is intended art such as a tail or weapon trail."],
+  "checks": [{"id": "cross_cell_components", "status": "fail", "value": 1, "threshold": 0}],
+  "inputs": [
+    {
+      "path": "raw-fox-run-v1.png",
+      "sha256": "f6d39bae39f7541a2c595bf58ad91d27c3a261ed0d708622a197a1c8e6ba0de0",
+      "bytes": 1551398
+    }
+  ],
+  "outputs": [
+    {
+      "path": "spill-overlay.png",
+      "sha256": "f3b663e0b0ba9839a526b42919cfee73446f4904feb88a2d83709ab158e551f4"
+    }
+  ],
+  "tool": {"name": "sheet_qc.py", "version": "0.4.0"}
+}

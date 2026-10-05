@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "per-frame anchors are refused", "set": "/anchor_px", "value": [1, 2]},
+    {"why": "objects need a name", "remove": "/name"},
+    {"why": "Windows path", "set": "/file", "value": "C:\\frames\\idle.png"}
+  ]
+}

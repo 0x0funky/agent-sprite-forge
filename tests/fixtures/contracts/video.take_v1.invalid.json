@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "unknown status", "set": "/status", "value": "maybe"},
+    {"why": "a rejection states a reason", "set": "/reasons", "value": []},
+    {"why": "metrics are mandatory", "remove": "/metrics"}
+  ]
+}

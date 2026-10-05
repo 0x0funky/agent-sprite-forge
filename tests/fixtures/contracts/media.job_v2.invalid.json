@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "v2 carries the duplicate-guard fingerprint", "remove": "/fingerprint"},
+    {"why": "a done job records its artifact", "remove": "/artifact"},
+    {"why": "unknown status", "set": "/status", "value": "complete"},
+    {"why": "attempts count from 1", "set": "/receipt/attempt", "value": 0},
+    {"why": "negative estimate", "set": "/estimate/usd", "value": -1}
+  ]
+}

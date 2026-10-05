@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "segments are [x0, x1, kind]", "set": "/segments/0", "value": [0, 640]},
+    {"why": "jump distance is mandatory", "remove": "/physics/jumpDistance"},
+    {"why": "not an aspect ratio", "set": "/viewports/1", "value": "wide"}
+  ]
+}

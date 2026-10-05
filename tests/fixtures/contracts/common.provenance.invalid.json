@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "params are mandatory", "remove": "/params"},
+    {"why": "Windows path", "set": "/inputs/0/path", "value": "C:\\in\\spec.json"}
+  ]
+}

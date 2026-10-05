@@ -1,0 +1,14 @@
+{
+  "frames": [0, 1, 2, 3],
+  "duration_ms": [100, 100, 100, 100],
+  "loop": true,
+  "total_duration_ms": 400,
+  "nominal_fps": 10.0,
+  "average_fps": 10.0,
+  "loop_policy": "cycle",
+  "events_ms": [{"name": "step_l", "at_ms": 0, "at": 0}, {"name": "step_r", "at_ms": 200, "at": 2}],
+  "tick_grid": {"hz": 60, "max_drift_ms": 0.0},
+  "preview": {"file": "clips/clip-00.webp", "timeline_verified": true},
+  "transitions": [],
+  "last_to_first": {"applies_to_playback": true}
+}

@@ -1,0 +1,12 @@
+{
+  "frames": [0, 1, 2, 3],
+  "ticks": 6,
+  "loop_policy": "cycle",
+  "events": [{"at": 0, "name": "step_l"}, {"at": 2, "name": "step_r"}],
+  "entry_frame": 0,
+  "stride_world_units": 24,
+  "stride_px_per_frame": 6,
+  "speed_ref": 60,
+  "transitions": [{"to": "idle", "entry_frame": 0, "dissolve_ms": 60, "mode": "dither"}],
+  "role": "player"
+}

@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "work region is mandatory", "remove": "/workRegion"},
+    {"why": "zero scale", "set": "/referenceScale", "value": 0},
+    {"why": "unknown key", "set": "/keyColor", "value": "pink"},
+    {"why": "three sides", "set": "/padding", "value": [96, 80, 96]}
+  ]
+}

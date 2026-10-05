@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "unknown id", "set": "/schema", "value": "codeart.pixelspec.v2"},
+    {"why": "anchor is mandatory", "remove": "/anchor_px"},
+    {"why": "a solid outline needs a colour", "set": "/outline", "value": {"mode": "solid"}},
+    {"why": "'.' is reserved", "set": "/palette/.", "value": "#ffffff"},
+    {"why": "empty clip", "set": "/clips/idle/frames", "value": []}
+  ]
+}

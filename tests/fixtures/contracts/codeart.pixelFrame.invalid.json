@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "integer offsets", "set": "/layers/body/dy", "value": 1.5},
+    {"why": "name is mandatory", "remove": "/name"}
+  ]
+}

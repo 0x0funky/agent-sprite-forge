@@ -1,0 +1,10 @@
+{
+  "cases": [
+    {"why": "v2 needs geometry", "remove": "/geometry"},
+    {"why": "4 or 8 only", "set": "/geometry/connectivity", "value": 6},
+    {"why": "v2 frames record trim_offset", "remove": "/frames/0/trim_offset"},
+    {"why": "bad hash", "set": "/provenance/input_sha256", "value": "x"},
+    {"why": "unknown mode", "set": "/hygiene/mode", "value": "all"},
+    {"why": "unknown background mode", "set": "/background_mode", "value": "magenta"}
+  ]
+}

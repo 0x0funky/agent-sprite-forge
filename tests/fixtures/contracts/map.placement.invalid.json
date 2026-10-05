@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "anchor px needs anchorPx", "remove": "/anchorPx"},
+    {"why": "image or path is mandatory", "remove": "/image"},
+    {"why": "unknown anchor", "set": "/anchor", "value": "bottom-right"}
+  ]
+}

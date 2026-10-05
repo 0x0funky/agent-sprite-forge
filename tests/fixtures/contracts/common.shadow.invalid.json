@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "ry is mandatory", "remove": "/ry"},
+    {"why": "opacity above 1", "set": "/opacity", "value": 1.5}
+  ]
+}

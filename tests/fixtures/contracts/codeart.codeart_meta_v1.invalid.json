@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "codeart meta always says code", "set": "/art_source", "value": "host_image"},
+    {"why": "qa is mandatory", "remove": "/qa"},
+    {"why": "no outputs", "set": "/outputs", "value": []},
+    {"why": "unknown QA status", "set": "/qa/status", "value": "excellent"}
+  ]
+}

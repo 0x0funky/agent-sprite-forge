@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "residue count is mandatory", "remove": "/opaque_key_px"},
+    {"why": "fraction above 1", "set": "/outer_ring_spill_fraction", "value": 1.5},
+    {"why": "unknown matte", "set": "/mode", "value": "magic"}
+  ]
+}
