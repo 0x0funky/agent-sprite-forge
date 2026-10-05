@@ -2,11 +2,17 @@
 
 Branch `asf/B09-runtime-export` (from `wip/asf-upgrade-20261005` @ 3f9252d). Files in this worktree:
 
+> **Integration (2026-10-05, group pass "runtime-media", branch `asf/int-g-runtime-media`).** Resolved: the B02 cross-module
+> blockers (D12 event positions and Godot ticks, D13 transition hints), the schema requests of section 5 (applied
+> by the shared stage, D12, D13, D21), the helper promotions of section 6 (D30), the reviewer's non-blocking
+> items (sprite3d-only atlas, faint-FX scale, states and event-name validation, the D21 fixture test) and the
+> D26-D29 conventions. Sections 1-8 below are current; open items for Z are marked **Z**.
+
 - CLI: [skills/generate2dsprite/scripts/export_engine.py](../skills/generate2dsprite/scripts/export_engine.py) (B09-T1)
 - Docs: [skills/generate2dsprite/references/engine-export.md](../skills/generate2dsprite/references/engine-export.md) (B09-T4)
 - Runtime: [skills/video2dsprite/references/runtime/forge-runtime.mjs](../skills/video2dsprite/references/runtime/forge-runtime.mjs) (B09-T2)
 - Compositor: [skills/video2dsprite/references/runtime/packed-alpha-webgl.mjs](../skills/video2dsprite/references/runtime/packed-alpha-webgl.mjs) and the thin wrapper [skills/video2dsprite/references/packed-alpha-runtime.js](../skills/video2dsprite/references/packed-alpha-runtime.js) (B09-T3)
-- Tests: [tests/test_export_engine.py](../tests/test_export_engine.py) (19), [tests/test_runtime_js.py](../tests/test_runtime_js.py) (5 + 1 opt-in), [tests/js/forge-runtime.test.mjs](../tests/js/forge-runtime.test.mjs) (30, `node --test`)
+- Tests: [tests/test_export_engine.py](../tests/test_export_engine.py) (26), [tests/test_runtime_js.py](../tests/test_runtime_js.py) (6 + 1 opt-in), [tests/js/forge-runtime.test.mjs](../tests/js/forge-runtime.test.mjs) (32, `node --test`)
 
 ## 1. CLIs
 
@@ -16,9 +22,11 @@ Branch `asf/B09-runtime-export` (from `wip/asf-upgrade-20261005` @ 3f9252d). Fil
     python "<skill-dir>/scripts/export_engine.py" --clips out/hero-clips/animation-clips.json --target godot-sprite3d --output-dir out/hero-3d --world-height 1.7 --billboard fixed-y
 
 - One verb, no subcommands. `--target` is `aseprite-json`, `godot-spriteframes`, `godot-sprite3d` or `all` (default). Other flags: `--name`, `--max-atlas-size` (16..4096, default 4096), `--padding` (2), `--extrude` (1), `--sampling auto|nearest|linear`, `--godot-fps auto|N`, `--world-height` or `--pixel-size`, `--subject-height-px`, `--reference-clip`, `--billboard enabled|fixed-y|disabled`, `--ppu`, `--camera-pitch-deg`.
-- Input is the built `animation-clips.json` (schema `generate2dsprite.animation_clips.v1` or `.v2`). A clips input manifest is refused with a pointer to `build_animation_clips.py`.
+- Input is the built `animation-clips.json` (schema `generate2dsprite.animation_clips.v1` or `.v2`), read BOM-tolerant and strict (no NaN, Infinity or duplicate keys; D28). A clips input manifest is refused with a pointer to `build_animation_clips.py`.
+- Positions follow `sprite.schema.json` builtClip (D12): `frames`/`duration_ms` are the played timeline (pingpong expanded, `authored_frames` authored); `events_ms[].at_ms` is authoritative, `position` (played frame) is taken or derived from `at_ms` and must agree, `at` is the authored position and must agree through `authored_frames` and the loop policy. `ticks`, `keys`, `entry_frame` stay authored; Godot plays the authored ticks mapped onto the played frames. Transition hints come from `transition_hints`, else legacy `transitions` items with a string `to` (D13); they are written as `transition_hints`. States, hint targets and event names (`common/eventName`) are validated.
 - `--help` is ASCII and exits 0 under cp1252 and cp950 (`test_help_under_cp1252_and_cp950`).
-- Success prints one ASCII JSON line: `status` (`pass` or `warn`), `output`, `metadata` (the `engine-export.json` path), `targets`, `clips`, `frames`, `pages`. Errors print `error: ...` to stderr and exit 1; argparse usage errors keep argparse's exit 2 (as `tools/vendor_sync.py` does).
+- Success prints one ASCII JSON line: `status` (`pass` or `warn`), `output`, `metadata` (the `engine-export.json` path), `targets`, `clips`, `frames`, `pages`. Errors print `error: ...` to stderr and exit 1; argparse usage errors exit 2 (D26); anything unexpected prints `error: internal error (<Type>: <message>)` and exits 1 through `forge_core.run_cli` (D27).
+- Atlas pages are planned only for `aseprite-json`/`godot-spriteframes`: a `godot-sprite3d`-only export has no page limit (`atlas.pages` is `[]`, each clip's `page` is 0). The subject height is measured only for `godot-sprite3d` or `--world-height`; faint FX exported to the atlas targets get no `scale` block.
 - Publication: everything is written in `forge_core.staged_output()`, every output is parsed back (round trip), then the directory is published. An existing output directory is refused; a stale frame (rgba hash mismatch), an impossible atlas or a failed round trip publishes nothing.
 
 Runtime files (no CLI; ES modules, Node 22 for the tests):
@@ -61,241 +69,30 @@ README note (plan): engine imports are unverified until done manually.
 - Changed: packed-alpha playback reads the 3.0 halves: RGB is cropped at (0, 0, width, height) and alpha at (halfWidth, 0, width, height), the video must be (2 x halfWidth) x halfHeight; 2.0 metadata (no halves) still works.
 - BREAKING: none (new tools; the wrapper API is kept).
 - Fixed: S19 (Sprite3D contract frame names did not resolve relative to the contract: export_engine writes relative frame paths and a relative bundle); DOC-13 (Aseprite tag and Godot SpriteFrames timing were documented without a tool); odd-width packed videos (403 -> 404 halves) were cropped at `width` instead of `halfWidth` by the old runtime.
+- Fixed (integration, D12): events of built pingpong clips are placed on the played frame shown at their `at_ms` (the second `step_l` of `0 1 2 1` sits on frame 3, not 1) in the Aseprite tag data, Sprite3D contracts, engine-export.json (`position` beside the authored `at`) and `forge-runtime.mjs`; a `position`/`frame`/`at` that contradicts `at_ms` is refused. Godot keeps exact tick timing for pingpong clips built from ticks (authored ticks mapped onto the played frames).
+- Fixed (integration, D13): transition hints written by build_animation_clips v2 under `transition_hints` were dropped by export_engine and the runtime; both now read `transition_hints` first and fall back to legacy `transitions` items with `to`. engine-export.json writes `transition_hints`.
+- Fixed (integration, reviewer notes): `--target godot-sprite3d` alone no longer fails on the atlas page limit; aseprite/SpriteFrames exports of faint FX no longer need `--subject-height-px`; a non-string state or unknown event name is a clean `error:` line instead of a traceback.
+- Changed (integration): engine-export.json clips also carry `authored_frames`, `keys_ms`, `entry_ms` and `hitstop_ms`; QA `tool.version` is the package version `0.4.0` (D29).
 
 ## 5. Schema change requests
 
-### 5.1 New sprite $defs (producer: B09 export_engine; consumers: games, B19 rig_animate optional Sprite3D, B01 build-godot-bundle)
+### 5.1 New sprite $defs: resolved (shared stage, per D12, D13)
 
-`engine-export.json`, the Sprite3D contract and its bundle have no contract yet (`generate2dsprite.godot_sprite3d.v1` exists only in `generate2dsprite.py:733-857`). Add these to `shared/schemas/sprite.schema.json` `$defs` (JSON pointer `/$defs/<name>`). `tests/test_export_engine.py` (`PROPOSED_SPRITE_DEFS`, `assert_valid_proposed`) validates every document export_engine writes against the frozen schemas plus exactly this text:
+`exportedClip`, `engine_export_v1`, `godot_sprite3d_v1` and `godot_sprite3d_bundle_v1` are in `shared/schemas/sprite.schema.json` (shared-stage commit f3d7eb2), adapted per D12/D13: `events_ms[].position`, `transition_hints` (with the pre-D13 `transitions` hint list still accepted) and `atlas.pages` allowed empty for a Sprite3D-only export. `tests/test_export_engine.py` validates every document export_engine writes against that real schema (`assert_valid_contract`); the in-memory `PROPOSED_SPRITE_DEFS` copy is gone.
 
-```json
-{
-  "exportedClip": {
-    "description": "A clip in engine-export.json: source frames, integer durations, events, per-target placement.",
-    "type": "object",
-    "required": ["frames", "duration_ms", "total_duration_ms", "loop", "loop_policy", "events_ms", "page"],
-    "properties": {
-      "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
-      "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-      "total_duration_ms": {"type": "integer", "minimum": 1},
-      "loop": {"type": "boolean"},
-      "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
-      "events_ms": {
-        "type": "array",
-        "items": {
-          "type": "object",
-          "required": ["name", "at_ms", "at"],
-          "properties": {
-            "name": {"$ref": "common.schema.json#/$defs/eventName"},
-            "at_ms": {"type": "integer", "minimum": 0},
-            "at": {"type": "integer", "minimum": 0},
-            "data": true
-          }
-        }
-      },
-      "page": {"type": "integer", "minimum": 0},
-      "transitions": {"type": "array", "items": {"$ref": "#/$defs/clipTransition"}},
-      "aseprite": {
-        "type": "object",
-        "required": ["file", "from", "to"],
-        "properties": {
-          "file": {"$ref": "common.schema.json#/$defs/relPath"},
-          "from": {"type": "integer", "minimum": 0},
-          "to": {"type": "integer", "minimum": 0}
-        }
-      },
-      "godot": {
-        "type": "object",
-        "required": ["speed", "relative_durations"],
-        "properties": {
-          "speed": {"type": "number", "exclusiveMinimum": 0},
-          "relative_durations": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}},
-          "basis": {"type": "string"}
-        }
-      },
-      "sprite3d": {
-        "type": "object",
-        "required": ["action", "contract"],
-        "properties": {
-          "action": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
-          "contract": {"$ref": "common.schema.json#/$defs/relPath"}
-        }
-      }
-    }
-  },
-  "engine_export_v1": {
-    "description": "engine-export.json (export_engine.py): files, clip timing, mapping table, QA. Paths are relative.",
-    "type": "object",
-    "required": [
-      "schema",
-      "name",
-      "tool",
-      "source",
-      "targets",
-      "frame_size",
-      "anchor_px",
-      "sampling",
-      "atlas",
-      "clips",
-      "mapping",
-      "files",
-      "qa"
-    ],
-    "properties": {
-      "schema": {"const": "generate2dsprite.engine_export.v1"},
-      "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
-      "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-      "source": {
-        "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
-        "properties": {
-          "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]}
-        }
-      },
-      "targets": {
-        "type": "array",
-        "minItems": 1,
-        "items": {"enum": ["aseprite-json", "godot-spriteframes", "godot-sprite3d"]}
-      },
-      "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
-      "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
-      "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
-      "default_clip": {"type": "string", "minLength": 1},
-      "atlas": {
-        "type": "object",
-        "required": ["max_size", "padding", "extrude", "pages"],
-        "properties": {
-          "max_size": {"type": "integer", "minimum": 16, "maximum": 4096},
-          "padding": {"type": "integer", "minimum": 0},
-          "extrude": {"type": "integer", "minimum": 0},
-          "pages": {
-            "type": "array",
-            "minItems": 1,
-            "items": {
-              "type": "object",
-              "required": ["index", "size", "cells", "clips"],
-              "properties": {
-                "index": {"type": "integer", "minimum": 0},
-                "size": {"$ref": "common.schema.json#/$defs/size2"},
-                "cells": {"type": "integer", "minimum": 1},
-                "clips": {"type": "array", "items": {"type": "string"}}
-              }
-            }
-          }
-        }
-      },
-      "scale": {
-        "type": "object",
-        "required": ["pixel_size", "subject_height_px", "world_height"],
-        "properties": {
-          "pixel_size": {"type": "number", "exclusiveMinimum": 0},
-          "subject_height_px": {"type": "number", "exclusiveMinimum": 0},
-          "world_height": {"type": "number", "exclusiveMinimum": 0}
-        }
-      },
-      "clips": {
-        "type": "object",
-        "minProperties": 1,
-        "additionalProperties": {"$ref": "#/$defs/exportedClip"}
-      },
-      "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
-      "unused_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
-      "mapping": {
-        "type": "object",
-        "required": ["anchor_px", "frame_size", "godot", "unity", "phaser", "pitch_compensation"]
-      },
-      "files": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
-      "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
-    }
-  },
-  "godot_sprite3d_v1": {
-    "description": "Godot Sprite3D contract; frames are relative to this file (S19); durations_ms is exact per frame.",
-    "type": "object",
-    "required": [
-      "schema",
-      "frame_size",
-      "output_origin",
-      "sprite3d_offset",
-      "world_height",
-      "recommended_pixel_size",
-      "duration_ms",
-      "fps",
-      "frames"
-    ],
-    "properties": {
-      "schema": {"const": "generate2dsprite.godot_sprite3d.v1"},
-      "clip": {"type": "string", "minLength": 1},
-      "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
-      "output_origin": {"$ref": "common.schema.json#/$defs/point2"},
-      "sprite3d_offset": {"$ref": "common.schema.json#/$defs/point2"},
-      "reference_subject_height_px": {"type": "number", "exclusiveMinimum": 0},
-      "world_height": {"type": "number", "exclusiveMinimum": 0},
-      "recommended_pixel_size": {"type": "number", "exclusiveMinimum": 0},
-      "rendered_subject_height_world": {"type": "number", "exclusiveMinimum": 0},
-      "scale_source": {"type": "string"},
-      "billboard": {"enum": ["enabled", "disabled", "fixed-y"]},
-      "texture_filter": {"$ref": "common.schema.json#/$defs/sampling"},
-      "duration_ms": {"type": "integer", "minimum": 1},
-      "fps": {"type": "number", "exclusiveMinimum": 0},
-      "frames": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/relPath"}},
-      "frame_sha256": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/sha256"}},
-      "durations_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-      "loop": {"type": "boolean"},
-      "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
-      "events_ms": {"type": "array"}
-    }
-  },
-  "godot_sprite3d_bundle_v1": {
-    "description": "Per-action Sprite3D contracts combined; contract paths are relative to this file.",
-    "type": "object",
-    "required": ["schema", "default_action", "world_height", "pixel_size", "actions"],
-    "properties": {
-      "schema": {"const": "generate2dsprite.godot_sprite3d_bundle.v1"},
-      "default_action": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
-      "world_height": {"type": "number", "exclusiveMinimum": 0},
-      "world_height_max_drift": {"type": "number", "minimum": 0},
-      "pixel_size": {"type": "number", "exclusiveMinimum": 0},
-      "pixel_size_max_drift": {"type": "number", "minimum": 0},
-      "actions": {
-        "type": "object",
-        "minProperties": 1,
-        "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]*$"},
-        "additionalProperties": {
-          "type": "object",
-          "required": ["contract", "loop"],
-          "properties": {
-            "contract": {"$ref": "common.schema.json#/$defs/relPath"},
-            "loop": {"type": "boolean"},
-            "clip": {"type": "string"}
-          }
-        }
-      }
-    }
-  }
-}
-```
+### 5.2 animation_v3 packed geometry: resolved (shared stage, per D21)
 
-Document ids: `generate2dsprite.engine_export.v1`, `generate2dsprite.godot_sprite3d.v1`, `generate2dsprite.godot_sprite3d_bundle.v1`. The v1 Sprite3D fields are what `generate2dsprite.py process --godot-world-height` writes today; export_engine adds the optional `clip`, `texture_filter`, `frame_sha256`, `durations_ms`, `loop`, `loop_policy`, `events_ms` and, per bundle action, `clip`. The bundle's `contract` must be relative (the current `cmd_build_godot_bundle` falls back to an absolute path: B01-T6 / S19).
+The contract example `tests/fixtures/contracts/video.animation_v3.valid.json` uses forge_av's logical `width`/`height` with physical halves, and `tests/js/forge-runtime.test.mjs` changed with it in the same commit (reviewer note on line 117). B08 `validate_animation` enforcing `width <= halfWidth` is the video group's (D21).
 
-### 5.2 animation_v3 packed geometry (owner A0; producer B08; consumers B09 runtime, games)
+### 5.3 Follow-ups for the schema owner (requests)
 
-The hand-written example `tests/fixtures/contracts/video.animation_v3.valid.json` declares `packedAlpha` `width 48, height 24, halfWidth 24, halfHeight 24`. forge_av (`packed_geometry`, `encode_packed_alpha`) defines `width`/`height` as the logical frame and `halfWidth`/`halfHeight` as the even halves, so `width <= halfWidth` always; a runtime following that example would crop alpha in the wrong place, and `forge-runtime.mjs` refuses it (`normalizeAnimation refuses packed geometry ...` test). Requests:
-
-- Fix the example: `"width": 24, "height": 24` in `packedAlpha`; in `mobilePackedAlpha[0]` use the tier's logical `width`/`height` (24, 24) and add `"halfWidth": 24, "halfHeight": 24`.
-- Document the semantics in `/$defs/animation_v3/properties/packedAlpha/description`: append "width/height are the logical frame (at most halfWidth/halfHeight); 2.0 has no halves and its width/height are the half size."
-- Add optional tier fields at `/$defs/animation_v3/properties/mobilePackedAlpha/items/properties`:
-
-```json
-"layout": {"type": "string", "minLength": 1},
-"halfWidth": {"type": "integer", "minimum": 1},
-"halfHeight": {"type": "integer", "minimum": 1}
-```
-
-JSON Schema cannot express `width <= halfWidth`; B08 `validate_animation` should check it.
+- `exportedClip.events_ms[].position`: export_engine now always writes it; it can become required.
+- `exportedClip.transitions` (the pre-D13 hint list): export_engine writes `transition_hints` only; the legacy form can be dropped from the exported-clip schema (readers keep the D13 fallback).
+- `exportedClip.page` is required, but a `godot-sprite3d`-only export has no atlas pages; export_engine writes `0` there until `page` is made optional (or absent) when `atlas.pages` is empty.
 
 ## 6. Shared-helper promotion requests
 
-- `_local_round_half_up(value) -> int` at `skills/generate2dsprite/scripts/export_engine.py:77`: forge_core already has the private `_round_half_up` (`shared/forge_core.py:716`); publish it as `forge_core.round_half_up` (Appendix A addition) so writers stop copying it. Covered by the pivot-rounding test.
-- `_local_file_ref(path, base) -> {path, sha256, bytes}` at `export_engine.py:871`: a fileRef relative to `base` that records only the file name when `portable_path` has no relative route (another drive), as A1 section 5 requires of every manifest writer. Proposed as `forge_core.file_ref(path, base)`; test `test_file_refs_never_record_absolute_paths`.
+- Resolved (D30): `_local_round_half_up` and `_local_file_ref` are gone; export_engine uses `forge_core.round_half_up`, `forge_core.file_ref` (another drive keeps only the file name), `forge_core.read_json` (D28), `forge_core.run_cli` (D27) and `forge_core.FORGE_PACKAGE_VERSION` (D29).
 - Godot 4 text resources: `spriteframes_text` (:389), `scene_text` (:414), `parse_godot_resource` (:488), `_gd_number` (:372), `_gd_string` (:381). If B14's Godot 4 map exporter writes `.tres`/`.tscn` too, move these into one shared helper (not part of Appendix A today; integration decides).
 - JS: none. `splitDurations` in forge-runtime.mjs mirrors `forge_core.frame_durations` and is parity-tested against it.
 
@@ -305,18 +102,19 @@ JSON Schema cannot express `width <= halfWidth`; B08 `validate_animation` should
 - generate2dsprite `references/processing.md` (B01), section "Godot Sprite3D (optional)": point to engine-export.md for SpriteFrames, Aseprite JSON and the relative-path Sprite3D package.
 - generate2dsprite `references/runtime-integration.md` and `frames-and-clips.md` (B02): link engine-export.md; name the video2dsprite runtime (`references/runtime/forge-runtime.mjs` in that skill) in plain text, since skills install separately.
 - video2dsprite SKILL.md ("Runtime and acceptance") and `references/pipeline.md` (B08): replace "Canvas2D reconstruction helper" with the WebGL compositor; link `references/runtime/forge-runtime.mjs` and `references/runtime/packed-alpha-webgl.mjs`; the existing pipeline.md example still runs unchanged (same API); say "draw `lease.drawable`, never the packed video; control playback with `lease.video`"; serve `.mjs` with a JavaScript MIME type.
-- B02 (built clips v2): export_engine passes through `keys`, `entry_frame`, `stride_world_units`, `stride_px_per_frame`, `cadence_ms`, `speed_ref`, `hitstop_ticks`, `role`, `tick_grid`, `ticks`, `tick_hz`, top-level `sampling`, `pixel_art`, `body_height_px`, `art_source`, `placeholder`, `shadow`, and reads transition hints from `transitions` items that have `to` (v1 `transitions` metrics are ignored). Please carry `ticks`/`tick_hz` and the hints into the built v2 clips (Godot then plays exact tick timing). If the hints move to another key, tell integration; `forge-runtime.mjs` also accepts `transition_hints`.
-- B08 (animation.json 3.0): keep forge_av semantics for `packedAlpha` (logical width/height, physical halves) and give each `mobilePackedAlpha` tier `halfWidth`/`halfHeight` plus `sourceWidth`/`sourceHeight` = the size the tier was scaled from: `forge-runtime.mjs` `drawableRegion` scales `contentSize` by `width / sourceWidth`. List pingpong selections expanded in `sourceIndices`/`durationsMs` (the runtime treats manifests as expanded).
+- B02 (built clips v2): resolved (D12, D13). export_engine and `forge-runtime.mjs` read B02's as-built format: `transition_hints`, `events_ms[].position` with `at` authored, authored `ticks` mapped onto the played frames; they pass through `keys`, `keys_ms`, `entry_frame`, `entry_ms`, `stride_world_units`, `stride_px_per_frame`, `cadence_ms`, `speed_ref`, `hitstop_ticks`, `hitstop_ms`, `role`, `tick_grid`, `ticks`, `tick_hz`, `authored_frames`, top-level `sampling`, `pixel_art`, `body_height_px`, `art_source`, `placeholder`, `shadow`. Tests feed real `build_animation_clips.py` v2 output (`test_real_builder_v2_events_ticks_and_hints`, `test_runtime_reads_real_builder_and_export_output`).
+- B08 (animation.json 3.0): resolved for the fixture (D21, shared stage). Keep forge_av semantics for `packedAlpha` (logical width/height, physical halves) and give each `mobilePackedAlpha` tier `halfWidth`/`halfHeight` plus `sourceWidth`/`sourceHeight` = the size the tier was scaled from: `forge-runtime.mjs` `drawableRegion` scales `contentSize` by `width / sourceWidth`. List pingpong selections expanded in `sourceIndices`/`durationsMs`; event `frame` values must agree with `atMs` (the runtime refuses a contradiction, as `validate_animation` does).
 - B19 (rig_animate "optional Sprite3D"): can call `export_engine.py --target godot-sprite3d` on its built clips instead of writing Sprite3D data itself.
-- Integration e2e (Appendix I, pipelines 1 and 3): `export_engine.py --target all` on the built clips; the result validates with section 5.1.
-- A0/Z: fix `video.animation_v3.valid.json` (section 5.2).
+- Integration e2e (Appendix I, pipelines 1 and 3): `export_engine.py --target all` on the built clips; the result validates as `sprite/engine_export_v1`.
+- **Z**: README/SKILL.md wording above; `pipeline.md` (B08) must say that consumers who copied only `packed-alpha-runtime.js` now also need the `runtime/` folder; CHANGELOG entries of section 4.
 - Z CONTRIBUTING/CI: Node 22 runs `tests/js` through `tests/test_runtime_js.py` (node marker); the WebGL check runs only with `FORGE_BROWSER=<chrome or edge executable>` and is never part of STD.
 
 ## 8. Known limitations and what is not proven
 
 - **No editor or engine import was run** (Aseprite, Godot 4, Phaser, PixiJS, Unity). The tests prove parse-level round trips only. Format facts taken from documentation and engine source knowledge, each needing one manual import: Phaser `createFromAseprite` looks frames up by `{frame}` names ("0", "1", ...); Aseprite 1.3 writes a tag's `repeat` as a string; Godot's text loader resolves a relative `ext_resource` path against the resource file; the Godot enum values used (`texture_filter` 1/2 in 2D and 0/3 in 3D, `billboard` 0/1/2); AtlasTexture `filter_clip`.
-- **Atlas**: frames are not trimmed or rotated; a clip's distinct frames must fit one page (a 4096 page holds 9 frames of 1024 px); clips never span pages because an Aseprite tag addresses one image.
-- **Input**: only built manifests. B02's v2 builder output did not exist yet; v2 was tested with hand-written manifests that validate as `sprite/animation_clips_v2`, and one test runs the current (v1) builder end to end.
+- **Atlas**: frames are not trimmed or rotated; for `aseprite-json` and `godot-spriteframes` a clip's distinct frames must fit one page (a 4096 page holds 9 frames of 1024 px); clips never span pages because an Aseprite tag addresses one image. `godot-sprite3d` alone has no such limit.
+- **Input**: only built manifests. v1 and v2 are tested end to end with the real `build_animation_clips.py` (pingpong events, ticks and hints in v2) and with hand-written manifests that validate as `sprite/animation_clips_v2`.
+- **Sprite3D-only exports** write `page: 0` per clip with an empty `atlas.pages` until the schema makes `page` optional (section 5.3).
 - **Godot**: SpriteFrames cannot carry events (they are in engine-export.json and the Aseprite tag data). Import settings (Lossless, mipmaps) are not written. Relative ext_resource paths become `res://` paths when Godot re-saves the resource.
 - **WebGL**: verified only through the opt-in check in headless Edge 154 and Chrome 154 on SwiftShader (no GPU), with a canvas standing in for the video element: GPU mode, outline shader, alpha exact after the snap, colour within 2 at alpha 64 (8-bit premultiplied canvas quantization), real `WEBGL_lose_context` loss and restore. Not run: a hardware GPU, Safari/iOS, a real `<video>` element, `requestVideoFrameCallback` in a browser, mobile memory budgets. That check found and fixed a real bug: snapping at exactly 2/255 and 253/255 was unreliable on the GPU, so the thresholds are now 2.5/255 and 252.5/255 (same 8-bit semantics).
 - **CPU fallback**: tested with fake canvases in Node; it reads pixels back every frame (slow, correct) and skips the outline (`stats.outlineSkipped`).

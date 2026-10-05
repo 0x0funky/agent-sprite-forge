@@ -8,6 +8,13 @@ Files changed: `skills/generate2dmedia/scripts/generate_media.py`, `tests/test_g
 Files added: `skills/generate2dmedia/scripts/media_ledger.py`, `skills/generate2dmedia/references/prices.json`,
 `tests/test_media_ledger.py`, this file.
 
+> **Integration (2026-10-05, group pass "runtime-media").** `generate_media.py`, `media_ledger.py` and
+> `tests/test_generate2dmedia.py` changed: batch progress files hold relative paths (D25), the catch-all prints
+> `error: internal error (<Type>: <message>)`, scrubbed (D27), job and progress JSON is read BOM-tolerant (D28),
+> receipts name the package version through `media_ledger.FORGE_PACKAGE_VERSION` (D29), and the ledger enforces the
+> local CLI routes' session cap (D22, used by B22's `cli_media.py`). The schema requests of section 5 were applied
+> by the shared stage. Other A4 files are unchanged.
+
 ## 1. CLIs
 
 Run from the user's project root; `<skill-dir>` is `skills/generate2dmedia` (`${CLAUDE_SKILL_DIR}` in Claude Code).
@@ -31,7 +38,11 @@ ledger at `<project-dir>/.forge/ledger.jsonl`), `--budget-usd`, `--max-calls`, `
 `--execute`, `--progress`, plus the batch-level safety flags). Environment cap: `FORGE_MAX_PAID_REQUESTS=N`
 (`0` blocks every paid call). Output: one line of ASCII JSON on stdout; errors are one `error: ...` line on
 stderr, exit 1 (130 when a single request is interrupted with Ctrl+C; a batch stops dispatching and
-exits 1). Every entry point's `--help` works under `PYTHONIOENCODING=cp1252`.
+exits 1); argparse usage errors exit 2 (D26); anything unexpected prints `error: internal error (<Type>:
+<message>)` with secrets, URLs and blobs removed (D27). Every entry point's `--help` works under
+`PYTHONIOENCODING=cp1252`. The batch progress file records `jobsFile` and each `jobDir` relative to its own
+folder (D25); `--progress` may name a folder that does not exist yet, and a progress file on another drive than
+the jobs file or an output folder is refused before anything is sent.
 
 ## 2. SKILL.md routing rows
 
@@ -132,7 +143,22 @@ Fixed
   recorded as `submit_unknown` (now `not_sent`).
 - F-16: the image submit timeout of 180 s was shorter than documented generation times.
 
+Integration (2026-10-05)
+- Changed (D25): batch progress files store `jobsFile` and `jobDir` relative to the progress file, never the
+  absolute paths the batch resolved.
+- Changed (D29): receipts' `toolVersion` and the User-Agent name the package version (`generate_media/0.4.0`).
+- Changed (D27, D28): unexpected errors are one scrubbed `error: internal error (...)` line; job.json, progress and
+  ledger files with a UTF-8 BOM are read.
+- Added (D22): the ledger's session cap for the local CLI routes (quota calls): at most 8 images and 2 videos per
+  12 hours per project by default (`FORGE_SESSION_IMAGES`, `FORGE_SESSION_VIDEOS`, `FORGE_SESSION_HOURS`);
+  `media_ledger.py summary` shows the session usage. Paid REST calls are not counted by it.
+
 ## 5. Schema change requests
+
+> Integration: resolved. The shared stage applied these requests to `shared/schemas/media.schema.json`
+> (`job_v2`, `ledger_line_v1` with `reservationId`, `prices_v1`, `batch_progress_v1`), and both vendored-schema tests
+> now run instead of skipping. Follow-up for the schema owner: `batch_progress_v1.jobsFile` and `results[].jobDir`
+> can be typed as `relPath` now that both batch tools write relative paths (D25).
 
 My documents follow plan Appendix B. They need these properties in A0's `media.schema.json`; if A0's
 frozen `$defs` already allow them, nothing changes. Two tests in `tests/test_generate2dmedia.py` check the
@@ -242,6 +268,16 @@ under the ledger lock, so use these instead of a separate `check_caps` call when
 A reserve entry is `{jobDir, fingerprint, provider, model, kind, route, reservedUsd, quotaCall?}`;
 `quotaCall` defaults to true for `codex-cli`, `grok-cli` and `grok-acp`, and `estimate()` returns 0 USD
 for those routes. Quota calls count toward `max_calls` but not toward `FORGE_MAX_PAID_REQUESTS`.
+
+Added in the integration pass (additive, keyword-only; `LEDGER_API_VERSION` stays "1"):
+`FORGE_PACKAGE_VERSION = "0.4.0"` (D29; generate2dmedia vendors no forge_core, a test keeps it equal to
+`forge_core.FORGE_PACKAGE_VERSION` and `forge_doctor.FORGE_PACKAGE_VERSION`); the session cap of D22:
+`SESSION_KINDS`, `SESSION_DEFAULTS = {"image": 8, "video": 2, "hours": 12.0}`, `SESSION_ENV`,
+`session_limits(images=None, videos=None, hours=None)` (explicit value, else `FORGE_SESSION_*`, else default;
+`LedgerError` on a bad value), `session_kind(kind)`, `Ledger.session_usage(hours, *, now=None, states=None)`,
+`Ledger.check_session_cap(kind, limits, *, now=None, states=None)`, `reserve(..., session=limits)` (checked
+under the ledger lock for quota calls only) and `SessionCapExceeded(CapExceeded)`; `summary()` gains
+`session`. A reservation whose time cannot be read counts toward the window; `not_sent` calls do not.
 
 ## 7. Cross-module links that Z must add
 
