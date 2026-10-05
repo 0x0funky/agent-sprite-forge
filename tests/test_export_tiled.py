@@ -153,6 +153,33 @@ def test_terrain_tsx_corner_wangset_and_collision(tmp_path):
     assert properties(tiles[6])["wang"] == ("string", "0,1,1,0")
 
 
+def test_tsx_tile_collision_keeps_only_what_forge_nav_blocks(tmp_path):
+    """D2, N4 (review r2, finding 7): the TSX gets exactly the tile shapes forge_nav keeps; a zero-size rect or
+    ellipse blocks nothing there, so it is not written as a solid either. A tile whose only shapes have no area
+    keeps no collision even with walkable false (forge_nav adds the whole cell only to a tile without shapes),
+    and a bundle with a zero-area tile polygon (the bow tie) no longer validates, so it is not exported."""
+    path = demo(tmp_path, hashes=False)
+    terrain = path.parent / "tiles" / "terrain.tileset.json"
+    edit(terrain, lambda doc: doc["tiles"][1]["collision"].extend([{"shape": "rect", "x": 9, "y": 9, "w": 0, "h": 3},
+                                                                   {"shape": "ellipse", "cx": 4, "cy": 4, "rx": 2,
+                                                                    "ry": 0}]))
+    edit(terrain, lambda doc: doc["tiles"][15].update(collision=[{"shape": "rect", "x": 1, "y": 1, "w": 5, "h": 0}],
+                                                      properties={"walkable": False}))
+    tiles = {int(t.get("id")): t for t in tsx(export(tmp_path, bundle=path) / "terrain.tsx").findall("tile")}
+    kept = [(o.get("x"), o.get("y"), o.get("width"), o.get("height")) for o in tiles[1].findall("objectgroup/object")]
+    assert len(kept) == 3 and ("9", "9", "0", "3") not in kept and all(o.get("ellipse") is None for o in
+                                                                       tiles[1].findall("objectgroup/object"))
+    assert tiles[15].find("objectgroup") is None
+    blocking = mb.blocking_set(mb.load_bundle(path))  # forge_nav's tile collision: no ellipse, no zero-size rect
+    assert not [s for s in blocking.tiles
+                if s["shape"] == "ellipse" or (s["shape"] == "rect" and (s["w"] <= 0 or s["h"] <= 0))]
+    edit(terrain, lambda doc: doc["tiles"][2].update(collision=[{"shape": "polygon",
+                                                                 "points": [[2, 2], [14, 14], [14, 2], [2, 14]]}]))
+    refused = run_cli([TOOL, "export", "--bundle", path, "--output-dir", tmp_path / "bow-tie"])
+    assert refused.returncode == 1 and "does not validate" in refused.stderr and "polygon has zero area" in refused.stderr
+    assert not (tmp_path / "bow-tie").exists()
+
+
 def test_blob_tsx_is_a_two_colour_mixed_wangset(tmp_path):
     root = tsx(export(tmp_path) / "path.tsx")
     assert (root.get("tilecount"), root.get("columns")) == ("48", "8")

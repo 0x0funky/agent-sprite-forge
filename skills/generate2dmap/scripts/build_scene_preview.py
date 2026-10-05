@@ -1493,18 +1493,9 @@ def read_blocking_set(bundle: dict[str, Any], build: Build) -> Any:
 
 def tile_solids_for_runtime(blocking: Any) -> list[dict[str, Any]]:
     """forge_nav's tile collision (N7: per-tile shapes moved to each placed tile, whole-pixel rects merged) as
-    collision.solids entries map-runtime.mjs reads; their source is tiles:<layer>."""
-    solids: list[dict[str, Any]] = []
-    for solid in blocking.tiles:
-        if solid["shape"] == "rect":
-            entry = {"shape": "rect", "x": solid["x"], "y": solid["y"], "w": solid["w"], "h": solid["h"]}
-        elif solid["shape"] == "ellipse":
-            entry = {"shape": "ellipse", "cx": solid["cx"], "cy": solid["cy"], "rx": solid["rx"], "ry": solid["ry"],
-                     "rotate": solid.get("rotate", 0)}
-        else:
-            entry = {"shape": "polygon", "points": [[point[0], point[1]] for point in solid["points"]]}
-        solids.append({**entry, "source": solid["source"]})
-    return solids
+    collision.solids entries map-runtime.mjs reads; their source is tiles:<layer>. These are the tileSolids of
+    forge_nav.runtime_inputs, the same ones map_nav.py check writes into nav-grid.json for other runtimes."""
+    return forge_nav.runtime_inputs(blocking)["tileSolids"]
 
 
 def compile_material_grid(bundle: dict[str, Any], build: Build, blocking: Any) -> tuple[dict | None, dict | None]:
@@ -1517,16 +1508,9 @@ def compile_material_grid(bundle: dict[str, Any], build: Build, blocking: Any) -
     build.read(build.resolve(spec.get("image"), "material_map.image"), "material_map.image", spec.get("sha256"))
     codes = blocking.material_codes
     scale = int(blocking.material_scale)
-
-    def plane(mask: np.ndarray) -> str:
-        return base64.b64encode(np.packbits(mask.ravel(), bitorder="little").tobytes()).decode("ascii")
-
     height, width = codes.shape
-    grid: dict[str, Any] = {"width": int(width), "height": int(height), "cellWidth": scale, "cellHeight": scale,
-                            "bits": plane(codes == forge_nav.BLOCK)}
+    grid = forge_nav.runtime_inputs(blocking)["materialGrid"]  # the materialGrid map_nav writes into nav-grid.json
     one_way = codes == forge_nav.ONE_WAY
-    if one_way.any():
-        grid["oneWay"] = plane(one_way)
     info = {"size": [int(width), int(height)], "cell": [scale, scale], "blockedCells": int((codes == forge_nav.BLOCK).sum()),
             "oneWayCells": int(one_way.sum()),
             "materials": [{"name": entry["name"], "class": entry["class"], "walkable": entry["walkable"],
@@ -1815,6 +1799,7 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     tile_solids = tile_solids_for_runtime(blocking)
     if tile_solids:
         collision["solids"] = collision.get("solids", []) + tile_solids
+    collision["tilesResolved"] = True  # map-runtime.mjs: the tile collision (N7) is in collision.solids
     material_grid, material_info = compile_material_grid(bundle, build, blocking)
     runtime, runtime_sha, runtime_version = read_runtime()
     title = args.title or next((bundle[key] for key in ("name", "title") if isinstance(bundle.get(key), str)

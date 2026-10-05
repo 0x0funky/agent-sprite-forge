@@ -725,10 +725,17 @@ class OverlayAndAuditTests(unittest.TestCase):
             palette.save(root / "indexed.png")
             bundle["world"] = {"width": 120, "height": 90, "unit": "px"}
             bundle["collision"]["solids"] = [{"shape": "rect", "id": "wall", "x": 15, "y": 25, "w": 10, "h": 10}]
-            bundle["material_map"] = {"image": "materials.png", "materials": {
-                "pond": {"class": "liquid", "color": "#ff0000"}, "lava": {"class": "magma", "color": "#00ff00"}}}
-            assert_valid_contract({**bundle, "material_map": {"image": "materials.png", "materials": {
-                "pond": {"class": "liquid", "color": "#ff0000"}}}}, "map", "map_bundle_v2", skill=SKILL)
+            bundle["material_map"] = {"image": "materials.png", "materials": {  # every pixel classified (N8)
+                "floor": {"class": "decor", "color": "#000000"}, "pond": {"class": "liquid", "color": "#ff0000"},
+                "lava": {"class": "magma", "color": "#00ff00"}}}
+            (root / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
+            refused = self.run_scene(root, "--debug-overlay", root / "out" / "overlay.png")
+            self.assertEqual(refused.returncode, 1, refused.stderr)  # forge_nav refuses the class (review r2, 6)
+            self.assertIn("forge_nav cannot read its collision", refused.stderr)
+            self.assertIn("run map_bundle.py validate first", refused.stderr)
+            self.assertFalse((root / "out" / "overlay.png").exists())
+            bundle["material_map"]["materials"].pop("lava")
+            assert_valid_contract(bundle, "map", "map_bundle_v2", skill=SKILL)
             (root / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
             run = self.run_scene(root, "--debug-overlay", root / "out" / "overlay.png", "--report",
                                  root / "out" / "report.json")
@@ -738,8 +745,8 @@ class OverlayAndAuditTests(unittest.TestCase):
             self.assertGreater(overlay[60, 40][0], overlay[160, 100][0] + 30)
             pond = overlay[40, 40]                                            # world (10..30)*2: liquid tint
             self.assertGreater(pond[2], pond[0])
-            self.assertIn("class 'magma'", run.stderr)
-            bundle["material_map"] = {"image": "indexed.png", "materials": {"tar": {"class": "hazard", "index": 1}}}
+            bundle["material_map"] = {"image": "indexed.png", "materials": {"floor": {"class": "decor", "index": 0},
+                                                                            "tar": {"class": "hazard", "index": 1}}}
             (root / "bundle.json").write_text(json.dumps(bundle), encoding="utf-8")
             run = self.run_scene(root, "--debug-overlay", root / "out" / "indexed.png", "--output",
                                  root / "out" / "preview-2.png")
@@ -922,6 +929,43 @@ class IntegrationDecisionTests(unittest.TestCase):
                        self.root / "materials-bundle.json", "--point", "55,104", "--point", "75,104",
                        "--point", "95,104"])
         self.assertEqual([p["valid"] for p in json.loads(nav.stdout)["points"]], [False, False, True])
+
+    def test_a_bundle_forge_nav_refuses_is_an_error_even_without_strict(self):
+        """D4 (review r2, finding 6): compose fell back to its own parse of a bundle forge_nav refused, with only a
+        warning, and --strict passed it: a bundle map_bundle validate and map_nav refuse got audit_status pass. Now
+        it is an error (exit 1, nothing written) with or without --strict; a bundle without a collision block is
+        still judged on its D2 set, with a point actor (actorRadius 0)."""
+        ghost = self.boundary_bundle()
+        ghost["props"] = {"post": {"image": "dot.png", "anchor_px": [0, 0]}}
+        ghost["objects"] = [{"id": "ghost", "prop": "no-such-prop", "x": 50, "y": 50, "anchor_px": [0, 0]}]
+        (self.root / "ghost.json").write_text(json.dumps(ghost), encoding="utf-8")
+        actors = [{"id": "hero", "image": "dot.png", "x": 15, "y": 15, "anchor": "px", "anchorPx": [0, 0]}]
+        (self.root / "one-actor.json").write_text(json.dumps({"actors": actors}), encoding="utf-8")
+        for strict in ([], ["--strict"]):
+            with self.subTest(strict=bool(strict)):
+                out = self.root / ("strict" if strict else "plain")
+                out.mkdir()
+                run = compose("--base", self.root / "base.png", "--placements", self.root / "one-actor.json",
+                              "--output", out / "compose.png", "--bundle", self.root / "ghost.json", "--audit-out",
+                              out / "audit.json", *strict)
+                self.assertEqual(run.returncode, 1, run.stdout)
+                self.assertIn("ghost.json: forge_nav cannot read its collision", run.stderr)
+                self.assertIn("unknown prop 'no-such-prop'", run.stderr)
+                self.assertIn("run map_bundle.py validate first", run.stderr)
+                self.assertNotIn("Traceback", run.stderr)
+                self.assertEqual(list(out.iterdir()), [], "nothing is written")
+        nav = run_cli([script_path("generate2dmap", "map_nav"), "query", "--bundle", self.root / "ghost.json",
+                       "--point", "15,15"])
+        self.assertEqual(nav.returncode, 1, "map_nav refuses the same bundle")
+        bare = self.boundary_bundle()
+        bare.pop("collision")
+        bare["objects"] = [{"id": "post", "x": 15, "y": 15, "anchor_px": [0, 0], "image": "dot.png",
+                            "footprint": {"shape": "rect", "width": 4, "depth": 4, "basis": "world_px"}}]
+        (self.root / "bare.json").write_text(json.dumps(bare), encoding="utf-8")
+        audit, _ = self.audit({"props": [], "actors": actors}, "--bundle", self.root / "bare.json")
+        checks = {check["id"]: check for check in audit["checks"]}
+        self.assertEqual(checks["actor_feet_valid"]["value"]["model"], "bundle")
+        self.assertEqual(checks["actor_feet_valid"]["value"]["invalid"], ["hero"], "the bundle's own footprint blocks")
 
     def test_without_a_bundle_rect_footprints_are_closed(self):
         """D33: the no-bundle path uses the same closed sets: an actor on a rect footprint's edge is blocked."""

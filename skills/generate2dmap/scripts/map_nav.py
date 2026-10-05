@@ -13,7 +13,10 @@ Verbs:
          anchor slot and approach point can be reached from the spawns and arrivals; check
          portal triggers and arrivals (and, with --link, the links between maps). Publishes
          nav-grid.json, nav-report.json and nav-debug.png into a new folder; a failed check
-         publishes nothing unless --publish-on-fail.
+         publishes nothing unless --publish-on-fail. nav-grid.json also carries runtimeInputs
+         {tileSolids, materialGrid}: the tile collision and material grid that
+         references/runtime/map-runtime.mjs cannot read itself, ready to pass as the options of
+         createMapRuntime(bundle, options) in a custom engine.
   query  print whether points are valid actor positions and whether segments are clear.
 
 Collision semantics (forge_nav rules N1-N15; map-runtime.mjs implements the same rules):
@@ -370,6 +373,8 @@ def grid_document(result: NavResult, base: Path) -> dict:
         "moves": ["".join(row) for row in text],
         "reachable": ["".join(row) for row in reachable],
         "blockedRects": [[x * grid.cell, y * grid.cell, w * grid.cell, h * grid.cell] for x, y, w, h in result.rects],
+        # D2: what map-runtime.mjs cannot read from the bundle itself (the options of createMapRuntime)
+        "runtimeInputs": forge_nav.runtime_inputs(map_bundle.blocking_set(result.bundle)),
     }
 
 

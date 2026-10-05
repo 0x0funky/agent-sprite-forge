@@ -97,7 +97,7 @@ Tiled's own `topdown` object order sorts by the image bottom, which differs from
 
 `compose_layered_preview.py` draws props, objects, actors and foreground over a base for review. Placements name the image, the world position and the anchor.
 
-Gameplay metadata lives in the map bundle: it is the only collision, occlusion and policy data that `map_nav.py`, the exporters and a runtime read. A placement's own `footprint` and `solid` are preview data: they let the audit judge a composed preview that has no bundle, and the debug overlay draws them. With `--bundle`, actor feet are judged on the bundle's blocking set through forge_nav, exactly as `map_nav.py query` judges them (D4); placement footprints then block nothing, and an actor standing inside one is reported by the `actor_feet_off_placement_footprints` warning, usually a prop that is missing from the bundle. Placement footprints use the same `basis` names (`prop_px` follows the drawn sprite, `world_px` only `--scale`) and mirror with a placement's `flip_x`.
+Gameplay metadata lives in the map bundle: it is the only collision, occlusion and policy data that `map_nav.py`, the exporters and a runtime read. A placement's own `footprint` and `solid` are preview data: they let the audit judge a composed preview that has no bundle, and the debug overlay draws them. With `--bundle`, actor feet are judged on the bundle's blocking set through forge_nav, exactly as `map_nav.py query` judges them (D4); a bundle forge_nav cannot read stops compose with an error (run `map_bundle.py validate` first), and a bundle without a `collision` block is judged with a point actor (`actorRadius` 0). Placement footprints then block nothing, and an actor standing inside one is reported by the `actor_feet_off_placement_footprints` warning, usually a prop that is missing from the bundle. Placement footprints use the same `basis` names (`prop_px` follows the drawn sprite, `world_px` only `--scale`) and mirror with a placement's `flip_x`.
 
 ```json
 {
@@ -173,7 +173,8 @@ N4  The blocking set (D2) is identical for every consumer. It is the union of:
     A shape without area blocks nothing and is dropped, wherever it comes from: a rect with
     w <= 0 or h <= 0, an ellipse with rx <= 0 or ry <= 0, a polygon whose shoelace sum
     sum(x[i] * y[i + 1]) - sum(y[i] * x[i + 1]) is exactly 0 (map_bundle.py refuses such a
-    collision polygon outright). A point is blocked when it lies in any member. Walk regions
+    polygon outright in collision.solids and in a tileset's tiles[].collision, where it also
+    refuses a self-intersecting ring). A point is blocked when it lies in any member. Walk regions
     (N3) bound the walk area; they are not blockers.
 
 N5  Solids are closed sets (D1); a point on a solid's boundary is blocked.
@@ -233,7 +234,7 @@ In short, for the rest of the rule book:
 - World pixels, y down (N1). The actor's footprint is an ellipse `rx = actorRadius`, `ry = actorRadius * ySquash`; `ySquash` is 1.0 for top-down tiles and about 0.58 for HD-2D plates. A position is valid when its centre and 8 points on that ellipse are all in the walk area and none is blocked (N2, N9).
 - `collision.rects` are exact blocking rectangles (D3), never an approximation of something else. A writer may emit rects that approximate its other solids only if its own reachability proof runs on the full blocking set, which forge_nav gives it.
 - Tile collision (N7, D5): a placed tile blocks with its tileset tile's `collision` shapes (tile pixels), or its whole cell when it has no shapes and `properties.walkable` is false. `export_tiled.py` keeps these shapes in the TSX tilesets.
-- Navigation (N10, N12 to N14) uses a grid of `max(1, round(actorRadius / 2))` px. A move between neighbouring cells is open when every sample along it is valid and the actor's centre never crosses a blocker or leaves the walk area, so walls and gaps thinner than a cell are never jumped. A corridor must be wider than `2 * actorRadius + cell` px to be sure to show up on the grid.
+- Navigation (N10, N12 to N14) uses a grid of `max(1, round(actorRadius / 2))` px. A move between neighbouring cells is open when every sample along it is valid and the actor's centre never crosses a blocker or leaves the walk area, so walls and gaps thinner than a cell are never jumped; touching a vertex, a corner or an ellipse at a single point is not crossing it. A corridor must be wider than `2 * actorRadius + cell` px to be sure to show up on the grid.
 - `one_way` is a side-scroll class (N11, D2): it blocks only moves that drop onto it from above. Bundles carry no view mode, so the rule applies everywhere; top-down maps should not use it.
 - Portal intent, `latch` and `requiresMovement` are runtime duties (N15).
 

@@ -1,13 +1,25 @@
 /*
- * map-runtime.mjs 1.1.1: collision query, navigation grid, walker and exits
+ * map-runtime.mjs 1.1.2: collision query, navigation grid, walker and exits
  * for generate2dmap scenes (map_bundle.v2).
  *
  * One dependency-free ES module for browsers, Node 18+ and bundlers. Games can
  * import it as it is; build_scene_preview.py inlines it verbatim into
  * preview.html. It reads the bundle fields it needs (world, collision,
- * objects, props, portals, spawns, interactions, anchors) and never touches
- * the DOM, the network, a clock or a random source: the same calls give the
- * same results.
+ * objects, props, portals, spawns, interactions, anchors, and whether there
+ * are tiles layers or a material_map) and never touches the DOM, the network,
+ * a clock or a random source: the same calls give the same results.
+ *
+ * RESOLVED INPUTS. This module reads no files, so two parts of the blocking
+ * set must come resolved, and createMapRuntime refuses a bundle without them
+ * (a TypeError, never a silent drop, D2):
+ *   - the per-tile collision (N7) of every tiles layer: options.tileSolids, or
+ *     the same solids already in collision.solids with collision.tilesResolved
+ *     set to true (build_scene_preview.py does this);
+ *   - the material map (N8): options.materialGrid, unless
+ *     options.ignoreMaterialMap is true.
+ * map_nav.py check writes both, read by forge_nav, into nav-grid.json as
+ * runtimeInputs {tileSolids, materialGrid}: pass that object as the options,
+ * createMapRuntime(bundle, navGrid.runtimeInputs).
  *
  * COLLISION mirrors forge_nav (shared/forge_nav.py, vendored as
  * scripts/forge_nav.py) rule for rule: the rule book N1-N15 in its docstring
@@ -24,9 +36,9 @@
  *       when a.y == b.y, toggle when (a.y > y) != (b.y > y) and
  *       x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x) and none of its holes
  *   N4  blockers: collision.solids, collision.rects, footprints of solid
- *       objects, placed tiles' collision (build_scene_preview converts it into
- *       collision.solids, since this module reads no files) and blocking
- *       material pixels; shapes without area are dropped
+ *       objects, placed tiles' collision (options.tileSolids, or already in
+ *       collision.solids: see RESOLVED INPUTS) and blocking material pixels;
+ *       shapes without area are dropped
  *   N5  solids are closed: rect x <= px <= x + w; ellipse nu*nu + nv*nv <= 1;
  *       polygon interior or on an edge
  *   N6  footprints: from the object, else from bundle.props[prop] (resolved
@@ -35,9 +47,9 @@
  *       instance scale; flip_x mirrors offset x and rotate
  *   N7  tile collision: each placed tile's shapes moved to its cell, and a
  *       tile without shapes whose walkable is false blocks its cell; forge_nav
- *       reads the tileset files, so build_scene_preview passes the result in
- *       as collision.solids (their source names the layer), closed like
- *       every solid (N5)
+ *       reads the tileset files, so the result comes in as options.tileSolids
+ *       (or inside collision.solids; their source names the layer), closed
+ *       like every solid (N5)
  *   N8  material grid: square pixels of s = W / width world px (a whole
  *       number), half-open (right and bottom edges belong to the next pixel);
  *       solid blocks; liquid and hazard block unless walkable; decor never;
@@ -47,7 +59,10 @@
  *       a + d * k / n are valid; the one_way rule holds; and (thin-gap rule)
  *       the centre stays in the walk area and off every blocker on the whole
  *       segment, tested at the midpoint of every piece between boundary cuts
- *       (an ellipse cut with |disc| <= 1e-12 * b * b is a tangent: one double root)
+ *       longer than 1e-9 px (a shorter piece is a rounding sliver at a single
+ *       touching point and is skipped); polygon edges cut where
+ *       -1e-12 <= u <= 1 + 1e-12, rect sides at (x0 - a.x) / dx and so on, an
+ *       ellipse cut with |disc| <= 1e-12 * b * b is a tangent: one double root
  *   N11 one_way blocks moving down (+y) onto it: no footprint sample may step
  *       from another pixel onto one_way between consecutive samples, and the
  *       centre path may not enter it
@@ -73,7 +88,7 @@
  * keyboard moves go through moveWithCollision().
  */
 
-export const RUNTIME_VERSION = "1.1.1";
+export const RUNTIME_VERSION = "1.1.2";
 export const TICK_HZ = 60;
 export const INTENT_MIN_COS = 0.25;
 export const SNAPSHOT_SCHEMA = "generate2dmap.scene_snapshot.v1";
@@ -85,6 +100,8 @@ export const MATERIAL_CLASSES = Object.freeze(["solid", "one_way", "liquid", "ha
 export const FOOTPRINT_BASES = Object.freeze(["prop_px", "world_px", "image_px"]);
 
 const EPS = 1e-9;
+const SLIVER_PX = 1e-9; // N10: a thin-gap piece this long or shorter is a rounding sliver at a touching point
+const EDGE_U_SLACK = 1e-12; // N10: polygon edges are cut where -slack <= u <= 1 + slack (forge_nav _EDGE_U_SLACK)
 const SQRT1_2 = 0.7071067811865476; // Math.SQRT1_2, forge_nav.SQRT1_2
 const DEG = Math.PI / 180; // math.radians multiplies by this exact double
 const INDEX_BUCKET = 32;
@@ -426,7 +443,7 @@ function itemsInBox(index, minX, minY, maxX, maxY, visit) {
   }
 }
 
-// Boundary elements for the thin-gap cuts of N10: polygon edges, rect sides, the world box, ellipses.
+// Boundary elements for the thin-gap cuts of N10: polygon edges, rects (solids and the world box), ellipses.
 function boundaryElements(world) {
   const elements = [];
   const edge = (ax, ay, bx, by) => elements.push({kind: "edge", ax, ay, bx, by, minX: Math.min(ax, bx),
@@ -437,12 +454,7 @@ function boundaryElements(world) {
       edge(shape.xs[i], shape.ys[i], shape.xs[j], shape.ys[j]);
     }
   };
-  const rect = (x0, y0, x1, y1) => {
-    edge(x0, y0, x1, y0);
-    edge(x1, y0, x1, y1);
-    edge(x1, y1, x0, y1);
-    edge(x0, y1, x0, y0);
-  };
+  const rect = (x0, y0, x1, y1) => elements.push({kind: "rect", x0, y0, x1, y1, minX: x0, minY: y0, maxX: x1, maxY: y1});
   for (const region of world.walkRegions) {
     polygon(region.outer);
     region.holes.forEach(polygon);
@@ -463,7 +475,7 @@ function edgeCuts(px, py, dx, dy, element, out) {
   const denom = dx * ey - dy * ex;
   if (denom !== 0) {
     const t = (wx * ey - wy * ex) / denom, u = (wx * dy - wy * dx) / denom;
-    if (u >= 0 && u <= 1 && t > 0 && t < 1) out.push(t);
+    if (u >= -EDGE_U_SLACK && u <= 1 + EDGE_U_SLACK && t > 0 && t < 1) out.push(t);
     return;
   }
   const length = dx * dx + dy * dy;
@@ -471,6 +483,16 @@ function edgeCuts(px, py, dx, dy, element, out) {
     for (const t of [(wx * dx + wy * dy) / length, ((element.bx - px) * dx + (element.by - py) * dy) / length]) {
       if (t > 0 && t < 1) out.push(t);
     }
+  }
+}
+
+// The lines of a rect's sides that p + t * d crosses, wherever along the side (forge_nav _Rect.seg_breaks).
+function rectCuts(px, py, dx, dy, element, out) {
+  if (dx) {
+    for (const t of [(element.x0 - px) / dx, (element.x1 - px) / dx]) if (t > 0 && t < 1) out.push(t);
+  }
+  if (dy) {
+    for (const t of [(element.y0 - py) / dy, (element.y1 - py) / dy]) if (t > 0 && t < 1) out.push(t);
   }
 }
 
@@ -634,6 +656,33 @@ export function materialAt(world, px, py) {
 
 // --------------------------------------------------------------------------- world
 
+/**
+ * The resolved inputs of N7 and N8 (RESOLVED INPUTS in the header) as {tileSolids, materialGrid}. A tiles layer
+ * whose tile collision is not resolved, or a material_map without its grid, is a TypeError (D2: a blocker never
+ * drops silently).
+ */
+function resolvedInputs(bundle, collision, options) {
+  const layers = bundle.layers === undefined || bundle.layers === null ? [] : bundle.layers;
+  if (!Array.isArray(layers)) throw new TypeError("layers must be a list");
+  const tiles = layers.find((layer) => layer !== null && typeof layer === "object" && layer.kind === "tiles");
+  const given = options.tileSolids === undefined || options.tileSolids === null ? null : options.tileSolids;
+  if (given !== null && !Array.isArray(given)) throw new TypeError("options.tileSolids must be a list of solids");
+  const marked = collision.tilesResolved === undefined ? false : flag(collision.tilesResolved, "collision.tilesResolved");
+  if (tiles !== undefined && given === null && !marked) {
+    throw new TypeError(`layer ${JSON.stringify(String(tiles.name))} is a tiles layer, but its tile collision (N7) is not `
+      + "resolved: pass options.tileSolids (map_nav.py check writes them into nav-grid.json as runtimeInputs), or add "
+      + "them to collision.solids and set collision.tilesResolved to true");
+  }
+  const ignore = options.ignoreMaterialMap === undefined ? false : flag(options.ignoreMaterialMap, "options.ignoreMaterialMap");
+  const grid = options.materialGrid === undefined || options.materialGrid === null ? null : options.materialGrid;
+  if (bundle.material_map !== undefined && bundle.material_map !== null && grid === null && !ignore) {
+    throw new TypeError("material_map (N8) needs options.materialGrid: map_nav.py check writes it into nav-grid.json "
+      + "(runtimeInputs) and materialGridFromRGBA decodes a colour image; pass options.ignoreMaterialMap: true to walk "
+      + "without it");
+  }
+  return {tileSolids: given === null ? [] : given, materialGrid: ignore ? null : grid};
+}
+
 function compilePortal(portal, where) {
   plainObject(portal, where);
   const id = text(portal.id, `${where}.id`);
@@ -718,9 +767,12 @@ export function footprintOffsets(radius, ySquash = 1) {
 
 /**
  * Compile the map_bundle.v2 fields the runtime reads into a world object (N2-N8).
+ * options.tileSolids lists the world solids of every placed tile (N7, forge_nav tile_solids); a bundle with a
+ * tiles layer needs them, unless collision.tilesResolved says collision.solids already holds them.
  * options.materialGrid is the material grid of material_map (see decodeMaterialGrid and
- * materialGridFromRGBA); without it the material map is not applied. Throws TypeError or RangeError on
- * malformed data, as forge_nav raises NavError.
+ * materialGridFromRGBA); a bundle with a material_map needs it, unless options.ignoreMaterialMap is true.
+ * map_nav.py check writes both into nav-grid.json as runtimeInputs. Throws TypeError or RangeError on
+ * malformed data or a missing resolved input, as forge_nav raises NavError.
  */
 export function createMapRuntime(bundle, options = {}) {
   plainObject(bundle, "bundle");
@@ -733,6 +785,7 @@ export function createMapRuntime(bundle, options = {}) {
   const ySquash = collision.ySquash === undefined ? 1 : finite(collision.ySquash, "collision.ySquash");
   if (!(ySquash > 0)) throw new RangeError("collision.ySquash must be positive");
   const cell = navCellSize(actorRadius);
+  const resolved = resolvedInputs(bundle, collision, plainObject(options, "options"));
 
   const walkRegions = (collision.walkRegions || []).map((region, k) => {
     const where = `collision.walkRegions[${k}]`;
@@ -772,8 +825,12 @@ export function createMapRuntime(bundle, options = {}) {
       solids.push(shape);
     }
   });
+  resolved.tileSolids.forEach((solid, k) => {
+    const shape = compileSolid(solid, `options.tileSolids[${k}]`);
+    if (hasArea(shape)) solids.push(shape);
+  });
 
-  const material = options.materialGrid ? decodeMaterialGrid(options.materialGrid) : null;
+  const material = resolved.materialGrid === null ? null : decodeMaterialGrid(resolved.materialGrid);
   if (material !== null && (material.width * material.scale !== width || material.height * material.scale !== height)) {
     throw new RangeError(`material grid ${material.width}x${material.height} of ${material.scale} px squares does not cover `
       + `the ${width}x${height} world`);
@@ -879,6 +936,7 @@ export function segmentBreaks(world, ax, ay, bx, by) {
       Math.max(ay, by) + pad, (k) => {
         const element = world.boundaryList[k];
         if (element.kind === "edge") edgeCuts(ax, ay, dx, dy, element, cuts);
+        else if (element.kind === "rect") rectCuts(ax, ay, dx, dy, element, cuts);
         else ellipseCuts(ax, ay, dx, dy, element.shape, cuts);
       });
     if (world.material !== null) materialCuts(world.material, ax, ay, dx, dy, cuts);
@@ -893,7 +951,8 @@ export function segmentBreaks(world, ax, ay, bx, by) {
  */
 export function segmentStatus(world, ax, ay, bx, by, {thinGap = true} = {}) {
   const dx = bx - ax, dy = by - ay;
-  const n = Math.max(1, Math.ceil(Math.sqrt(dx * dx + dy * dy) / (world.cell / 2)));
+  const length = Math.sqrt(dx * dx + dy * dy);
+  const n = Math.max(1, Math.ceil(length / (world.cell / 2)));
   for (let k = 0; k <= n; k++) {
     const px = ax + dx * k / n, py = ay + dy * k / n;
     if (!isValid(world, px, py)) return `actor footprint blocked at (${px}, ${py})`;
@@ -911,6 +970,7 @@ export function segmentStatus(world, ax, ay, bx, by, {thinGap = true} = {}) {
   const ts = segmentBreaks(world, ax, ay, bx, by);
   let code = downward ? materialAt(world, ax, ay) : FREE;
   for (let i = 1; i < ts.length; i++) {
+    if ((ts[i] - ts[i - 1]) * length <= SLIVER_PX) continue; // N10: a rounding sliver at a touching point
     const mid = (ts[i - 1] + ts[i]) / 2, mx = ax + dx * mid, my = ay + dy * mid;
     if (!pointFree(world, mx, my)) return `centre path leaves the walk area or crosses a blocker near (${mx}, ${my}) (thin-gap rule)`;
     if (downward) {

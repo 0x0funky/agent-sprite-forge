@@ -44,6 +44,7 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_nav  # noqa: E402  (the shared collision rule book, D4)
 import map_bundle  # noqa: E402
 from map_bundle import BundleError  # noqa: E402
 
@@ -290,6 +291,8 @@ class _Exporter:
             shapes = list(entry.get("collision") or [])
             if not shapes and (entry.get("properties") or {}).get("walkable") is False:
                 shapes = [{"shape": "rect", "x": 0, "y": 0, "w": tileset.tile_w, "h": tileset.tile_h}]
+            # N4, N7: exactly the shapes forge_nav's tile collision keeps (a shape without area blocks nothing)
+            shapes = [shape for shape in shapes if forge_nav.has_area(shape)]
             if shapes:
                 objects = [tiled_shape(shape, k + 1, "solid") for k, shape in enumerate(shapes)]
                 tile["objectgroup"] = object_group(2, "", objects)

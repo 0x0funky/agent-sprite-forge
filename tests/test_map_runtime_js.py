@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import subprocess
 import tempfile
 import unittest
@@ -22,12 +23,13 @@ import numpy as np
 import pytest
 from PIL import Image
 
-from forge_testutils import REPO_ROOT, SKILLS_DIR, load_script, require_node
+from forge_testutils import REPO_ROOT, SKILLS_DIR, load_script, require_node, run_cli, script_path
 
 RUNTIME = SKILLS_DIR / "generate2dmap" / "references" / "runtime" / "map-runtime.mjs"
 NODE_SUITE = REPO_ROOT / "tests" / "js" / "map-runtime.test.mjs"
 NAV = load_script("generate2dmap", "forge_nav")
 BUNDLE = "generate2dmap.map_bundle.v2"
+SLIVER_PX_JS = re.compile(r"const SLIVER_PX = ([0-9.e-]+);")
 
 
 def run_node(code: str, payload) -> dict:
@@ -418,6 +420,80 @@ class ForgeNavReferenceTests(unittest.TestCase):
         self.assertEqual(result[radii.index(5.0)], 3, "5 / 2 = 2.5 rounds up (Python round() would give 2)")
 
 
+def tiled_hazard_map(root: Path) -> Path:
+    """Review r2 finding 3: one tile whose collision is a full-cell rect, and a hazard pixel in the material map,
+    a bundle map_bundle validate passes. map-runtime.mjs given it directly walked through both."""
+    (root / "tiles").mkdir(parents=True)
+    Image.new("RGBA", (32, 16), (90, 90, 90, 255)).save(root / "tiles" / "t.png")
+    (root / "tiles" / "t.tileset.json").write_text(json.dumps({
+        "schema": "generate2dmap.tileset.v1", "id": "t", "image": "t.png", "tile_size": 16, "columns": 2,
+        "tilecount": 2, "kind": "flat", "materials": ["stone"], "seamless_verified": False,
+        "tiles": [{"index": 0}, {"index": 1, "collision": [{"shape": "rect", "x": 0, "y": 0, "w": 16, "h": 16}]}]}),
+        encoding="utf-8")
+    pixels = np.zeros((4, 4, 4), np.uint8)
+    pixels[...] = (128, 128, 128, 255)
+    pixels[0, 3] = (224, 64, 16, 255)  # a lava pixel: world (24..32, 0..8)
+    Image.fromarray(pixels).save(root / "materials.png")
+    bundle = {"schema": BUNDLE, "id": "wall", "tile_size": 16, "world": {"width": 32, "height": 32, "unit": "px"},
+              "tilesets": [{"id": "t", "manifest": "tiles/t.tileset.json"}],
+              "layers": [{"name": "ground", "kind": "tiles", "tileset": "t", "data": [[1, 0], [0, 0]]}],
+              "material_map": {"image": "materials.png", "materials": {
+                  "floor": {"class": "decor", "color": "#808080"}, "lava": {"class": "hazard", "color": "#e04010"}}},
+              "collision": {"actorRadius": 1}, "spawns": [{"id": "start", "x": 16, "y": 24}],
+              "interactions": [{"id": "corner", "x": 20, "y": 4}]}
+    path = root / "map-bundle.json"
+    path.write_text(json.dumps(bundle, indent=1), encoding="utf-8")
+    return path
+
+
+_JS_DIRECT = """
+const answers = {};
+try { rt.createMapRuntime(job.bundle); answers.bare = "built"; } catch (error) { answers.bare = `${error.name}: ${error.message}`; }
+try { rt.createMapRuntime(job.bundle, {tileSolids: job.inputs.tileSolids}); answers.tilesOnly = "built"; }
+catch (error) { answers.tilesOnly = `${error.name}: ${error.message}`; }
+const world = rt.createMapRuntime(job.bundle, job.inputs);
+answers.valid = job.points.map(([x, y]) => rt.isValid(world, x, y));
+answers.free = job.lattice.map(([x, y]) => (rt.pointFree(world, x, y) ? 1 : 0));
+answers.routes = rt.traverseRoutes(world, {speed: 60}).ok;
+process.stdout.write(JSON.stringify(answers));
+"""
+
+
+@pytest.mark.node
+class ResolvedInputsTests(unittest.TestCase):
+    """The custom-engine route (references/map-presets.md): a game reads map-bundle.json itself and hands
+    map-runtime.mjs the tile collision and material grid that map_nav check writes into nav-grid.json (D2)."""
+
+    def test_nav_grid_runtime_inputs_make_the_runtime_answer_like_map_nav(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            path = tiled_hazard_map(root)
+            checked = run_cli([script_path("generate2dmap", "map_bundle"), "validate", "--bundle", path])
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            nav = run_cli([script_path("generate2dmap", "map_nav"), "check", "--bundle", path, "--output-dir",
+                           root / "nav"])
+            self.assertEqual(nav.returncode, 0, nav.stderr)
+            grid = json.loads((root / "nav" / "nav-grid.json").read_text(encoding="utf-8"))
+            blocking = NAV.read_blocking_set(path)
+            self.assertEqual(grid["runtimeInputs"], json.loads(json.dumps(NAV.runtime_inputs(blocking))))
+            self.assertEqual([solid["source"] for solid in grid["runtimeInputs"]["tileSolids"]], ["tiles:ground"])
+            points = [[8, 8], [28, 4], [16, 24]]  # in the wall tile, on the lava pixel, open floor
+            query = run_cli([script_path("generate2dmap", "map_nav"), "query", "--bundle", path,
+                             *[arg for x, y in points for arg in ("--point", f"{x},{y}")]])
+            expected = [point["valid"] for point in json.loads(query.stdout)["points"]]
+            self.assertEqual(expected, [False, False, True])
+            lattice = sample_points(32, 32)
+            result = run_node(_JS_DIRECT, {"bundle": json.loads(path.read_text(encoding="utf-8")),
+                                           "inputs": grid["runtimeInputs"], "points": points,
+                                           "lattice": lattice.tolist()})
+        self.assertRegex(result["bare"], r"^TypeError: layer \"ground\" is a tiles layer, but its tile collision")
+        self.assertRegex(result["tilesOnly"], r"^TypeError: material_map \(N8\) needs options\.materialGrid")
+        self.assertEqual(result["valid"], expected, "the runtime blocks the tile wall and the lava pixel")
+        np.testing.assert_array_equal(np.array(result["free"], bool),
+                                      blocking.model().centre_ok(lattice[:, 0], lattice[:, 1]))
+        self.assertTrue(result["routes"], "the corner interaction is walked around the wall and the lava")
+
+
 class RuntimeSourceTests(unittest.TestCase):
     def test_runtime_can_be_inlined_into_a_page(self):
         source = RUNTIME.read_text(encoding="utf-8")
@@ -426,7 +502,12 @@ class RuntimeSourceTests(unittest.TestCase):
             self.assertNotIn(marker, source.lower())
         self.assertNotRegex(source, r"\b(?:fetch|XMLHttpRequest|WebSocket|Math\.random|Date\.now|performance\.now)\b",
                             "the runtime is deterministic and offline")
-        self.assertRegex(source, r'export const RUNTIME_VERSION = "1\.1\.1";')  # 1.1.1: N10 tangent ellipses
+        # 1.1.1: N10 tangent ellipses; 1.1.2: N10 touching slivers, forge_nav's rect cuts, resolved tiles/materials
+        self.assertRegex(source, r'export const RUNTIME_VERSION = "1\.1\.2";')
+        self.assertEqual(SLIVER_PX_JS.findall(source), ["1e-9"])
+        self.assertEqual(NAV._SLIVER_PX, 1e-9)
+        self.assertIn("const EDGE_U_SLACK = 1e-12;", source)
+        self.assertEqual(NAV._EDGE_U_SLACK, 1e-12)
 
     def test_runtime_names_the_forge_nav_rule_book(self):
         source = RUNTIME.read_text(encoding="utf-8")

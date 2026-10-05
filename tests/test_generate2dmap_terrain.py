@@ -13,6 +13,7 @@ import copy
 import hashlib
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -957,6 +958,39 @@ class CliTests(TerrainCase):
         summary = json.loads(lines[0])
         self.assertEqual(Path(summary["manifest"]), (self.root / "tiles" / "terrain-bundle.json").absolute())
         self.assertTrue(summary["qc"]["passed"])
+
+    def test_a_published_fail_report_exits_1(self):
+        """D26 (review r2, finding 9): without --strict-qc a failing QA envelope is still published for inspection,
+        and the run exits 1 with 'error: published with QA status fail: <ids>'; --strict-qc publishes nothing."""
+        Image.new("RGBA", (64, 32), (80, 160, 60, 255)).save(self.root / "flat.png")  # contrast 0, equal variants
+        common = ["--input", self.root / "flat.png", "--rows", "2", "--cols", "4", "--terrain-row", "grass=0",
+                  "--terrain-row", "dirt=1"]
+        result = run_cli([SCRIPT, *common, "--output-dir", self.root / "flat"], "cp1252")
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(result.stderr.strip().splitlines()[-1],
+                         "error: published with QA status fail: contrast, variant_difference")
+        self.assertEqual(json.loads(result.stdout)["status"], "fail")
+        manifest = json.loads((self.root / "flat" / "terrain-bundle.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["qa"]["status"], "fail")
+        strict = run_cli([SCRIPT, *common, "--output-dir", self.root / "flat-strict", "--strict-qc"], "cp1252")
+        self.assertEqual(strict.returncode, 1)
+        self.assertIn("error: Terrain atlas QC failed", strict.stderr)
+        self.assertFalse((self.root / "flat-strict").exists())
+
+    def test_rows_and_cols_must_fit_the_atlas_before_any_per_cell_work(self):
+        """Review r2, finding 13: --cols 99999999 on a 64x64 atlas built rows x cols tile paths before the grid was
+        checked and ran for minutes; the grid is now checked against the atlas header first."""
+        Image.new("RGBA", (64, 64), (80, 160, 60, 255)).save(self.root / "in.png")
+        for rows, cols in (("1", "99999999"), ("65", "1")):
+            with self.subTest(rows=rows, cols=cols):
+                started = time.perf_counter()
+                result = run_cli([SCRIPT, "--input", self.root / "in.png", "--rows", rows, "--cols", cols,
+                                  "--terrain-row", "grass=0", "--output-dir", self.root / "o"], "cp1252", timeout=120)
+                self.assertLess(time.perf_counter() - started, 60)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertEqual(result.stderr.strip(), f"error: --rows {rows} and --cols {cols} do not fit the 64x64 "
+                                                        "atlas: every cell needs at least one pixel.")
+                self.assertFalse((self.root / "o").exists())
 
     def test_friendly_errors(self):
         cases = {
