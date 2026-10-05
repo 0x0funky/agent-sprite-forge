@@ -12,6 +12,7 @@ Account access and future model availability require live verification.
 | OpenAI Images | Text generation and reference edits; configurable size/quality/background | `generate_media.py image --provider openai` |
 | xAI Imagine Image | Generation and reference editing | `image --provider xai`; one reference per edit here |
 | xAI Imagine Video | Image-to-video, asynchronous jobs | `video --provider xai` and GET-only `resume` |
+| Any route above, in bulk | Many approved jobs with one consent list | `batch jobs.json`: dry-run first, at most 2 workers, no retries |
 | Grok Build | Host's native video tool when exposed | Existing host route; no bundled daemon or login automation |
 
 OpenAI's current documentation lists `gpt-image-2.5-sunburst` and
@@ -40,18 +41,42 @@ loop experiments, but motion velocity/pose continuity still needs inspection.
 
 USD list prices below are a dated snapshot, excluding tax and rejected/regenerated
 candidates. A four-second example is an arithmetic illustration, not a quoted bill.
+The adapter's estimates read the same rows from [prices.json](prices.json), where
+each row records its `source` and `verifiedAt` date; a request without a matching
+row is reported as unpriced rather than extrapolated.
 
-| xAI route | 720p output / second | One input image | 4-second example |
-| --- | ---: | ---: | ---: |
-| `grok-imagine-video-1.5` | $0.14 | $0.01 | $0.57 |
-| `grok-imagine-video-1.5-lite` | $0.03 | $0.01 | $0.13 |
-| `grok-imagine-video` | $0.07 | $0.002 | $0.282 |
+| xAI route | 720p output / second | One input image | 4-second example | verifiedAt |
+| --- | ---: | ---: | ---: | --- |
+| `grok-imagine-video-1.5` | $0.14 | $0.01 | $0.57 | 2026-10-05 |
+| `grok-imagine-video-1.5-lite` | $0.03 | $0.01 | $0.13 | 2026-10-05 |
+| `grok-imagine-video` | $0.07 | $0.002 | $0.282 | 2026-10-05 |
 
 Image-2.0 lists 1K low at $0.04/output, 2K medium at $0.08/output, plus $0.01 per
-input image. Last-frame/reference inputs may change charges. Re-check billing
-before batches; subscription quotas are not an API price model.
+input image (verifiedAt 2026-10-05). Other resolution and quality combinations, and
+480p or 1080p video, have no verified row yet. Last-frame/reference inputs may
+change charges; the estimate counts a last frame as one more input image. OpenAI
+image models have no verified row in this snapshot, so their estimates are null.
+Re-check billing before batches; subscription quotas are not an API price model.
 [xAI pricing](https://docs.x.ai/developers/pricing),
 [Video 1.5 Lite capabilities](https://docs.x.ai/developers/models/grok-imagine-video-1.5-lite).
+
+## Terms and output rights
+
+Generated images and videos are governed by the terms of the provider that made
+them, and so is what you may send as prompts and references. Read them before
+shipping generated assets, and keep the provider and model recorded in `job.json`
+as provenance. This survey is not legal advice.
+
+- OpenAI: [Terms of Use](https://openai.com/policies/terms-of-use/),
+  [Services Agreement](https://openai.com/policies/services-agreement/) (API
+  customers), [Usage Policies](https://openai.com/policies/usage-policies/).
+- xAI: [Terms of Service](https://x.ai/legal/terms-of-service),
+  [Enterprise Terms](https://x.ai/legal/terms-of-service-enterprise) (API
+  customers), [Acceptable Use Policy](https://x.ai/legal/acceptable-use-policy).
+
+These terms links were added on 2026-10-05 without fetching the pages (offline
+update); confirm they resolve, and which terms apply to your account, before relying
+on them.
 
 ## Researched, not implemented in this release
 
