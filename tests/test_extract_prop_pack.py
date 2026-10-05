@@ -22,7 +22,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw, ImageFilter
 
-from forge_testutils import (assert_cli_help, assert_valid_contract, contract_validator, load_script,
+from forge_testutils import (assert_cli_help, assert_valid_contract, load_script,
                              make_magenta_sheet, real_fixture, run_cli, script_path, SKILLS_DIR)
 
 PROPS = load_script("generate2dmap", "extract_prop_pack")
@@ -404,13 +404,15 @@ def test_legacy_native_alpha_with_floor_matches_cfed170(tmp_path):
         assert np.array_equal(pixels(tmp_path / "out" / item["image"]), hidden_rgb_zeroed(np.asarray(prop)))
 
 
-def test_remove_bg_magenta_wrapper_is_the_cfed170_keyer():
-    """extract_platform_strip still imports remove_bg_magenta from this module (until B11 lands)."""
-    sheet = aa_chroma_sheet(2, 2, 40).convert("RGBA")
-    original = np.asarray(sheet).copy()
-    keyed = PROPS.remove_bg_magenta(sheet, 100, 150)
-    assert np.array_equal(np.asarray(keyed), np.asarray(_cfed170_remove_bg_magenta(sheet, 100, 150)))
-    assert np.array_equal(np.asarray(sheet), original)
+def test_dead_remove_bg_magenta_wrapper_is_gone():
+    """D10: nothing imports extract_prop_pack.remove_bg_magenta any more (extract_platform_strip keys with
+    forge_matte.legacy_hard_key itself), so the wrapper is deleted; keying is key_sheet's."""
+    assert not hasattr(PROPS, "remove_bg_magenta")
+    scripts = SKILLS_DIR / "generate2dmap" / "scripts"
+    for path in scripts.glob("*.py"):
+        assert "remove_bg_magenta" not in path.read_text(encoding="utf-8") or path.name in (
+            "forge_matte.py", "extract_prop_pack.py"), path.name
+    assert "def remove_bg_magenta" not in (scripts / "extract_prop_pack.py").read_text(encoding="utf-8")
 
 
 @pytest.mark.perf
@@ -1104,14 +1106,19 @@ def test_cli_qc_failure_publishes_nothing(tmp_path):
     assert result.stdout == "" and sorted(path.name for path in tmp_path.iterdir()) == ["props.png"]
 
 
-def test_cli_all_empty_exits_1_and_usage_errors_exit_1(tmp_path):
+def test_cli_all_empty_exits_1_and_usage_errors_exit_2(tmp_path):
+    """D26: a failed run exits 1 ('error: ...'); a usage error keeps argparse's exit 2 ('usage: ... error: ...')."""
     native_sheet(32, 16, {(2, 2, 4, 4): (90, 60, 30, 255)}).save(tmp_path / "props.png")
     result = run_cli([SCRIPT, "--input", tmp_path / "props.png", "--rows", "1", "--cols", "2", "--output-dir",
                       tmp_path / "out", "--min-component-area", "500"])
     assert result.returncode == 1 and "error: No prop was accepted" in result.stderr
     assert not (tmp_path / "out").exists()
     usage = run_cli([SCRIPT, "--input", tmp_path / "props.png"])
-    assert usage.returncode == 1 and "error: the following arguments are required: --output-dir" in usage.stderr
+    assert usage.returncode == 2 and usage.stderr.startswith("usage: ")
+    assert "error: the following arguments are required: --output-dir" in usage.stderr
+    bad_value = run_cli([SCRIPT, "--input", tmp_path / "props.png", "--rows", "1", "--cols", "2",
+                         "--output-dir", tmp_path / "out", "--world-scale", "abc"])
+    assert bad_value.returncode == 2 and "Traceback" not in bad_value.stderr and not (tmp_path / "out").exists()
 
 
 def test_cli_summary_is_one_ascii_line_with_cjk_labels(tmp_path):
@@ -1126,41 +1133,7 @@ def test_cli_summary_is_one_ascii_line_with_cjk_labels(tmp_path):
 
 # --------------------------------------------------------------------------- proposed crop-box contract
 
-CROP_BOXES_DEF = {  # handoff/B10-map-prop-pack.md section 5, request 1 (common.schema.json /$defs/cropBoxes)
-    "description": "forge-crop-boxes/v1: measured crop boxes in sheet pixels (DOC-18). extract_prop_pack reads it "
-                   "with --boxes-file and writes it as auto-boxes.json; assemble_frames --crop-boxes should read it "
-                   "too. Readers also accept the legacy {props: [{label, source_box}]} object and a bare list of boxes.",
-    "type": "object",
-    "required": ["items"],
-    "properties": {
-        "schema": {"const": "forge-crop-boxes/v1"},
-        "source": {"$ref": "#/$defs/fileRef"},
-        "items": {"type": "array", "minItems": 1, "items": {
-            "type": "object",
-            "required": ["id", "box"],
-            "properties": {
-                "id": {"type": "string", "minLength": 1},
-                "box": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 4, "maxItems": 4},
-                "display_name": {"type": "string", "minLength": 1},
-                "anchor_px": {"$ref": "#/$defs/point2"},
-            },
-        }},
-    },
-}
-
-
 def validate_crop_boxes(document: dict) -> None:
-    """Validate against the cropBoxes def requested in handoff/B10-map-prop-pack.md section 5,
-    applied in memory to the vendored common.schema.json."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    common = json.loads((SKILLS_DIR / "generate2dmap" / "references" / "schemas" / "common.schema.json")
-                        .read_text(encoding="utf-8"))
-    common["$defs"]["cropBoxes"] = CROP_BOXES_DEF
-    registry = Registry().with_resource(common["$id"], DRAFT202012.create_resource(common))
-    validator = Draft202012Validator({"$ref": f"{common['$id']}#/$defs/cropBoxes"}, registry=registry)
-    errors = [error.message for error in validator.iter_errors(document)]
-    assert not errors, errors
-    assert contract_validator("common", "fileRef", skill="generate2dmap").is_valid(document["source"])
+    """auto-boxes.json against the vendored common cropBoxes contract, which holds handoff B10's
+    section 5 request (per D33)."""
+    assert_valid_contract(document, "common", "cropBoxes", skill="generate2dmap")

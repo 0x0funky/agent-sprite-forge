@@ -28,7 +28,6 @@ from pathlib import Path
 from typing import Any, NamedTuple, Sequence
 
 import numpy as np
-from PIL import Image
 
 _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
@@ -40,7 +39,7 @@ import forge_matte  # noqa: E402
 SCHEMA = "generate2dmap.prop_pack.v2"
 CROP_BOXES_SCHEMA = "forge-crop-boxes/v1"
 TOOL_NAME = "extract_prop_pack"
-TOOL_VERSION = "2.0.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29: QA envelopes carry the package version
 MANIFEST_NAME = "prop-pack.json"
 AUTO_BOXES_NAME = "auto-boxes.json"
 
@@ -86,10 +85,6 @@ NOT_PROVEN = (
 
 # --------------------------------------------------------------------------- small helpers
 
-def _round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
-
-
 def _number(value: float) -> int | float:
     """JSON-friendly number: whole values become int."""
     return int(value) if float(value).is_integer() else float(value)
@@ -101,20 +96,6 @@ def _touches_edge(box: Sequence[int] | None, width: int, height: int, margin: in
         return False
     x0, y0, x1, y1 = box
     return x0 <= margin or y0 <= margin or x1 >= width - margin or y1 >= height - margin
-
-
-def _local_dilate_square(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Chebyshev dilation by ``radius`` px with clipped windows (forge_matte._dilate, forge_core._dilate_square)."""
-    if radius <= 0:
-        return mask.copy()
-    size = 2 * radius + 1
-    table = np.pad(np.pad(mask, radius).astype(np.int32).cumsum(0).cumsum(1), ((1, 0), (1, 0)))
-    return (table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]) > 0
-
-
-def remove_bg_magenta(img: Image.Image, threshold: int, edge_threshold: int) -> Image.Image:
-    """The cfed170 magenta keyer (forge_matte.legacy_hard_key, bit-exact); kept for extract_platform_strip."""
-    return forge_matte.legacy_hard_key(img, threshold, edge_threshold)
 
 
 def clean_edges(pixels: np.ndarray, depth: int) -> None:
@@ -135,7 +116,7 @@ def clean_edges(pixels: np.ndarray, depth: int) -> None:
 
 def auto_min_area(cell_area: int) -> int:
     """--min-component-area auto for a cell of ``cell_area`` px."""
-    scaled = _round_half_up(MIN_AREA_REFERENCE * cell_area / MIN_AREA_REFERENCE_CELL)
+    scaled = forge_core.round_half_up(MIN_AREA_REFERENCE * cell_area / MIN_AREA_REFERENCE_CELL)
     return max(1, min(MIN_AREA_REFERENCE, scaled))
 
 
@@ -143,7 +124,7 @@ def edge_fringe(pixels: np.ndarray) -> tuple[int, int]:
     """(fringe px, band px): visible pixels within 2 px of transparency, and those whose
     magenta excess min(R, B) - G exceeds the despill margin (MAP-03)."""
     alpha = pixels[..., 3]
-    band = _local_dilate_square(alpha == 0, EDGE_FRINGE_BAND_PX) & (alpha > 0)
+    band = forge_core.dilate_square(alpha == 0, EDGE_FRINGE_BAND_PX) & (alpha > 0)
     rgb = pixels[..., :3].astype(np.int16)
     excess = np.minimum(rgb[..., 0], rgb[..., 2]) - rgb[..., 1]
     return int(np.count_nonzero(band & (excess > DESPILL_MARGIN))), int(np.count_nonzero(band))
@@ -303,7 +284,7 @@ def read_crop_boxes(path: Path, size: tuple[int, int]) -> list[CellSpec]:
     the sheet. Items may also carry anchor_px (box pixels), display_name,
     footprint, solid, contact, occlusion_class and occupant_policy.
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    data = forge_core.read_json(path)  # D28: UTF-8 with an optional BOM
     if isinstance(data, dict) and data.get("schema", CROP_BOXES_SCHEMA) != CROP_BOXES_SCHEMA:
         raise ValueError(f"Crop specification schema {data['schema']!r} is not {CROP_BOXES_SCHEMA!r}.")
     entries: Any = None
@@ -402,7 +383,7 @@ def find_auto_boxes(pixels: np.ndarray, *, gap: int, attach: int, margin: int,
     seeds = big[labels]
     owner = np.zeros(alpha.shape, np.int32)
     if seeds.any():
-        groups, _ = forge_core.label_components(_local_dilate_square(seeds, (gap + 1) // 2), 8)
+        groups, _ = forge_core.label_components(forge_core.dilate_square(seeds, (gap + 1) // 2), 8)
         owner[seeds] = groups[seeds]
         _grow_labels(owner, alpha > 0, attach)
     ys, xs = np.nonzero(owner)
@@ -564,7 +545,7 @@ class CellResult:
 
 
 def _support_rows(top: int, bottom: int) -> int:
-    return max(1, _round_half_up((bottom - top) * SUPPORT_BAND_FRACTION))
+    return max(1, forge_core.round_half_up((bottom - top) * SUPPORT_BAND_FRACTION))
 
 
 def _measured_anchor(frame: np.ndarray, selection: np.ndarray, mode: str) -> tuple[int, int]:
@@ -574,7 +555,7 @@ def _measured_anchor(frame: np.ndarray, selection: np.ndarray, mode: str) -> tup
         geometry = selection
     _, top, _, bottom = forge_core.subject_bbox(geometry)
     x, y = forge_core.anchor_from_mask(geometry, mode, _support_rows(top, bottom))
-    return _round_half_up(x), _round_half_up(y)
+    return forge_core.round_half_up(x), forge_core.round_half_up(y)
 
 
 def suggest_footprint(image: np.ndarray, anchor: Sequence[float], shape: str,
@@ -812,9 +793,12 @@ def read_manifest(path: str | os.PathLike) -> dict[str, Any]:
     v2 is returned as written. v1 items gain cell_box, source_rect, padding,
     display_name and a bbox anchor (bottom centre of the art, ``anchor_source``
     ``derived-v1``); v1 keep-empty items (output_size [0, 0]) become placeholders.
-    v1 never recorded trimming, so its boxes assume --trim-border 0.
+    v1 never recorded trimming, so its boxes assume --trim-border 0. An item
+    without a source_box (not written by the extractor) is passed through as is.
+    compose_layered_preview reads v1 packs through this function (D10). JSON is
+    read with forge_core.read_json (a BOM is tolerated, D28).
     """
-    data = json.loads(Path(path).read_text(encoding="utf-8-sig"))
+    data = forge_core.read_json(path)
     if not isinstance(data, dict) or not isinstance(data.get("accepted"), list):
         raise ValueError(f"{path} is not a prop-pack manifest.")
     if "schema" in data:
@@ -823,7 +807,10 @@ def read_manifest(path: str | os.PathLike) -> dict[str, Any]:
         return data
     items = []
     for item in data["accepted"]:
-        cell = item["source_box"]
+        cell = item.get("source_box") if isinstance(item, dict) else None
+        if not (isinstance(cell, list) and len(cell) == 4):  # a hand-made v1 item: nothing to derive from
+            items.append(item)
+            continue
         padded, content = item.get("padded_crop_bbox"), item.get("crop_bbox")
         view = {**item, "display_name": item["label"], "cell_box": list(cell), "anchor_source": "derived-v1"}
         if item.get("output_size") == [0, 0] or not padded or not content:
@@ -834,7 +821,7 @@ def read_manifest(path: str | os.PathLike) -> dict[str, Any]:
                 "source_rect": [cell[0] + padded[0], cell[1] + padded[1], cell[0] + padded[2], cell[1] + padded[3]],
                 "padding": [content[0] - padded[0], content[1] - padded[1], padded[2] - content[2],
                             padded[3] - content[3]],
-                "anchor_px": [_round_half_up((content[0] + content[2]) / 2) - padded[0], content[3] - padded[1]],
+                "anchor_px": [forge_core.round_half_up((content[0] + content[2]) / 2) - padded[0], content[3] - padded[1]],
             })
         items.append(view)
     return {**data, "schema_version": 1, "accepted": items}
@@ -850,13 +837,13 @@ def _relative_or_none(path: Path, base: Path) -> str | None:
 
 
 def _manifest_relative(path: Path, base: Path) -> str:
-    """Manifest-relative POSIX path, or the bare file name when none exists (another drive)."""
-    return _relative_or_none(Path(path).resolve(), Path(base).resolve()) or Path(path).name
+    """Manifest-relative POSIX path, or the bare file name when none exists (another drive):
+    forge_core.manifest_path (D30)."""
+    return forge_core.manifest_path(path, base)
 
 
 def _file_ref(path: Path, base: Path) -> dict[str, Any]:
-    return {"path": _manifest_relative(path, base), "sha256": forge_core.sha256_file(path),
-            "bytes": Path(path).stat().st_size}
+    return forge_core.file_ref(path, base)
 
 
 def final_paths(args: argparse.Namespace) -> tuple[Path, Path]:
@@ -966,17 +953,9 @@ def _publish(results: Sequence[CellResult], manifest: dict[str, Any], destinatio
 
 # --------------------------------------------------------------------------- CLI
 
-class _Parser(argparse.ArgumentParser):
-    """argparse with the skill convention for usage errors: 'error: ...' on stderr, exit status 1."""
-
-    def error(self, message: str) -> None:  # type: ignore[override]
-        self.print_usage(sys.stderr)
-        print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
-        raise SystemExit(1)
-
-
 def build_parser() -> argparse.ArgumentParser:
-    parser = _Parser(
+    """argparse with its own convention for usage errors (D26): 'usage: ... error: ...', exit status 2."""
+    parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=("examples (one line each, run from the project root):\n"
                 '  python "<skill-dir>/scripts/extract_prop_pack.py" --input raw/props.png --rows 2 --cols 2'
@@ -1071,11 +1050,11 @@ def _auto_specs(args: argparse.Namespace, options: Options,
                 cleaned: np.ndarray) -> tuple[list[CellSpec], np.ndarray, dict[str, Any]]:
     height, width = cleaned.shape[:2]
     short_side = min(width, height)
-    gap = args.auto_box_gap if args.auto_box_gap is not None else max(1, _round_half_up(short_side / AUTO_GAP_DIVISOR))
+    gap = args.auto_box_gap if args.auto_box_gap is not None else max(1, forge_core.round_half_up(short_side / AUTO_GAP_DIVISOR))
     objects, owner, report = find_auto_boxes(
-        cleaned, gap=gap, attach=max(1, _round_half_up(short_side / AUTO_ATTACH_DIVISOR)),
+        cleaned, gap=gap, attach=max(1, forge_core.round_half_up(short_side / AUTO_ATTACH_DIVISOR)),
         margin=max(options.component_padding, options.edge_touch_margin + 1),
-        min_solid_area=max(1, _round_half_up(width * height / AUTO_AREA_PER_SOLID_PX)))
+        min_solid_area=max(1, forge_core.round_half_up(width * height / AUTO_AREA_PER_SOLID_PX)))
     if not objects:
         raise ValueError("auto-boxes found no prop (no part with alpha >= 128 is large enough); nothing was published.")
     tokens = read_label_tokens(args)
@@ -1207,17 +1186,9 @@ def extract(args: argparse.Namespace) -> dict[str, Any]:
     return manifest
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _cli(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        manifest = extract(args)
-    except (ValueError, OSError) as error:
-        print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
-    except Exception as error:  # never show a traceback to the user
-        print(f"error: unexpected {type(error).__name__}: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+    manifest = extract(args)
     output_dir, manifest_path = final_paths(args)
     statuses = [item["status"] for item in manifest["accepted"]]
     print(json.dumps({
@@ -1227,6 +1198,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         "warnings": [forge_core.ascii_text(text) for text in manifest["warnings"]],
     }, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI under forge_core.run_cli (D26, D27): usage errors exit 2, a failed run prints
+    'error: <message>' and exits 1, and no traceback reaches the user."""
+    return forge_core.run_cli(_cli, argv)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,7 @@
 
 A prop pack batches compact static props into one generated sheet, then extracts each object into its own transparent PNG with a ground anchor. It trades per-prop control for fewer generation calls, so use it only when the props share style, camera, scale and quality bar. Choose the kit from the scene's gameplay roles and reuse each accepted prop across placements; never invent props to fill a sheet.
 
-Run commands from the user's project root; `<skill-dir>` is this skill's folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs stay in the project. Success prints one line of ASCII JSON (output folder, manifest, counts, QA status, warnings); failures print `error: ...` on stderr and exit 1.
+Run commands from the user's project root; `<skill-dir>` is this skill's folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs stay in the project. Success prints one line of ASCII JSON (output folder, manifest, counts, QA status, warnings). A usage error (an unknown or malformed flag) exits 2; any other failure prints `error: ...` on stderr and exits 1.
 
 ## Asset strategy gate
 
@@ -86,7 +86,7 @@ Every accepted item records:
 - `component_count`, `kept_area`, `dropped_components`, `dropped_area`, `edge_touch`, and for chroma sheets `edge_fringe_px` (tinted pixels within 2 px of transparency).
 - Optional `footprint`, `solid`, `contact`, `occlusion_class`, `occupant_policy`, and `world_size`/`world_anchor` with `--world-scale`.
 
-The manifest also keeps the settings (despill, hygiene report, geometry, grid rounding) and a QA envelope: `accepted`, `edge_touch`, `dropped_area`, `strategy_aspect`, `edge_fringe` (warn above 2% of edge pixels) and, with auto boxes, `auto_box_unowned`, plus what the checks do not prove and the sha256 of every input and output. Same inputs give the same bytes. The cfed170 v1 keys (`source_box`, `crop_bbox`, `padded_crop_bbox`, `output_size`, ...) are still written, in cell coordinates. `extract_prop_pack.read_manifest()` reads v1 manifests as v2-shaped documents with a bottom-centre anchor.
+The manifest also keeps the settings (despill, hygiene report, geometry, grid rounding) and a QA envelope: `accepted`, `edge_touch`, `dropped_area`, `strategy_aspect`, `edge_fringe` (warn above 2% of edge pixels) and, with auto boxes, `auto_box_unowned`, plus what the checks do not prove and the sha256 of every input and output. Same inputs give the same bytes. The cfed170 v1 keys (`source_box`, `crop_bbox`, `padded_crop_bbox`, `output_size`, ...) are still written, in cell coordinates. `extract_prop_pack.read_manifest()` reads v1 manifests as v2-shaped documents with a bottom-centre anchor (`anchor_source` `derived-v1`); `compose_layered_preview.py` reads v1 packs through it, so their props stand on the art's bottom edge. Compose finds a pack's manifest beside a prop image or one folder up (`<pack>/<label>/prop.png` with `<pack>/prop-pack.json`; `--prop-pack` names others), places the prop by its `anchor_px` and audits it with its `footprint` and `solid`; it refuses a manifest anchor whose image sha256 no longer matches.
 
 ## Anchors, footprints and occlusion
 
@@ -94,10 +94,12 @@ The manifest also keeps the settings (despill, hygiene report, geometry, grid ro
 
 `--world-scale` (for example `0.5` or `3/8`) adds transparent padding so the anchor and the image size scale to whole pixels; an integer placement at that scale then has no rounding error (`world_size`, `world_anchor`). Use an exact fraction; a scale needing more than a 64 px padding step is refused.
 
-`--suggest-footprint ellipse|rect` adds a ground footprint measured from the bottom quarter of the art: width is the run of columns at least half covered there (a trunk, not the canopy), depth is width x `--footprint-depth-ratio` (0.5), and the offset from `anchor_px` puts its front edge on the ground line. Footprints are in prop pixels and are scaled once by the instance scale; never inflate them again for actor size (map collision accounts for the actor). Suggestions are starting points: review them over the art and author the final footprint.
+`--suggest-footprint ellipse|rect` adds a ground footprint measured from the bottom quarter of the art: width is the run of columns at least half covered there (a trunk, not the canopy), depth is width x `--footprint-depth-ratio` (0.5), and the offset from `anchor_px` puts its front edge on the ground line. Footprints are in prop pixels and are scaled once by the instance scale; never inflate them again for actor size (map collision accounts for the actor). `footprint.basis` names that space: `prop_px` (the default, which suggestions write), `world_px` for a footprint authored in world pixels that is never scaled, and `image_px`, the legacy name of `prop_px` that readers still accept. Suggestions are starting points: review them over the art and author the final footprint.
 
 - `occlusion_class`: `low` (stays below the actor's body), `tall` (can hide an actor behind it; y-sort by the anchor), `foreground` (always drawn over actors).
 - `occupant_policy`: `y_sort` (ordinary depth sorting), `rear_shift_and_fade` (when an actor occupies the prop's cell, shift the decoration rear-ward and fade it), `static_front`, `static_back` (fixed order). Render priority alone is not an occlusion policy.
+
+Map bundles use accepted items directly. A bundle prop `{"pack": "props/prop-pack.json", "label": "lantern"}` takes the item's `image`, `sha256`, `anchor_px`, `footprint`, `solid`, `occlusion_class` and `occupant_policy` (fields written beside `pack` override them); an object whose `prop` is a label in the bundle's `prop_packs` takes only the item's art. [layered-map-contract.md](layered-map-contract.md) defines the two enums, the art lookup order and the collision rules.
 
 ## Pixel and code-art props
 
