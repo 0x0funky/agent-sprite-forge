@@ -1,0 +1,2 @@
+# codeart2d SVG rasterisation only; PixelSpec rendering needs just requirements.txt.
+resvg-py>=0.5,<0.6

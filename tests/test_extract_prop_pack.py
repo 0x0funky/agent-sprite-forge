@@ -1,4 +1,4 @@
-"""Behavioral regression tests for map composition, extraction and coverage."""
+"""Behavioral regression tests for prop-pack extraction (extract_prop_pack)."""
 from __future__ import annotations
 
 import importlib.util
@@ -22,44 +22,7 @@ def load(name):
     return module
 
 
-COMPOSE = load("compose_layered_preview")
 PROPS = load("extract_prop_pack")
-PARALLAX = load("validate_parallax")
-PLATFORM = load("extract_platform_strip")
-
-
-class CompositionTests(unittest.TestCase):
-    def test_collects_all_layers_including_actor(self):
-        entries = COMPOSE.load_props({"props": [{"id": "tree"}], "objects": [{"id": "chest"}],
-                                     "actors": [{"id": "hero"}], "foreground": [{"id": "roof"}]})
-        self.assertEqual([item["id"] for item in entries], ["tree", "chest", "hero", "roof"])
-        self.assertEqual(entries[-1]["layer"], "foreground")
-
-    def test_source_anchor_scales_with_art(self):
-        self.assertEqual(COMPOSE.placement_xy({"x": 80, "y": 100, "anchorPx": [10, 30]}, 40, 80, (20, 40)), (60, 40))
-
-    def test_invalid_anchor_fails(self):
-        for prop in ({"anchor": "misspelled"}, {"anchorPx": [2, 50]}, {"anchorPx": [float("nan"), 0]}):
-            with self.subTest(prop=prop), self.assertRaises(ValueError):
-                COMPOSE.placement_xy(prop, 20, 40)
-
-    def test_nearest_preserves_alpha_and_clipping_is_reported(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = Image.new("RGBA", (2, 2), (255, 0, 255, 128))
-            source.putpixel((1, 1), (0, 0, 0, 0))
-            source.save(root / "prop.png")
-            canvas = Image.new("RGBA", (10, 10))
-            report = COMPOSE.paste_prop(canvas, {"image": "prop.png", "w": 4, "h": 4, "x": -1, "y": 0, "anchor": "top-left"}, [root], "nearest")
-            self.assertEqual(canvas.getpixel((0, 0)), (255, 0, 255, 128))
-            self.assertTrue(report["clipped"])
-
-    def test_rejects_invalid_opacity(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            Image.new("RGBA", (2, 2)).save(root / "p.png")
-            with self.assertRaises(ValueError):
-                COMPOSE.paste_prop(Image.new("RGBA", (4, 4)), {"image": "p.png", "opacity": float("nan")}, [root])
 
 
 class PropExtractionTests(unittest.TestCase):
@@ -217,93 +180,6 @@ class PropExtractionTests(unittest.TestCase):
                 PROPS.extract(args)
             self.assertEqual(path.read_bytes(), original)
             self.assertFalse((root / "out").exists())
-
-
-class ParallaxTests(unittest.TestCase):
-    def plan(self):
-        return {"viewport": [32, 16], "camera": {"x": [0, 64], "zoom": [1, 2]},
-                "layers": [{"id": "sky", "role": "sky", "image": "sky.png", "alpha": "opaque", "scroll_factor": [0, 0]},
-                           {"id": "near", "role": "foreground", "image": "near.png", "alpha": "transparent", "repeat": [True, False]}]}
-
-    def fixture(self, root):
-        Image.new("RGB", (32, 16), "blue").save(root / "sky.png")
-        layer = Image.new("RGBA", (32, 16))
-        layer.putpixel((5, 5), (10, 200, 10, 255))
-        layer.save(root / "near.png")
-
-    def test_opaque_sky_and_real_alpha_pass(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.fixture(root)
-            report = PARALLAX.validate_plan(self.plan(), root)
-            self.assertTrue(report["passed"])
-            self.assertFalse(report["layers"][1]["repeat_seams"][0]["seamless_verified"])
-
-    def test_camera_extreme_gap_is_found(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.fixture(root)
-            plan = self.plan()
-            plan["layers"][0]["scroll_factor"] = [1, 0]
-            report = PARALLAX.validate_plan(plan, root)
-            self.assertFalse(report["passed"])
-            self.assertTrue(any("cover" in issue for issue in report["issues"]))
-
-    def test_fake_alpha_fails(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.fixture(root)
-            Image.new("RGB", (32, 16), "gray").save(root / "near.png")
-            self.assertFalse(PARALLAX.validate_plan(self.plan(), root)["passed"])
-
-    def test_report_cannot_alias_image(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            self.fixture(root)
-            with self.assertRaisesRegex(ValueError, "aliases"):
-                PARALLAX.check_report_destination(root / "sky.png", root / "plan.json", self.plan())
-
-
-class PlatformTests(unittest.TestCase):
-    def fixture(self, root, hole=False):
-        image = Image.new("RGBA", (24, 8))
-        for x in range(24):
-            for y in range(2, 6):
-                image.putpixel((x, y), (110, 80, 60, 255))
-        if hole:
-            image.putpixel((12, 2), (0, 0, 0, 0))
-        image.save(root / "strip.png")
-        spec = {"surface_y_px": 2, "collision_depth_px": 4,
-                "pieces": [{"id": name, "role": role, "source_box": [index * 8, 0, (index + 1) * 8, 8]}
-                           for index, (name, role) in enumerate(zip(("left", "mid", "right"), PLATFORM.ROLES))]}
-        (root / "strip.json").write_text(json.dumps(spec), encoding="utf-8")
-        return PLATFORM.build_parser().parse_args([
-            "--input", str(root / "strip.png"), "--spec", str(root / "strip.json"),
-            "--output-dir", str(root / "out"), "--background-mode", "native_alpha", "--strict-qc"])
-
-    def test_fixed_geometry_and_repeated_middle(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            result = PLATFORM.extract(self.fixture(root))
-            self.assertTrue(result["qc"]["passed"])
-            self.assertFalse(result["processing"]["resized"])
-            self.assertEqual(result["preview"]["size"], [40, 8])
-            self.assertEqual(result["pieces"][0]["anchor_px"], [0, 2])
-
-    def test_structural_hole_fails_without_publishing(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            with self.assertRaisesRegex(ValueError, "coverage fails"):
-                PLATFORM.extract(self.fixture(root, hole=True))
-            self.assertFalse((root / "out").exists())
-
-    def test_existing_output_is_not_overwritten(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            args = self.fixture(root)
-            (root / "out").mkdir()
-            with self.assertRaises(FileExistsError):
-                PLATFORM.extract(args)
 
 
 if __name__ == "__main__":
