@@ -11,7 +11,9 @@ lattice) has none, and this tool never invents one.
 
 The new --output-dir holds <stem>.png (1x), <stem>@<N>x.png (--upscale N),
 indexed/<stem>.png (--indexed), palette.json and pixel-reduce-qa.json. On
-success one ASCII JSON line names the folder and the QA file.
+success one ASCII JSON line names the folder and the QA file. Usage errors exit
+2 (argparse); every other failure prints one "error: ..." line, publishes nothing
+and exits 1.
 
 Example: python pixel_reduce.py --input hero-6x.png --output-dir hero-1x
 """
@@ -203,9 +205,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             not_proven=["Fractional grids (a non-integer pixel size) are not detected.",
                         "Whether the logical image keeps the art's intent: look at the 1x and upscaled output."]
                        + (["The grid was forced (--force): the reduction is lossy."] if refused else []),
-            inputs=[fp.file_ref(path, stage) for path in inputs]
-                   + ([] if built else [fp.file_ref(args.palette, stage)]),
-            outputs=[fp.file_ref(path, stage) for path in outputs],
+            inputs=[forge_core.file_ref(path, stage) for path in inputs]
+                   + ([] if built else [forge_core.file_ref(args.palette, stage)]),
+            outputs=[forge_core.file_ref(path, stage) for path in outputs],
             images=details, palette={"colors": len(palette), "built": built,
                                      "transparent_index": palette.transparent_index})
         forge_core.write_json(stage / "pixel-reduce-qa.json", envelope)
