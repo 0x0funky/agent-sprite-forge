@@ -135,6 +135,34 @@ def test_layout_planning_prefers_the_largest_envelope_and_respects_a_forced_grid
     assert forced["layout"]["empty_cells"] == 1 and forced["cells"][8]["used"] is False
 
 
+def test_huge_counts_fail_fast_and_the_bounded_search_finds_every_grid(tmp_path):
+    """r2-conventions finding 13: --frames 99999999 spun at 100% CPU for minutes, because the layout search
+    visited every rows x cols pair (O(frames^2)). Grids hold at most MAX_CELLS cells, the search visits only the
+    columns that fit, and huge counts fail at once with one error line (a hang hits the 30 s timeout here)."""
+    for args, message in ((["--frames", "99999999"], "--frames must be at most 1024"),
+                          (["--frames", "1025"], "--frames must be at most 1024"),
+                          (["--frames", "8", "--rows", "99999", "--cols", "99999"], "at most 1024 cells"),
+                          (["--frames", "8", "--rows", "-2", "--cols", "-4"], "must be positive"),
+                          (["--frames", "8", "--budget", "10000000000"], "--budget")):
+        result = run_cli([SCRIPT, *args, "--output-dir", tmp_path / "bad"], timeout=30)
+        assert result.returncode == 1 and message in result.stderr, (args, result.stderr)
+        assert result.stderr.startswith("error:") and not (tmp_path / "bad").exists(), (args, result.stderr)
+    loose = plan_of(run("--frames", 8, "--max-empty", 99999999, "--output-dir", tmp_path / "loose"))
+    assert (loose["layout"]["rows"], loose["layout"]["cols"]) == (2, 4)
+    widest = pg.candidate_layouts(pg.MAX_CELLS, ["1:1"], envelope_aspect=1.0, safe=0.15, max_empty=10 ** 9)
+    assert widest[0]["rows"] * widest[0]["cols"] == pg.MAX_CELLS == 1024
+    assert all(item["rows"] * item["cols"] == pg.MAX_CELLS for item in widest)
+    for frames in (1, 7, 8, 9, 16):  # the same grids as the old full search, which tried every rows x cols pair
+        for max_empty in (0, 1, 3):
+            found = {(item["aspect"], item["rows"], item["cols"])
+                     for item in pg.candidate_layouts(frames, list(pg.STANDARD_ASPECTS), envelope_aspect=1.0,
+                                                      safe=0.15, max_empty=max_empty)}
+            full = {(aspect, rows, cols) for aspect in pg.STANDARD_ASPECTS
+                    for rows in range(1, frames + max_empty + 1) for cols in range(1, frames + max_empty + 1)
+                    if frames <= rows * cols <= frames + max_empty}
+            assert found == full, (frames, max_empty)
+
+
 def test_layout_only_guide_and_input_errors(tmp_path):
     plan = plan_of(run("--frames", 4, "--output-dir", tmp_path / "layout"))
     assert plan["phases"] == [] and {item["id"]: item for item in plan["qa"]["checks"]}["leg_alternation"][
