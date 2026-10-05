@@ -98,7 +98,29 @@ Agent Sprite Forge 不是一包 prompt。Agent 決定規劃與美術來源；det
   </tr>
 </table>
 
-<!-- LIVE:codex-fox -->
+### 實機測試（2026-10-06）
+
+全新、沒有對話記錄的 session，只給 skill 和一句一般需求。完整數據見 [docs/validation-2026-10-06.md](./docs/validation-2026-10-06.md)。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./src/validation/claude-slime-fx.gif" alt="Claude Code 用程式碼畫的 32x32 史萊姆：待機、跳躍、受擊與受擊特效" width="288" />
+      <img src="./src/validation/claude-map-collision.png" alt="16x16 tile 草地與水域地圖（含碰撞疊圖）" width="288" />
+      <br />
+      <strong>Claude Code + plugin，一句中文指令</strong>
+      <br />
+      32x32 史萊姆（待機、跳躍、受擊）、受擊特效，加一張有碰撞的 16x16 tile 地圖，3 分鐘完成（US$1.32）。圖是程式碼畫的，也會明確標示。<code>map_bundle validate</code> 通過，所有出生點和出口都走得到。
+    </td>
+    <td align="center" width="50%">
+      <img src="./src/validation/codex-fox-old-vs-new.gif" alt="舊版生圖狐狸跑步 vs 新版程式碼繪製狐狸" width="404" />
+      <br />
+      <strong>Codex：和 2026-10-05 冷啟動測試同一個狐狸跑步需求</strong>
+      <br />
+      48 px 的像素角色現在會走 <code>codeart2d</code>。跨格溢出、半透明雜點和雜色全部歸零，不需要手動修正，還附上 Aseprite 和 Godot 匯出。取捨是：左邊舊版用生圖模型做的狐狸，動作比較生動。
+    </td>
+  </tr>
+</table>
 
 ### Engine-Ready Prototypes
 
@@ -404,7 +426,22 @@ layered_raster + y_sorted_props + precise_shapes + trigger_zones + raw_canvas
 
 `video2dsprite` 的動作來源：host 的圖生影片工具、ACP 模式的 Grok CLI（VERIFIED 之後）、經你同意的 xAI API，或你已有的影片。核准一張原畫，以記錄下來的轉換準備輸入，用固定鏡頭生成單一動作，再去背、對位、挑循環或重新計時、封裝並驗證。精準的像素動畫仍建議用 sheet；影片不保證比較小、比較省解碼或無縫。
 
-<!-- LIVE:grok-video -->
+**實機測試（Grok 1.0.40 ACP 模式，生成 1 次，角色和 2026-10-05 測試相同）：**
+
+<p align="center">
+  <img src="./src/validation/grok-old-vs-new-loop.gif" alt="同一支 Grok 影片：舊去背 vs 0.4.0 去背，自動選出的循環" width="360" />
+  <img src="./src/validation/grok-old-vs-new-fringe-2x.png" alt="2 倍放大：舊版有洋紅描邊，0.4.0 邊緣乾淨" width="460" />
+</p>
+
+| 同一支新影片 | 舊管線 | 0.4.0 |
+|---|---:|---:|
+| 紫邊（外圈溢色，平均） | 0.704 | **0.000** |
+| 不透明 key 色漏進主體（145 幀） | 7,780 | **0** |
+| 每對幀的 alpha 閃爍 | 22.3 | **3.4** |
+| 去背時間（145 幀） | 271 秒 | **44 秒** |
+| 循環 | 手動挑 | **自動選 74–88，接縫比 1.02** |
+
+`prepare_i2v_input` → Grok → `register_clip` → `gait_loop select` → `package` → `verify`（49 項檢查）全部通過。
 
 #### Case study：Ryo run（16 幀）
 

@@ -98,7 +98,29 @@ Rendered by the `codeart2d` tools from the specs in [`skills/codeart2d/examples`
   </tr>
 </table>
 
-<!-- LIVE:codex-fox -->
+### Live-tested on real hosts (2026-10-06)
+
+Fresh sessions with no history, given the skills and a plain request. Full numbers are in [docs/validation-2026-10-06.md](./docs/validation-2026-10-06.md).
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./src/validation/claude-slime-fx.gif" alt="Code-drawn 32x32 slime idle, jump and hurt with a hit FX, made in Claude Code" width="288" />
+      <img src="./src/validation/claude-map-collision.png" alt="16x16-tile grass and water map with the collision overlay" width="288" />
+      <br />
+      <strong>Claude Code + plugin, one zh-TW sentence</strong>
+      <br />
+      A 32x32 slime (idle, jump, hurt), a hit FX and a 16x16-tile map with collision, in 3 min (US$1.32). The art is code-drawn and disclosed as such. <code>map_bundle validate</code> passes, and every spawn and exit is reachable.
+    </td>
+    <td align="center" width="50%">
+      <img src="./src/validation/codex-fox-old-vs-new.gif" alt="Old image-model fox run vs new code-drawn fox run" width="404" />
+      <br />
+      <strong>Codex, the same fox-run request as the 2026-10-05 cold test</strong>
+      <br />
+      A 48 px pixel sprite now routes to <code>codeart2d</code>. Cross-cell spill, partial alpha and colour noise all drop to 0, there are zero manual fixes, and it ships Aseprite and Godot exports. The trade-off: the earlier image-model fox (left) has livelier motion.
+    </td>
+  </tr>
+</table>
 
 ### Engine-Ready Prototypes
 
@@ -404,7 +426,22 @@ An earlier showcase: an image-generated tileset and 3x3 prop sheet that the agen
 
 `video2dsprite` takes motion from the host's image-to-video tool, the Grok CLI in ACP mode (once VERIFIED), the xAI API with your consent, or a clip you already have. Approve one master, prepare the input with a recorded transform, generate one action with a locked camera, then key, register, pick the loop or retime, package and verify. Keep sheets for exact pixel animation; video is not promised to be smaller, cheaper to decode or seamless.
 
-<!-- LIVE:grok-video -->
+**Live run (Grok 1.0.40 in ACP mode, 1 generation, same character as the 2026-10-05 test):**
+
+<p align="center">
+  <img src="./src/validation/grok-old-vs-new-loop.gif" alt="Old keyer vs 0.4.0 keyer on the same Grok clip, auto-selected loop" width="360" />
+  <img src="./src/validation/grok-old-vs-new-fringe-2x.png" alt="2x crop: magenta outline in the old keyer, clean edge in 0.4.0" width="460" />
+</p>
+
+| Same new clip | old pipeline | 0.4.0 |
+|---|---:|---:|
+| Purple fringe (outer-ring spill, mean) | 0.704 | **0.000** |
+| Opaque key pixels leaked (145 frames) | 7,780 | **0** |
+| Alpha flips per frame pair | 22.3 | **3.4** |
+| Keying time, 145 frames | 271 s | **44 s** |
+| Loop | picked by hand | **auto 74–88, seam ratio 1.02** |
+
+`prepare_i2v_input` → Grok → `register_clip` → `gait_loop select` → `package` → `verify` (49 checks): all pass.
 
 #### Case study: Ryo run (16 denser frames)
 
