@@ -18,6 +18,8 @@ API
       The D2 blocking set of one map bundle (v2, or v1 read the way map_bundle.py reads it).
       This reader only gathers what collision needs; map_bundle.py validate stays the gate.
   BlockingSet.model() -> CollisionModel; BlockingSet.solids lists every blocking shape.
+  runtime_inputs(blocking) -> {"tileSolids", "materialGrid"}: what map-runtime.mjs cannot read
+      from a bundle (it reads no files), in the form createMapRuntime takes as its options.
   CollisionModel(width, height, radius, y_squash, regions, solids, material_codes, material_scale)
       .valid(xs, ys)  .blocked(xs, ys)  .area_ok(xs, ys)  .centre_ok(xs, ys)
       .segment_status(a, b, thin_gap=True) -> None or the reason   .segment_clear(a, b)
@@ -26,7 +28,7 @@ API
   grid_bfs(passable, starts, moves) / reachable_mask / moves_from_mask: the generic grid BFS
   navigate(model, starts) -> Navigation, with .point_target(p), .reach_target(p, reach) and
       .exit_target(trigger, activation, radius) answering as map_nav.py check does
-  Building blocks: footprint_solid, object_solid, tile_solids, material_codes,
+  Building blocks: footprint_solid, object_solid, has_area (N4), tile_solids, material_codes,
       collision_shapes, merge_rects, nav_cell, footprint_offsets, pnpoly, on_polygon_edge,
       Trigger, attach.
 
@@ -139,15 +141,19 @@ N10 segmentClear(a, b). dx = b.x - a.x, dy = b.y - a.y, len = sqrt(dx * dx + dy 
       Thin gaps: the actor's centre must stay in the walk area and off every blocker along
       the whole segment, so a wall or a gap thinner than the sample spacing is never
       jumped. The segment p + t * d (t in [0, 1]) is cut at every t in (0, 1) where it can
-      cross a boundary: polygon edges of regions, holes and solids (proper crossings with
-      0 <= u <= 1, and both end points of a collinear overlap), rect sides, both roots of
-      each ellipse's quadratic (disc = b * b - 4 * a * c; when |disc| <= 1e-12 * (b * b)
-      the line is tangent and disc is taken as 0, one double root, so rounding noise never
-      turns the touching point into a sliver), material pixel edges (x = m * s, y = m * s
-      inside the image) and, without walk regions, the sides of the world box. The midpoint
-      of every piece of positive length must be in the walk area and not blocked. A single
-      touching point is not a failure. Cut positions only need to be accurate, not
-      bit-identical: each piece's status is constant on its interior.
+      cross a boundary: polygon edges of regions, holes and solids (crossings with
+      -1e-12 <= u <= 1 + 1e-12 along the edge, so rounding never drops a vertex from both
+      of its edges, and both end points of a collinear overlap), rect sides (the lines
+      x = x0, x = x0 + w, y = y0 and y = y0 + h, cut at (x0 - p.x) / dx and so on, wherever
+      they cross), both roots of each ellipse's quadratic (disc = b * b - 4 * a * c; when
+      |disc| <= 1e-12 * (b * b) the line is tangent and disc is taken as 0, one double
+      root), material pixel edges (x = m * s, y = m * s inside the image) and, without walk
+      regions, the sides of the world box. The midpoint of every piece longer than 1e-9 px
+      ((t1 - t0) * len > 1e-9) must be in the walk area and not blocked. A shorter piece is
+      a rounding sliver at a single touching point (the two edges of a vertex, for example,
+      cut a segment through that vertex 1 ulp apart) and is skipped: a single touching
+      point is not a failure. Cut positions only need to be accurate, not bit-identical:
+      each piece's status is constant on its interior.
 
 N11 one_way (D2: blocks from above only; a side-scroll class). A move with b.y > a.y
     (moving down) is blocked when, between consecutive samples k - 1 and k of N10, any of
@@ -204,6 +210,7 @@ loaded by path.
 """
 from __future__ import annotations
 
+import base64
 import copy
 import json
 import math
@@ -230,6 +237,8 @@ MATERIAL_CLASSES = ("solid", "one_way", "liquid", "hazard", "decor")
 BUNDLE_SCHEMAS = ("generate2dmap.map_bundle.v1", "generate2dmap.map_bundle.v2")
 _PAD = 1e-7  # bounding boxes are widened by this much for culling only; never for decisions
 _TANGENT_DISC = 1e-12  # N10: an ellipse quadratic with |disc| <= this * b * b is a tangent (one double root)
+_EDGE_U_SLACK = 1e-12  # N10: a polygon edge is cut where -this <= u <= 1 + this, so no vertex slips between two edges
+_SLIVER_PX = 1e-9  # N10: a thin-gap piece this long or shorter is a rounding sliver at a touching point; skipped
 _REL_PATH = re.compile(r"^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\]+$")  # common.schema.json relPath
 _REASON_STAND = "the actor cannot stand here (footprint blocked)"
 
@@ -239,8 +248,9 @@ __all__ = [
     "footprint_offsets", "pnpoly", "on_polygon_edge", "nav_cell", "round_half_up", "merge_rects",
     "CollisionModel", "NavGrid", "build_grid", "moves_from_mask", "grid_bfs", "reachable_mask",
     "Trigger", "Reach", "Navigation", "attach", "navigate",
-    "footprint_solid", "object_solid", "TileLayer", "tile_solids", "material_codes", "collision_shapes",
-    "BlockingSet", "read_json", "read_blocking_set", "blocking_set_from_document", "upgrade_v1_footprints",
+    "footprint_solid", "object_solid", "has_area", "TileLayer", "tile_solids", "material_codes", "collision_shapes",
+    "BlockingSet", "runtime_inputs", "read_json", "read_blocking_set", "blocking_set_from_document",
+    "upgrade_v1_footprints",
 ]
 
 
@@ -344,7 +354,7 @@ def _segment_edge_params(px: float, py: float, dx: float, dy: float, edges: np.n
     with np.errstate(divide="ignore", invalid="ignore"):
         t = (wx * ey - wy * ex) / denom
         u = (wx * dy - wy * dx) / denom
-        hits = t[(denom != 0) & (u >= 0) & (u <= 1)]
+        hits = t[(denom != 0) & (u >= -_EDGE_U_SLACK) & (u <= 1 + _EDGE_U_SLACK)]
         length = dx * dx + dy * dy
         collinear = (denom == 0) & (wx * dy - wy * dx == 0)
         if collinear.any() and length > 0:  # overlapping edges: their end points split the segment
@@ -544,9 +554,10 @@ def _polygon_area2(points: Any) -> float:
     return float(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
 
 
-def _has_area(solid: Mapping[str, Any]) -> bool:
-    """N4: a rect with w or h <= 0, an ellipse with rx or ry <= 0 and a polygon with zero
-    shoelace area block nothing, wherever they come from."""
+def has_area(solid: Mapping[str, Any]) -> bool:
+    """N4: False for a shape that blocks nothing, wherever it comes from: a rect with w or h <= 0,
+    an ellipse with rx or ry <= 0 and a polygon with zero shoelace area. Every reader of the
+    blocking set (the engine exporters too) drops exactly these shapes."""
     if solid["shape"] == "rect":
         return solid["w"] > 0 and solid["h"] > 0
     if solid["shape"] == "ellipse":
@@ -622,7 +633,7 @@ class CollisionModel:
         self.offsets = footprint_offsets(self.radius, self.y_squash)
         self.regions = [_Region(np.asarray(polygon, np.float64), [np.asarray(h, np.float64) for h in holes])
                         for polygon, holes in regions]
-        kept = [solid for solid in solids if _has_area(solid)]  # shapes without area block nothing (N4)
+        kept = [solid for solid in solids if has_area(solid)]  # shapes without area block nothing (N4)
         self.solids = [_shape(solid) for solid in kept]
         self.solid_sources = [str(solid.get("source", "")) for solid in kept]
         self.materials = None if material_codes is None else _Materials(material_codes, material_scale)
@@ -768,7 +779,7 @@ class CollisionModel:
         if not thin_gap:
             return None
         ts = self.segment_breaks((ax, ay), (bx, by))
-        pieces = ts[1:] > ts[:-1]
+        pieces = (ts[1:] - ts[:-1]) * length > _SLIVER_PX  # N10: skip rounding slivers at touching points
         mid = (ts[:-1][pieces] + ts[1:][pieces]) / 2
         mx, my = ax + dx * mid, ay + dy * mid
         centre = self.centre_ok(mx, my)
@@ -850,8 +861,8 @@ def _split(breaks: np.ndarray, starts: np.ndarray, ends: np.ndarray, lo: np.ndar
            hi: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Split each [starts[e], ends[e]] at breaks[lo[e]:hi[e]] (sorted, inside the closed range).
 
-    Returns (edge index, piece start, piece end) for every piece of positive length, pieces
-    of one edge in ascending order.
+    Returns (edge index, piece start, piece end) for every piece longer than the N10 sliver
+    length (1e-9 px; a shorter piece is a touching point), pieces of one edge in ascending order.
     """
     counts = hi - lo
     total = counts + 2
@@ -865,7 +876,7 @@ def _split(breaks: np.ndarray, starts: np.ndarray, ends: np.ndarray, lo: np.ndar
     values[first] = starts
     values[last] = ends
     values[middle] = breaks[np.repeat(lo, counts) + position[middle] - 1]
-    keep = (edge_of[:-1] == edge_of[1:]) & (values[1:] > values[:-1])
+    keep = (edge_of[:-1] == edge_of[1:]) & (values[1:] - values[:-1] > _SLIVER_PX)
     return edge_of[:-1][keep], values[:-1][keep], values[1:][keep]
 
 
@@ -1303,7 +1314,7 @@ def tile_solids(layers: Iterable[TileLayer]) -> list[dict]:
                     tile_masks[index, y0:y1, x0:x1] = True
                     if box != (x0, y0, x1, y1):  # the part outside the cell stays an exact solid
                         loose.setdefault(index, []).append(shape)
-                elif _has_area(shape):  # shapes without area block nothing (N4)
+                elif has_area(shape):  # shapes without area block nothing (N4)
                     loose.setdefault(index, []).append(shape)
         cells = np.where((grid >= 0) & (grid < count), grid, count)
         rows, cols = cells.shape
@@ -1373,7 +1384,7 @@ def collision_shapes(collision: Mapping[str, Any]) -> tuple[list[tuple[np.ndarra
         if shape["shape"] == "polygon":
             _polygon_array(shape.get("points"), f"{where}.points")
         normalised = dict(shape, source=shape.get("id", f"collision.solids[{i}]"))
-        if _has_area(normalised):
+        if has_area(normalised):
             solids.append(normalised)
     rects: list[dict] = []
     for i, rect in enumerate(collision.get("rects") or []):
@@ -1417,6 +1428,41 @@ class BlockingSet:
     def model(self) -> CollisionModel:
         return CollisionModel(self.width, self.height, self.actor_radius, self.y_squash, self.regions, self.solids,
                               self.material_codes, self.material_scale)
+
+
+def _bit_plane(mask: np.ndarray) -> str:
+    """A boolean plane as base64 bits, bit k (least significant first) for pixel k = row * width + col."""
+    return base64.b64encode(np.packbits(np.asarray(mask, bool).ravel(), bitorder="little").tobytes()).decode("ascii")
+
+
+def runtime_inputs(blocking: BlockingSet) -> dict:
+    """The parts of the D2 blocking set that map-runtime.mjs cannot read from a bundle by itself, in the
+    form createMapRuntime(bundle, options) takes (D2: it refuses a tiles layer or a material_map without
+    them, rather than drop them):
+      tileSolids: the per-tile collision of N7 as world solids (this set's tiles; source tiles:<layer>);
+      materialGrid: the material map of N8 as {width, height, cellWidth, cellHeight, bits, oneWay?}: BLOCK
+        (and ONE_WAY) pixels as bit planes on squares of material_scale world px; None without a material map.
+    map_nav.py check writes them into nav-grid.json (runtimeInputs); build_scene_preview embeds them."""
+    solids: list[dict] = []
+    for solid in blocking.tiles:
+        if solid["shape"] == "rect":
+            entry: dict = {"shape": "rect", "x": solid["x"], "y": solid["y"], "w": solid["w"], "h": solid["h"]}
+        elif solid["shape"] == "ellipse":
+            entry = {"shape": "ellipse", "cx": solid["cx"], "cy": solid["cy"], "rx": solid["rx"], "ry": solid["ry"],
+                     "rotate": solid.get("rotate", 0)}
+        else:
+            entry = {"shape": "polygon", "points": [[point[0], point[1]] for point in solid["points"]]}
+        solids.append({**entry, "source": solid["source"]})
+    grid = None
+    codes = blocking.material_codes
+    if codes is not None:
+        height, width = codes.shape
+        scale = int(blocking.material_scale)
+        grid = {"width": int(width), "height": int(height), "cellWidth": scale, "cellHeight": scale,
+                "bits": _bit_plane(codes == BLOCK)}
+        if (codes == ONE_WAY).any():
+            grid["oneWay"] = _bit_plane(codes == ONE_WAY)
+    return {"tileSolids": solids, "materialGrid": grid}
 
 
 # --------------------------------------------------------------------------- reading a bundle

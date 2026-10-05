@@ -38,7 +38,7 @@ Collision is one blocking set for every map tool (integration decisions D1 and D
 - Footprints come from the object, else from its `props` item (pack items included). They are scaled once by the object's `scale`, not at all for `basis: "world_px"` (`prop_px` is the default; `image_px` is its legacy alias), and `flip_x` mirrors them around the anchor. They are never inflated by the actor radius again.
 - Tile collision: each placed tile's `tiles[].collision` shapes (tile pixels) are moved to its cell, and a tile without shapes whose `properties.walkable` is false blocks its whole cell. The page receives them as world solids (drawn orange with **Debug**).
 - `material_map` pixels are squares of a whole number of world px and every opaque pixel must match one material (colour, or `index` for a palette or greyscale image), else the build stops. `solid` blocks; `liquid` and `hazard` block unless `walkable: true`; `decor` never blocks. `one_way` blocks moving down onto it (from above) and never a point; the rule applies to every map, so a top-down map should not use it.
-- `segmentClear(a, b)`: footprint samples at most `cell / 2` apart are valid, the one_way rule holds and the actor's centre stays in the walk area and off every blocker along the whole segment (the thin-gap rule), so no wall or gap thinner than the samples is jumped.
+- `segmentClear(a, b)`: footprint samples at most `cell / 2` apart are valid, the one_way rule holds and the actor's centre stays in the walk area and off every blocker along the whole segment (the thin-gap rule), so no wall or gap thinner than the samples is jumped. A single touching point is not a crossing: a path that only touches a vertex, a rect corner or an ellipse stays open (pieces of 1e-9 px or less between boundary cuts are rounding slivers, N10).
 - Paths come from a 4-neighbour grid search with `cell = max(1, round half up(actorRadius / 2))` px; a move between neighbouring cell centres is open when `segmentClear` holds. A start joins every valid cell within two cells that it reaches in a straight line. Paths are smoothed with `segmentClear`. The walker spends each tick's budget (`--speed` / 60) along the path without idle ticks at corners and never moves further than the budget. Keyboard moves slide along walls and stop when blocked.
 - Exits: an `intent` portal fires within `radius` of its trigger when the input direction is within about 75 degrees of `travelDirection` (cosine above 0.25); a `crossing` portal (the default) fires while the actor is inside its closed trigger and moving. Walking inward never exits. Arriving inside a portal's zone latches it until the actor leaves the zone, and a fired portal stays latched the same way. After an exit fires the page simulates the round trip: the actor returns through `entranceByFrom[<destination map>]` (a spawn of this map or an `[x, y]` point).
 - Interactions with `reach` are reached from any reachable cell centre within `reach`; interactions without it are point targets like slots and approach points: the actor must stand on them. The page counts one nav cell around them as in reach for the E key.
@@ -63,6 +63,17 @@ Click the map to focus it, then walk with WASD or the arrow keys, or click a poi
 
 For acceptance, run the route check (button, `window.__scene.traverseAll()` in the browser console, or `--verify`) and attach the snapshot JSON with the other QA files. A route result with `ok: false` names the problem: unreachable (with forge_nav's reason), walker blocked, exit did not fire, or zero-motion ticks.
 
+## Using map-runtime.mjs in a game
+
+The page's walker is [runtime/map-runtime.mjs](runtime/map-runtime.mjs), a dependency-free ES module a browser or node game can import as it is (`createMapRuntime`, `isValid`, `segmentClear`, `findPath`, `stepActor`, `traverseRoutes`). It reads no files, so two parts of the blocking set must reach it resolved: the collision of placed tiles and the material map. The preview passes them in the page; a game gets them from `map_nav.py check`, whose `nav-grid.json` holds them as `runtimeInputs`:
+
+```js
+import {createMapRuntime, findPath} from "./map-runtime.mjs";
+const world = createMapRuntime(bundle, navGrid.runtimeInputs); // {tileSolids, materialGrid}
+```
+
+`createMapRuntime` throws a `TypeError` for a bundle with a `tiles` layer when neither `options.tileSolids` is given nor `collision.tilesResolved` is true (the tile solids already added to `collision.solids`), and for a `material_map` without `options.materialGrid` unless `options.ignoreMaterialMap` is true. `materialGridFromRGBA` builds the grid from a decoded colour image when the material map is not palette-indexed. A pack-based `props` entry (`pack` + `label`) must be resolved into an inline item first, as the preview does.
+
 ## Checks and outputs
 
 `preview-qa.json` is a QA envelope (`generate2dmap.scene_preview_qa.v1`): inputs and outputs with sha256, the checks below, warnings, and a `preview` block (bytes, runtime version and sha256, layers, draw order, art sources, counts, the material summary and the collision counts: collision solids, rects, footprints, tile solids and the blocking material classes). It has no time stamp, so the same inputs give the same bytes, as does `preview.html`.
@@ -81,7 +92,7 @@ For acceptance, run the route check (button, `window.__scene.traverseAll()` in t
 
 - Engine behaviour: controllers, physics, acceleration and other speeds; Tiled, Godot or LDtk imports; mobile, touch and other browsers (only headless Chromium is run).
 - Art: the actor is a marker sized from `actorRadius`, not character art; animation, lights, atmosphere, parallax, cut-aways and per-pixel occlusion are not shown. Look at the page and the screenshots before calling the art finished.
-- Collision beyond its rules: footprint samples are half a nav cell apart; JS and Python agreement is tested on synthetic fixtures (`tests/test_map_runtime_js.py`), not on each map.
+- Collision beyond its rules: footprint samples are half a nav cell apart; JS and Python agreement is tested on synthetic fixtures (`tests/test_map_runtime_js.py`, `tests/test_collision_parity.py`), not on each map.
 - Gameplay: dialogue, encounters, saves and anything after an exit fires.
 
 See [layered-map-contract.md](layered-map-contract.md) for placement, depth and collision conventions.

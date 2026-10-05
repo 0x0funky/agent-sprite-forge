@@ -1012,6 +1012,51 @@ def test_closed_polygon_edges_on_grid_lines_block_moves(axis):
     assert assert_moves_equal_segment_clear(model, grid, np.random.default_rng(3), 64) > 100
 
 
+TOUCHING_VERTICES = [  # (kind, triangle, move): the first vertex lies on the move's node line; each broke the old rule
+    ("solid", [[10.5, 6.75], [10.81, 6.29], [10.74, 7.2]], ((10.5, 6.5), (10.5, 7.5))),
+    ("solid", [[16.25, 9.5], [15.41, 9.81], [16.61, 9.77]], ((15.5, 9.5), (16.5, 9.5))),
+    ("solid", [[20.5, 24.25], [20.83, 23.43], [20.85, 24.6]], ((20.5, 23.5), (20.5, 24.5))),
+    ("hole", [[30.5, 6.25], [30.66, 5.42], [30.85, 6.9]], ((30.5, 5.5), (30.5, 6.5))),
+    ("hole", [[40.5, 25.75], [40.57, 25.27], [40.6, 25.95]], ((40.5, 25.5), (40.5, 26.5))),
+]
+
+
+def test_a_vertex_on_a_node_line_is_one_touching_point(tmp_path):
+    """N10 (review r1, finding 1): the two edges at a vertex cut a segment through it 1 ulp apart; the sliver's
+    midpoint rounded onto the closed vertex, so segment_status blocked a move the grid's fast path opened, and
+    map_nav check proved a corridor the runtime could not walk. A piece of 1e-9 px or less is skipped: the touch
+    is open in segment_status, the grid and map_nav alike, while a vertex 1e-6 px across the line still blocks."""
+    path = write_bundle(tmp_path / "vertex", world={"width": 3, "height": 10, "unit": "px"},
+                        collision={"actorRadius": 0, "rects": [[0, 0, 1, 10], [2, 0, 1, 10]],
+                                   "solids": [{"shape": "polygon", "points": [[1.5, 4.75], [1.35, 4.1], [1.26, 5.29]]}]},
+                        spawns=[{"id": "start", "x": 1.5, "y": 0.5}], interactions=[{"id": "chest", "x": 1.5, "y": 9.5}])
+    model = model_of(path)
+    cuts = model.segment_breaks((1.5, 4.5), (1.5, 5.5))
+    assert len(cuts) == 4 and 0 < cuts[2] - cuts[1] <= 1e-9  # the vertex's two cuts, 1 ulp apart
+    assert model.segment_status((1.5, 4.5), (1.5, 5.5)) is None and model.segment_clear((1.5, 5.5), (1.5, 4.5))
+    grid = fn.build_grid(model)
+    assert grid.moves[4, 1] & fn.MOVE_S and grid.moves[5, 1] & fn.MOVE_N
+    assert fn.navigate(model, [(1.5, 0.5)], grid).point_target((1.5, 9.5)).reachable
+    result = nav.check_bundle(mb.load_bundle(path))
+    assert result.status == "pass" and all(target.reachable for target in result.targets)
+    for kind, triangle, (a, b) in TOUCHING_VERTICES:
+        outline = np.array([[0, 0], [48, 0], [48, 32], [0, 32]], float)
+        model = (fn.CollisionModel(48, 32, 0, solids=[{"shape": "polygon", "points": triangle}]) if kind == "solid"
+                 else fn.CollisionModel(48, 32, 0, regions=[(outline, [np.array(triangle, float)])]))
+        assert model.segment_status(a, b) is None and model.segment_clear(b, a), (kind, triangle)
+        grid = fn.build_grid(model)
+        (row, col), bit = grid.node_of(*a), fn.MOVE_S if a[0] == b[0] else fn.MOVE_E
+        assert grid.moves[row, col] & bit, (kind, triangle)
+        assert assert_moves_equal_segment_clear(model, grid, np.random.default_rng(7), 400) > 1000
+        poke = [[triangle[0][0] + (0.0 if a[0] != b[0] else 1e-6 * (1 if triangle[1][0] < a[0] else -1)),
+                 triangle[0][1] + (0.0 if a[0] == b[0] else 1e-6 * (1 if triangle[1][1] < a[1] else -1))],
+                *triangle[1:]]  # the vertex 1e-6 px across the line: a real crossing of the centre path
+        crossing = (fn.CollisionModel(48, 32, 0, solids=[{"shape": "polygon", "points": poke}]) if kind == "solid"
+                    else fn.CollisionModel(48, 32, 0, regions=[(outline, [np.array(poke, float)])]))
+        assert not crossing.segment_clear(a, b), (kind, poke)
+        assert not fn.build_grid(crossing).moves[row, col] & bit, (kind, poke)
+
+
 def test_whole_number_polygons_keep_grid_moves_equal_to_segment_clear():
     rng = np.random.default_rng(29)
     for _ in range(4):

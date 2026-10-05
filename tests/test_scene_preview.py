@@ -332,6 +332,10 @@ class PageTests(PreviewCase):
                         "tile 3's triangle moved to its cell (col 1, row 1)")
         self.assertEqual(report["preview"]["collision"]["tileSolids"], len(tiles))
         self.assertIn("tile", " ".join(report["notProven"]) + report["method"])
+        # Review r2 finding 3: the page says its tile collision is resolved (map-runtime.mjs refuses a tiles layer
+        # otherwise), and its tile solids are forge_nav.runtime_inputs', the ones map_nav check writes for games.
+        self.assertIs(scene["bundle"]["collision"]["tilesResolved"], True)
+        self.assertEqual(tiles, json.loads(json.dumps(NAV.runtime_inputs(blocking)["tileSolids"])))
 
     def test_objects_are_in_ground_line_order_with_sorty_x_id_ties(self):
         html_text, report, _ = self.built()
@@ -367,6 +371,8 @@ class PageTests(PreviewCase):
         info = report["preview"]["materialMap"]
         self.assertEqual((info["blockedCells"], info["oneWayCells"]), (2, 1))
         self.assertEqual(report["preview"]["collision"]["blockingMaterialClasses"], ["solid", "one_way", "liquid"])
+        blocking = NAV.read_blocking_set(self.root / "map" / "map_bundle.json")
+        self.assertEqual(grid, NAV.runtime_inputs(blocking)["materialGrid"], "the grid map_nav writes for games")
 
     def test_palette_material_maps_match_by_index(self):
         def indexed(bundle, root):

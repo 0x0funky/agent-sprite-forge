@@ -10,7 +10,7 @@ import {
   exitTarget, findPath, flood, floodFrom, footprintSamples, footprintSolid, insidePolygon, isBlocked, isValid,
   joinCells, materialAt, materialBlocks, materialCode, materialGridFromRGBA, moveOpen, moveWithCollision, navCellSize,
   navGrid, objectSolid, onPolygonEdge, pointFree, pointTarget, portalArrivals, returnSpawn, routeStarts,
-  runtimeSnapshot, segmentClear, segmentStatus, sortForDrawing, stepActor, traverseRoutes,
+  runtimeSnapshot, segmentBreaks, segmentClear, segmentStatus, sortForDrawing, stepActor, traverseRoutes,
 } from "../../skills/generate2dmap/references/runtime/map-runtime.mjs";
 
 const BUDGET = 112 / TICK_HZ;
@@ -259,6 +259,72 @@ test("segmentClear samples every cell / 2, then applies the thin-gap rule to the
   const corner = open([{shape: "rect", x: 10, y: 0, w: 5, h: 10}]);
   assert.equal(segmentClear(corner, 0, 0, 20, 20), true, "touching the corner (10, 10) at a single point is not a failure");
   assert.equal(segmentClear(corner, 0, 20, 20, 0), false, "this diagonal enters the rect after its corner");
+});
+
+test("a vertex that only touches the centre path is one touching point, not a sliver (N10, 1.1.2)", () => {
+  // Review r1 finding 1: the triangle's two edges at (1.5, 4.75) cut the corridor's only node column 1 ulp apart;
+  // the sliver's midpoint rounded onto the closed vertex and closed the corridor (forge_nav's grid opened it).
+  const world = createMapRuntime({world: {width: 3, height: 10}, layers: [],
+    collision: {actorRadius: 0, rects: [[0, 0, 1, 10], [2, 0, 1, 10]],
+      solids: [{shape: "polygon", points: [[1.5, 4.75], [1.35, 4.1], [1.26, 5.29]]}]},
+    spawns: [{id: "start", x: 1.5, y: 0.5}], interactions: [{id: "chest", x: 1.5, y: 9.5}]});
+  assert.deepEqual(segmentBreaks(world, 1.5, 4.5, 1.5, 5.5), [0, 0.24999999999999994, 0.25, 1],
+    "forge_nav's cuts, bit for bit: the vertex's two edges 1 ulp apart");
+  assert.equal(segmentStatus(world, 1.5, 4.5, 1.5, 5.5), null);
+  assert.equal(segmentClear(world, 1.5, 5.5, 1.5, 4.5), true);
+  assert.ok(pointTarget(world, flood(world, 1.5, 0.5), 1.5, 9.5).node >= 0, "the chest beyond the touch is reached");
+  assert.ok(findPath(world, 1.5, 0.5, 1.5, 9.5) !== null);
+  assert.equal(traverseRoutes(world, {speed: 60}).ok, true, "the preview's route check walks it");
+  const poked = createMapRuntime({world: {width: 3, height: 10}, collision: {actorRadius: 0,
+    rects: [[0, 0, 1, 10], [2, 0, 1, 10]], solids: [{shape: "polygon", points: [[1.500001, 4.75], [1.35, 4.1], [1.26, 5.29]]}]}});
+  assert.match(segmentStatus(poked, 1.5, 4.5, 1.5, 5.5), /thin-gap/, "a vertex 1e-6 px across the path still blocks");
+});
+
+test("rect sides are cut like forge_nav _Rect.seg_breaks, so corner-grazing diagonals agree bit for bit (N10)", () => {
+  const world = open([{shape: "rect", x: 26.13, y: 12.59, w: 3.82, h: 4.78}]);
+  // The values forge_nav.CollisionModel.segment_breaks gives for the same segments (tests/test_collision_parity.py).
+  assert.deepEqual(segmentBreaks(world, 28.7, 11.34, 32.45, 15.09), [0, 0.33333333333333304, 0.3333333333333333, 1]);
+  assert.deepEqual(segmentBreaks(world, 32.7, 14.620000000000001, 29.2, 18.12),
+    [0, 0.7857142857142857, 0.7857142857142859, 1]);
+  assert.equal(segmentClear(world, 28.7, 11.34, 32.45, 15.09), true, "it grazes the top-right corner only");
+  assert.equal(segmentClear(world, 32.7, 14.620000000000001, 29.2, 18.12), true, "the bottom-right corner only");
+  assert.equal(segmentClear(world, 28.7, 11.5, 32.45, 15.25), false, "0.16 px lower it cuts the corner off");
+});
+
+// ------------------------------------------------------------------- resolved inputs: tiles and materials (D2)
+
+test("createMapRuntime refuses tile layers and material maps it was not given resolved (D2, N7, N8)", () => {
+  const tiled = (collision = {}, extra = {}) => ({world: {width: 32, height: 32}, tile_size: 16,
+    layers: [{name: "ground", kind: "tiles", tileset: "t", data: [[1, 0], [0, 0]]}],
+    collision: {actorRadius: 0, ...collision}, ...extra});
+  assert.throws(() => createMapRuntime(tiled()), (error) => error instanceof TypeError
+    && /layer "ground" is a tiles layer, but its tile collision \(N7\) is not resolved/.test(error.message)
+    && /nav-grid\.json/.test(error.message));
+  const wall = {shape: "rect", x: 0, y: 0, w: 16, h: 16, source: "tiles:ground"};
+  const given = createMapRuntime(tiled(), {tileSolids: [wall]});
+  assert.deepEqual([isValid(given, 8, 8), isValid(given, 24, 24)], [false, true], "options.tileSolids block (N7)");
+  assert.equal(given.solids.at(-1).source, "tiles:ground");
+  assert.equal(isValid(createMapRuntime(tiled(), {tileSolids: []}), 8, 8), true, "an empty list: nothing blocks");
+  const folded = createMapRuntime(tiled({solids: [wall], tilesResolved: true}));
+  assert.equal(isValid(folded, 8, 8), false, "build_scene_preview's form: the solids are already in collision");
+  assert.throws(() => createMapRuntime(tiled({tilesResolved: "yes"})), /tilesResolved must be true or false/);
+  assert.throws(() => createMapRuntime(tiled(), {tileSolids: {}}), /tileSolids must be a list/);
+  assert.throws(() => createMapRuntime(tiled(), {tileSolids: [{shape: "circle"}]}), /tileSolids\[0\]\.shape/);
+  assert.throws(() => createMapRuntime({...tiled(), layers: {}}, {tileSolids: []}), /layers must be a list/);
+  assert.throws(() => createMapRuntime(tiled(), null), /options must be an object/);
+
+  const mapped = {world: {width: 40, height: 30}, collision: {actorRadius: 0},
+    material_map: {image: "materials.png", materials: {lava: {class: "hazard", color: "#e04010"}}}};
+  assert.throws(() => createMapRuntime(mapped), (error) => error instanceof TypeError
+    && /material_map \(N8\) needs options\.materialGrid/.test(error.message) && /ignoreMaterialMap/.test(error.message));
+  const bits = btoa(String.fromCharCode(1 << 5, 0));
+  const grid = {width: 4, height: 3, cellWidth: 10, cellHeight: 10, bits};
+  assert.equal(pointFree(createMapRuntime(mapped, {materialGrid: grid}), 15, 15), false, "the grid applies (N8)");
+  const ignored = createMapRuntime(mapped, {materialGrid: grid, ignoreMaterialMap: true});
+  assert.deepEqual([ignored.material, pointFree(ignored, 15, 15)], [null, true], "explicitly walked without it");
+  assert.throws(() => createMapRuntime(mapped, {ignoreMaterialMap: "yes"}), /ignoreMaterialMap must be true or false/);
+  assert.doesNotThrow(() => createMapRuntime({...tiled(), layers: [{name: "art", kind: "image", image: "a.png"}]}),
+    "image and objects layers need nothing");
 });
 
 function ledgeWorld() {

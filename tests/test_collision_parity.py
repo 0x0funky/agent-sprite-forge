@@ -1,9 +1,9 @@
-"""JS/Python collision parity on three map fixtures (integration decision D4; plan Appendix I, Phase 3 e2e).
+"""JS/Python collision parity on four map fixtures (integration decision D4; plan Appendix I, Phase 3 e2e).
 
 forge_nav (shared/forge_nav.py, vendored into generate2dmap) decides walkability for map_nav, layout_build, the
 compose audit and the engine exporters; map-runtime.mjs mirrors it rule for rule (N1-N15) and is what the
 playable preview and a game walk with. This test proves that the two give the same answer to every question,
-bit for bit, on three bundles written to disk:
+bit for bit, on four bundles written to disk:
 
 1. a top-down tile map whose collision comes from per-tile shapes (tileset_v1 tiles[].collision, D5): whole-pixel
    rects that merge, a rect that reaches out of its cell, a fractional rect, an ellipse, polygons, thin walls and
@@ -13,7 +13,11 @@ bit for bit, on three bundles written to disk:
    solids, prop footprints (prop_px and world_px basis, scale, flip_x, solid false) and a material map of six
    materials in five classes;
 3. a side-scroll room whose palette material map (matched by index) holds one_way ledges, solid ground,
-   hazards and a wadeable pool, with a slope polygon and a hanging wall.
+   hazards and a wadeable pool, with a slope polygon and a hanging wall;
+4. single touching points (N10, review r1 finding 1): polygon solids and walk-region holes whose one vertex lies on
+   a node line, with decimal neighbours (the two edges at such a vertex cut a segment through it 1 ulp apart), the
+   review's corridor whose only node column touches a triangle, and decimal rects whose corners the probes graze
+   diagonally (map-runtime.mjs cuts rect sides with forge_nav's formula).
 
 Python reads the bundle file with forge_nav.read_blocking_set (the D2 blocking set). JavaScript gets exactly what
 a player gets: build_scene_preview builds the playable page from the same bundle (tile collision converted into
@@ -25,7 +29,8 @@ node. Compared with no tolerance and no exempt point:
   of these fixtures, plus the vertices and edge points of every solid, walk region and hole and the extreme
   points of every ellipse, each also shifted so that a footprint sample lands on it;
 - segmentClear with and without the thin-gap rule on random segments, short vertical drops and climbs (one_way),
-  segments along every rect and polygon edge, and segments that graze every ellipse;
+  segments along every rect and polygon edge, segments that graze every ellipse, segments through every polygon
+  vertex along x and along y, and diagonals that graze every rect corner from outside;
 - reachability: every grid node, every open move, the BFS distances from the spawns and arrival points, and the
   node and entry point each interaction, anchor slot, approach point and exit is reached at (N14).
 
@@ -327,7 +332,46 @@ def side_scroll(root: Path) -> Path:
     return write_bundle(root, bundle)
 
 
-FIXTURES = {"tile-map": tile_map, "hd2d-plate": hd2d_plate, "side-scroll": side_scroll}
+# --------------------------------------------------------------------------- fixture 4: single touching points
+
+TOUCH_WORLD = (48, 32)
+TOUCH_SOLIDS = [  # each touches one node line at its first vertex; each broke the pre-fix rule (review r1, finding 1)
+    [[1.5, 4.75], [1.35, 4.1], [1.26, 5.29]],  # the review repro: the corridor's only node column touches it
+    [[10.5, 6.75], [10.81, 6.29], [10.74, 7.2]],
+    [[16.25, 9.5], [15.41, 9.81], [16.61, 9.77]],
+    [[20.5, 24.25], [20.83, 23.43], [20.85, 24.6]],
+]
+TOUCH_HOLES = [[[30.5, 6.25], [30.66, 5.42], [30.85, 6.9]], [[40.5, 25.75], [40.57, 25.27], [40.6, 25.95]]]
+TOUCH_RECTS = [[26.13, 12.59, 3.82, 4.78], [6.09, 17.29, 5.91, 4.82], [35.13, 15.6, 4.4, 3.55]]  # decimal corners
+
+
+def touch_points(root: Path) -> Path:
+    """Fixture 4: a 48x32 point-actor map (actorRadius 0, cell 1) of single touching points (N10). The start
+    sits at the top of the review's 1 px corridor, whose only node column touches a triangle at (1.5, 4.75);
+    every target lies beyond that touch. Before the fix forge_nav's grid opened that move while its own
+    segment_clear and map-runtime.mjs closed it (the sliver between two vertex cuts 1 ulp apart was tested at
+    its rounded midpoint, the closed vertex), and map-runtime.mjs cut rect sides with the edge formula, so a
+    diagonal grazing a decimal rect's corner could differ between JS and Python."""
+    width, height = TOUCH_WORLD
+    bundle = {
+        "schema": BUNDLE, "id": "touch", "world": {"width": width, "height": height, "unit": "px"}, "layers": [],
+        "collision": {
+            "actorRadius": 0,
+            "walkRegions": [{"polygon": [[0, 0], [width, 0], [width, height], [0, height]], "holes": TOUCH_HOLES}],
+            "solids": [{"shape": "polygon", "points": points} for points in TOUCH_SOLIDS]
+            + [{"shape": "rect", "x": x, "y": y, "w": w, "h": h} for x, y, w, h in TOUCH_RECTS],
+            "rects": [[0, 0, 1, 12], [2, 0, 1, 12]],  # the corridor's walls
+        },
+        "spawns": [{"id": "start", "x": 1.5, "y": 0.5}],
+        "interactions": [{"id": "chest", "x": 1.5, "y": 11.5}, {"id": "plaza", "x": 24.5, "y": 20.5},
+                         {"id": "east", "x": 44.5, "y": 28.5, "reach": 2}],
+        "anchors": {"stair": {"point": [40.5, 26.5], "approach": [[40.5, 27.5]]}},
+    }
+    root.mkdir(parents=True, exist_ok=True)
+    return write_bundle(root, bundle)
+
+
+FIXTURES = {"tile-map": tile_map, "hd2d-plate": hd2d_plate, "side-scroll": side_scroll, "touch-points": touch_points}
 
 
 # --------------------------------------------------------------------------- the two sides
@@ -406,6 +450,27 @@ def run_runtime(scene: dict, lattice: dict, points: list, segments: list) -> dic
                                encoding="utf-8", errors="replace", timeout=900, check=False)
     if completed.returncode != 0:
         raise AssertionError(f"map-runtime.mjs query failed:\n{completed.stderr[-3000:]}")
+    return json.loads(completed.stdout)
+
+
+_ROUTES = r"""
+import * as rt from @@RUNTIME@@;
+import {readFileSync} from "node:fs";
+const scene = JSON.parse(readFileSync(0, "utf8"));
+const world = rt.createMapRuntime(scene.bundle, {materialGrid: scene.materialGrid});
+const routes = rt.traverseRoutes(world, {speed: scene.speed});
+process.stdout.write(JSON.stringify({ok: routes.ok, results: routes.results.map((r) => [r.target, r.ok, r.reason])}));
+"""
+
+
+def run_routes(scene: dict) -> dict:
+    """The page's route check (what build_scene_preview --verify runs in the browser) under node."""
+    node = require_node()
+    code = _ROUTES.replace("@@RUNTIME@@", json.dumps(RUNTIME.as_uri()))
+    completed = subprocess.run([node, "--input-type=module", "-e", code], input=json.dumps(scene), capture_output=True,
+                               encoding="utf-8", errors="replace", timeout=300, check=False)
+    if completed.returncode != 0:
+        raise AssertionError(f"map-runtime.mjs route check failed:\n{completed.stderr[-3000:]}")
     return json.loads(completed.stdout)
 
 
@@ -508,11 +573,32 @@ def probe_segments(blocking, model, seed: int) -> list[list[float]]:
         for (ax, ay), (bx, by) in zip(corners, corners[1:] + corners[:1]):
             segments.append([ax, ay, bx, by])  # along the edge
             segments.append([ax - (by - ay) * 0.5, ay + (bx - ax) * 0.5, ax, ay])  # ends on a vertex
+        segments += corner_grazes(corners) if solid["shape"] == "rect" else vertex_crossings(corners)
     for polygon, holes in blocking.regions:
         for ring in [polygon, *holes]:
             corners = [tuple(map(float, p)) for p in ring]
             for (ax, ay), (bx, by) in zip(corners, corners[1:] + corners[:1]):
                 segments.append([ax, ay, bx, by])
+            segments += vertex_crossings(corners)
+    return segments
+
+
+def vertex_crossings(corners: list[tuple[float, float]]) -> list[list[float]]:
+    """A segment through every vertex along y and one along x (N10: where a vertex only touches the segment, its
+    two edges cut it 1 ulp apart, and that sliver must be skipped on both sides)."""
+    segments = []
+    for x, y in corners:
+        segments += [[x, y - 0.75, x, y + 0.5], [x - 0.75, y, x + 0.5, y]]
+    return segments
+
+
+def corner_grazes(corners: list[tuple[float, float]]) -> list[list[float]]:
+    """Diagonals that touch a rect only at one corner, from outside (top-left, top-right, bottom-right, bottom-left;
+    map-runtime.mjs must cut rect sides with forge_nav's (x0 - p.x) / dx formula, or these differ)."""
+    segments = []
+    for (cx, cy), (sx, sy) in zip(corners, ((1, -1), (1, 1), (-1, 1), (1, 1))):
+        for before, after in ((1.25, 2.5), (2.75, 0.75)):
+            segments.append([cx - sx * before, cy - sy * before, cx + sx * after, cy + sy * after])
     return segments
 
 
@@ -574,7 +660,7 @@ class CollisionParityTests(unittest.TestCase):
         self.assertEqual(result["seeds"], [r * grid.cols + c for r, c in navigation.seeds], f"{name}: BFS seeds")
         self.assertEqual(result["targets"], targets, f"{name}: N14 targets (node, entry)")
         return {"blocking": blocking, "grid": grid, "navigation": navigation, "targets": targets,
-                "valid": model.valid(px, py), "segments": len(segments), "points": len(points)}
+                "valid": model.valid(px, py), "segments": len(segments), "points": len(points), "scene": scene}
 
     def test_top_down_tile_map_with_per_tile_collision(self):
         facts = self.compare("tile-map")
@@ -612,6 +698,32 @@ class CollisionParityTests(unittest.TestCase):
         unreachable = {key for key, (node, _) in facts["targets"].items() if node < 0}
         self.assertEqual(unreachable, {"slot:chest/0"}, "every ledge is reached from below; the slot's footprint "
                                                         "touches the pillar")
+
+    def test_single_touching_points_are_open_on_both_sides(self):
+        """N10 (review r1, finding 1): a node line that touches a polygon solid or a walk-region hole at one vertex,
+        and a diagonal that grazes a rect corner, are open in forge_nav (its grid and its segment_clear) and in
+        map-runtime.mjs alike. Before the fix map_nav check passed the review's corridor while segment_clear,
+        the runtime and the preview's route check found the chest unreachable."""
+        facts = self.compare("touch-points")
+        blocking, grid = facts["blocking"], facts["grid"]
+        model = blocking.model()
+        self.assertEqual((model.cell, len(blocking.regions[0][1]), len(blocking.solids)), (1, 2, 9))
+        self.assertTrue(all(start.reachable for start in facts["navigation"].starts))
+        self.assertEqual({key for key, (node, _) in facts["targets"].items() if node < 0}, set(),
+                         "every target lies beyond the corridor's touching point")
+        self.assertIsNone(model.segment_status((1.5, 4.5), (1.5, 5.5)), "the review repro is one touching point")
+        checked = 0
+        for r, c in zip(*np.nonzero(grid.valid)):  # the grid's fast path gives every move as segment_clear does
+            for bit, dr, dc in ((NAV.MOVE_E, 0, 1), (NAV.MOVE_S, 1, 0)):
+                rr, cc = r + dr, c + dc
+                if rr < grid.rows and cc < grid.cols and grid.valid[rr, cc]:
+                    clear = model.segment_clear((grid.xs[c], grid.ys[r]), (grid.xs[cc], grid.ys[rr]))
+                    self.assertEqual(bool(grid.moves[r, c] & bit), clear, (int(r), int(c), bit))
+                    checked += 1
+        self.assertGreater(checked, 2700)
+        routes = run_routes(facts["scene"])  # what --verify runs in the browser
+        self.assertTrue(routes["ok"], routes["results"])
+        self.assertEqual([target for target, ok, _ in routes["results"] if not ok], [])
 
 
 if __name__ == "__main__":
