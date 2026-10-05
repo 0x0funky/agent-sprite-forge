@@ -985,7 +985,7 @@ In skills/generate2dmap/scripts/validate_stage.py (imported by the other three B
 - `_local_dilate(mask, radius)`: resolved; `forge_core.dilate_square` (D30) is used, with identical results.
 - `_local_max_filter(plane, radius)` (extract_scene_lights.py:111): square-window maximum as two separable passes of shifted maxima, numpy only. Proposed `forge_core.max_filter` (scipy's `maximum_filter` with mode `nearest` gives the same result). Peak detection.
 - `_local_file_ref(path, base, sha256=None) -> dict`: resolved; `forge_core.file_ref` (D30) is used. The private `round_half_up` is now `forge_core.round_half_up` (D30).
-- `_local_qa_envelope(checks, *, method, not_proven, inputs, outputs, tool, visual=False) -> dict` (:541): status fail > warn > needs-visual-review > pass, no createdAt. Proposed `forge_core.qa_envelope`; every Wave B module builds the same envelope.
+- `_local_qa_envelope(checks, *, method, not_proven, inputs, outputs, tool, visual=False) -> dict` (:520): status fail > warn > needs-visual-review > pass, no createdAt. Proposed `forge_core.qa_envelope`; every Wave B module builds the same envelope.
 
 ## 7. Cross-module links that Z must add
 
