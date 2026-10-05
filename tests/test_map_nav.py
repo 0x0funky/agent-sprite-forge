@@ -464,11 +464,10 @@ def test_check_and_query_run_on_forge_nav(tmp_path):
     """D4: map_nav is the command line over the vendored forge_nav. Its grid, BFS and predicates are
     forge_nav's, check builds a forge_nav.CollisionModel from the bundle's D2 blocking set, and query
     answers with D1's closed polygon solids (B13's pre-integration model left a polygon's right and
-    bottom edges free; map_nav.CollisionModel keeps that model only as the reference of
-    tests/test_forge_nav.py)."""
+    bottom edges free; tests/test_forge_nav.py keeps that model as its frozen reference, PreD1Model)."""
     fn = nav.forge_nav
-    assert (nav.grid_bfs, nav.attach, nav.pnpoly, nav.NavGrid, nav.merge_rects) == (
-        fn.grid_bfs, fn.attach, fn.pnpoly, fn.NavGrid, fn.merge_rects)
+    assert (nav.CollisionModel, nav.grid_bfs, nav.attach, nav.pnpoly, nav.NavGrid, nav.merge_rects) == (
+        fn.CollisionModel, fn.grid_bfs, fn.attach, fn.pnpoly, fn.NavGrid, fn.merge_rects)
     square = {"shape": "polygon", "points": [[40, 40], [60, 40], [60, 60], [40, 60]]}
     path = write_bundle(tmp_path / "poly", collision={"actorRadius": 0, "solids": [square]},
                         spawns=[{"id": "start", "x": 10, "y": 10}])
@@ -479,8 +478,7 @@ def test_check_and_query_run_on_forge_nav(tmp_path):
     run = run_cli([TOOL, "query", "--bundle", path, *[a for e in edges for a in ("--point", e)]])
     assert run.returncode == 0, run.stderr
     assert [p["valid"] for p in json.loads(run.stdout)["points"]] == [False] * 5  # closed on every edge (D1)
-    reference = nav.CollisionModel(160, 100, 0, solids=[square])
-    assert reference.blocked(60, 50) == False  # noqa: E712  the pre-D1 even-odd model it replaced
+    assert nav.CollisionModel(160, 100, 0, solids=[square]).blocked(60, 50)  # the library name follows D1 too
 
 
 def test_footprint_basis_and_flip_x_reach_the_check(tmp_path):

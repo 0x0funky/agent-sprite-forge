@@ -97,6 +97,22 @@ def props_fixture(root: Path) -> tuple[dict, dict | None]:
     }, None
 
 
+def tangent_fixture(root: Path) -> tuple[dict, dict | None]:
+    """Ellipses that grid moves only touch, the case the integration pass found on layout_build's meadow
+    example (forge_nav N10: one touching point, one double root): one under row 19 (cell 3, touching
+    (8, 58.5) between nodes x 7.5 and 10.5) and one right of column 10 (touching (31.5, 23) between nodes
+    y 22.5 and 25.5); a third under row 15 is crossed by 1e-6 px."""
+    return {
+        "schema": BUNDLE, "world": {"width": 48, "height": 80},
+        "collision": {"actorRadius": 5, "solids": [
+            {"shape": "ellipse", "cx": 8.0, "cy": 60.25, "rx": 3.0, "ry": 1.75},
+            {"shape": "ellipse", "cx": 33.25, "cy": 23.0, "rx": 1.75, "ry": 3.0},
+            {"shape": "ellipse", "cx": 25.0, "cy": 48.249999, "rx": 3.0, "ry": 1.75}]},
+        "spawns": [{"id": "start", "x": 4.5, "y": 4.5}],
+        "interactions": [{"id": "far", "x": 43.5, "y": 76.5}],
+    }, None
+
+
 MATERIAL_CLASSES = {"grass": {"class": "decor", "color": "#40a040"}, "rock": {"class": "solid", "color": "#505050"},
                     "water": {"class": "liquid", "color": "#2050c0"},
                     "shallows": {"class": "liquid", "color": "#3070e0", "walkable": True},
@@ -360,6 +376,19 @@ class ForgeNavReferenceTests(unittest.TestCase):
     def test_one_way_blocks_downward_moves_only(self):
         self.compare("one-way", one_way_fixture)
 
+    def test_tangent_ellipses_touch_at_one_point(self):
+        """N10 tangents (integration pass, meadow example): the runtime's grid moves and segments agree with
+        forge_nav where an ellipse only touches a row, and a row 1e-6 px inside still crosses it."""
+        self.compare("tangent", tangent_fixture)
+        with tempfile.TemporaryDirectory() as temporary:
+            bundle, _ = tangent_fixture(Path(temporary))
+            grid = NAV.build_grid(Reference(bundle, Path(temporary)).model)
+        self.assertTrue(grid.valid[19, 2] and grid.valid[19, 3] and grid.valid[7, 10] and grid.valid[8, 10])
+        self.assertTrue(grid.moves[19, 2] & NAV.MOVE_E and grid.moves[19, 3] & NAV.MOVE_W, "row tangent: open")
+        self.assertTrue(grid.moves[7, 10] & NAV.MOVE_S and grid.moves[8, 10] & NAV.MOVE_N, "column tangent: open")
+        self.assertTrue(grid.valid[15, 7] and grid.valid[15, 8])
+        self.assertFalse(grid.moves[15, 7] & NAV.MOVE_E or grid.moves[15, 8] & NAV.MOVE_W, "crossed by 1e-6 px: closed")
+
     def test_the_fixtures_exercise_every_rule(self):
         """Sanity: the fixtures hold thin gaps, one_way moves, flipped footprints and unreachable targets."""
         with tempfile.TemporaryDirectory() as temporary:
@@ -397,7 +426,7 @@ class RuntimeSourceTests(unittest.TestCase):
             self.assertNotIn(marker, source.lower())
         self.assertNotRegex(source, r"\b(?:fetch|XMLHttpRequest|WebSocket|Math\.random|Date\.now|performance\.now)\b",
                             "the runtime is deterministic and offline")
-        self.assertRegex(source, r'export const RUNTIME_VERSION = "1\.1\.0";')
+        self.assertRegex(source, r'export const RUNTIME_VERSION = "1\.1\.1";')  # 1.1.1: N10 tangent ellipses
 
     def test_runtime_names_the_forge_nav_rule_book(self):
         source = RUNTIME.read_text(encoding="utf-8")

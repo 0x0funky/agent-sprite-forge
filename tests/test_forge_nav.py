@@ -35,6 +35,31 @@ SKILL = "generate2dmap"
 fn = load_shared("forge_nav")
 nav = load_script(SKILL, "map_nav")  # B13's map_nav.py, loaded by path: the reference implementation
 mb = nav.map_bundle  # the map_bundle module map_nav itself uses
+_vendored = nav.forge_nav  # the forge_nav copy map_nav imports
+
+
+class PreD1Model(_vendored.CollisionModel):
+    """B13's map_nav model as built before integration, frozen here as the reference these tests pin
+    forge_nav's model differences against (D1): polygon solids use the even-odd test alone (a point on
+    a polygon solid's right or bottom edge was free) and shapes without area still block. Everything
+    else is forge_nav's code. It lived in map_nav.py as map_nav.CollisionModel until the integration
+    pass moved it here (handoff B13, section 6); map_nav.CollisionModel is now forge_nav's model."""
+
+    def __init__(self, width: float, height: float, radius: float, y_squash: float = 1.0, regions=(),
+                 solids=(), material_codes=None, material_scale: int = 1) -> None:
+        super().__init__(width, height, radius, y_squash, regions, (), material_codes, material_scale)
+        self.solids = [_vendored._Polygon(solid["points"]) if solid["shape"] == "polygon"  # open, even-odd only
+                       else _vendored._shape(solid) for solid in solids]
+        self.solid_sources = [solid.get("source", "") for solid in solids]
+
+    @classmethod
+    def from_bundle(cls, bundle) -> "PreD1Model":
+        if bundle.collision is None:
+            raise mb.BundleError("the bundle has no collision block (map_nav needs collision.actorRadius)")
+        material = bundle.material
+        return cls(bundle.width, bundle.height, bundle.collision.actor_radius, bundle.collision.y_squash,
+                   bundle.collision.regions, mb.world_solids(bundle),
+                   None if material is None else material.class_codes(), 1 if material is None else material.scale)
 
 
 def write_bundle(folder: Path, name: str = "map-bundle.json", **fields) -> Path:
@@ -54,7 +79,7 @@ def both(path: Path):
     bundle = mb.load_bundle(path)
     assert bundle.errors == [], [p.as_dict() for p in bundle.errors]
     blocking = fn.read_blocking_set(path)
-    return nav.CollisionModel.from_bundle(bundle), blocking.model(), bundle, blocking
+    return PreD1Model.from_bundle(bundle), blocking.model(), bundle, blocking
 
 
 def model_of(path: Path):
@@ -910,7 +935,7 @@ def test_polygon_solids_are_closed():
     right and bottom edges free. Walk regions keep the even-odd rule (no seams between regions)."""
     square = [[10, 10], [30, 10], [30, 30], [10, 30]]
     new = fn.CollisionModel(40, 40, 0, solids=[{"shape": "polygon", "points": square}])
-    old = nav.CollisionModel(40, 40, 0, solids=[{"shape": "polygon", "points": square}])
+    old = PreD1Model(40, 40, 0, solids=[{"shape": "polygon", "points": square}])
     edges = ([10, 20], [30, 20], [20, 10], [20, 30], [10, 10], [30, 30], [30, 10], [10, 30])
     xs, ys = np.array(edges, float).T
     assert new.blocked(xs, ys).all()
@@ -935,7 +960,7 @@ def test_shapes_without_area_block_nothing():
         warnings.simplefilter("error")  # and no division by a zero radius
         model = fn.CollisionModel(20, 20, 0, solids=[line_rect, flat, dot])
         assert model.solids == [] and not model.blocked([10, 5, 5, 15], [10, 5, 6, 5]).any()
-    assert nav.CollisionModel(20, 20, 0, solids=[line_rect]).blocked(10, 10)  # map_nav blocked the line
+    assert PreD1Model(20, 20, 0, solids=[line_rect]).blocked(10, 10)  # map_nav blocked the line
     assert fn.footprint_solid(10, 10, {"shape": "rect", "width": 0, "depth": 4}) is None
     assert fn.footprint_solid(10, 10, {"shape": "ellipse", "width": 3, "depth": 0}, scale=2) is None
     layer = fn.TileLayer("g", np.array([[0, 0]]), 16, 16, {0: {"collision": [
@@ -943,6 +968,27 @@ def test_shapes_without_area_block_nothing():
         {"shape": "polygon", "points": [[0, 0], [8, 8], [16, 16]]},
         {"shape": "ellipse", "cx": 4, "cy": 4, "rx": 2, "ry": 0}]}})
     assert fn.tile_solids([layer]) == []
+
+
+def test_a_tangent_ellipse_is_one_touching_point():
+    """N10, found by the integration pass on layout_build's meadow example: a footprint ellipse whose top
+    touches a grid row exactly (cy - ry = 58.5). The quadratic's discriminant is rounding noise (+3.9e-16 one
+    way, -4.4e-16 the other), which made segmentClear block the move west to east but not east to west, and
+    differ from the grid. A tangent is a single touching point in both directions, in segment_clear and in
+    build_grid alike, while a line 1e-6 px inside the ellipse still crosses it."""
+    tangent = {"shape": "ellipse", "cx": 8.0, "cy": 60.25, "rx": 3.0, "ry": 1.75, "rotate": 0.0}
+    a, b = (7.5, 58.5), (10.5, 58.5)
+    for model in (fn.CollisionModel(40, 80, 5, solids=[tangent]), PreD1Model(40, 80, 5, solids=[tangent])):
+        assert model.cell == 3 and model.valid(*a) and model.valid(*b)
+        assert model.segment_clear(a, b) and model.segment_clear(b, a)
+    grid = fn.build_grid(fn.CollisionModel(40, 80, 5, solids=[tangent]))
+    assert (grid.xs[2], grid.xs[3], grid.ys[19]) == (7.5, 10.5, 58.5)
+    assert grid.moves[19, 2] & fn.MOVE_E and grid.moves[19, 3] & fn.MOVE_W
+    inside = fn.CollisionModel(40, 80, 5, solids=[{**tangent, "cy": 60.25 - 1e-6}])  # a real chord of ~5e-3 px
+    assert not inside.segment_clear(a, b) and not inside.segment_clear(b, a)
+    assert "thin-gap rule" in inside.segment_status(a, b)
+    inside_grid = fn.build_grid(inside)
+    assert not inside_grid.moves[19, 2] & fn.MOVE_E and not inside_grid.moves[19, 3] & fn.MOVE_W
 
 
 @pytest.mark.parametrize("axis", ["h", "v"])
@@ -957,7 +1003,7 @@ def test_closed_polygon_edges_on_grid_lines_block_moves(axis):
     assert model.valid(*a) and model.valid(*b) and model.valid((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
     assert model.segment_clear(a, b, thin_gap=False)
     assert "thin-gap rule" in model.segment_status(a, b)
-    reference = nav.CollisionModel(8, 8, 0, solids=[{"shape": "polygon", "points": points}])
+    reference = PreD1Model(8, 8, 0, solids=[{"shape": "polygon", "points": points}])
     assert reference.segment_clear(a, b)  # map_nav: the bottom edge was outside the polygon
     grid = fn.build_grid(model)
     row, col = (2, 3) if axis == "h" else (3, 2)

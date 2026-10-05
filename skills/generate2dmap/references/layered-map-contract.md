@@ -149,7 +149,7 @@ The same object, as gameplay data in the map bundle, with a mirrored second tree
 
 ## Collision rules
 
-`forge_nav.py` (canonical copy `shared/forge_nav.py`, vendored into this skill's `scripts/` beside the `forge_core.py` it needs) is the one implementation of the map collision rules. `map_nav.py`, the compose audit with `--bundle`, the Tiled, Godot and LDtk exporters, the codeart layout builder and the scene preview all read a bundle's blocking set through it, and `map-runtime.mjs` mirrors it rule for rule. Its module docstring is the complete rule book (N1 to N15, with the exact arithmetic). These are its rules for the walk area, the blocking set, solids, footprints, materials and one-way platforms, quoted verbatim:
+`forge_nav.py` (canonical copy `shared/forge_nav.py`, vendored into this skill's `scripts/` beside the `forge_core.py` it needs) is the one implementation of the map collision rules. `map_nav.py`, the compose audit with `--bundle`, the Tiled, Godot and LDtk exporters, the codeart layout builder and the scene preview all read a bundle's blocking set through it, and [runtime/map-runtime.mjs](runtime/map-runtime.mjs), the JavaScript collision query that the playable scene preview ([scene-preview.md](scene-preview.md)) inlines, mirrors it rule for rule. Its module docstring is the complete rule book (N1 to N15, with the exact arithmetic). These are its rules for the walk area, the blocking set, solids, footprints, materials and one-way platforms, quoted verbatim:
 
 ```text
 N3  Walk area. Without walk regions it is the closed box 0 <= x <= W and 0 <= y <= H.
@@ -247,4 +247,4 @@ In short, for the rest of the rule book:
 - Export with `export_tiled.py` when the target loads Tiled data; the export proves the re-rendered files match the bundle, not that the Tiled editor or an engine imports them (Tiled GUI not verified).
 - Walk the routes in the actual runtime: in front of and behind props, around corners, over bridges and through portals both ways.
 
-Strategy-level guidance (routes, portals, autotiles, chunks, roads and bridges) is in [map-strategies.md](map-strategies.md); genre presets and engine targets are in [map-presets.md](map-presets.md); prop extraction and anchors are in [prop-pack-contract.md](prop-pack-contract.md).
+Strategy-level guidance (routes, portals, autotiles, chunks, roads and bridges) is in [map-strategies.md](map-strategies.md); genre presets and engine targets are in [map-presets.md](map-presets.md); prop extraction and anchors are in [prop-pack-contract.md](prop-pack-contract.md); walking a bundle in a browser before exporting it is in [scene-preview.md](scene-preview.md).

@@ -1851,6 +1851,9 @@ def build(args: argparse.Namespace) -> dict:
                       "base": layout.base.name, "data": grid.astype(int).tolist()}
         forge_core.write_json(stage / "terrain-vertices.json", vertex_doc)
         outputs.insert(0, stage / "terrain-vertices.json")
+        # Like every other file the bundle names, the vertex grid is bound by its sha256 (map_bundle.py validate
+        # --require-sha256 accepts the bundle as published).
+        bundle["terrain"]["sha256"] = forge_core.sha256_file(stage / "terrain-vertices.json")
         if args.preview:
             preview = render_preview(ground, instances)
             codeart_core.save_png(preview, stage / "preview.png")

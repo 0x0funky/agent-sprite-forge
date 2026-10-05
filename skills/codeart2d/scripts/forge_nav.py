@@ -141,11 +141,13 @@ N10 segmentClear(a, b). dx = b.x - a.x, dy = b.y - a.y, len = sqrt(dx * dx + dy 
       jumped. The segment p + t * d (t in [0, 1]) is cut at every t in (0, 1) where it can
       cross a boundary: polygon edges of regions, holes and solids (proper crossings with
       0 <= u <= 1, and both end points of a collinear overlap), rect sides, both roots of
-      each ellipse's quadratic, material pixel edges (x = m * s, y = m * s inside the image)
-      and, without walk regions, the sides of the world box. The midpoint of every piece of
-      positive length must be in the walk area and not blocked. A single touching point is
-      not a failure. Cut positions only need to be accurate, not bit-identical: each piece's
-      status is constant on its interior.
+      each ellipse's quadratic (disc = b * b - 4 * a * c; when |disc| <= 1e-12 * (b * b)
+      the line is tangent and disc is taken as 0, one double root, so rounding noise never
+      turns the touching point into a sliver), material pixel edges (x = m * s, y = m * s
+      inside the image) and, without walk regions, the sides of the world box. The midpoint
+      of every piece of positive length must be in the walk area and not blocked. A single
+      touching point is not a failure. Cut positions only need to be accurate, not
+      bit-identical: each piece's status is constant on its interior.
 
 N11 one_way (D2: blocks from above only; a side-scroll class). A move with b.y > a.y
     (moving down) is blocked when, between consecutive samples k - 1 and k of N10, any of
@@ -227,6 +229,7 @@ FOOTPRINT_BASES = ("prop_px", "world_px", "image_px")  # D7: image_px is the leg
 MATERIAL_CLASSES = ("solid", "one_way", "liquid", "hazard", "decor")
 BUNDLE_SCHEMAS = ("generate2dmap.map_bundle.v1", "generate2dmap.map_bundle.v2")
 _PAD = 1e-7  # bounding boxes are widened by this much for culling only; never for decisions
+_TANGENT_DISC = 1e-12  # N10: an ellipse quadratic with |disc| <= this * b * b is a tangent (one double root)
 _REL_PATH = re.compile(r"^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\]+$")  # common.schema.json relPath
 _REASON_STAND = "the actor cannot stand here (footprint blocked)"
 
@@ -502,6 +505,9 @@ class _Ellipse:
         b = 2 * (u0 * du / self.rx ** 2 + v0 * dv / self.ry ** 2)
         c = (u0 / self.rx) ** 2 + (v0 / self.ry) ** 2 - 1
         disc = b * b - 4 * a * c
+        # A tangent line has a double root, but rounding leaves disc a few ulp either side of 0, which
+        # would make the touching point a sliver piece in one direction only (N10): take it as 0.
+        disc = np.where(np.abs(disc) <= _TANGENT_DISC * (b * b), 0.0, disc)
         with np.errstate(invalid="ignore"):
             root = np.sqrt(np.where(disc >= 0, disc, np.nan))
         return np.stack([(-b - root) / (2 * a), (-b + root) / (2 * a)])

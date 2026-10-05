@@ -1,5 +1,5 @@
 /*
- * map-runtime.mjs 1.1.0: collision query, navigation grid, walker and exits
+ * map-runtime.mjs 1.1.1: collision query, navigation grid, walker and exits
  * for generate2dmap scenes (map_bundle.v2).
  *
  * One dependency-free ES module for browsers, Node 18+ and bundlers. Games can
@@ -47,6 +47,7 @@
  *       a + d * k / n are valid; the one_way rule holds; and (thin-gap rule)
  *       the centre stays in the walk area and off every blocker on the whole
  *       segment, tested at the midpoint of every piece between boundary cuts
+ *       (an ellipse cut with |disc| <= 1e-12 * b * b is a tangent: one double root)
  *   N11 one_way blocks moving down (+y) onto it: no footprint sample may step
  *       from another pixel onto one_way between consecutive samples, and the
  *       centre path may not enter it
@@ -72,7 +73,7 @@
  * keyboard moves go through moveWithCollision().
  */
 
-export const RUNTIME_VERSION = "1.1.0";
+export const RUNTIME_VERSION = "1.1.1";
 export const TICK_HZ = 60;
 export const INTENT_MIN_COS = 0.25;
 export const SNAPSHOT_SCHEMA = "generate2dmap.scene_snapshot.v1";
@@ -473,6 +474,9 @@ function edgeCuts(px, py, dx, dy, element, out) {
   }
 }
 
+// N10 tangent tolerance of the ellipse quadratic (forge_nav _TANGENT_DISC).
+const TANGENT_DISC = 1e-12;
+
 // Both roots of |p + t d| on an ellipse boundary (forge_nav _Ellipse._roots).
 function ellipseCuts(px, py, dx, dy, shape, out) {
   let u0 = px - shape.cx, v0 = py - shape.cy;
@@ -486,7 +490,10 @@ function ellipseCuts(px, py, dx, dy, shape, out) {
   const a = (du / shape.rx) * (du / shape.rx) + (dv / shape.ry) * (dv / shape.ry);
   const b = 2 * (u0 * du / rx2 + v0 * dv / ry2);
   const c = (u0 / shape.rx) * (u0 / shape.rx) + (v0 / shape.ry) * (v0 / shape.ry) - 1;
-  const disc = b * b - 4 * a * c;
+  let disc = b * b - 4 * a * c;
+  // A tangent line has a double root; rounding leaves disc a few ulp either side of 0, which would make the
+  // touching point a sliver piece in one direction only (N10): take it as 0, exactly as forge_nav does.
+  if (Math.abs(disc) <= TANGENT_DISC * (b * b)) disc = 0;
   if (!(disc >= 0) || !(a > 0)) return;
   const root = Math.sqrt(disc);
   for (const t of [(-b - root) / (2 * a), (-b + root) / (2 * a)]) if (t > 0 && t < 1) out.push(t);

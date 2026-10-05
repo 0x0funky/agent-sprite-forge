@@ -436,8 +436,20 @@ def test_bundle_and_sidecars_validate(meadow):
     assert bundle["provenance"]["version"] == "0.4.0"
     assert bundle["layers"][0] == {"name": "ground", "kind": "image", "image": "ground.png",
                                    "sha256": sha256_of(meadow["a"] / "ground.png")}
+    assert bundle["terrain"]["sha256"] == sha256_of(meadow["a"] / "terrain-vertices.json")
     assert re.fullmatch(r"[^:]+", bundle["id"])
     assert not any(re.match(r"[A-Za-z]:|/|\\\\", str(value)) for value in path_values(bundle))
+
+
+def test_bundle_passes_map_bundle_validate_with_require_sha256(meadow):
+    """Cross-skill (integration): generate2dmap's map_bundle.py validate, run by path, accepts the published
+    bundle with --require-sha256, so every file the bundle names (vertex grid, ground, props) is bound by
+    its sha256 and its art resolves by the D6 order."""
+    result = run_cli([script_path("generate2dmap", "map_bundle"), "validate", "--bundle",
+                      meadow["a"] / "map-bundle.json", "--require-sha256"])
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert (summary["status"], summary["errors"]) == ("pass", 0), summary
 
 
 def test_prop_variety_mirroring_and_footprints(meadow):

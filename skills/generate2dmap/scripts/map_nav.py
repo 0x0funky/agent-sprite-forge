@@ -35,9 +35,8 @@ Collision semantics (forge_nav rules N1-N15; map-runtime.mjs implements the same
   * one_way material blocks from above only: a move with a downward (+y) component may not
     bring a footprint sample, nor the centre path, from another material onto one_way.
 
-Library users take forge_nav directly. map_nav.CollisionModel is B13's model as built before
-integration, kept only as the reference tests/test_forge_nav.py pins D1's differences
-against; the verbs never use it.
+Library users take forge_nav directly; map_nav.CollisionModel, NavGrid, grid_bfs and the other
+re-exported names are forge_nav's own.
 """
 from __future__ import annotations
 
@@ -47,7 +46,7 @@ import math
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Sequence
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -57,8 +56,9 @@ import forge_core  # noqa: E402  (this skill's vendored copy)
 import forge_nav  # noqa: E402  (the shared collision rule book, D4)
 import map_bundle  # noqa: E402
 from forge_nav import (  # noqa: E402,F401  (map_nav's public names, now forge_nav's)
-    BLOCK, FREE, MAX_GRID_NODES, MOVE_E, MOVE_N, MOVE_S, MOVE_W, ONE_WAY, SQRT1_2, NavGrid, Navigation, Reach,
-    Trigger, attach, footprint_offsets, grid_bfs, merge_rects, moves_from_mask, nav_cell, pnpoly, reachable_mask,
+    BLOCK, FREE, MAX_GRID_NODES, MOVE_E, MOVE_N, MOVE_S, MOVE_W, ONE_WAY, SQRT1_2, CollisionModel, NavGrid,
+    Navigation, Reach, Trigger, attach, footprint_offsets, grid_bfs, merge_rects, moves_from_mask, nav_cell, pnpoly,
+    reachable_mask,
 )
 from map_bundle import BundleError  # noqa: E402
 
@@ -90,31 +90,6 @@ def build_grid(model: forge_nav.CollisionModel) -> NavGrid:
         return forge_nav.build_grid(model)
     except forge_nav.NavError as error:
         raise BundleError(str(error)) from None
-
-
-class CollisionModel(forge_nav.CollisionModel):
-    """B13's map_nav model as built before integration, kept only as the reference that
-    tests/test_forge_nav.py pins forge_nav's model differences against (D1): polygon solids
-    use the even-odd test alone (a point on a polygon solid's right or bottom edge was free)
-    and shapes without area still block. Everything else is forge_nav's code. The verbs never
-    use it; delete it once that test freezes its own reference copy (handoff B13, section 6)."""
-
-    def __init__(self, width: float, height: float, radius: float, y_squash: float = 1.0,
-                 regions: Sequence[tuple[Any, Sequence[Any]]] = (), solids: Sequence[dict] = (),
-                 material_codes: np.ndarray | None = None, material_scale: int = 1) -> None:
-        super().__init__(width, height, radius, y_squash, regions, (), material_codes, material_scale)
-        self.solids = [forge_nav._Polygon(solid["points"]) if solid["shape"] == "polygon"  # open, even-odd only
-                       else forge_nav._shape(solid) for solid in solids]
-        self.solid_sources = [solid.get("source", "") for solid in solids]
-
-    @classmethod
-    def from_bundle(cls, bundle: map_bundle.Bundle) -> "CollisionModel":
-        if bundle.collision is None:
-            raise BundleError("the bundle has no collision block (map_nav needs collision.actorRadius)")
-        material = bundle.material
-        return cls(bundle.width, bundle.height, bundle.collision.actor_radius, bundle.collision.y_squash,
-                   bundle.collision.regions, map_bundle.world_solids(bundle),
-                   None if material is None else material.class_codes(), 1 if material is None else material.scale)
 
 
 # --------------------------------------------------------------------------- map checks

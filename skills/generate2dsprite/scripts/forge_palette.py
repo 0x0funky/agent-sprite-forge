@@ -920,6 +920,9 @@ def quantize_sequence(frames: Sequence[Any], palette: Any, *, margin: float = HY
     ``pingpong``: the clip plays 0..n-1..1, so frame 0 is seeded from frame 1 and
     the returned list is the whole cycle ``q + q[-2:0:-1]``: the way back reuses
     the forward frames, an exact mirror. Neither: a one-shot clip, unseeded.
+    ``alpha_threshold`` is a fraction of full alpha (0..1) here, like
+    ``alpha_band``; quantize_image and fit_report take 0..255, so a value above
+    1 is refused rather than silently making every pixel transparent.
     Returns uint8 index maps (transparent pixels at the palette's
     transparent_index), plus per-frame hysteresis stats with ``return_stats``.
     """
@@ -927,6 +930,9 @@ def quantize_sequence(frames: Sequence[Any], palette: Any, *, margin: float = HY
     low, high = float(alpha_band[0]), float(alpha_band[1])
     if not 0.0 <= low <= high <= 1.0:
         raise PaletteError("alpha_band needs 0 <= low <= high <= 1")
+    if not 0.0 <= float(alpha_threshold) <= 1.0:
+        raise PaletteError(f"quantize_sequence alpha_threshold is a fraction 0..1 (got {alpha_threshold!r}); "
+                           "quantize_image and fit_report take 0..255")
     if not margin >= 0.0:
         raise PaletteError("margin must be >= 0")
     pixels = [_rgba(frame) for frame in frames]

@@ -661,6 +661,8 @@ def test_quantize_sequence_stats_and_validation():
         fp.quantize_sequence([clip[0], clip[0][:10]], palette)
     with pytest.raises(fp.PaletteError):
         fp.quantize_sequence(clip, palette, alpha_band=(0.7, 0.2))
+    with pytest.raises(fp.PaletteError, match="fraction 0..1"):  # 0..255 belongs to quantize_image
+        fp.quantize_sequence(clip, palette, alpha_threshold=128)
     with pytest.raises(fp.PaletteError):
         fp.quantize_sequence(clip, palette.replace(transparent_index=None))
 
