@@ -17,7 +17,7 @@ python "<skill-dir>/scripts/rig_animate.py" --anim hero.anim.json --output-dir o
 python "<skill-dir>/scripts/rig_animate.py" --anim hero.anim.json --output-dir out/hero-godot --godot-world-height 1.8
 ```
 
-In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. `--rig` defaults to the `rig` path inside the animation (relative to the animation file). On success the script prints one JSON line with `output`, `metadata` (codeart-meta.json), `report` (rig-report.json), the clips and the frame count. Errors print `error: ...` and exit 1. `--output-dir` must not exist; the work is staged beside it and published only after QA, so with `--strict-qc` a failed check leaves nothing behind.
+In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. `--rig` defaults to the `rig` path inside the animation (relative to the animation file). On success the script prints one JSON line with `output`, `metadata` (codeart-meta.json), `report` (rig-report.json), the clips and the frame count. Errors print `error: ...` and exit 1 (an unexpected failure too, as one `error: internal error (...)` line); a wrong argument is a usage error with exit 2, and `--help` works even before numpy is installed. JSON may be saved with a UTF-8 BOM. `--output-dir` must not exist; the work is staged beside it and published only after QA, so with `--strict-qc` a failed check leaves nothing behind.
 
 | Flag | Meaning |
 |---|---|
@@ -32,7 +32,7 @@ In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. `--rig` defaults to the `
 | `--margin 1` | Minimum transparent margin in rig pixels. |
 | `--seam-range 0.8,1.25` | Allowed loop seam over median step (see QA). |
 | `--build-clips` | Run the sibling `generate2dsprite/scripts/build_animation_clips.py` by path into `compiled-clips/`. |
-| `--clips-schema v1\|v2` | Schema id written into clips.json (v1 by default; every builder reads it). |
+| `--clips-schema v1\|v2` | Schema id written into clips.json: v2 by default, so events reach the compiled `events_ms`; v1 for a build_animation_clips that predates the v2 reader. |
 | `--godot-world-height H` | Also write `godot/<clip>.sprite3d.json` and `godot/sprite3d-bundle.json`. |
 | `--backend auto\|resvg_py\|resvg_js_cli\|chrome` | SVG rasterizer (resvg-py first). |
 

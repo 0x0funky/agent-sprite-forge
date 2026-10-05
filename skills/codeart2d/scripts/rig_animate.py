@@ -52,27 +52,37 @@ from typing import Any, Callable, Iterable, Mapping, Sequence
 import xml.etree.ElementTree as ET
 
 
-def _require_modules() -> None:
-    """Exit with the pip command, not a traceback, when numpy or Pillow is missing."""
-    missing = [name for name in ("numpy", "PIL") if importlib.util.find_spec(name) is None]
-    if missing:
-        packages = " ".join("Pillow" if name == "PIL" else name for name in missing)
-        print(f"error: missing Python module(s): {', '.join(missing)}\n"
-              f"install with: python -m pip install {packages}", file=sys.stderr)
-        raise SystemExit(1)
-
-
-_require_modules()
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import numpy as np  # noqa: E402
-from PIL import Image, ImageDraw  # noqa: E402
+try:
+    import numpy as np
+    from PIL import Image, ImageDraw
 
-import codeart_core as core  # noqa: E402
-import forge_core  # noqa: E402
+    import codeart_core as core
+    import forge_core
+except ImportError as _import_error:  # a clean machine: --help still works and main() prints the pip command
+    _MISSING: ImportError | None = _import_error
+else:
+    _MISSING = None
+
+
+def missing_modules_message() -> str | None:
+    """The pip command for missing numpy/Pillow (None when everything imported); used by main() after
+    argparse has had its chance to answer --help, so --help works on a clean machine too."""
+    if _MISSING is None:
+        return None
+    missing = [name for name in ("numpy", "PIL") if importlib.util.find_spec(name) is None]
+    if not missing:
+        return f"error: cannot import the codeart2d libraries ({_MISSING}); reinstall the codeart2d skill"
+    packages = " ".join("Pillow" if name == "PIL" else name for name in missing)
+    interpreter = sys.executable.encode("ascii", "backslashreplace").decode("ascii")
+    return (f"error: missing Python module(s): {', '.join(missing)}\n"
+            f"install with: python -m pip install {packages}\n"
+            f"(run it with the interpreter that runs this tool: {interpreter})")
 
 
 TOOL = "codeart2d/rig_animate.py"
-TOOL_VERSION = "1"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.4.0"  # D29: the package version
+RASTER_BACKENDS = ("resvg_py", "resvg_js_cli", "chrome")  # codeart_core.RASTER_BACKENDS, for --help without numpy
 RIG_ANIM_SCHEMA = "codeart2d.rig_anim.v1"
 RIG_ANIM_ALIASES = ("codeart.rig_anim.v1",)  # spelling of the design prototype
 RIG_REPORT_SCHEMA = "codeart2d.rig_report.v1"
@@ -86,8 +96,12 @@ DRIFT_TOLERANCE = 1e-6
 CONTACT_TOLERANCE = 1e-6
 DEFAULT_BUILDER = Path(__file__).resolve().parents[2] / "generate2dsprite" / "scripts" / "build_animation_clips.py"
 
-SVG_NS = core.SVG_NS
-CodeArtError = core.CodeArtError
+SVG_NS = "http://www.w3.org/2000/svg"  # codeart_core.SVG_NS
+if _MISSING is None:
+    CodeArtError = core.CodeArtError
+else:
+    class CodeArtError(ValueError):  # type: ignore[no-redef]  (never raised: main() stops first)
+        """Stand-in so the module imports on a clean machine."""
 
 
 def _q(tag: str) -> str:
@@ -1020,22 +1034,16 @@ def _event_name(value: Any, label: str) -> str:
 
 
 def _strict_json(path: Path) -> Any:
-    """JSON that refuses NaN and infinity (Python's json would accept them)."""
-    def constant(name: str) -> Any:
-        raise CodeArtError(f"{path.name}: {name} is not allowed; animation values must be finite numbers")
-
-    def number(text: str) -> float:
-        value = float(text)
-        if not math.isfinite(value):
-            raise CodeArtError(f"{path.name}: {text} overflows to infinity")
-        return value
-
+    """Strict JSON through forge_core.read_json (D28): UTF-8 with an optional BOM; NaN, infinity
+    (1e999 too) and duplicate keys are refused, which Python's json alone would accept."""
     try:
-        return json.loads(path.read_text(encoding="utf-8"), parse_constant=constant, parse_float=number)
-    except json.JSONDecodeError as exc:
-        raise CodeArtError(f"{path.name} is not valid JSON: {exc}") from None
+        return forge_core.read_json(path, strict=True)
     except OSError as exc:
         raise CodeArtError(f"cannot read {path}: {exc.strerror or exc}") from None
+    except json.JSONDecodeError as exc:
+        raise CodeArtError(f"{path.name} is not valid JSON: {exc}") from None
+    except ValueError as exc:  # NaN, infinity, a duplicate key, or text that is not UTF-8
+        raise CodeArtError(f"{path.name}: {exc}; animation values must be finite numbers and keys unique") from None
 
 
 class Animation:
@@ -1056,8 +1064,18 @@ class Animation:
             raise CodeArtError(f"{label}: states must map state names to clip names")
         self.states = dict(states)
         reference = data.get("entry_reference")
-        if reference is not None and reference not in self.clips:
-            raise CodeArtError(f"{label}: entry_reference {reference!r} is not a clip")
+        if reference is not None and (not isinstance(reference, str) or reference not in self.clips):
+            raise CodeArtError(f"{label}: entry_reference {reference!r} is not a clip name")
+        for clip in self.clips.values():  # transitions name clips of this animation (as render_pixelspec checks)
+            for index, item in enumerate(clip.transitions):
+                target = self.clips.get(item["to"])
+                if target is None:
+                    raise CodeArtError(f"{label}: clip {clip.name} transitions[{index}] goes to unknown clip "
+                                       f"{item['to']!r}; clips: {', '.join(self.clips)}")
+                entry = item.get("entry_frame", 0)
+                if isinstance(entry, bool) or not isinstance(entry, int) or not 0 <= entry < target.frames:
+                    raise CodeArtError(f"{label}: clip {clip.name} transitions[{index}].entry_frame must be a frame "
+                                       f"index of {item['to']!r} in [0, {target.frames})")
         self.entry_reference = reference if reference is not None else ("idle" if "idle" in self.clips else None)
         self.pixel = self._pixel_options(data.get("pixel", {}), label)
 
@@ -1119,8 +1137,14 @@ class Animation:
             raise CodeArtError(f"{label}: tracks must map bone ids to tracks")
         for bone_id, track in raw_tracks.items():
             tracks.append(self._track(str(bone_id), track, f"{label} track {bone_id}"))
+        raw_ik = raw.get("ik", {})
+        if raw_ik is None:
+            raw_ik = {}
+        if not isinstance(raw_ik, dict):
+            raise CodeArtError(f"{label}: ik must map chain names to two-bone chains, for example "
+                               "{\"leg\": {\"bones\": [\"thigh\", \"shin\"], \"end\": \"foot\", ...}}")
         ik = [self._ik(str(chain_name), spec, f"{label} ik {chain_name}", loop, stride, ease)
-              for chain_name, spec in (raw.get("ik") or {}).items()]
+              for chain_name, spec in raw_ik.items()]
         self._check_ik(ik, tracks, label)
         entry = raw.get("entry_frame")
         if entry is not None and (isinstance(entry, bool) or not isinstance(entry, int) or not 0 <= entry < frames):
@@ -1159,7 +1183,8 @@ class Animation:
         if not isinstance(raw, dict):
             raise CodeArtError(f"{label} must be an object")
         bones = raw.get("bones")
-        if not isinstance(bones, list) or len(bones) != 2 or not all(b in self.rig.bones for b in bones):
+        if not isinstance(bones, list) or len(bones) != 2 or not all(isinstance(b, str) and b in self.rig.bones
+                                                                     for b in bones):
             raise CodeArtError(f"{label}: bones must name two rig bones [root, middle]")
         root, mid = bones
         if self.rig.bones[mid].parent != root:
@@ -1616,18 +1641,13 @@ class Renderer:
 # fx_build.py imports these, so both codeart2d animation tools write the same contracts.
 
 def output_ref(path: Path, base: Path) -> dict:
-    """fileRef of a published output: POSIX path relative to `base`, sha256 and bytes."""
-    return {"path": Path(os.path.relpath(path, base)).as_posix(), "sha256": forge_core.sha256_file(path),
-            "bytes": path.stat().st_size}
+    """fileRef of a published output: POSIX path relative to `base`, sha256 and bytes (forge_core.file_ref)."""
+    return forge_core.file_ref(path, base)
 
 
 def input_ref(path: Path, base: Path) -> dict:
-    """fileRef of an input: relative to `base`, or the file name when it lives on another drive."""
-    try:
-        relative = Path(os.path.relpath(path.resolve(), base.resolve())).as_posix()
-    except ValueError:
-        relative = path.name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": path.stat().st_size}
+    """fileRef of an input: relative to `base`, or the file name when it lives on another drive (D30)."""
+    return forge_core.file_ref(path, base)
 
 
 def qa_envelope(checks: list[dict], *, method: str, not_proven: list[str], inputs: list[dict],
@@ -2267,7 +2287,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="vector route stroke-width multiplier (thicker lines at small sizes, e.g. 1.8 at 64 px)")
     parser.add_argument("--palette", help="palette file (.json, .hex, .gpl) for c-NAME classes and the palette gate")
     parser.add_argument("--variant", help="palette variant to apply (needs --palette)")
-    parser.add_argument("--backend", choices=("auto",) + core.RASTER_BACKENDS, default="auto",
+    parser.add_argument("--backend", choices=("auto",) + RASTER_BACKENDS, default="auto",
                         help="SVG rasterizer (default auto: resvg-py, then resvg-js CLI, then Chrome)")
     parser.add_argument("--margin", type=int, default=1, help="minimum transparent margin in rig pixels (default 1)")
     parser.add_argument("--seam-range", type=_seam_range, default=SEAM_RANGE,
@@ -2276,18 +2296,17 @@ def build_parser() -> argparse.ArgumentParser:
                         help="run generate2dsprite build_animation_clips.py on clips.json (into compiled-clips/)")
     parser.add_argument("--clips-builder", default=str(DEFAULT_BUILDER),
                         help="path to build_animation_clips.py (default: the sibling generate2dsprite skill)")
-    parser.add_argument("--clips-schema", choices=tuple(CLIPS_SCHEMAS), default="v1",
-                        help="clips.json schema id (default v1, accepted by every builder; v2 for clips v2 builders)")
+    parser.add_argument("--clips-schema", choices=tuple(CLIPS_SCHEMAS), default="v2",
+                        help="clips.json schema id (default v2, so events reach events_ms; v1 for builders that "
+                             "predate the v2 reader)")
     parser.add_argument("--godot-world-height", type=float,
                         help="also write godot/*.sprite3d.json (godot_sprite3d.v1) for this subject height")
     parser.add_argument("--strict-qc", action="store_true", help="exit 1 and publish nothing when a QA check fails")
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
-    parser = build_parser()
-    args = parser.parse_args(argv)
+def _run(argv: Sequence[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
     try:
         summary = build(args)
     except (CodeArtError, core.RasterError, ValueError, OSError) as exc:
@@ -2295,6 +2314,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """argparse first (so --help and usage errors work everywhere, exit 2), then the run inside
+    forge_core.run_cli: anything unexpected becomes one "error: internal error (...)" line, exit 1 (D27)."""
+    problem = missing_modules_message()
+    if problem:
+        build_parser().parse_args(argv)
+        print(problem, file=sys.stderr)
+        return 1
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,20 @@ Branch `asf/B19-codeart-rig-fx` from `wip/asf-upgrade-20261005` @ 3f9252d. New f
 - References: [rig-animation.md](../skills/codeart2d/references/rig-animation.md), [fx-language.md](../skills/codeart2d/references/fx-language.md), [fx-runtime-contract.md](../skills/codeart2d/references/fx-runtime-contract.md).
 - Tests: [test_codeart2d_rig.py](../tests/test_codeart2d_rig.py) (39), [test_codeart2d_fx.py](../tests/test_codeart2d_fx.py) (15), [test_fx_verify_js.py](../tests/test_fx_verify_js.py) (6, marker node), [tests/js/fx-verify.test.mjs](../tests/js/fx-verify.test.mjs) (15 node:test cases).
 
+## Phase 3 integration status (branch asf/int-g-codeart)
+
+Resolved in the codeart group fix pass (integration decisions cited as Dn):
+
+- **D32, line endings.** `tests/js/fx-verify.test.mjs` normalises CRLF to LF before it builds the mutants, so the node suite passes 15/15 on a `core.autocrlf=true` checkout (the one STD failure every earlier stage carried).
+- **D33, malformed animations.** `ik` must be an object (a list or a string was an AttributeError), IK `bones` must be strings (lists were unhashable), `entry_reference` must be a clip name string. `transitions[].to` must name a clip of the animation and `entry_frame` must fit that clip (it was published unchecked; the codeart review's non-blocking note).
+- **D27.** `main()` in rig_animate and fx_build runs through `forge_core.run_cli` (in-process callers too): anything unexpected is one `error: internal error (Type: message)` line, exit 1. The codeart reviewer's `fuzz_b19.py` (49 animation and 49 FX mutations, main() called in-process) reports 0 problems; `test_fuzzed_animations_never_escape_main` and `test_fuzzed_specs_never_escape_main` keep it that way.
+- **D11.** `--clips-schema` defaults to `v2` in both tools, so events reach the compiled `events_ms` and `sampling`, `pixel_art` and `art_source` reach the compiled clips (verified with the integrated B02 builder); `v1` stays for older builders.
+- **D28.** Animation and FX specs are read through `forge_core.read_json(strict=True)`: a UTF-8 BOM is accepted; NaN, infinity and duplicate keys are refused.
+- **D29.** `TOOL_VERSION` is `forge_core.FORGE_PACKAGE_VERSION` (`0.4.0`) in rig-report, fx-report and codeart-meta envelopes.
+- **D30.** `output_ref` / `input_ref` are `forge_core.file_ref`.
+- **Codeart review, non-blocking.** `--help` works on a machine without numpy (the modules record the import error and `main()` prints the pip command after argparse); `fx_build` checks that `routes` is a list of names.
+- **Schemas.** Section 5's requests are applied (S1, f3d7eb2); the tests validate rig_anim_v1, rig_report_v1, fx_v1, fx_report_v1 and the presets against the real vendored schemas, and the in-memory `CODEART_ADDITIONS` / `FX_ADDITIONS` are gone.
+
 ## 1. CLIs
 
 Run from the user's project root; outputs go to a new folder in the project. In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
@@ -18,7 +32,7 @@ Run from the user's project root; outputs go to a new folder in the project. In 
     python "<skill-dir>/scripts/fx_build.py" --spec slash.fx.json --output-dir out/fx-hd --route vector --zoom 4 --effects slash,impact
     node "<skill-dir>/scripts/fx_verify.mjs" out/fx-slash-v1/fx-runtime.mjs --report out/fx-slash-v1/fx-verify-2.json
 
-- Both Python CLIs: argparse, `utf8_stdio()` first, `--output-dir` refused when it exists, work staged with `forge_core.staged_output` and published only after QA; `--strict-qc` publishes nothing when a check fails. Errors: `error: ...` on stderr, exit 1, no traceback. Success: one ASCII JSON line with `output`, `metadata` (codeart-meta.json), `report` (rig-report.json or fx-report.json), the clips or effects, the stored frame count, the route (and `runtime` for fx_build).
+- Both Python CLIs: argparse, `utf8_stdio()` first, `--output-dir` refused when it exists, work staged with `forge_core.staged_output` and published only after QA; `--strict-qc` publishes nothing when a check fails. Errors: `error: ...` on stderr, exit 1, no traceback (D27, `forge_core.run_cli`); argument errors are argparse usage errors, exit 2. `--help` works before numpy is installed. Success: one ASCII JSON line with `output`, `metadata` (codeart-meta.json), `report` (rig-report.json or fx-report.json), the clips or effects, the stored frame count, the route (and `runtime` for fx_build).
 - `--help` is ASCII and works under cp1252 and cp950 (tested with `assert_cli_help`).
 - `fx_verify.mjs` is a Node 18+ CLI with no packages: `--help` prints ASCII usage; one JSON line `{status, module, report, effects, failed, warned}`; exit 1 when a check fails (also `error: fx.v1 verification failed: <ids>` on stderr); `--report` writes a common qaEnvelope and refuses an existing file (it writes the report also when checks fail, because the report is the evidence).
 - Integration e2e (plan Appendix I, code art): `rig_animate.py --anim examples/hero.anim.json --output-dir <tmp>/hero --build-clips --strict-qc`, then export_engine on `<tmp>/hero/compiled-clips/animation-clips.json`; `fx_build.py --spec examples/slash.fx.json --output-dir <tmp>/fx --export-runtime --strict-qc` (it runs fx_verify.mjs itself when node is on PATH; `fx-verify.json` and the `runtime_verify` check record the result).
@@ -61,6 +75,8 @@ Disclosure line for both tools (codeart_core already writes it into codeart-meta
 - Fixed (roadmap findings, prototype to tool): planted-foot slide 2.43 px and 1.03 px sink of the design prototype rig are now 0 px (roadmap 4.8: IK plus ground constraint; measured on rig geometry and on the hero's boot pixels); Python complex values and NaN leaking into SVG geometry (fox probe `61.13-0.00j`, roadmap 4.4) are refused; clipPath id collisions between frames batched in one page (fox probe) cannot happen (unique ids enforced, per-frame prefixes); fully transparent FX tail frames that build_animation_clips refused (roadmap 4.11) are dropped with their time merged; prototype slot fills read only from `fill` attributes now follow the CSS cascade (classes, inheritance, `currentColor`).
 
 ## 5. Schema change requests
+
+**Status: applied** by S1 (f3d7eb2); nothing is pending. The record of the requests follows.
 
 All in `shared/schemas/codeart.schema.json` (A0), then `tools/vendor_sync.py --write` (vendored into `skills/codeart2d/references/schemas/`). Purely additive: new `$defs`, new optional properties, and a conditional `allOf` on FX primitives that only constrains the six preset types. A0's existing `codeart.rig_anim_v1.valid.json` and `codeart.fx_v1.valid.json` (placeholder primitive types `arc`, `particles`) still validate; `tests/test_codeart2d_rig.py` and `tests/test_codeart2d_fx.py` apply exactly this JSON in memory (`CODEART_ADDITIONS`, `FX_ADDITIONS`) and validate the examples, rig-report.json, fx-report.json and A0's fixtures against it.
 
@@ -398,7 +414,7 @@ Reasons and consumers:
 
 Optional fields these producers add to existing contracts (open objects, listed so they do not drift):
 
-- clips.json (`sprite/clips_input`): per clip `loop_policy`, `entry_frame`, `stride_world_units`, `stride_px_per_frame`, `events`, `transitions`, `role`; top level `sampling`, `pixel_art`, `art_source: "code"`, `placeholder: false`, `body_height_px`, `states`. All already defined in A0's schema; the file validates as is. The schema id is `generate2dsprite.animation_clips.v1` by default (`--clips-schema v2` writes `.v2`).
+- clips.json (`sprite/clips_input`): per clip `loop_policy`, `entry_frame`, `stride_world_units`, `stride_px_per_frame`, `events`, `transitions`, `role`; top level `sampling`, `pixel_art`, `art_source: "code"`, `placeholder: false`, `body_height_px`, `states`. All already defined in A0's schema; the file validates as is. The schema id is `generate2dsprite.animation_clips.v2` by default (D11; `--clips-schema v1` writes `.v1`).
 - codeart-meta.json (`codeart/codeart_meta_v1`): top-level `route`, and `rig` plus `anim` (rig_animate) or `spec` (fx_build) as fileRefs; `renderer` adds `route`, and for the pixel route `coverage_ss`, `coverage`, `finish`.
 - `godot/<clip>.sprite3d.json` follows `generate2dsprite.godot_sprite3d.v1` as built by `generate2dsprite.py` (no schema exists in `sprite.schema.json`) and adds `durations_ms` and `loop`; `frame_size` may be non-square. B09 owns engine exports; if it adds a `godot_sprite3d_v1` def, these two keys should be in it.
 
@@ -424,7 +440,7 @@ No promotion is needed for the JS side: fx_verify.mjs is self-contained by desig
 - codeart2d SKILL.md: link references/rig-animation.md, references/fx-language.md and references/fx-runtime-contract.md; the hello-sprite quickstart (B18) can point to the hero example for "make it walk".
 - generate2dsprite character-animation.md (B02): the cutout/hybrid paragraph should point to codeart2d rig-animation.md in plain text (B02-T6 already plans this).
 - generate2dsprite processing.md (B01): add a "Code-art frames" note: never run `process` on code art; frames are 8-bit RGBA on one shared canvas, empty tail frames are dropped with their time merged, repeated poses are reused by name (roadmap P1-1).
-- build_animation_clips (B02): (a) rig_animate.py and fx_build.py write `generate2dsprite.animation_clips.v1` manifests that carry v2 optional fields (`events`, `entry_frame`, `loop_policy`, `stride_px_per_frame`, `role`); the builder must keep accepting them in v1 manifests. Once B02's v2 builder is merged, switch both tools' `--clips-schema` default to `v2` (one argparse default each) so events reach `events_ms`. (b) The builder records `source_manifest.path` as an absolute path into the stage folder, so `compiled-clips/animation-clips.json` is not byte-deterministic and points at a folder that no longer exists after publishing; a manifest-relative path (or the file name) would fix both. B19's byte-determinism tests therefore run without `--build-clips`.
+- build_animation_clips (B02): (a) done in Phase 3 (D11): both tools write `animation_clips.v2` by default, so events reach `events_ms`; the builder keeps accepting v1 manifests with v2 optional fields for `--clips-schema v1`. (b) The builder records `source_manifest.path` as an absolute path into the stage folder, so `compiled-clips/animation-clips.json` is not byte-deterministic and points at a folder that no longer exists after publishing; a manifest-relative path (or the file name) would fix both. B19's byte-determinism tests therefore run without `--build-clips`.
 - export_engine (B09): reads `compiled-clips/animation-clips.json`; `body_height_px`, `sampling` and `art_source` are in clips.json for it; godot Sprite3D keys as in section 5.
 - Integration e2e (Appendix I): the code-art pipeline commands are in section 1.
 - svg-profile.md (B18): list the rig-specific refusals (bone transforms, transformed groups holding bones, `#id` and descendant selectors, nested svg) next to the portable profile, or link rig-animation.md.
@@ -438,7 +454,7 @@ No promotion is needed for the JS side: fx_verify.mjs is self-contained by desig
 - **Flattening.** Slots leave their groups: clip-path, mask or filter on a bone with child bones is refused; group opacity is multiplied per slot (exact only when slots of a group do not overlap); `#id` and descendant selectors are refused.
 - **Vector route.** Anti-aliased frames: partial alpha and blended edge colours are expected and not palette-checked.
 - **FX.** Six presets, no free-form shapes; the runtime draws anti-aliased canvas paths, not pixel-exact frames (use the baked frames for pixel games). fx_verify.mjs records calls instead of rasterizing: readability (full-screen flash, reach, stroke width) is judged on paint bounding boxes, not pixels, and frame time on devices is not measured.
-- **Builder.** Only the cfed170 build_animation_clips in this branch was run; B02's v2 builder is not merged yet (section 7). compiled-clips/ is not byte-deterministic (builder's absolute stage path).
+- **Builder.** The integrated B02 v2 builder is run by the hero and FX tests (v2 manifests by default). The integrated builder records manifest-relative paths (B02 uses manifest_path), so compiled-clips/ no longer points at the removed stage; its byte-identity across runs is not tested here.
 - **Godot.** Sprite3D contracts were not imported into Godot.
 - **Platforms.** Windows 11 only: Python 3.13.2, numpy 2.5.3, Pillow 12.3.0, resvg-py 0.5.0 (resvg 0.48.1), Node 22.15.0. Not run on Linux, macOS, Python 3.10 or Pillow 10.1. Frame PNG bytes are deterministic per Pillow/zlib build (tested by running twice).
 - **Timing.** Hero, both clips: about 3 s (pixel route, 216 slot coverage renders through resvg-py, cached) and 2.3 s (vector, zoom 4) including the builder; the FX example about 4 s. No perf test was specified for these tools.

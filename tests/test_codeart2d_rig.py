@@ -15,7 +15,8 @@ import pytest
 from PIL import Image
 
 from forge_testutils import (
-    REPO_ROOT, SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, require_resvg, run_cli, script_path,
+    REPO_ROOT, SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script, require_resvg, run_cli,
+    script_path,
 )
 
 rig = load_script("codeart2d", "rig_animate")
@@ -25,101 +26,6 @@ EXAMPLES = REPO_ROOT / "skills" / "codeart2d" / "examples"
 HERO_RIG = EXAMPLES / "hero.rig.svg"
 HERO_ANIM = EXAMPLES / "hero.anim.json"
 SCHEMA_DIR = SKILLS_DIR / "codeart2d" / "references" / "schemas"
-
-# Schema additions requested in handoff/B19-codeart-rig-fx.md section 5 (codeart.schema.json): the IK block
-# and the other optional fields rig_animate reads, and the rig-report.json document. Applied in memory here.
-POINT_KEYS = {"type": "array", "minItems": 1, "items": {
-    "type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1},
-                                     {"$ref": "common.schema.json#/$defs/point2"}], "minItems": 2, "maxItems": 2}}
-NUMBER_KEYS = {"type": "array", "minItems": 1, "items": {
-    "type": "array", "prefixItems": [{"type": "number", "minimum": 0, "maximum": 1}, {"type": "number"}],
-    "minItems": 2, "maxItems": 2}}
-HEX = {"$ref": "common.schema.json#/$defs/hexColor"}
-CODEART_ADDITIONS = {
-    "$defs": {
-        "ikGait": {
-            "description": "Planted-foot gait for a loop clip with stride_world_units: the foot is planted for the "
-                           "stance fraction of the cycle and travels stride * stance against the body, so it stays "
-                           "still in the world; during the swing it lifts by lift px and rolls by roll degrees.",
-            "type": "object",
-            "properties": {"phase": {"type": "number"}, "stance": {"type": "number", "minimum": 0.05, "maximum": 0.95},
-                           "lift": {"type": "number", "minimum": 0}, "roll": {"type": "number"},
-                           "x": {"type": "number"}}},
-        "ikChain": {
-            "description": "Two-bone IK: bones [root, middle]; end is a child bone of middle (its pivot is the "
-                           "effector) or a rest point [x, y]; pole is the direction the middle joint bends toward; "
-                           "exactly one of target (canvas pixels) or gait; angle is the end bone's world angle; "
-                           "ground (default true) keeps the end bone's slots on the rig ground line.",
-            "type": "object", "required": ["bones"],
-            "properties": {
-                "bones": {"type": "array", "items": {"type": "string", "minLength": 1}, "minItems": 2, "maxItems": 2},
-                "end": {"anyOf": [{"type": "string", "minLength": 1}, {"$ref": "common.schema.json#/$defs/point2"}]},
-                "pole": {"$ref": "common.schema.json#/$defs/point2"}, "target": POINT_KEYS, "angle": NUMBER_KEYS,
-                "gait": {"$ref": "#/$defs/ikGait"}, "ground": {"type": "boolean"}, "ease": {"$ref": "#/$defs/easing"}},
-            "oneOf": [{"required": ["target"]}, {"required": ["gait"]}]},
-        "rig_report_v1": {
-            "description": "rig-report.json written by rig_animate.py: per-clip frame records (QA metrics, ground "
-                           "edge, margin, IK contacts), seam reports, planted-foot drift, entry frame, stride and "
-                           "events, all in output pixels; qa is the envelope of codeart-meta.json.",
-            "type": "object", "required": ["schema", "route", "frame_size", "anchor_px", "clips", "qa"],
-            "properties": {
-                "schema": {"const": "codeart2d.rig_report.v1"}, "route": {"enum": ["pixel", "vector"]},
-                "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
-                "anchor_px": {"$ref": "common.schema.json#/$defs/point2"}, "ground_px": {"type": "number"},
-                "zoom": {"type": "integer", "minimum": 1},
-                "clips": {"type": "object", "minProperties": 1, "additionalProperties": {
-                    "type": "object", "required": ["frames", "loop", "duration_ms", "entry_frame", "contact"],
-                    "properties": {
-                        "frames": {"type": "array", "minItems": 1, "items": {
-                            "type": "object", "required": ["id", "t", "file", "stored_as", "qa", "ground"],
-                            "properties": {"file": {"$ref": "common.schema.json#/$defs/relPath"}}}},
-                        "loop": {"type": "boolean"}, "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
-                        "seam": {"anyOf": [{"$ref": "common.schema.json#/$defs/seamReport"}, {"type": "null"}]},
-                        "entry_frame": {"type": "integer", "minimum": 0}, "contact": {"type": "object"},
-                        "events": {"type": "array", "items": {"$ref": "sprite.schema.json#/$defs/clipEvent"}}}}},
-                "ik_clamps": {"type": "array"}, "ground_failures": {"type": "array"},
-                "margin_failures": {"type": "array"}, "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}}},
-    },
-    "rigClip_properties": {
-        "ik": {"type": "object", "additionalProperties": {"$ref": "#/$defs/ikChain"}},
-        "grounded": {"type": "boolean"}, "entry_frame": {"type": "integer", "minimum": 0},
-        "transitions": {"type": "array", "items": {"$ref": "sprite.schema.json#/$defs/clipTransition"}},
-        "role": {"enum": ["player", "enemy", "npc", "fx", "prop"]}},
-    "rig_anim_v1_properties": {
-        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
-        "entry_reference": {"type": "string", "minLength": 1},
-        "pixel": {"type": "object", "properties": {
-            "ramps": {"type": "object", "additionalProperties": {"anyOf": [
-                {"type": "array", "items": HEX, "minItems": 5, "maxItems": 5},
-                {"type": "object", "required": ["mid"],
-                 "properties": {key: HEX for key in ("hi", "mid", "lo", "dark", "out")}}]}},
-            "light": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
-            "inner_lines": {"type": "boolean"}, "outline": {"type": "string", "minLength": 1},
-            "outline_mode": {"enum": ["solid", "selout", "none"]}}}},
-}
-
-
-def patched_validator(definition: str):
-    """Draft 2020-12 validator for codeart.schema.json#/$defs/<definition> with CODEART_ADDITIONS applied."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    schemas = {path.name.removesuffix(".schema.json"): json.loads(path.read_text(encoding="utf-8"))
-               for path in SCHEMA_DIR.glob("*.schema.json")}
-    codeart = schemas["codeart"]
-    codeart["$defs"].update(copy.deepcopy(CODEART_ADDITIONS["$defs"]))
-    codeart["$defs"]["rigClip"]["properties"].update(copy.deepcopy(CODEART_ADDITIONS["rigClip_properties"]))
-    codeart["$defs"]["rig_anim_v1"]["properties"].update(copy.deepcopy(CODEART_ADDITIONS["rig_anim_v1_properties"]))
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema))
-                                         for schema in schemas.values())
-    return Draft202012Validator({"$ref": f"{codeart['$id']}#/$defs/{definition}"}, registry=registry)
-
-
-def assert_patched_valid(document, definition: str) -> None:
-    errors = [f"{error.json_path}: {error.message}" for error in patched_validator(definition).iter_errors(document)]
-    assert not errors, "\n".join(errors)
-
 
 def read_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -434,7 +340,7 @@ def test_lint_nan_in_the_animation(tmp_path):
                                                                                    '"stride_world_units": NaN'),
                     encoding="utf-8")
     result = run_rig(anim, tmp_path / "out")
-    assert result.returncode == 1 and "NaN is not allowed" in result.stderr
+    assert result.returncode == 1 and "NaN is not valid JSON" in result.stderr and "finite numbers" in result.stderr
     assert not (tmp_path / "out").exists()
 
 
@@ -628,21 +534,30 @@ def test_hero_outputs_validate_against_the_contracts(hero_pixel):
     assert_valid_contract(meta["qa"], "common", "qaEnvelope", skill="codeart2d")
     assert {ref["path"] for ref in meta["qa"]["outputs"]} >= {"clips.json"}
     assert {ref["path"].rsplit("/", 1)[-1] for ref in meta["qa"]["inputs"]} == {"hero.rig.svg", "hero.anim.json"}
+    assert clips["schema"] == "generate2dsprite.animation_clips.v2"  # D11: v2 by default
     built = read_json(output / "compiled-clips" / "animation-clips.json")
     assert_valid_contract(built, "sprite", "animation_clips_v2", skill="codeart2d")
-    assert_patched_valid(read_json(output / "rig-report.json"), "rig_report_v1")
+    walk = built["clips"]["walk"]
+    assert [event["name"] for event in walk["events_ms"]] == ["step_r", "step_l"]  # events reach events_ms
+    assert built["sampling"] == "nearest" and built["art_source"] == "code"
+    report = read_json(output / "rig-report.json")
+    assert_valid_contract(report, "codeart", "rig_report_v1", skill="codeart2d")
+    assert report["qa"]["tool"] == {"name": "codeart2d/rig_animate.py", "version": "0.4.0"}  # D29
 
 
 def test_hero_example_validates_against_rig_anim_v1():
+    """The handoff's IK and rig-report additions are in the shared schema now (S1): the real vendored
+    schema types the IK block and A0's contract fixture stays valid."""
     anim = read_json(HERO_ANIM)
     assert_valid_contract(anim, "codeart", "rig_anim_v1", skill="codeart2d")
-    assert_patched_valid(anim, "rig_anim_v1")
     broken = copy.deepcopy(anim)
     broken["clips"]["walk"]["ik"]["leg_f"]["gait"]["stance"] = 2
-    assert not patched_validator("rig_anim_v1").is_valid(broken)
-    # The additions are additive: A0's contract fixture stays valid.
-    assert_patched_valid(read_json(REPO_ROOT / "tests" / "fixtures" / "contracts" / "codeart.rig_anim_v1.valid.json"),
-                         "rig_anim_v1")
+    assert contract_errors(broken, "codeart", "rig_anim_v1", skill="codeart2d")
+    broken = copy.deepcopy(anim)
+    broken["clips"]["walk"]["ik"] = [broken["clips"]["walk"]["ik"]["leg_f"]]
+    assert contract_errors(broken, "codeart", "rig_anim_v1", skill="codeart2d")
+    assert_valid_contract(read_json(REPO_ROOT / "tests" / "fixtures" / "contracts" / "codeart.rig_anim_v1.valid.json"),
+                          "codeart", "rig_anim_v1", skill="codeart2d")
 
 
 @pytest.mark.resvg
@@ -716,14 +631,17 @@ def test_outline_none_draws_no_lines_and_stays_on_palette(tmp_path):
 
 
 @pytest.mark.resvg
-def test_clips_schema_v2_and_palette_gate(tmp_path):
+def test_clips_schema_default_v2_legacy_v1_and_palette_gate(tmp_path):
+    """D11: clips.json is animation_clips.v2 by default; --clips-schema v1 still writes the v1 id."""
     require_resvg()
     anim = write_case(tmp_path / "case")
     output = tmp_path / "out"
-    assert run_rig(anim, output, "--clips-schema", "v2").returncode == 0
+    assert run_rig(anim, output).returncode == 0
     clips = read_json(output / "clips.json")
     assert clips["schema"] == "generate2dsprite.animation_clips.v2"
     assert_valid_contract(clips, "sprite", "clips_input", skill="codeart2d")
+    assert run_rig(anim, tmp_path / "legacy", "--clips-schema", "v1").returncode == 0
+    assert read_json(tmp_path / "legacy" / "clips.json")["schema"] == "generate2dsprite.animation_clips.v1"
     palette = tmp_path / "palette.json"
     palette.write_text(json.dumps({"body": "#3b5dc9", "leg": "#4a5a85", "outline": "#1a1c2c"}), encoding="utf-8")
     result = run_rig(anim, tmp_path / "out2", "--palette", palette)
@@ -748,3 +666,105 @@ def test_palette_variant_recolours_the_rig(tmp_path):
     meta = read_json(output / "codeart-meta.json")
     assert {ref["path"].rsplit("/", 1)[-1] for ref in meta["qa"]["inputs"]} == {"leg.rig.svg", "leg.anim.json",
                                                                               "palette.json"}
+
+
+# ----------------------------------------------------------------------------- D33 and D27: malformed input
+
+def test_malformed_ik_bones_entry_reference_and_transitions_are_clean_errors():
+    """D33 (codeart review): ik as a list or string, unhashable bone names and a non-string
+    entry_reference raised AttributeError/TypeError; transitions to unknown clips were published."""
+    leg = rig.Rig(LEG_RIG)
+    cases = [
+        (leg_anim(ik=[dict(LEG_IK, target=[[0, [16, 40]]])]), "ik must map chain names"),
+        (leg_anim(ik="leg"), "ik must map chain names"),
+        (leg_anim(ik={"leg": dict(LEG_IK, bones=[["thigh"], ["shin"]], target=[[0, [16, 40]]])}),
+         "bones must name two rig bones"),
+        (leg_anim(ik={"leg": dict(LEG_IK, bones=[1, 2], target=[[0, [16, 40]]])}), "bones must name two rig bones"),
+        (dict(leg_anim(), entry_reference=["stand"]), "entry_reference"),
+        (dict(leg_anim(), entry_reference={"a": 1}), "entry_reference"),
+        (leg_anim(transitions=[{"to": "nope"}]), "unknown clip 'nope'"),
+        (leg_anim(transitions=[{"to": "stand", "entry_frame": 9}]), "entry_frame must be a frame index"),
+    ]
+    for document, message in cases:
+        with pytest.raises(core.CodeArtError, match=message):
+            rig.Animation(document, leg)
+    assert rig.Animation(leg_anim(ik=None), leg).clips["stand"].ik == []  # null means no chains
+    assert rig.Animation(leg_anim(transitions=[{"to": "stand", "entry_frame": 2}]), leg)
+
+
+def _in_process(main, argv):
+    """Call a CLI main() the way the codeart reviewer's fuzzer did: any exception escaping it would be a
+    user-facing traceback."""
+    import contextlib
+    import io
+
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        try:
+            code = main(argv)
+        except SystemExit as exit_:
+            code = exit_.code
+    return code, err.getvalue()
+
+
+@pytest.mark.resvg
+def test_fuzzed_animations_never_escape_main(tmp_path, monkeypatch):
+    """D27: malformed animation JSON gives one error line and exit 1 (the reviewer's cases plus the three
+    tracebacks it found), never an exception out of main(); a defect still reads as 'internal error'."""
+    require_resvg()
+    (tmp_path / "hero.rig.svg").write_bytes(HERO_RIG.read_bytes())
+    anim = read_json(HERO_ANIM)
+    mutations = [
+        (["clips", "walk", "ik"], [1]), (["clips", "walk", "ik"], "x"),
+        (["clips", "walk", "ik", "leg_f", "bones"], [[1], [2]]), (["clips", "walk", "ik", "leg_f", "bones"], {"a": 1}),
+        (["entry_reference"], [1]), (["clips", "walk", "transitions"], [{"to": "nope"}]),
+        (["clips", "walk", "tracks"], [1]), (["clips", "walk", "events"], "abc"), (["clips", "walk", "ease"], [1]),
+        (["clips", "walk", "ik", "leg_f", "gait"], [1]), (["clips", "walk", "ik", "leg_f", "pole"], "a"),
+        (["clips", "walk", "ik", "leg_f", "end"], {"a": 1}), (["pixel"], [1]), (["states"], [1]), (["clips"], [1]),
+        (["rig"], 5), (["clips", "walk", "duration_ms"], 100.5), (["clips", "walk", "stride_world_units"], "x"),
+    ]
+    for index, (path, value) in enumerate(mutations):
+        document = copy.deepcopy(anim)
+        node = document
+        for key in path[:-1]:
+            node = node[key]
+        node[path[-1]] = value
+        spec = tmp_path / f"m{index}.anim.json"
+        spec.write_text(json.dumps(document), encoding="utf-8")
+        code, err = _in_process(rig.main, ["--anim", str(spec), "--output-dir", str(tmp_path / f"o{index}")])
+        assert code == 1 and err.startswith("error:") and "internal error" not in err, (path, value, err)
+        assert not (tmp_path / f"o{index}").exists()
+    for index, text in enumerate(["[1]", "{", '{"a": 1, "a": 2}', "\ufeff{}"]):
+        spec = tmp_path / f"t{index}.anim.json"
+        spec.write_text(text, encoding="utf-8")
+        code, err = _in_process(rig.main, ["--anim", str(spec), "--output-dir", str(tmp_path / f"t{index}")])
+        assert code == 1 and err.startswith("error:") and "internal error" not in err, (text, err)
+
+    def broken(_args):
+        raise KeyError("boom")
+
+    monkeypatch.setattr(rig, "build", broken)
+    code, err = _in_process(rig.main, ["--anim", str(HERO_ANIM), "--output-dir", str(tmp_path / "never")])
+    assert code == 1 and err.strip() == "error: internal error (KeyError: 'boom')"
+
+
+BLOCKER = """import runpy, sys
+for name in sys.argv[1].split(","):
+    sys.modules[name] = None
+script = sys.argv[2]
+sys.argv = [script, *sys.argv[3:]]
+runpy.run_path(script, run_name="__main__")
+"""
+
+
+@pytest.mark.parametrize("tool, argv", [("rig_animate", ["--anim", "x.json", "--output-dir", "out"]),
+                                        ("fx_build", ["--spec", "x.json", "--output-dir", "out"])])
+def test_help_works_and_the_pip_command_prints_without_numpy(tmp_path, tool, argv):
+    """Codeart review: --help printed the pip error on a machine without numpy (B18 already kept --help)."""
+    blocker = tmp_path / "blocker.py"
+    blocker.write_text(BLOCKER, encoding="utf-8")
+    help_result = run_cli([blocker, "numpy", script_path("codeart2d", tool), "--help"], "cp1252", cwd=tmp_path)
+    assert help_result.returncode == 0 and "usage:" in help_result.stdout and help_result.stdout.isascii()
+    result = run_cli([blocker, "numpy", script_path("codeart2d", tool), *argv], "cp1252", cwd=tmp_path)
+    assert result.returncode == 1 and "Traceback" not in result.stderr
+    assert "missing Python module(s): numpy" in result.stderr and "python -m pip install numpy" in result.stderr

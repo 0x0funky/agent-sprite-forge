@@ -12,7 +12,7 @@ python "<skill-dir>/scripts/fx_build.py" --spec slash.fx.json --output-dir out/f
 node "<skill-dir>/scripts/fx_verify.mjs" out/fx-slash-v1/fx-runtime.mjs --report out/fx-slash-v1/fx-verify-again.json
 ```
 
-In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success one JSON line names the output folder, `codeart-meta.json`, `fx-report.json` and the runtime module. Errors print `error: ...` and exit 1; `--output-dir` must not exist, and `--strict-qc` publishes nothing when a check fails.
+In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success one JSON line names the output folder, `codeart-meta.json`, `fx-report.json` and the runtime module. Errors print `error: ...` and exit 1 (an unexpected failure too, as one `error: internal error (...)` line); a wrong argument is a usage error with exit 2. `--output-dir` must not exist, and `--strict-qc` publishes nothing when a check fails. clips.json is `animation_clips.v2` by default, so the hit events reach the compiled clips; `routes`, when given, is a list of route names.
 
 | Flag | Meaning |
 |---|---|
