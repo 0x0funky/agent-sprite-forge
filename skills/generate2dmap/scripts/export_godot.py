@@ -18,11 +18,21 @@ Writes into a new --output-dir:
 
 Paths inside the files are relative to the files, so the folder can be copied
 anywhere inside a Godot project. Every file is parsed back before publishing:
-tiles, peering bits, physics polygons, prop anchors and markers must round-trip.
-Verified at parse level only: the Godot editor import is not run by this tool.
+tiles, peering bits, physics polygons, prop anchors, collision shapes and
+markers must round-trip. Verified at parse level only: the Godot editor import
+is not run by this tool.
 
-Prop images come from objects[].image, the prop packs (--prop-pack or the
-bundle's prop_packs list, matched by label), or the object's occluder.source.
+Collision is the D2 blocking set read by forge_nav (scripts/forge_nav.py):
+collision.solids and rects and the footprints of solid objects (scaled once,
+basis and flip_x applied) become shapes under the collision StaticBody2D; tile
+collision becomes TileSet physics polygons (a walkable: false tile without
+shapes blocks its whole cell). Material-map classes have no Godot form here:
+the blocking ones are listed in the report's notExported.
+
+Prop images are found in the D6 order: objects[].image, the bundle's
+props[prop] (an inline item, or a prop pack named by pack + label), prop packs
+by label (the bundle's prop_packs, then --prop-pack), occluder.source. flip_x
+props become Sprite2D with flip_h, mirrored around their anchor.
 """
 
 from __future__ import annotations
@@ -48,13 +58,14 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_nav  # noqa: E402  (this skill's vendored copy: the D2 blocking set, rules N1-N15)
 
 
 BUNDLE_SCHEMAS = ("generate2dmap.map_bundle.v2", "generate2dmap.map_bundle.v1")
 TILESET_SCHEMA = "generate2dmap.tileset.v1"
 PROP_PACK_SCHEMAS = (None, "generate2dmap.prop_pack.v2")
 REPORT_SCHEMA = "generate2dmap.engine_export.v1"
-TOOL = {"name": "export_godot", "version": "1.0"}
+TOOL = {"name": "export_godot", "version": forge_core.FORGE_PACKAGE_VERSION}
 GODOT_TARGET = "4.3+"
 GODOT_FORMAT = 3
 TERRAIN_MODES = {"match_corners_and_sides": 0, "match_corners": 1, "match_sides": 2}
@@ -70,8 +81,10 @@ NOT_PROVEN = [
     "Parse-level only: the files are re-read by this tool's own reader; the Godot editor import was not run.",
     "Terrain peering bits follow the documented Wang/blob mapping; painting with Godot's terrain brush is not "
     "verified (the centre terrain of a mixed Wang tile is its majority corner material).",
-    "Non-circular ellipse solids become 32-sided polygons; walk regions ride as metadata, and the material map "
-    "and nav grid are not exported (see notExported).",
+    "Non-circular ellipse solids and footprints become 32-sided polygons inscribed in the ellipse; walk regions ride "
+    "as metadata, and the material map and nav grid are not exported (see notExported).",
+    "Collision shapes are the forge_nav blocking set at export time; Godot's physics (body shapes, margins, one-way "
+    "collision) is not simulated here.",
 ]
 
 
@@ -121,6 +134,7 @@ class BundleInfo:
     tilesets: dict[str, TilesetInfo]
     layers: list[dict[str, Any]]  # {"name", "kind", "tiles": TileLayerInfo | None, "image": ImageInfo | None}
     objects: list[dict[str, Any]]  # bundle objects plus "_image": ImageInfo
+    blocking: Any = None  # forge_nav.BlockingSet (D2)
     warnings: list[str] = field(default_factory=list)
 
 
@@ -244,7 +258,7 @@ def _local_check_markers(data: dict[str, Any]) -> None:
 def _local_load_tileset(path: Path, expected_sha: Any, ident: str) -> TilesetInfo:
     """Read a tileset.v1 manifest and its atlas image; tile indices must fit the atlas."""
     _local_check_sha(path, expected_sha, f"tileset {ident} manifest")
-    manifest = json.loads(path.read_text(encoding="utf-8"))
+    manifest = _local_read_json(path, f"tileset {ident} manifest")
     if not isinstance(manifest, dict) or manifest.get("schema") != TILESET_SCHEMA:
         raise ValueError(f"tileset {ident}: {path.name} must have schema {TILESET_SCHEMA!r}.")
     tile_size = _size2(manifest.get("tile_size"), f"tileset {ident} tile_size")
@@ -303,7 +317,7 @@ def _local_layer_grid(bundle_dir: Path, layer: dict[str, Any], shape: tuple[int,
             except ValueError as error:
                 raise ValueError(f"layer {name}: {path.name} must hold whole tile indices ({error}).") from None
         else:
-            values = json.loads(text)
+            values = _local_read_json(path, f"layer {name} data")
             if isinstance(values, dict):
                 values = values.get("data")
     else:
@@ -331,11 +345,19 @@ def _local_layer_grid(bundle_dir: Path, layer: dict[str, Any], shape: tuple[int,
     return grid.reshape(rows, cols)
 
 
+def _local_read_json(path: Path, what: str) -> Any:
+    """Strict JSON (D28): UTF-8 with an optional BOM, no NaN, Infinity or duplicate keys, as forge_nav reads it."""
+    try:
+        return forge_core.read_json(path, strict=True)
+    except ValueError as error:
+        raise ValueError(f"{what}: {path.name} is not valid JSON ({error}).") from None
+
+
 def _local_prop_pack_images(paths: list[Path]) -> dict[str, tuple[Path, str | None]]:
-    """label -> (image path, recorded sha256) from prop-pack manifests (v1 or v2)."""
+    """label -> (image path, recorded sha256) from prop-pack manifests (v1 or v2); the first pack naming a label wins."""
     found: dict[str, tuple[Path, str | None]] = {}
     for path in paths:
-        manifest = json.loads(path.read_text(encoding="utf-8"))
+        manifest = _local_read_json(path, "prop pack")
         if not isinstance(manifest, dict) or manifest.get("schema") not in PROP_PACK_SCHEMAS \
                 or not isinstance(manifest.get("accepted"), list):
             raise ValueError(f"{path.name} is not a prop pack manifest (accepted list, schema v1 or v2).")
@@ -346,10 +368,54 @@ def _local_prop_pack_images(paths: list[Path]) -> dict[str, tuple[Path, str | No
     return found
 
 
+def _local_prop_registry(base: Path, data: dict[str, Any]) -> dict[str, tuple[Path, str | None] | None]:
+    """The bundle's props registry as art (D6 step 2): name -> (image, recorded sha256). An inline item's image is
+    relative to the bundle; a pack + label item's image comes from that prop pack's accepted item, relative to the
+    pack, unless the entry gives its own image. None when the item names no image."""
+    registry = data.get("props")
+    if registry is None:
+        return {}
+    if not isinstance(registry, dict):
+        raise ValueError("props must map prop names to items (an image, or a pack plus a label).")
+    found: dict[str, tuple[Path, str | None] | None] = {}
+    for name, entry in registry.items():
+        if not isinstance(entry, dict):
+            raise ValueError(f"props[{name!r}] must be an object.")
+        if isinstance(entry.get("image"), str):
+            found[name] = (_local_rel_path(base, entry["image"], f"props[{name!r}] image"), entry.get("sha256"))
+        elif "pack" in entry:
+            pack = _local_rel_path(base, entry["pack"], f"props[{name!r}] pack")
+            manifest = _local_read_json(pack, f"props[{name!r}] pack")
+            items = [item for item in (manifest.get("accepted") or [] if isinstance(manifest, dict) else [])
+                     if isinstance(item, dict) and item.get("label") == entry.get("label")]
+            if not items:
+                raise ValueError(f"props[{name!r}]: prop pack {entry['pack']} has no accepted item "
+                                 f"{entry.get('label')!r}.")
+            image = items[0].get("image")
+            found[name] = (None if not isinstance(image, str) else
+                           (_local_rel_path(pack.parent, image, f"props[{name!r}] pack image"), items[0].get("sha256")))
+        else:
+            found[name] = None
+    return found
+
+
+def _local_blocking_set(path: Path, data: dict[str, Any]) -> Any:
+    """The D2 blocking set through forge_nav (the reader every map tool shares, D4). A bundle without a collision
+    block still has footprints, tile collision and materials: they are read with an actor radius of 0."""
+    document = data if isinstance(data.get("collision"), dict) else {**data, "collision": {"actorRadius": 0}}
+    try:
+        return forge_nav.blocking_set_from_document(document, path.parent)
+    except forge_nav.NavError as error:
+        raise ValueError(f"collision (forge_nav): {error}") from None
+
+
 def _local_read_bundle(path: Path, prop_packs: Sequence[Path] = ()) -> BundleInfo:
     """Read a map_bundle.v2 file and everything it references, checking paths and recorded sha256."""
     raw = path.read_bytes()
-    data = json.loads(raw.decode("utf-8"))
+    try:
+        data = forge_core.parse_json(raw, strict=True)
+    except ValueError as error:
+        raise ValueError(f"{path.name} is not valid JSON ({error}).") from None
     if not isinstance(data, dict) or data.get("schema") not in BUNDLE_SCHEMAS:
         raise ValueError(f"{path.name} must be a map bundle (schema {BUNDLE_SCHEMAS[0]!r}).")
     base = path.parent
@@ -400,14 +466,16 @@ def _local_read_bundle(path: Path, prop_packs: Sequence[Path] = ()) -> BundleInf
         elif kind != "objects":
             raise ValueError(f"layer {layer['name']}: kind must be tiles, image or objects.")
         layers.append(entry)
-    pack_paths = list(prop_packs)
+    pack_paths = []  # D6 step 3: the bundle's prop_packs, then --prop-pack
     for position, entry in enumerate(data.get("prop_packs") or []):
         manifest = _local_rel_path(base, entry.get("manifest") if isinstance(entry, dict) else entry,
                                    f"prop_packs[{position}]")
         if isinstance(entry, dict):
             _local_check_sha(manifest, entry.get("sha256"), f"prop_packs[{position}]")
         pack_paths.append(manifest)
+    pack_paths += list(prop_packs)
     packs = _local_prop_pack_images(pack_paths)
+    registry = _local_prop_registry(base, data)
     objects = []
     seen: set[str] = set()
     for position, item in enumerate(data.get("objects") or []):
@@ -423,24 +491,30 @@ def _local_read_bundle(path: Path, prop_packs: Sequence[Path] = ()) -> BundleInf
         scale = _number(item.get("scale", 1), f"object {item['id']} scale")
         if scale <= 0:
             raise ValueError(f"object {item['id']}: scale must be positive.")
+        if "sortY" in item:
+            _number(item["sortY"], f"object {item['id']} sortY")
+        if not isinstance(item.get("flip_x", False), bool):
+            raise ValueError(f"object {item['id']}: flip_x must be true or false.")
         if isinstance(item.get("image"), str):
             image = _local_png_info(_local_rel_path(base, item["image"], f"object {item['id']} image"),
                                     item.get("image_sha256"), f"object {item['id']} image")
+        elif registry.get(prop) is not None:
+            image = _local_png_info(registry[prop][0], registry[prop][1], f"props[{prop!r}] image")
         elif prop in packs:
             image = _local_png_info(packs[prop][0], packs[prop][1], f"prop {prop} image")
         elif isinstance(item.get("occluder"), dict) and isinstance(item["occluder"].get("source"), str):
             image = _local_png_info(_local_rel_path(base, item["occluder"]["source"], f"object {item['id']} occluder"),
                                     None, f"object {item['id']} occluder")
         else:
-            raise ValueError(f"object {item['id']}: no image for prop {prop!r}; set objects[].image, pass "
-                             f"--prop-pack, or list the pack in the bundle's prop_packs.")
+            raise ValueError(f"object {item['id']}: no image for prop {prop!r}; set objects[].image, give the "
+                             f"bundle's props[{prop!r}] an image, list a prop pack in prop_packs, or pass --prop-pack.")
         ax, ay = item["anchor_px"]
         if not (0 <= ax <= image.size[0] and 0 <= ay <= image.size[1]):
             raise ValueError(f"object {item['id']}: anchor_px {item['anchor_px']} lies outside its "
                              f"{image.size[0]}x{image.size[1]} image {image.path.name}.")
         objects.append({**item, "_image": image})
     return BundleInfo(path, forge_core.sha256_bytes(raw), data, data["schema"], world, tile_size, tilesets, layers,
-                      objects)
+                      objects, _local_blocking_set(path, data))
 
 
 def _local_safe_name(text: str, taken: set[str], fallback: str = "item") -> str:
@@ -453,14 +527,6 @@ def _local_safe_name(text: str, taken: set[str], fallback: str = "item") -> str:
         name, number = f"{stem}-{number}", number + 1
     taken.add(name.lower())
     return name
-
-
-def _local_file_ref(path: Path, base_dir: Path, sha256: str | None = None) -> dict[str, Any]:
-    """Manifest-relative POSIX path, or only the file name when there is no relative route (another drive)."""
-    relative = forge_core.portable_path(path, base_dir)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": sha256 or forge_core.sha256_file(path), "bytes": Path(path).stat().st_size}
 
 
 def _local_used_tilesets(bundle: BundleInfo) -> list[str]:
@@ -480,6 +546,10 @@ def _local_not_exported(bundle: BundleInfo) -> list[str]:
     for key in ("terrain", "material_map", "nav", "camera", "stage", "atmosphere", "lights"):
         if key in data:
             notes.append(f"{key}: not exported (stays in the map bundle)")
+    classes = bundle.blocking.blocking_material_classes if bundle.blocking is not None else []
+    if classes:  # D2: an exporter that cannot represent a blocking class lists it
+        notes.append(f"material_map blocking classes {', '.join(classes)}: no engine collision is made from the "
+                     f"material map, so those pixels do not block in the engine (forge_nav and the preview block them)")
     if any(item.get("animatedParts") for item in data.get("objects") or [] if isinstance(item, dict)):
         notes.append("objects[].animatedParts: not exported")
     return notes
@@ -905,13 +975,25 @@ def _shape_polygon(shape: dict[str, Any], what: str) -> list[tuple[float, float]
     raise ValueError(f"{what} shape must be rect, ellipse or polygon.")
 
 
+def _has_area(points: list[tuple[float, float]]) -> bool:
+    """N4: a polygon whose shoelace sum is exactly 0 blocks nothing (rects and ellipses of zero size included)."""
+    xs, ys = [x for x, _ in points], [y for _, y in points]
+    return sum(x * y for x, y in zip(xs, ys[1:] + ys[:1])) - sum(y * x for x, y in zip(xs[1:] + xs[:1], ys)) != 0
+
+
 def expected_physics(tileset: TilesetInfo, tile: dict[str, Any]) -> list[list[tuple[float, float]]]:
-    """Tile collision shapes as Godot polygons: tile pixels shifted so the tile centre is the origin."""
+    """Tile collision as Godot polygons, tile pixels shifted so the tile centre is the origin (N7): the tile's
+    collision shapes, or its whole cell when it has none and properties.walkable is false."""
     half_w, half_h = tileset.tile_size[0] / 2, tileset.tile_size[1] / 2
+    shapes = list(tile.get("collision") or [])
+    flags = tile.get("properties")
+    if not shapes and isinstance(flags, dict) and flags.get("walkable") is False:
+        shapes = [{"shape": "rect", "x": 0, "y": 0, "w": tileset.tile_size[0], "h": tileset.tile_size[1]}]
     polygons = []
-    for number, shape in enumerate(tile.get("collision") or []):
+    for number, shape in enumerate(shapes):
         points = _shape_polygon(shape, f"tileset {tileset.id} tile {tile['index']} collision[{number}]")
-        polygons.append([(x - half_w, y - half_h) for x, y in points])
+        if _has_area(points):
+            polygons.append([(x - half_w, y - half_h) for x, y in points])
     return polygons
 
 
@@ -927,7 +1009,7 @@ class TilesetPlan:
 
 def build_tileset(plans: list[TilesetPlan], tile_size: tuple[int, int]) -> str:
     writer = GdWriter("gd_resource", "TileSet")
-    physics = any(tile.get("collision") for plan in plans for tile in plan.tileset.tiles.values())
+    physics = any(expected_physics(plan.tileset, tile) for plan in plans for tile in plan.tileset.tiles.values())
     walkable = any(isinstance(tile.get("properties"), dict) and "walkable" in tile["properties"]
                    for plan in plans for tile in plan.tileset.tiles.values())
     sources = []
@@ -1001,28 +1083,34 @@ def layer_cells(layer: TileLayerInfo, source_id: int) -> list[tuple[int, int, in
 
 
 def prop_transform(item: dict[str, Any]) -> dict[str, Any]:
-    """Sprite2D placement: the node origin sits on (x, sortY) so Godot's y-sort follows sortY;
-    offset puts the image so the prop's anchor_px lands on (x, y)."""
+    """Sprite2D placement: the node origin sits on (x, sortY) so Godot's y-sort follows sortY; offset puts the
+    image so the prop's anchor_px lands on (x, y). With flip_x (D6) the sprite sets flip_h, which mirrors the
+    texture inside its own rect, so anchor column ax lands at offset.x + width - ax: offset.x = ax - width."""
     x, y = float(item["x"]), float(item["y"])
     ax, ay = (float(v) for v in item["anchor_px"])
     scale = float(item.get("scale", 1))
     sort_y = float(item.get("sortY", y))
-    return {"position": (x, sort_y), "offset": (-ax, (y - sort_y) / scale - ay), "scale": scale}
+    flip = item.get("flip_x") is True
+    offset_x = ax - item["_image"].size[0] if flip else -ax
+    return {"position": (x, sort_y), "offset": (offset_x, (y - sort_y) / scale - ay), "scale": scale, "flip": flip}
 
 
-def _shape_node(writer: GdWriter, shape: dict[str, Any], what: str) -> tuple[str, list[tuple[str, Any]]]:
-    """(node type, properties) for one bundle solid."""
+def _shape_node(writer: GdWriter, shape: dict[str, Any], what: str) -> tuple[str, list[tuple[str, Any]], tuple]:
+    """(node type, properties, expected geometry for the parse-back QA) for one solid in world pixels."""
     kind = shape.get("shape")
     if kind == "rect":
         x, y = _number(shape.get("x"), f"{what} x"), _number(shape.get("y"), f"{what} y")
         w, h = _number(shape.get("w"), f"{what} w"), _number(shape.get("h"), f"{what} h")
         sub = writer.sub_resource("RectangleShape2D", [("size", vec2(w, h))])
-        return "CollisionShape2D", [("position", vec2(x + w / 2, y + h / 2)), ("shape", sub)]
+        centre = (x + w / 2, y + h / 2)
+        return "CollisionShape2D", [("position", vec2(*centre)), ("shape", sub)], ("rect", centre, (w, h))
     if kind == "ellipse" and abs(float(shape.get("rx", 0)) - float(shape.get("ry", -1))) <= EPSILON:
-        sub = writer.sub_resource("CircleShape2D", [("radius", _number(shape.get("rx"), f"{what} rx"))])
-        return "CollisionShape2D", [("position", vec2(_number(shape.get("cx"), f"{what} cx"),
-                                                      _number(shape.get("cy"), f"{what} cy"))), ("shape", sub)]
-    return "CollisionPolygon2D", [("polygon", packed_vec2(_shape_polygon(shape, what)))]
+        radius = _number(shape.get("rx"), f"{what} rx")
+        centre = (_number(shape.get("cx"), f"{what} cx"), _number(shape.get("cy"), f"{what} cy"))
+        sub = writer.sub_resource("CircleShape2D", [("radius", radius)])
+        return "CollisionShape2D", [("position", vec2(*centre)), ("shape", sub)], ("circle", centre, radius)
+    points = _shape_polygon(shape, what)
+    return "CollisionPolygon2D", [("polygon", packed_vec2(points))], ("polygon", tuple(points))
 
 
 def build_scene(bundle: BundleInfo, name: str, plans: dict[str, TilesetPlan], tileset_path: str | None,
@@ -1037,7 +1125,7 @@ def build_scene(bundle: BundleInfo, name: str, plans: dict[str, TilesetPlan], ti
     nodes: list[tuple[str, str, str | None, list[tuple[str, Any]]]] = [(root, "Node2D", None, root_props)]
     top: set[str] = set()
     layout: dict[str, Any] = {"layers": [], "props": {}, "markers": {}, "portals": {}, "interactions": {},
-                              "solids": 0}
+                              "solids": 0, "footprints": 0, "collision": {}}
     tileset_ref = writer.ext_resource("TileSet", tileset_path) if tileset_path else None
     objects_done = False
 
@@ -1052,20 +1140,24 @@ def build_scene(bundle: BundleInfo, name: str, plans: dict[str, TilesetPlan], ti
             if abs(placed["scale"] - 1) > EPSILON:
                 properties.append(("scale", vec2(placed["scale"], placed["scale"])))
             properties += [("texture", writer.ext_resource("Texture2D", asset_paths[item["_image"].sha256])),
-                           ("centered", False), ("offset", vec2(*placed["offset"])),
+                           ("centered", False), ("offset", vec2(*placed["offset"]))]
+            if placed["flip"]:
+                properties.append(("flip_h", True))
+            properties += [
                            ("metadata/bundle_id", item["id"]), ("metadata/prop", str(item.get("prop", ""))),
                            ("metadata/anchor_world", vec2(item["x"], item["y"])),
                            ("metadata/anchor_px", vec2(*item["anchor_px"]))]
             if "sortY" in item:
                 properties.append(("metadata/sort_y", float(item["sortY"])))
             for key, meta in (("footprint", "footprint"), ("solid", "solid"), ("occlusion", "occlusion"),
-                              ("contact", "contact")):
+                              ("contact", "contact"), ("flip_x", "flip_x")):
                 if key in item:
                     properties.append((f"metadata/{meta}", _json_to_gd(item[key])))
             nodes.append((child, "Sprite2D", props_node, properties))
             layout["props"][item["id"]] = {"node": f"{props_node}/{child}", **placed,
                                            "anchor": (float(item["x"]), float(item["y"])),
                                            "anchor_px": tuple(float(v) for v in item["anchor_px"]),
+                                           "width": item["_image"].size[0],
                                            "texture": asset_paths[item["_image"].sha256]}
         layout["layers"].append({"name": layer_name, "kind": "objects", "node": props_node,
                                  "count": len(bundle.objects)})
@@ -1093,10 +1185,13 @@ def build_scene(bundle: BundleInfo, name: str, plans: dict[str, TilesetPlan], ti
         add_props("props")
 
     collision = bundle.data.get("collision") or {}
-    if collision:
+    footprints = bundle.blocking.footprints if bundle.blocking is not None else []
+    if collision or footprints:
         body = _node_name("collision", top)
-        meta: list[tuple[str, Any]] = [("metadata/actor_radius", float(collision.get("actorRadius", 0))),
-                                       ("metadata/y_squash", float(collision.get("ySquash", 1.0)))]
+        meta: list[tuple[str, Any]] = []
+        if collision:
+            meta += [("metadata/actor_radius", float(collision.get("actorRadius", 0))),
+                     ("metadata/y_squash", float(collision.get("ySquash", 1.0)))]
         if collision.get("walkRegions"):
             meta.append(("metadata/walk_regions", [
                 {"polygon": packed_vec2([_point(p, "walk region point") for p in region["polygon"]]),
@@ -1114,9 +1209,20 @@ def build_scene(bundle: BundleInfo, name: str, plans: dict[str, TilesetPlan], ti
             if solid.get("shape") == "rect" and (float(solid.get("w", 0)) <= 0 or float(solid.get("h", 0)) <= 0):
                 bundle.warnings.append(f"collision {ident} has zero size and was skipped")
                 continue
-            kind, properties = _shape_node(writer, solid, f"collision {ident}")
-            nodes.append((_node_name(ident, taken), kind, body, properties))
+            kind, properties, expected = _shape_node(writer, solid, f"collision {ident}")
+            child = _node_name(ident, taken)
+            nodes.append((child, kind, body, properties))
+            layout["collision"][f"{body}/{child}"] = expected
             layout["solids"] += 1
+        # D33: the footprints of solid objects, as forge_nav reads them: scaled once by the instance scale (basis
+        # world_px is not), offset and rotation applied, mirrored by flip_x (N6)
+        for solid in footprints:
+            ident = solid["source"].split(":", 1)[1]
+            kind, properties, expected = _shape_node(writer, solid, f"object {ident} footprint")
+            child = _node_name(f"footprint_{ident}", taken)
+            nodes.append((child, kind, body, properties + [("metadata/object", ident)]))
+            layout["collision"][f"{body}/{child}"] = expected
+            layout["footprints"] += 1
 
     spawns, anchors = bundle.data.get("spawns") or [], bundle.data.get("anchors") or {}
     if spawns or anchors:
@@ -1280,6 +1386,34 @@ def qa_tileset(text: str, plans: list[TilesetPlan], stage: Path) -> list[dict[st
             _check("physics_polygons_roundtrip", "fail" if physics_mismatch else "pass", physics_mismatch)]
 
 
+def _collision_mismatch(node: GdSection | None, subs: dict[str, GdSection], expected: tuple) -> str | None:
+    """Why a parsed collision node differs from the shape it was written from, or None."""
+    if node is None:
+        return "node is missing"
+    kind = expected[0]
+    if kind == "polygon":
+        polygon = node.properties.get("polygon")
+        flat = [c for point in expected[1] for c in point]
+        if node.fields.get("type") != "CollisionPolygon2D" or not isinstance(polygon, GdCall) \
+                or len(polygon.args) != len(flat) or max((abs(float(a) - b) for a, b in zip(polygon.args, flat)),
+                                                         default=0) > 1e-3:
+            return "polygon points differ"
+        return None
+    position, ref = node.properties.get("position"), node.properties.get("shape")
+    shape = subs.get(ref.args[0]) if isinstance(ref, GdCall) else None
+    if node.fields.get("type") != "CollisionShape2D" or not isinstance(position, GdCall) or shape is None \
+            or max(abs(float(position.args[0]) - expected[1][0]), abs(float(position.args[1]) - expected[1][1])) > 1e-3:
+        return "position or shape differs"
+    if kind == "rect":
+        size = shape.properties.get("size")
+        if shape.fields.get("type") != "RectangleShape2D" or not isinstance(size, GdCall) \
+                or max(abs(float(size.args[0]) - expected[2][0]), abs(float(size.args[1]) - expected[2][1])) > 1e-3:
+            return "rectangle size differs"
+    elif shape.fields.get("type") != "CircleShape2D" or abs(float(shape.properties.get("radius", -1)) - expected[2]) > 1e-3:
+        return "circle radius differs"
+    return None
+
+
 def qa_scene(text: str, layout: dict[str, Any], stage: Path) -> list[dict[str, Any]]:
     sections = parse_godot_text(text)
     problems = []
@@ -1328,13 +1462,24 @@ def qa_scene(text: str, layout: dict[str, Any], stage: Path) -> list[dict[str, A
         sx = float(scale.args[0])
         with Image.open(stage / texture.fields["path"]) as image:
             size = image.size
+        flipped = node.properties.get("flip_h") is True
+        if flipped != placed["flip"]:
+            prop_problems.append(f"prop {ident}: flip_h is {flipped}, the bundle's flip_x is {placed['flip']}")
         top_left = (position.args[0] + sx * offset.args[0], position.args[1] + sx * offset.args[1])
-        anchor = (top_left[0] + sx * placed["anchor_px"][0], top_left[1] + sx * placed["anchor_px"][1])
+        column = size[0] - placed["anchor_px"][0] if flipped else placed["anchor_px"][0]  # flip_h mirrors in place
+        anchor = (top_left[0] + sx * column, top_left[1] + sx * placed["anchor_px"][1])
         if max(abs(anchor[0] - placed["anchor"][0]), abs(anchor[1] - placed["anchor"][1])) > 1e-3 \
                 or node.properties.get("centered") is not False:
             prop_problems.append(f"prop {ident}: anchor lands at {anchor}, bundle says {placed['anchor']}")
         if not (0 <= placed["anchor_px"][0] <= size[0] and 0 <= placed["anchor_px"][1] <= size[1]):
             prop_problems.append(f"prop {ident}: anchor_px {placed['anchor_px']} lies outside its {size} image")
+    _, sub_resources = _resources(sections)
+    collision_problems = []
+    for path, expected in layout["collision"].items():
+        node = nodes.get(path)
+        problem = _collision_mismatch(node, sub_resources, expected)
+        if problem:
+            collision_problems.append(f"{path}: {problem}")
     marker_problems = []
     for group in ("markers", "portals", "interactions"):
         for ident, placed in layout[group].items():
@@ -1348,6 +1493,8 @@ def qa_scene(text: str, layout: dict[str, Any], stage: Path) -> list[dict[str, A
             _check("tile_map_data_roundtrip", "fail" if tile_problems else "pass", tile_problems),
             _check("prop_anchors_roundtrip", "fail" if prop_problems else "pass", prop_problems,
                    {"max_error_px": 1e-3}),
+            _check("collision_shapes_roundtrip", "fail" if collision_problems else "pass", collision_problems,
+                   {"shapes": len(layout["collision"]), "max_error_px": 1e-3}),
             _check("markers_roundtrip", "fail" if marker_problems else "pass", marker_problems,
                    {"max_error_px": 1e-3})]
 
@@ -1369,7 +1516,7 @@ def copy_assets(bundle: BundleInfo, stage: Path) -> tuple[dict[str, str], list[d
         shutil.copyfile(info.path, target)
         paths[info.sha256] = relative
         records.append({"role": role, "id": ident, "path": relative, "sha256": info.sha256,
-                        "source": _local_file_ref(info.path, bundle.path.parent, info.sha256)["path"]})
+                        "source": forge_core.file_ref(info.path, bundle.path.parent, sha256=info.sha256)["path"]})
 
     for ident in _local_used_tilesets(bundle):
         tileset = bundle.tilesets[ident]
@@ -1430,36 +1577,38 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
                                          for item in (check["value"] or [])[:2]))
         if args.strict_qc and outside:
             raise ValueError(f"strict QC failed (objects_in_world): {outside[0]}; nothing was written.")
-        outputs = [_local_file_ref(stage / f"{name}.tscn", stage)]
+        outputs = [forge_core.file_ref(stage / f"{name}.tscn", stage)]
         if tileset_name:
-            outputs.append(_local_file_ref(stage / tileset_name, stage))
-        outputs += [_local_file_ref(stage / record["path"], stage, record["sha256"]) for record in assets]
+            outputs.append(forge_core.file_ref(stage / tileset_name, stage))
+        outputs += [forge_core.file_ref(stage / record["path"], stage, sha256=record["sha256"]) for record in assets]
         status = "warn" if any(check["status"] == "warn" for check in checks) else "pass"
         report = {
             "schema": REPORT_SCHEMA, "tool": dict(TOOL),
             "engine": {"name": "godot", "target": GODOT_TARGET, "format": GODOT_FORMAT,
                        "verified": "parse-level (files re-read by this tool); Godot editor import not run"},
-            "bundle": _local_file_ref(bundle.path, final, bundle.sha256),
+            "bundle": forge_core.file_ref(bundle.path, final, sha256=bundle.sha256),
             "files": {"scene": f"{name}.tscn", "tileset": tileset_name},
             "assets": assets,
             "tilesets": [{"id": plan.tileset.id, "source_id": plan.source_id, "terrain_set": plan.terrain_set,
                           "terrain_mode": plan.mode, "inside_material": None if plan.inside is None else
                           plan.tileset.materials[plan.inside], "tiles": len(plan.tileset.tiles),
-                          "physics_polygons": sum(len(tile.get("collision") or [])
+                          "physics_polygons": sum(len(expected_physics(plan.tileset, tile))
                                                   for tile in plan.tileset.tiles.values())} for plan in plans],
             "layers": [{key: value for key, value in layer.items() if key != "cells"}
                        | ({"cells": len(layer["cells"])} if "cells" in layer else {}) for layer in layout["layers"]],
-            "counts": {"objects": len(bundle.objects), "solids": layout["solids"],
+            "counts": {"objects": len(bundle.objects), "solids": layout["solids"], "footprints": layout["footprints"],
                        "markers": len(layout["markers"]), "portals": len(layout["portals"]),
                        "interactions": len(layout["interactions"])},
             "notExported": _local_not_exported(bundle),
             "warnings": warnings,
             "qa": {"status": status,
-                   "method": "export_godot: wrote the TileSet and scene, re-read both with a Godot text-resource "
-                             "parser and compared tiles (decoded tile_map_data), terrain peering bits, physics "
-                             "polygons, prop anchors and marker positions with the bundle.",
+                   "method": "export_godot: read collision through forge_nav (the D2 blocking set), wrote the "
+                             "TileSet and scene, re-read both with a Godot text-resource parser and compared tiles "
+                             "(decoded tile_map_data), terrain peering bits, physics polygons, prop anchors (flip_h "
+                             "included), collision shapes (solids, rects, solid footprints) and marker positions "
+                             "with the bundle.",
                    "notProven": list(NOT_PROVEN), "checks": checks,
-                   "inputs": [_local_file_ref(bundle.path, final, bundle.sha256)], "outputs": outputs,
+                   "inputs": [forge_core.file_ref(bundle.path, final, sha256=bundle.sha256)], "outputs": outputs,
                    "tool": dict(TOOL)},
         }
         forge_core.write_json(stage / "godot-export.json", report)
@@ -1489,18 +1638,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = export(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary = export(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Exit 0 when published, 1 on an error (nothing published), 2 on a usage error (D26, D27)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":
