@@ -230,7 +230,7 @@ def write_demo_bundle(root: Path, *, hashes: bool = True, name: str = "map-bundl
     path = root / name
     path.write_text(json.dumps(bundle, indent=1), encoding="utf-8")
     if hashes:
-        doc = mb._local_read_json(path)
+        doc = mb.read_json(path)
         for container, key, _, sha_key in mb.path_fields(doc):
             if sha_key:
                 container[sha_key] = sha(root / container[key])
@@ -574,10 +574,12 @@ def test_schema_evaluator_matches_jsonschema(tmp_path):
     assert cases > 450
 
 
-def test_schema_evaluator_covers_every_keyword():
-    """Every keyword in the schemas this skill vendors, and in all shared schemas (so the
-    evaluator can move to forge_core), is implemented or an annotation."""
-    known = mb._ASSERTIONS | mb._ANNOTATIONS
+def test_schema_evaluator_covers_every_keyword(tmp_path):
+    """map_bundle validates with the vendored forge_schema (D31): every keyword in the schemas this
+    skill vendors, and in all shared schemas, is one forge_schema implements or annotates, and a
+    keyword it does not know is refused instead of being skipped."""
+    assert mb.SCHEMAS is mb.forge_schema.schema_set(mb.SCHEMA_DIR)
+    known = mb.forge_schema.KEYWORDS
 
     def keywords(node, out, in_properties=False):
         if isinstance(node, dict):
@@ -594,8 +596,11 @@ def test_schema_evaluator_covers_every_keyword():
             found: set[str] = set()
             keywords(json.loads(path.read_text(encoding="utf-8")), found)
             assert found <= known, (path, found - known)
-    with pytest.raises(ValueError, match="unsupported"):
-        mb._LocalSchemaSet(FIXTURES_DIR)._check(1, {"uniqueItems": True}, "x", "$", [])
+        mb.forge_schema.SchemaSet(folder).check_supported()
+    (tmp_path / "odd.schema.json").write_text(json.dumps({"$defs": {"x": {"unevaluatedProperties": False}}}),
+                                              encoding="utf-8")
+    with pytest.raises(mb.forge_schema.SchemaError, match="unsupported"):
+        mb.forge_schema.SchemaSet(tmp_path).errors({}, "odd.schema.json#/$defs/x")
 
 
 def test_schema_evaluator_on_synthetic_schemas(tmp_path):
@@ -616,7 +621,7 @@ def test_schema_evaluator_on_synthetic_schemas(tmp_path):
         "additionalProperties": False}}}
     for schema in (other, main):
         (tmp_path / schema["$id"].rsplit("/", 1)[1]).write_text(json.dumps(schema), encoding="utf-8")
-    ours = mb._LocalSchemaSet(tmp_path)
+    ours = mb.forge_schema.SchemaSet(tmp_path)
     registry = Registry().with_resources((s["$id"], DRAFT202012.create_resource(s)) for s in (other, main))
     theirs = Draft202012Validator({"$ref": base + "main.schema.json#/$defs/thing"}, registry=registry)
     instances = [{"n": 4, "s": "abc"}, {"n": 5, "s": "a"}, {"n": 1}, {"s": "a"}, {}, {"n": 1, "s": "a", "k": 1, "p": 2},
@@ -626,7 +631,7 @@ def test_schema_evaluator_on_synthetic_schemas(tmp_path):
     for instance in instances:
         expected = theirs.is_valid(instance)
         assert (not ours.errors(instance, "main.schema.json#/$defs/thing")) == expected, instance
-    assert mb._json_equal([1, {"a": 2.0}], [1, {"a": 2}]) and not mb._json_equal([True], [1])
+    assert mb.forge_schema.json_equal([1, {"a": 2.0}], [1, {"a": 2}]) and not mb.forge_schema.json_equal([True], [1])
 
 
 def test_corrupt_files_are_reported_not_raised(tmp_path):
@@ -676,7 +681,7 @@ def test_strict_json_reader(tmp_path):
         mb.load_bundle(path)
     path.write_text('{"x": NaN}', encoding="utf-8")
     with pytest.raises(mb.BundleError, match="NaN"):
-        mb._local_read_json(path)
+        mb.read_json(path)
     path.write_text('﻿{"schema": "generate2dmap.map_bundle.v3"}', encoding="utf-8")
     assert [p.path for p in mb.load_bundle(path).errors] == ["$.schema"]
     result = run_cli([TOOL, "validate", "--bundle", tmp_path / "missing.json"])
@@ -697,7 +702,8 @@ def _set(pointer: str, value):
 
 
 # Rules the integrated map schema now states (B13 section 5: reciprocal, id, props, layers[].offset) are
-# reported by the schema check at the same path, with the evaluator's message.
+# reported by the schema check at the same path, with forge_schema's message (D31); a failed anyOf or
+# oneOf of the bundle (a prop's image or pack, a portal's trigger, tile_size) gets plain words.
 RULES = [
     ("duplicate object id", _set("/objects/1/id", "tree-1"), "$.objects[1].id", "duplicate object id"),
     ("duplicate spawn id", _set("/spawns/1/id", "start"), "$.spawns[1].id", "duplicate spawn id"),
@@ -722,7 +728,7 @@ RULES = [
     ("zero travel direction", _set("/portals/0/travelDirection", [0, 0]), "$.portals[0].travelDirection",
      "must not be [0, 0]"),
     ("reciprocal must be boolean", _set("/portals/0/reciprocal", "no"), "$.portals[0].reciprocal",
-     'is not of type "boolean"'),
+     "is not of type 'boolean'"),
     ("spawn outside the world", _set("/spawns/0/x", 500), "$.spawns[0]", "outside the 192x128 world"),
     ("malformed slot", _set("/anchors/well/slots/0", "here"), "$.anchors.well.slots[0]", "a slot is"),
     ("map id with a colon", _set("/id", "a:b"), "$.id", "does not match '^[^:]+$'"),
@@ -734,17 +740,20 @@ RULES = [
     ("prop image path is absolute", _set("/props/tree/image", "/art/tree.png"), "$.props.tree.image",
      "does not match"),
     ("prop without image", _set("/props/tree", {"anchor_px": [1, 1]}), "$.props.tree",
-     "'image' is a required property"),
-    ("props registry is a list", _set("/props", []), "$.props", 'is not of type "object"'),
+     "a prop needs an image (or pack + label)"),
+    ("portal without a trigger", _set("/portals/1", {"id": "cellar", "to": "meadow:start"}), "$.portals[1]",
+     "a portal needs exactly one trigger"),
+    ("tile size is text", _set("/tile_size", "16"), "$.tile_size", "a whole number of pixels or [width, height]"),
+    ("props registry is a list", _set("/props", []), "$.props", "is not of type 'object'"),
     ("prop anchor is malformed", _set("/props/tree/anchor_px", "bottom"), "$.props.tree.anchor_px",
-     'is not of type "array"'),
-    ("prop solid is not boolean", _set("/props/tree/solid", "yes"), "$.props.tree.solid", 'is not of type "boolean"'),
+     "is not of type 'array'"),
+    ("prop solid is not boolean", _set("/props/tree/solid", "yes"), "$.props.tree.solid", "is not of type 'boolean'"),
     ("duplicate tileset id", _set("/tilesets/1/id", "terrain"), "$.tilesets[1].id", "duplicate tileset id"),
     ("zero-area walk region", _set("/collision/walkRegions", [{"polygon": [[0, 0], [10, 0], [20, 0]]}]),
      "$.collision.walkRegions[0].polygon", "zero area"),
     ("material without colour", _set("/material_map/materials/lava", {"class": "hazard"}), "$.material_map.materials",
      "needs a color"),
-    ("image layer offset is malformed", _set("/layers/0/offset", [1]), "$.layers[0].offset", "needs at least 2 item"),
+    ("image layer offset is malformed", _set("/layers/0/offset", [1]), "$.layers[0].offset", "[1] is too short"),
 ]
 
 
@@ -988,6 +997,115 @@ def test_render_map_layers_and_draw_order(tmp_path):
     assert mb.raster_box(*mb.object_placement(bundle.objects[3], (14, 10))) == (121, 95, 14, 10)
 
 
+def _two_tone(width: int, height: int) -> np.ndarray:
+    """An asymmetric prop: red left half, blue right half, opaque."""
+    image = np.zeros((height, width, 4), np.uint8)
+    image[:, : width // 2] = (220, 30, 30, 255)
+    image[:, width // 2:] = (30, 30, 220, 255)
+    return image
+
+
+def d6_bundle(root: Path, *, registry: bool = True) -> Path:
+    """A 64 x 48 bundle exercising the D6 art lookup: a registry prop (post), an object with its
+    own image (lamp), a flipped post, and without the registry a prop_packs label and an occluder."""
+    save(_two_tone(6, 16), root / "post.png")
+    save(prop_image(8, 8, (200, 160, 40), 5), root / "lamp.png")
+    save(_two_tone(10, 6), root / "pack" / "crate" / "prop.png")
+    save(prop_image(6, 10, (90, 90, 90), 6), root / "stone.png")
+    (root / "pack" / "prop-pack.json").write_text(json.dumps(
+        {"accepted": [{"label": "crate", "image": "crate/prop.png"}], "rejected": []}), encoding="utf-8")
+    doc = {"schema": "generate2dmap.map_bundle.v2", "world": {"width": 64, "height": 48, "unit": "px"},
+           "layers": [{"name": "props", "kind": "objects"}], "collision": {"actorRadius": 1}}
+    if registry:
+        doc["props"] = {"post": {"image": "post.png", "anchor_px": [2, 15],
+                                 "footprint": {"shape": "rect", "width": 4, "depth": 2, "offset": [1.5, 0]}}}
+        doc["objects"] = [{"id": "post-1", "prop": "post", "x": 10, "y": 20, "anchor_px": [2, 15]},
+                          {"id": "post-2", "prop": "post", "x": 30, "y": 20, "anchor_px": [2, 15], "flip_x": True},
+                          {"id": "lamp-1", "prop": "post", "x": 50, "y": 40, "anchor_px": [4, 7],
+                           "image": "lamp.png", "footprint": {"shape": "none"}}]
+    else:
+        doc["prop_packs"] = [{"manifest": "pack/prop-pack.json"}]
+        doc["objects"] = [{"id": "crate-1", "prop": "crate", "x": 20, "y": 30, "anchor_px": [5, 5], "flip_x": True},
+                          {"id": "stone-1", "prop": "stone", "x": 45, "y": 30, "anchor_px": [3, 9],
+                           "occluder": {"alphaThreshold": 16, "source": "stone.png"}},
+                          {"id": "ghost", "prop": "ghost", "x": 5, "y": 5, "anchor_px": [0, 0]}]
+    path = root / "map-bundle.json"
+    path.write_text(json.dumps(doc), encoding="utf-8")
+    return path
+
+
+def test_object_art_follows_the_d6_lookup_order(tmp_path):
+    """D6: objects[].image first, then the props registry, then prop_packs by label, then
+    occluder.source; an object with none of them is listed once as a warning."""
+    bundle = mb.load_bundle(d6_bundle(tmp_path / "registry"))
+    assert bundle.errors == [], errors_of(bundle)
+    art = {obj.id: (obj.art, obj.image.name, obj.image_size, obj.flip_x) for obj in bundle.objects}
+    assert art == {"post-1": ("props", "post.png", (6, 16), False), "post-2": ("props", "post.png", (6, 16), True),
+                   "lamp-1": ("object", "lamp.png", (8, 8), False)}
+    assert_patched_valid(json.loads((tmp_path / "registry" / "map-bundle.json").read_text(encoding="utf-8")),
+                         "map_bundle_v2")
+    packs = mb.load_bundle(d6_bundle(tmp_path / "packs", registry=False))
+    assert packs.errors == [], errors_of(packs)
+    art = {obj.id: (obj.art, obj.image and obj.image.as_posix().split("/")[-2:]) for obj in packs.objects}
+    assert art == {"crate-1": ("prop_packs", ["crate", "prop.png"]), "stone-1": ("occluder", ["packs", "stone.png"]),
+                   "ghost": (None, None)}
+    warned = [p.message for p in packs.warnings if p.path == "$.objects"]
+    assert len(warned) == 1 and "1 object(s) have no art" in warned[0] and "'ghost'" in warned[0]
+    files = {entry["file"].relative_to(tmp_path / "packs").as_posix() for entry in packs.files}
+    assert {"pack/prop-pack.json", "pack/crate/prop.png", "stone.png"} <= files  # sha256-tracked inputs
+
+    edit(tmp_path / "registry" / "map-bundle.json", lambda doc: doc["objects"][2].update(image="missing.png"))
+    assert any(p.path == "$.objects[2].image" and "file not found" in p.message
+               for p in mb.load_bundle(tmp_path / "registry" / "map-bundle.json").errors)
+
+
+def test_flip_x_mirrors_art_and_footprint_around_the_anchor(tmp_path):
+    """D6: a flipped object's art is mirrored around its anchor x (so the anchor still lands on x) and
+    forge_nav mirrors its footprint too; the render and the world solids agree."""
+    bundle = mb.load_bundle(d6_bundle(tmp_path / "map"))
+    plain, flipped = bundle.objects[0], bundle.objects[1]
+    assert mb.object_placement(plain, (6, 16)) == (8.0, 21.0, 6.0, 16.0)
+    assert mb.object_placement(flipped, (6, 16)) == (26.0, 21.0, 6.0, 16.0)  # mirrored anchor 6 - 2 = 4 lands on 30
+    image = mb.render_map(bundle)
+    assert tuple(image[10, 8, :3]) == (220, 30, 30) and tuple(image[10, 13, :3]) == (30, 30, 220)
+    assert tuple(image[10, 26, :3]) == (30, 30, 220) and tuple(image[10, 31, :3]) == (220, 30, 30)
+    solids = {s["source"]: s for s in mb.world_solids(bundle)}
+    assert solids["object:post-1"] == {"shape": "rect", "x": 9.5, "y": 19.0, "w": 4.0, "h": 2.0,
+                                       "source": "object:post-1"}
+    assert solids["object:post-2"]["x"] == 26.5  # offset 1.5 mirrored to -1.5: centre 28.5
+    assert "object:lamp-1" not in solids  # its own footprint (shape none) wins over the prop's
+
+
+def test_footprint_basis_follows_d7(tmp_path):
+    """D7: prop_px (the default) and its legacy alias image_px scale with the instance; world_px never."""
+    def solid(basis):
+        root = tmp_path / (basis or "default")
+        path = d6_bundle(root)
+        footprint = {"shape": "ellipse", "width": 4, "depth": 2, "offset": [1, -1]}
+        if basis:
+            footprint["basis"] = basis
+        edit(path, lambda doc: doc["objects"][0].update(scale=3, footprint=footprint))
+        return {s["source"]: s for s in mb.world_solids(mb.load_bundle(path))}["object:post-1"]
+    scaled = {"shape": "ellipse", "cx": 13.0, "cy": 17.0, "rx": 6.0, "ry": 3.0, "rotate": 0.0, "source": "object:post-1"}
+    assert solid(None) == solid("prop_px") == solid("image_px") == scaled
+    assert solid("world_px") == {**scaled, "cx": 11.0, "cy": 19.0, "rx": 2.0, "ry": 1.0}
+
+
+def test_reviewer_warnings_anchor_mismatch_and_placeholder_items(tmp_path):
+    """An object that takes its prop's footprint with another anchor moves its collision against the
+    art (warned); a prop-pack placeholder item used as a prop is warned too."""
+    path = d6_bundle(tmp_path / "map")
+    edit(path, lambda doc: doc["objects"][0].update(anchor_px=[3, 15]))
+    warned = {p.path: p.message for p in mb.load_bundle(path).warnings}
+    assert "collision moves against the art by (1, 0) prop px" in warned["$.objects[0].anchor_px"]
+    pack = json.loads((tmp_path / "map" / "pack" / "prop-pack.json").read_text(encoding="utf-8"))
+    pack["accepted"][0]["status"] = "placeholder"
+    (tmp_path / "map" / "pack" / "prop-pack.json").write_text(json.dumps(pack), encoding="utf-8")
+    edit(path, lambda doc: doc["props"].update(crate={"pack": "pack/prop-pack.json", "label": "crate"}))
+    warned = {p.path: p.message for p in mb.load_bundle(path).warnings}
+    assert "is a placeholder" in warned["$.props.crate.label"]
+
+
 def test_merge_rects_is_exact():
     rng = np.random.default_rng(5)
     for density in (0.0, 0.2, 0.5, 0.8, 1.0):
@@ -1016,6 +1134,19 @@ def test_hash_fills_every_sha256(tmp_path):
     assert bundle.errors == [] and bundle.id == "meadow"
     assert_valid_contract(doc, "map", "map_bundle_v2", skill=SKILL)
     assert_patched_valid(doc, "map_bundle_v2")
+
+
+def test_hash_covers_object_images_and_prop_packs(tmp_path):
+    """The D6 art files are bundle files too: hash fills objects[].image_sha256 and prop_packs sha256."""
+    path = d6_bundle(tmp_path / "map")
+    edit(path, lambda doc: doc.update(prop_packs=[{"manifest": "pack/prop-pack.json"}]))
+    out = tmp_path / "map" / "hashed.json"
+    result = run_cli([TOOL, "hash", "--bundle", path, "--output", out])
+    assert result.returncode == 0, result.stderr
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["objects"][2]["image_sha256"] == sha(tmp_path / "map" / "lamp.png")
+    assert doc["prop_packs"][0]["sha256"] == sha(tmp_path / "map" / "pack" / "prop-pack.json")
+    assert mb.load_bundle(out, require_sha256=True).errors == []
 
 
 def test_cli_help_cp1252():
@@ -1094,3 +1225,40 @@ def test_reference_docs_commands_and_links():
                 parsers[script[:-3]].parse_args(argv[2:])  # flags and verbs exist
             commands += 1
     assert commands >= 12
+
+
+def _rule_book(text: str) -> dict[str, str]:
+    """forge_nav rule id -> its text: the line starting with N<k> plus its indented continuation lines."""
+    import re
+
+    found: dict[str, list[str]] = {}
+    current = None
+    for line in text.splitlines():
+        match = re.match(r"(N\d+) ", line)
+        if match:
+            current = match.group(1)
+            found[current] = [line]
+        elif current and line.startswith("    "):
+            found[current].append(line)
+        else:
+            current = None
+    return {key: "\n".join(lines) for key, lines in found.items()}
+
+
+def test_contract_quotes_the_forge_nav_rules_verbatim():
+    """layered-map-contract.md quotes the D1/D2 rules (walk area, blocking set, closed solids, footprints with
+    their D6 mirror and D7 basis, materials, one_way) from the vendored forge_nav docstring word for word, and
+    states the D3 rects meaning, the D6 lookup order, the D7 basis names and render rule 3 as a runtime duty."""
+    text = (SKILLS_DIR / SKILL / "references" / "layered-map-contract.md").read_text(encoding="utf-8")
+    (quoted,) = [block for block in _doc_blocks("layered-map-contract.md", "text") if block.startswith("N")]
+    rules, book = _rule_book(quoted), _rule_book(mb.forge_nav.__doc__)  # vendored copies are byte-identical
+    assert sorted(rules) == ["N11", "N3", "N4", "N5", "N6", "N8"]
+    for rule, body in rules.items():
+        assert body == book[rule], rule
+    steps = [text.index(step) for step in ("1. `objects[].image`", "2. `props[prop]`", "3. `prop_packs`",
+                                           "4. `occluder.source`")]
+    assert steps == sorted(steps) and mb.ART_SOURCES == ("object", "props", "prop_packs", "occluder")
+    for phrase in ("exact blocking rectangles (D3)", "`prop_px` (the default)", "`world_px`: world pixels, never scaled",
+                   "`image_px`: the legacy name of `prop_px`", "Rule 3 is a runtime duty",
+                   "Gameplay metadata lives in the map bundle", "actor_feet_off_placement_footprints"):
+        assert phrase in text, phrase

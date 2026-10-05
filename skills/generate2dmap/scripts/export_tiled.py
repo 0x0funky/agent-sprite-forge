@@ -4,7 +4,7 @@
 Verbs:
   export  write map.tmj, one TSX per bundle tileset (corner wangset for wang_corner tiles,
           a two-colour mixed wangset for blob-47 tiles, per-tile collision and properties),
-          props.tsx (an image-collection tileset: each prop with its anchor and footprint),
+          props.tsx (an image-collection tileset: each prop's art with its anchor and footprint),
           copies of every image under images/, preview.png (the bundle's reference render)
           and export-report.json. --embedded-variant adds map.embedded.tmj with the tilesets
           inlined, for Phaser and other loaders that cannot read .tsx. Before anything is
@@ -16,9 +16,13 @@ Verbs:
 Tiled layers: the bundle's layers in order (tiles layers such as ground and decoration,
 image layers, objects layers as prop tile objects with anchor and sortY properties, stored
 in draw order with draworder "index" because Tiled's topdown order sorts by image bottom,
-not by the ground line), then "collision" (hidden: walk regions, solids, collision rects,
-solid footprints scaled once, material areas) and "interactions" (spawns, portals,
-interactions, anchors). The Tiled GUI, its terrain brushes and Phaser are not verified here.
+not by the ground line), then "collision" (hidden: walk regions, then the bundle's blocking
+set as forge_nav reads it (D2): solids, collision rects, solid footprints scaled once (basis
+world_px never, D7) and mirrored with flip_x (D6), then the material areas) and
+"interactions" (spawns, portals, interactions, anchors). Tile collision lives in the TSX
+tilesets (D5). Object art follows the D6 lookup order (objects[].image, props registry,
+prop_packs by label, occluder.source); a flip_x object is a tile object with Tiled's
+horizontal flip flag. The Tiled GUI, its terrain brushes and Phaser are not verified here.
 """
 from __future__ import annotations
 
@@ -41,15 +45,16 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import forge_core  # noqa: E402  (this skill's vendored copy)
 import map_bundle  # noqa: E402
-from map_bundle import BundleError, _local_round_half_up  # noqa: E402
+from map_bundle import BundleError  # noqa: E402
 
 TOOL_NAME = "export_tiled.py"
-TOOL_VERSION = "1.0.0"
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # D29
 TILED_FORMAT = "1.10"
 TILED_APP = "1.11.0"
 REPORT_SCHEMA = "generate2dmap.tiled_export.v1"
 RESERVED_LAYERS = ("collision", "interactions")
 FLIP_FLAGS = 0xF0000000
+FLIPPED_HORIZONTALLY = 0x80000000  # Tiled's gid flag: the tile object is drawn mirrored left to right
 WANG_COLOURS = ("#5aa344", "#3b5dc9", "#c79d62", "#9a9a9a", "#d04e4e", "#8e5bd0", "#e0c040", "#40c0c0")
 _SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
@@ -233,7 +238,7 @@ class _Exporter:
         self.next_layer_id = 1
         self.tilesets: list[tuple[str, dict, int]] = []  # (tsx file name, JSON tileset, firstgid)
         self.firstgid: dict[str, int] = {}
-        self.prop_gid: dict[str, int] = {}
+        self.prop_gid: dict[tuple[str, str], int] = {}  # (prop id, art path) -> gid
 
     # -- helpers
 
@@ -317,31 +322,42 @@ class _Exporter:
             result["wangsets"] = wangsets
         return result
 
-    def props_tileset(self, prop_ids: list[str]) -> dict:
+    def props_tileset(self, keys: list[tuple[str, str]]) -> dict:
+        """One image tile per (prop id, art path) the objects draw (the D6 art lookup), with its anchor
+        and, for art from the props registry, the prop's footprint, solid and occlusion fields."""
         tiles = []
-        for k, prop_id in enumerate(prop_ids):
-            prop = self.bundle.props[prop_id]
-            copied = self.copy_image(prop.image)
-            anchor = prop.anchor_px or (prop.size[0] / 2, float(prop.size[1]))
+        sizes = []
+        for k, (prop_id, art) in enumerate(keys):
+            art_path = Path(art)
+            prop = self.bundle.props.get(prop_id)
+            first = next(obj for obj in self.bundle.objects if obj.prop == prop_id and obj.image == art_path)
+            copied = self.copy_image(art_path)
+            sizes.append(first.image_size)
+            registry_art = prop is not None and prop.image == art_path
+            if registry_art:
+                anchor = prop.anchor_px or (prop.size[0] / 2, float(prop.size[1]))
+            else:
+                anchor = first.anchor_px
             tile: dict[str, Any] = {
                 "id": k, "type": "prop", "image": copied.rel, "imagewidth": copied.size[0],
                 "imageheight": copied.size[1],
                 "properties": _properties([("prop", prop_id), ("anchorX", float(anchor[0])),
                                            ("anchorY", float(anchor[1])),
-                                           ("solid", prop.solid), ("occlusionClass", prop.occlusion_class),
-                                           ("occupantPolicy", prop.occupant_policy)]),
+                                           ("solid", prop.solid if registry_art else None),
+                                           ("occlusionClass", prop.occlusion_class if registry_art else None),
+                                           ("occupantPolicy", prop.occupant_policy if registry_art else None)]),
             }
-            unit = map_bundle.MapObject(id=prop_id, prop=prop_id, x=float(anchor[0]), y=float(anchor[1]), scale=1.0,
-                                        anchor_px=anchor, footprint=prop.footprint, solid=True, sort_y=0.0, layer=None,
-                                        occlusion=None, occupant_policy=None)
-            footprint = map_bundle.footprint_solid(unit)
-            if footprint is not None:
-                tile["objectgroup"] = object_group(2, "", [tiled_shape(footprint, 1, "footprint", "footprint")])
+            if registry_art:
+                unit = map_bundle.MapObject(id=prop_id, prop=prop_id, x=float(anchor[0]), y=float(anchor[1]),
+                                            scale=1.0, anchor_px=anchor, footprint=prop.footprint, solid=True,
+                                            sort_y=0.0, layer=None, occlusion=None, occupant_policy=None)
+                footprint = map_bundle.footprint_solid(unit)
+                if footprint is not None:
+                    tile["objectgroup"] = object_group(2, "", [tiled_shape(footprint, 1, "footprint", "footprint")])
             tiles.append(tile)
-        sizes = [self.bundle.props[p].size for p in prop_ids]
         return {"name": "props", "type": "tileset", "version": TILED_FORMAT, "tiledversion": TILED_APP,
-                "tilewidth": max(s[0] for s in sizes), "tileheight": max(s[1] for s in sizes),
-                "tilecount": len(prop_ids), "columns": 0, "margin": 0, "spacing": 0, "objectalignment": "bottomleft",
+                "tilewidth": max(size[0] for size in sizes), "tileheight": max(size[1] for size in sizes),
+                "tilecount": len(keys), "columns": 0, "margin": 0, "spacing": 0, "objectalignment": "bottomleft",
                 "grid": {"orientation": "orthogonal", "width": 1, "height": 1}, "tiles": tiles}
 
     def add_tileset(self, file_stem: str, tileset: dict) -> int:
@@ -373,37 +389,43 @@ class _Exporter:
     def objects_layer(self, layer: map_bundle.Layer) -> dict:
         objects = []
         for obj in map_bundle.draw_order([o for o in self.bundle.objects if o.layer == layer.name]):
-            prop = self.bundle.props.get(obj.prop)
-            if prop is None or prop.image is None or obj.prop not in self.prop_gid:
+            key = (obj.prop, str(obj.image))
+            if obj.image is None or obj.image_size is None or key not in self.prop_gid:
                 continue
-            left, bottom, width, height = map_bundle.object_placement(obj, prop.size)
+            left, bottom, width, height = map_bundle.object_placement(obj, obj.image_size)
+            gid = self.prop_gid[key] | (FLIPPED_HORIZONTALLY if obj.flip_x else 0)
             objects.append({
-                "gid": self.prop_gid[obj.prop], "height": height, "id": self.object_id(), "name": obj.id,
+                "gid": gid, "height": height, "id": self.object_id(), "name": obj.id,
                 "properties": _properties([("prop", obj.prop), ("anchorWorldX", obj.x), ("anchorWorldY", obj.y),
                                            ("sortY", obj.sort_y), ("scale", obj.scale), ("solid", obj.solid),
-                                           ("occlusion", obj.occlusion), ("occupantPolicy", obj.occupant_policy)]),
+                                           ("occlusion", obj.occlusion), ("occupantPolicy", obj.occupant_policy),
+                                           ("flipX", True if obj.flip_x else None)]),
                 "rotation": 0, "type": "prop", "visible": True, "width": width, "x": left, "y": bottom})
         return object_group(self.layer_id(), layer.name, objects,
                             properties=_properties([("sortBy", "sortY, then x, then id (ground line)")]))
 
     def collision_layer(self) -> dict:
+        """Walk regions, then the D2 blocking set as forge_nav reads the bundle (solids, rects and
+        solid footprints; tile collision stays in the TSX tilesets, D5), then the material areas."""
         bundle, objects = self.bundle, []
         collision = bundle.collision
         if collision is not None:
+            blocking = map_bundle.blocking_set(bundle)
             for i, (polygon, holes) in enumerate(collision.regions):
                 region = {"shape": "polygon", "points": polygon.tolist()}
                 objects.append(tiled_shape(region, self.object_id(), "walkRegion", f"region-{i}"))
                 for k, hole in enumerate(holes):
                     objects.append(tiled_shape({"shape": "polygon", "points": hole.tolist()}, self.object_id(),
                                                "walkHole", f"region-{i}-hole-{k}", _properties([("region", i)])))
-            for solid in collision.solids:
+            for solid in blocking.collision_solids + blocking.rects:
                 objects.append(tiled_shape(solid, self.object_id(), "solid", solid["source"],
                                            _properties([("source", solid["source"])])))
-        for obj in bundle.objects:
-            solid = map_bundle.footprint_solid(obj)
-            if solid is not None:
-                objects.append(tiled_shape(solid, self.object_id(), "solid", obj.id,
-                                           _properties([("source", solid["source"])])))
+            footprints = blocking.footprints
+        else:  # no collision block, so no forge_nav model: the footprints follow the same rule (N6)
+            footprints = [solid for solid in map(map_bundle.footprint_solid, bundle.objects) if solid is not None]
+        for solid in footprints:
+            objects.append(tiled_shape(solid, self.object_id(), "solid", solid["source"].split(":", 1)[1],
+                                       _properties([("source", solid["source"])])))
         material = bundle.material
         if material is not None:
             for i, (name, klass, walkable) in enumerate(zip(material.names, material.classes, material.walkable)):
@@ -462,11 +484,11 @@ class _Exporter:
             raise ExportError(f"layer name(s) {clash} are reserved for the Tiled export; rename them in the bundle")
         for tileset in bundle.tilesets.values():
             self.firstgid[tileset.id] = self.add_tileset(tileset.id, self.terrain_tileset(tileset))
-        used = sorted({obj.prop for obj in bundle.objects if obj.prop in bundle.props
-                       and bundle.props[obj.prop].image is not None and bundle.props[obj.prop].size is not None})
+        used = sorted({(obj.prop, str(obj.image)) for obj in bundle.objects
+                       if obj.image is not None and obj.image_size is not None})
         if used:
             firstgid = self.add_tileset("props", self.props_tileset(used))
-            self.prop_gid = {prop_id: firstgid + k for k, prop_id in enumerate(used)}
+            self.prop_gid = {key: firstgid + k for k, key in enumerate(used)}
         layers = []
         for layer in bundle.layers:
             if layer.kind == "tiles" and layer.grid is not None:
@@ -503,7 +525,7 @@ def read_tiled_map(tmj: str | os.PathLike) -> dict:
     {"map": TMJ document, "tilesets": [{"firstgid", "base", "columns", "tilewidth",
     "tileheight", "tilecount", "image", "tiles": {id: {"image", ...}}}, ...]} sorted by firstgid."""
     tmj = Path(tmj).resolve()
-    document = map_bundle._local_read_json(tmj)
+    document = map_bundle.read_json(tmj)
     tilesets = []
     for entry in document["tilesets"]:
         if "source" in entry:
@@ -549,7 +571,8 @@ class _GidImages:
 
     def owner(self, gid: int) -> dict:
         if gid & FLIP_FLAGS:
-            raise BundleError(f"gid {gid} uses flip flags, which this reader does not support")
+            raise BundleError(f"gid {gid} uses flip flags, which this reader supports only as the horizontal "
+                              "flip of a tile object")
         candidates = [ts for ts in self.tilesets if ts["firstgid"] <= gid]
         if not candidates or gid - candidates[-1]["firstgid"] >= candidates[-1]["tilecount"]:
             raise BundleError(f"gid {gid} belongs to no tileset")
@@ -577,10 +600,24 @@ class _GidImages:
         return self._images[gid]
 
 
+def _object_gid(raw: int) -> tuple[int, bool]:
+    """(gid, mirrored) of a tile object's gid: the horizontal flip flag (a flip_x object, D6) is
+    supported; vertical, diagonal and hexagonal flags are refused."""
+    if raw & (FLIP_FLAGS & ~FLIPPED_HORIZONTALLY):
+        raise BundleError(f"gid {raw} uses vertical, diagonal or hexagonal flip flags, which this reader does not "
+                          "support")
+    return raw & ~FLIP_FLAGS, bool(raw & FLIPPED_HORIZONTALLY)
+
+
+def _mirrored(image: Image.Image, mirrored: bool) -> Image.Image:
+    return image.transpose(Image.Transpose.FLIP_LEFT_RIGHT) if mirrored else image
+
+
 def render_tiled(tiled: dict, size: tuple[int, int]) -> np.ndarray:
     """Re-render a map read by read_tiled_map(): visible tile, image and tile-object layers,
     objects in draworder (index = file order, topdown = by y), tile objects drawn at
-    (round(x), round(y - height)) scaled to (round(width), round(height)) with nearest neighbour."""
+    (round(x), round(y - height)) scaled to (round(width), round(height)) with nearest neighbour,
+    mirrored left to right when the gid carries the horizontal flip flag."""
     document = tiled["map"]
     gids = _GidImages(tiled)
     tw, th = int(document["tilewidth"]), int(document["tileheight"])
@@ -608,13 +645,14 @@ def render_tiled(tiled: dict, size: tuple[int, int]) -> np.ndarray:
         elif layer["type"] == "imagelayer":
             image = forge_core.load_rgba(tiled["path"].parent / layer["image"])[0]
             offset_x, offset_y = layer.get("offsetx", 0), layer.get("offsety", 0)
-            map_bundle.composite(canvas, image, _local_round_half_up(offset_x), _local_round_half_up(offset_y))
+            map_bundle.composite(canvas, image, forge_core.round_half_up(offset_x), forge_core.round_half_up(offset_y))
         elif layer["type"] == "objectgroup":
             objects = [o for o in layer["objects"] if o.get("gid") and o.get("visible", True)]
             if layer.get("draworder", "topdown") == "topdown":
                 objects = sorted(objects, key=lambda o: o["y"])
             for obj in objects:
-                map_bundle.draw_image(canvas, gids.image(int(obj["gid"])), obj["x"], obj["y"], obj["width"],
+                gid, mirrored = _object_gid(int(obj["gid"]))
+                map_bundle.draw_image(canvas, _mirrored(gids.image(gid), mirrored), obj["x"], obj["y"], obj["width"],
                                       obj["height"])
     return np.asarray(canvas)[: size[1], : size[0]]
 
@@ -655,14 +693,15 @@ def render_pytiled(tmj: str | os.PathLike, size: tuple[int, int]) -> np.ndarray:
         elif isinstance(layer, tp.ImageLayer):
             image = forge_core.load_rgba(tmj.parent / layer.image)[0]
             offset = layer.offset
-            map_bundle.composite(canvas, image, _local_round_half_up(offset.x), _local_round_half_up(offset.y))
+            map_bundle.composite(canvas, image, forge_core.round_half_up(offset.x), forge_core.round_half_up(offset.y))
         elif isinstance(layer, tp.ObjectLayer):
             objects = [o for o in layer.tiled_objects if isinstance(o, tp.tiled_object.Tile) and o.visible]
             if layer.draw_order == "topdown":
                 objects = sorted(objects, key=lambda o: o.coordinates.y)
             for obj in objects:
-                map_bundle.draw_image(canvas, tile_image(obj.gid), obj.coordinates.x, obj.coordinates.y,
-                                      obj.size.width, obj.size.height)
+                gid, mirrored = _object_gid(int(obj.gid))
+                map_bundle.draw_image(canvas, _mirrored(tile_image(gid), mirrored), obj.coordinates.x,
+                                      obj.coordinates.y, obj.size.width, obj.size.height)
     return np.asarray(canvas)[: size[1], : size[0]]
 
 
@@ -725,7 +764,7 @@ def export_bundle(bundle: map_bundle.Bundle, stage: Path, embedded_variant: bool
         ],
         "checks": checks,
         "inputs": map_bundle.bundle_inputs(bundle, stage),
-        "outputs": [map_bundle._local_file_ref(path, stage) for path in outputs],
+        "outputs": [forge_core.file_ref(path, stage) for path in outputs],
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "tiled": {"format": TILED_FORMAT, "app": TILED_APP,
                   "tilesets": [{"file": name, "name": ts["name"], "firstgid": gid, "tilecount": ts["tilecount"]}
@@ -795,8 +834,14 @@ def cmd_verify(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    return args.func(args)
+
+
 def main(argv: list[str] | None = None) -> int:
-    return map_bundle._local_run_cli(build_parser(), argv)
+    """The CLI under forge_core.run_cli (D26, D27)."""
+    return forge_core.run_cli(_run, argv)
 
 
 if __name__ == "__main__":

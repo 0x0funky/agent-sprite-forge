@@ -458,6 +458,64 @@ def test_segments_along_region_edges():
     assert {0.0, 1.0} <= set(breaks.tolist()) and np.isclose(breaks, 5 / 30).any() and np.isclose(breaks, 25 / 30).any()
 
 
+# --------------------------------------------------------------------------- the CLI over forge_nav (D4)
+
+def test_check_and_query_run_on_forge_nav(tmp_path):
+    """D4: map_nav is the command line over the vendored forge_nav. Its grid, BFS and predicates are
+    forge_nav's, check builds a forge_nav.CollisionModel from the bundle's D2 blocking set, and query
+    answers with D1's closed polygon solids (B13's pre-integration model left a polygon's right and
+    bottom edges free; map_nav.CollisionModel keeps that model only as the reference of
+    tests/test_forge_nav.py)."""
+    fn = nav.forge_nav
+    assert (nav.grid_bfs, nav.attach, nav.pnpoly, nav.NavGrid, nav.merge_rects) == (
+        fn.grid_bfs, fn.attach, fn.pnpoly, fn.NavGrid, fn.merge_rects)
+    square = {"shape": "polygon", "points": [[40, 40], [60, 40], [60, 60], [40, 60]]}
+    path = write_bundle(tmp_path / "poly", collision={"actorRadius": 0, "solids": [square]},
+                        spawns=[{"id": "start", "x": 10, "y": 10}])
+    result = checked(path)
+    assert type(result.model) is fn.CollisionModel
+    assert np.array_equal(result.grid.moves, fn.build_grid(fn.read_blocking_set(path).model()).moves)
+    edges = ["60,50", "50,60", "40,50", "50,40", "60,60"]
+    run = run_cli([TOOL, "query", "--bundle", path, *[a for e in edges for a in ("--point", e)]])
+    assert run.returncode == 0, run.stderr
+    assert [p["valid"] for p in json.loads(run.stdout)["points"]] == [False] * 5  # closed on every edge (D1)
+    reference = nav.CollisionModel(160, 100, 0, solids=[square])
+    assert reference.blocked(60, 50) == False  # noqa: E712  the pre-D1 even-odd model it replaced
+
+
+def test_footprint_basis_and_flip_x_reach_the_check(tmp_path):
+    """D7 and D6 through the CLI: a world_px footprint keeps its size at scale 3, and flip_x mirrors
+    a footprint offset around the anchor x."""
+    save(np.full((10, 10, 4), 255, np.uint8), tmp_path / "solo" / "post.png")
+    footprint = {"shape": "rect", "width": 6, "depth": 4, "offset": [10, 0], "basis": "world_px"}
+    props = {"post": {"image": "post.png", "anchor_px": [5, 9], "footprint": footprint, "solid": True}}
+    objects = [{"id": "post-1", "prop": "post", "x": 80, "y": 50, "scale": 3, "anchor_px": [5, 9], "flip_x": True}]
+    path = write_bundle(tmp_path / "solo", collision={"actorRadius": 0}, props=props, objects=objects,
+                        layers=[{"name": "props", "kind": "objects"}], spawns=[{"id": "start", "x": 10, "y": 10}])
+    points = ["70,50", "67,50", "66.9,50", "90,50", "73,52", "73.1,52"]
+    run = run_cli([TOOL, "query", "--bundle", path, *[a for e in points for a in ("--point", e)]])
+    assert run.returncode == 0, run.stderr
+    # mirrored: centre x 80 - 10 = 70, unscaled 6 x 4 (world_px): blocked on [67, 73] x [48, 52]
+    assert [p["valid"] for p in json.loads(run.stdout)["points"]] == [False, False, True, True, False, True]
+
+
+def test_report_inputs_list_the_linked_bundles(tmp_path):
+    """The --link bundles the link checks read are inputs of nav-report.json (review B13)."""
+    spawns = [{"id": "start", "x": 20, "y": 50}, {"id": "arrive-east", "x": 140, "y": 50}]
+    to_road = {"id": "exit-east", "rect": [150, 30, 10, 40], "to": "road:arrive-west", "activation": "intent",
+               "travelDirection": [1, 0], "radius": 6, "entranceByFrom": {"road": "arrive-east"}}
+    back = {"id": "exit-west", "rect": [0, 30, 10, 40], "to": "meadow", "activation": "intent",
+            "travelDirection": [-1, 0], "radius": 6, "entranceByFrom": {"meadow": "arrive-west"}}
+    meadow = write_bundle(tmp_path / "meadow", spawns=spawns, portals=[to_road])
+    road = write_bundle(tmp_path / "road", spawns=[{"id": "arrive-west", "x": 20, "y": 50}], portals=[back])
+    out = tmp_path / "nav"
+    run = run_cli([TOOL, "check", "--bundle", meadow, "--link", road, "--output-dir", out])
+    assert run.returncode == 0, run.stderr
+    report = json.loads((out / "nav-report.json").read_text(encoding="utf-8"))
+    assert [ref["path"] for ref in report["inputs"]] == ["../meadow/map-bundle.json", "../road/map-bundle.json"]
+    assert report["tool"] == {"name": "map_nav.py", "version": "0.4.0"}  # D29: the package version
+
+
 # --------------------------------------------------------------------------- outputs and CLI
 
 def test_nav_outputs_and_contracts(tmp_path):

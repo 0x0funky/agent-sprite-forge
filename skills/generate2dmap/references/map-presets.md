@@ -19,10 +19,10 @@ Rules of thumb used below:
 | Dungeon rooms | `room_chunk_mode` | fixed-size rooms (for example 15 x 11 tiles) | tile collision; door gaps match the sockets | crossing doors between rooms; one bundle per room | map_nav per room, the chunk validator across rooms |
 | Tactics board | `grid_mode` | one material pixel per tile (`material_map` scale = tile size) | material classes per tile (`liquid`, `hazard`, `solid`); small radius so every free tile is a valid node | tall dressing uses `rear_shift_and_fade` | map_bundle, map_nav, export_tiled |
 | Brawler belt | `side_scroll_mode` | a long plate; the belt is one walk-region polygon | belt polygon only; `ySquash` about 0.6 | intent exits at the belt ends | map_bundle, map_nav |
-| Platformer | `side_scroll_mode` | platform kit tiles | `one_way` platforms in the material map | exits and checkpoints | map_bundle for data; jump and gap checks belong to the side-scroll layout validator, not to map_nav |
+| Platformer | `side_scroll_mode` | platform kit tiles | `one_way` platforms in the material map | exits and checkpoints | map_bundle for data; jump and gap checks belong to the side-scroll layout validator (`validate_layout.py`), not to map_nav |
 | Story or point-and-click scene | `baked_scene_mode` | one complete picture | a walk region for the floor | interactions with `reach`, anchors whose `approach` is where the actor walks before acting | map_bundle, map_nav |
 
-`map_nav.py` checks top-down movement. Platformer reachability depends on jump arcs, which it does not model; for those maps it still checks the data, the `one_way` direction and the exits.
+`map_nav.py` checks top-down movement. Platformer reachability depends on jump arcs, which it does not model; for those maps it still checks the data, the `one_way` direction (blocked only when moving down onto it) and the exits. `one_way` is a side-scroll class; bundles carry no view mode, so the rule applies to every map and top-down presets never use it.
 
 ### Snippets
 
@@ -60,9 +60,9 @@ Tactics board (12 x 10 tiles of 32 px; materials one pixel per tile):
 |---|---|---|---|
 | Tiled 1.10 or later | `map.tmj`, one `.tsx` per tileset, `props.tsx`, `images/` | `export_tiled.py export` | the written files re-render to the bundle's reference render with 0 px difference (built-in reader; pytiled-parser when installed); Tiled GUI not verified, including terrain brushes on the exported wangsets |
 | Phaser 3 | `map.embedded.tmj` (tilesets inlined) and `images/` | `export_tiled.py export --embedded-variant` | the same re-render check; Phaser itself is not run by the tests |
-| Godot 4 | TileSet and TileMapLayer resources | the Godot exporter of the engine-exporters module, once it lands | parse level only; editor import not verified |
-| LDtk | an `.ldtk` project | the LDtk exporter of the same module | required fields only; editor not verified |
-| Custom engine (Canvas, Three.js, Pixi, others) | `map-bundle.json` and `nav-grid.json` | `map_bundle.py`, `map_nav.py` | collision and reachability follow plan Appendix C; the shared JavaScript collision query comes with the scene-preview module |
+| Godot 4.3 or later | a `.tres` TileSet and a `.tscn` scene | `export_godot.py` ([engine-maps.md](engine-maps.md)) | re-read by the exporter's own Godot text parser; editor import not verified |
+| LDtk 1.5.3 | an `.ldtk` project | `export_ldtk.py` ([engine-maps.md](engine-maps.md)) | required fields against a snapshot of the LDtk schema; editor not verified |
+| Custom engine (Canvas, Three.js, Pixi, others) | `map-bundle.json` and `nav-grid.json` | `map_bundle.py`, `map_nav.py` | collision and reachability follow the forge_nav rules ([layered-map-contract.md](layered-map-contract.md)); [runtime/map-runtime.mjs](runtime/map-runtime.mjs) is the JavaScript collision query that mirrors them |
 | Unity | a Tiled export through a third-party importer, or a reader of `map-bundle.json` | not provided here | not verified |
 
 `nav-grid.json` (from `map_nav.py check`) lists one character per grid node: `#` for a blocked node, otherwise a hex digit of its open moves (east 1, south 2, west 4, north 8; south is +y). Node `(col, row)` sits at `((col + 0.5) * cell, (row + 0.5) * cell)`. A runtime can path-find on it directly; `blockedRects` lists the blocked nodes as disjoint rectangles in world pixels.
