@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64"
+     data-codeart="rig.v1" data-anchor="32 59" data-facing="right" data-outline="#1a1c2c">
+  <!-- Code-drawn hero rig (codeart2d, no image model). 64x64 canvas, ground line y=59,
+       about 48 px visible height. Bones are <g data-pivot>; slots carry data-z (draw order).
+       Legs are thigh -> shin -> foot so two-bone IK can plant a flat foot on the ground. -->
+  <style>
+    .c-out{stroke:#1a1c2c;stroke-width:1}
+    .c-skin{fill:#f0b98c} .c-skin-sh{fill:#c8845e}
+    .c-hair{fill:#6b3d2e}
+    .c-tunic{fill:#3b5dc9} .c-tunic-sh{fill:#29366f} .c-belt{fill:#73464c}
+    .c-pants{fill:#4a5a85} .c-pants-sh{fill:#333c57}
+    .c-boot{fill:#5a3a2a} .c-boot-sh{fill:#3d2618}
+    .c-ink{fill:#1a1c2c}
+  </style>
+  <g id="root" data-pivot="32 59">
+    <g id="hips" data-pivot="32 38">
+      <!-- back leg (far side): darker shades, drawn behind the torso -->
+      <g id="thigh_b" data-pivot="31 38" data-z="10">
+        <rect class="c-pants-sh c-out" x="28.25" y="36.5" width="5.5" height="12" rx="2.5"/>
+        <g id="shin_b" data-pivot="31 47.5">
+          <rect class="c-pants-sh c-out" x="28.75" y="46.75" width="4.5" height="11.25" rx="2"/>
+          <g id="foot_b" data-pivot="31 57" data-z="11">
+            <rect class="c-boot-sh c-out" x="28.5" y="55.5" width="8" height="3.5" rx="1.25"/>
+          </g>
+        </g>
+      </g>
+      <g id="torso" data-pivot="32 38">
+        <!-- back arm: behind everything -->
+        <g id="arm_b" data-pivot="31.5 29.5" data-z="5">
+          <rect class="c-tunic-sh c-out" x="29.5" y="28.5" width="4" height="7" rx="2"/>
+          <g id="fore_b" data-pivot="31.5 35">
+            <rect class="c-skin-sh c-out" x="29.5" y="34" width="4" height="6" rx="2"/>
+          </g>
+        </g>
+        <rect data-z="30" class="c-tunic c-out" x="28" y="27" width="10" height="12.5" rx="3"/>
+        <rect data-z="31" class="c-belt" x="28.5" y="36" width="9" height="2"/>
+        <g id="head" data-pivot="33 27" data-z="40">
+          <circle class="c-skin c-out" cx="34" cy="20" r="7.5"/>
+          <path data-z="41" class="c-hair c-out"
+                d="M26.5 21.5 C26 13.2 32 11 37.6 11.9 C41 12.6 42.4 15.2 41.5 17.5 L37.8 16.6 L36 15 L34.3 17.1 L30.3 17.7 L29.9 23.2 Z"/>
+          <rect data-z="42" class="c-ink" x="37" y="19" width="2" height="3"/>
+        </g>
+        <!-- front arm: in front of the torso and the front leg -->
+        <g id="arm_f" data-pivot="34 29.5" data-z="60">
+          <rect class="c-tunic c-out" x="32" y="28.5" width="4" height="7" rx="2"/>
+          <g id="fore_f" data-pivot="34 35">
+            <rect class="c-skin c-out" x="32" y="34" width="4" height="6" rx="2"/>
+          </g>
+        </g>
+      </g>
+      <!-- front leg (near side) -->
+      <g id="thigh_f" data-pivot="33 38" data-z="50">
+        <rect class="c-pants c-out" x="30.25" y="36.5" width="5.5" height="12" rx="2.5"/>
+        <g id="shin_f" data-pivot="33 47.5">
+          <rect class="c-pants c-out" x="30.75" y="46.75" width="4.5" height="11.25" rx="2"/>
+          <g id="foot_f" data-pivot="33 57" data-z="51">
+            <rect class="c-boot c-out" x="30.5" y="55.5" width="8" height="3.5" rx="1.25"/>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>
