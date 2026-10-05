@@ -1,0 +1,521 @@
+{
+  "schema": "codeart2d.layout_spec.v1",
+  "map_id": "meadow",
+  "size": [40, 25],
+  "tile_size": 16,
+  "seed": 7,
+  "materials": {
+    "grass": {
+      "color": "#5aa344"
+    },
+    "path": {
+      "color": "#c79d62"
+    },
+    "water": {
+      "color": "#2c62ab",
+      "walkable": false
+    }
+  },
+  "base": "grass",
+  "terrain": [
+    {
+      "id": "pond",
+      "shape": "ellipse",
+      "material": "water",
+      "center": [31, 7],
+      "radius": [3.6, 3.1],
+      "wobble": 0.6
+    },
+    {
+      "id": "green",
+      "shape": "ellipse",
+      "material": "path",
+      "center": [19, 13.4],
+      "radius": [8.6, 2.0]
+    },
+    {
+      "id": "west-road",
+      "shape": "road",
+      "material": "path",
+      "width": 1.7,
+      "points": [[-1, 15], [4, 14.8], [8, 13.6], [11, 13.2]]
+    },
+    {
+      "id": "east-road",
+      "shape": "road",
+      "material": "path",
+      "width": 1.7,
+      "points": [[27, 13.5], [31, 14.6], [35, 15.6], [38, 15.2], [41, 15]]
+    },
+    {
+      "id": "lane",
+      "shape": "road",
+      "material": "path",
+      "width": 1.5,
+      "points": [[22.5, 12.5], [22.8, 9.5], [24, 6.5], [24.6, 3], [24.2, -1]]
+    }
+  ],
+  "actor": {
+    "radius": 5,
+    "ySquash": 1.0
+  },
+  "props": {
+    "tree": {
+      "pixelspec": {
+        "schema": "codeart2d.pixelspec.v1",
+        "canvas": [20, 26],
+        "anchor_px": [10, 25],
+        "palette": {
+          "D": "#23502f",
+          "G": "#377a3b",
+          "H": "#8cc657",
+          "L": "#5aa344",
+          "T": "#43291a",
+          "t": "#6a4a2c",
+          "o": "#1a2230"
+        },
+        "layers": [
+          {
+            "name": "body",
+            "rows": [
+              "....................",
+              ".......LLLLLL.......",
+              "......LLLLLLLL......",
+              ".....LLLLLLLGGG.....",
+              "....LHHHHLLGGGGG....",
+              "...LLHHHHLGGGGGGG...",
+              "...LLHHHHGGGGGGGG...",
+              "...LLLLGGGGGGGGGG...",
+              "..LLLLGGGGGGGGGGDD..",
+              "..LLLGGGGGGGGGGDDD..",
+              "..LLGGGGGGGGGGDDDD..",
+              "..GGGGGGGGGGGDDDDD..",
+              "..GGGGGGGGGDDDDDDD..",
+              "..GGGGGGGGDDDDDDDD..",
+              "...GGGGGGDDDDDDDD...",
+              "....GGGGDDDDDDDD....",
+              "........tttT........",
+              "........tttT........",
+              "........tttT........",
+              "........tttT........",
+              "........tttT........",
+              "........tttT........",
+              "........tttT........",
+              "........tttT........",
+              ".......TTTTTT.......",
+              "...................."
+            ]
+          }
+        ],
+        "outline": {
+          "mode": "solid",
+          "color": "o"
+        }
+      },
+      "occlusion": "tall",
+      "footprint": {
+        "shape": "ellipse",
+        "width": 7,
+        "depth": 4,
+        "offset": [0, -2]
+      }
+    },
+    "pine": {
+      "pixelspec": {
+        "schema": "codeart2d.pixelspec.v1",
+        "canvas": [18, 30],
+        "anchor_px": [9, 29],
+        "palette": {
+          "D": "#23502f",
+          "G": "#377a3b",
+          "L": "#5aa344",
+          "T": "#43291a",
+          "t": "#6a4a2c",
+          "o": "#1a2230"
+        },
+        "layers": [
+          {
+            "name": "body",
+            "rows": [
+              "..................",
+              "........GG........",
+              "........GG........",
+              ".......GGGD.......",
+              ".......GGGD.......",
+              "......LLGGDD......",
+              "......LLGGDD......",
+              ".....LLLGGDDD.....",
+              ".....GGGGGDDD.....",
+              "....GGGGGGDDDD....",
+              "......LLGGDD......",
+              ".....LLLGGDDD.....",
+              "....LLLLGGDDDD....",
+              "....GGGGGGDDDD....",
+              "...GGGGGGGDDDDD...",
+              "...LLLLLGGDDDDD...",
+              ".....LLLGGDDD.....",
+              "....LLLLGGDDDD....",
+              "....GGGGGGDDDD....",
+              "...GGGGGGGDDDDD...",
+              "...LLLLLGGDDDDD...",
+              "..LLLLLLGGDDDDDD..",
+              ".LLLLLLLGGDDDDDDD.",
+              "........tT........",
+              "........tT........",
+              "........tT........",
+              "........tT........",
+              "........tT........",
+              "........tT........",
+              ".................."
+            ]
+          }
+        ],
+        "outline": {
+          "mode": "solid",
+          "color": "o"
+        }
+      },
+      "occlusion": "tall",
+      "footprint": {
+        "shape": "ellipse",
+        "width": 6,
+        "depth": 3.5,
+        "offset": [0, -1.75]
+      }
+    },
+    "bush": {
+      "pixelspec": {
+        "schema": "codeart2d.pixelspec.v1",
+        "canvas": [16, 12],
+        "anchor_px": [8, 11],
+        "palette": {
+          "D": "#23502f",
+          "G": "#377a3b",
+          "H": "#8cc657",
+          "L": "#5aa344",
+          "o": "#1a2230"
+        },
+        "layers": [
+          {
+            "name": "body",
+            "rows": [
+              "................",
+              ".......LL.......",
+              ".....LLLLLL.....",
+              "...LLHHLLGGGG...",
+              "..LLHHHHGGGGGG..",
+              ".LLLLGGGGGGGGGD.",
+              ".LLGGGGGGGGGDDD.",
+              ".GGGGGGGGGDDDDD.",
+              "..GGGGGGDDDDDD..",
+              "...GGGDDDDDDD...",
+              "....DDDDDDDD....",
+              "................"
+            ]
+          }
+        ],
+        "outline": {
+          "mode": "solid",
+          "color": "o"
+        }
+      },
+      "occlusion": "low",
+      "footprint": {
+        "shape": "ellipse",
+        "width": 13,
+        "depth": 5,
+        "offset": [0, -2.5]
+      }
+    },
+    "rock": {
+      "pixelspec": {
+        "schema": "codeart2d.pixelspec.v1",
+        "canvas": [14, 10],
+        "anchor_px": [7, 9],
+        "palette": {
+          "S": "#4b505e",
+          "s": "#7e8696",
+          "w": "#b7bdc9",
+          "o": "#1a2230"
+        },
+        "layers": [
+          {
+            "name": "body",
+            "rows": [
+              "..............",
+              "..............",
+              "..............",
+              "...wwwwwsss...",
+              "..wwwwssssss..",
+              ".wwwsssssssSS.",
+              ".wsssssssSSSS.",
+              ".ssssssSSSSSS.",
+              "..sssSSSSSSS..",
+              ".............."
+            ]
+          }
+        ],
+        "outline": {
+          "mode": "solid",
+          "color": "o"
+        }
+      },
+      "occlusion": "low",
+      "footprint": {
+        "shape": "ellipse",
+        "width": 12,
+        "depth": 5,
+        "offset": [0, -2.5]
+      }
+    },
+    "house": {
+      "pixelspec": {
+        "schema": "codeart2d.pixelspec.v1",
+        "canvas": [46, 42],
+        "anchor_px": [23, 41],
+        "palette": {
+          "P": "#b9a888",
+          "R": "#772531",
+          "T": "#43291a",
+          "d": "#6a4a2c",
+          "n": "#2c62ab",
+          "p": "#ece0c4",
+          "r": "#b5403b",
+          "o": "#1a2230"
+        },
+        "layers": [
+          {
+            "name": "body",
+            "rows": [
+              "..............................................",
+              "..............................................",
+              "......................rr......................",
+              ".....................rrrr.....................",
+              "....................RRRRRR....................",
+              "...................rrrrrrRR...................",
+              ".................rrrrrrrrRRRR.................",
+              "................rrrrrrrrrRRRRR................",
+              "...............RRRRRRRRRRRRRRRR...............",
+              "..............rrrrrrrrrrrRRRRRRR..............",
+              ".............rrrrrrrrrrrrRRRRRRRR.............",
+              "............rrrrrrrrrrrrrRRRRRRRRR............",
+              "...........RRRRRRRRRRRRRRRRRRRRRRRR...........",
+              ".........rrrrrrrrrrrrrrrrRRRRRRRRRRRR.........",
+              "........rrrrrrrrrrrrrrrrrRRRRRRRRRRRRR........",
+              ".......rrrrrrrrrrrrrrrrrrRRRRRRRRRRRRRR.......",
+              "......RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR......",
+              ".....rrrrrrrrrrrrrrrrrrrrRRRRRRRRRRRRRRRR.....",
+              "....rrrrrrrrrrrrrrrrrrrrrRRRRRRRRRRRRRRRRR....",
+              "...RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR...",
+              "..RRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRR..",
+              "....pppppppppppppppppppppppppppppPPPPPPPPP....",
+              "....pppppppppppppppppppppppppppppPPPPPPPPP....",
+              "....pppppppppppppppppppppppppppppPPPPPPPPP....",
+              "....pppppppppppppppppppppppppppppPPPPPPPPP....",
+              "....pppppppppppppppppppppppppppppPPPPPPPPP....",
+              "....ppppnnnPnnnppppppppppppppppnnnPnnnPPPP....",
+              "....ppppnnnPnnnppppppppppppppppnnnPnnnPPPP....",
+              "....ppppPPPPPPPppppppppppppppppPPPPPPPPPPP....",
+              "....ppppnnnPnnnppppppppppppppppnnnPnnnPPPP....",
+              "....ppppnnnPnnnppppdddddTTTppppnnnPnnnPPPP....",
+              "....ppppnnnPnnnppppdddddTTTppppnnnPnnnPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              "....pppppppppppppppdddddTTTppppppPPPPPPPPP....",
+              ".............................................."
+            ]
+          }
+        ],
+        "outline": {
+          "mode": "solid",
+          "color": "o"
+        }
+      },
+      "occlusion": "tall",
+      "flip": false,
+      "footprint": {
+        "shape": "rect",
+        "width": 38,
+        "depth": 16,
+        "offset": [0, -8]
+      },
+      "interactions": [
+        {
+          "name": "door",
+          "offset": [0, 2],
+          "reach": 12
+        }
+      ]
+    },
+    "flowers": {
+      "pixelspec": {
+        "schema": "codeart2d.pixelspec.v1",
+        "canvas": [10, 8],
+        "anchor_px": [5, 8],
+        "palette": {
+          "f": "#f4e45a",
+          "g": "#377a3b",
+          "k": "#f08aa8"
+        },
+        "layers": [
+          {
+            "name": "body",
+            "rows": [
+              "..........",
+              "..........",
+              ".....k....",
+              "..f..g....",
+              "..g..g.f..",
+              "..g.k..g..",
+              "....g..g..",
+              "....g....."
+            ]
+          }
+        ]
+      },
+      "occlusion": "low",
+      "footprint": {
+        "shape": "none"
+      }
+    }
+  },
+  "objects": [
+    {
+      "id": "house-1",
+      "prop": "house",
+      "x": 216,
+      "y": 186
+    },
+    {
+      "id": "house-2",
+      "prop": "house",
+      "x": 312,
+      "y": 186
+    },
+    {
+      "id": "house-3",
+      "prop": "house",
+      "x": 408,
+      "y": 186
+    }
+  ],
+  "scatter": [
+    {
+      "id": "forest",
+      "kinds": {
+        "tree": 5,
+        "pine": 3
+      },
+      "count": 70,
+      "spacing": 20,
+      "density": {
+        "scale": 110,
+        "octaves": 2,
+        "threshold": 0.52,
+        "edge_bonus": 0.35,
+        "edge_distance": 72
+      },
+      "clearance": {
+        "road": 18,
+        "blocked": 14,
+        "object": 10,
+        "exit": 36,
+        "spawn": 28
+      }
+    },
+    {
+      "id": "hedgerow",
+      "kinds": {
+        "bush": 3,
+        "rock": 1
+      },
+      "count": 18,
+      "spacing": 18,
+      "near": {
+        "road": [12, 26]
+      },
+      "clearance": {
+        "road": 12,
+        "blocked": 8,
+        "object": 8,
+        "exit": 30,
+        "spawn": 20
+      }
+    },
+    {
+      "id": "shore",
+      "kinds": {
+        "rock": 2,
+        "bush": 1
+      },
+      "count": 8,
+      "spacing": 18,
+      "region": [
+        400,
+        24,
+        608,
+        208
+      ],
+      "attempts": 1200,
+      "near": {
+        "blocked": [10, 26]
+      },
+      "clearance": {
+        "road": 14,
+        "blocked": 10,
+        "object": 8,
+        "exit": 30,
+        "spawn": 20
+      }
+    },
+    {
+      "id": "flowers",
+      "kinds": {
+        "flowers": 1
+      },
+      "count": 24,
+      "spacing": 14,
+      "clearance": {
+        "road": 6,
+        "blocked": 6,
+        "object": 4,
+        "exit": 20,
+        "spawn": 12
+      }
+    }
+  ],
+  "exits": [
+    {
+      "id": "exit-west",
+      "edge": "west",
+      "road": "west-road",
+      "to": "west-field:from-meadow"
+    },
+    {
+      "id": "exit-east",
+      "edge": "east",
+      "road": "east-road",
+      "to": "harbor-road:from-meadow"
+    },
+    {
+      "id": "exit-north",
+      "edge": "north",
+      "road": "lane",
+      "to": "north-woods:from-meadow"
+    }
+  ],
+  "spawns": [
+    {
+      "id": "start",
+      "x": 300,
+      "y": 216,
+      "facing": "south"
+    }
+  ]
+}
