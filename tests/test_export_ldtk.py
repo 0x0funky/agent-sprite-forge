@@ -15,7 +15,7 @@ import numpy as np
 from PIL import Image
 
 from forge_testutils import assert_cli_help, assert_valid_contract, load_script, run_cli, script_path
-from test_export_godot import build_bundle, requested_contract_errors
+from test_export_godot import build_bundle, requested_contract_errors  # noqa: E402  (real schemas, D33)
 
 
 LDTK = load_script("generate2dmap", "export_ldtk")
@@ -217,6 +217,43 @@ class ExportLdtkTests(unittest.TestCase):
         assert_valid_contract(report["qa"], "common", "qaEnvelope", skill=SKILL)
         self.assertEqual(report["engine"]["name"], "ldtk")
         self.assertTrue(any(item.startswith("collision:") for item in report["notExported"]))
+
+    def test_flip_x_props_use_a_mirrored_atlas_copy_and_pivot(self):
+        """D6: a flip_x prop is drawn mirrored around its anchor: its own entity definition points at a mirrored
+        copy in the props atlas, with the anchor column mirrored too, so the entity's px is still (x, y)."""
+        self.data["objects"][1]["flip_x"] = True
+        self.data.pop("prop_packs")
+        self.data["props"] = {"tree": {"image": "props/tree/prop.png", "anchor_px": [12, 39]},
+                              "rock": {"pack": "props/prop-pack.json", "label": "rock"}}
+        path = self.root / "map" / "flipped.json"
+        path.write_text(json.dumps(self.data), encoding="utf-8")
+        summary = self.run_export(bundle=path, out=self.root / "flipped")
+        self.assertEqual(summary["status"], "pass")
+        project = self.project(self.root / "flipped")
+        by_id = {fields(entity)["BundleId"]: entity for entity in self.entities(project)
+                 if entity["__identifier"].startswith("Prop")}
+        definitions = {item["uid"]: item for item in project["defs"]["entities"]}
+        plain, mirrored = definitions[by_id["tree-1"]["defUid"]], definitions[by_id["tree-2"]["defUid"]]
+        self.assertNotEqual(plain["uid"], mirrored["uid"])
+        self.assertEqual(mirrored["identifier"], "Prop_tree_flip_x")
+        self.assertEqual((mirrored["pivotX"] * 24, mirrored["pivotY"] * 40), (24 - 12, 39))
+        self.assertEqual((fields(by_id["tree-2"])["FlipX"], fields(by_id["tree-1"])["FlipX"]), (True, False))
+        self.assertEqual(by_id["tree-2"]["px"], [100, 50], "the entity sits on the bundle's (x, y)")
+        atlas = np.asarray(Image.open(self.root / "flipped" / "assets" / "props-atlas.png").convert("RGBA"))
+        source = np.asarray(Image.open(self.root / "map" / "props" / "tree" / "prop.png").convert("RGBA"))
+        rect = mirrored["tileRect"]
+        np.testing.assert_array_equal(atlas[rect["y"]:rect["y"] + rect["h"], rect["x"]:rect["x"] + rect["w"]],
+                                      source[:, ::-1])
+        report = json.loads((self.root / "flipped" / "ldtk-export.json").read_text(encoding="utf-8"))
+        self.assertEqual({check["id"]: check["status"] for check in report["qa"]["checks"]}["assets_identical"], "pass")
+        self.assertTrue(any(note.startswith("material_map blocking classes liquid") for note in report["notExported"]))
+        self.assertTrue(any("footprints of solid objects" in note for note in report["notExported"]))
+
+    def test_usage_errors_exit_2(self):
+        result = export(self.bundle, self.out, "--bogus")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
+        self.assertFalse(self.out.exists())
 
     def test_non_square_tiles_are_refused(self):
         self.data["tile_size"] = [16, 8]

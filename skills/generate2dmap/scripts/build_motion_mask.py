@@ -50,7 +50,7 @@ import forge_core  # noqa: E402
 
 PLAN_SCHEMA = "generate2dmap.motion_plan.v1"
 MASK_QA_SCHEMA = "generate2dmap.motion_mask_qa.v1"
-TOOL = {"name": "build_motion_mask", "version": "1.0.0"}
+TOOL = {"name": "build_motion_mask", "version": forge_core.FORGE_PACKAGE_VERSION}
 REGION_KINDS = ("polygon", "rect", "luma_band", "landmark")
 # flow (water, falls, mist, cloud, smoke) and flicker (fire, candles, light) only ever play forwards;
 # sway (cloth, foliage, flags, hanging lamps) may play backwards, which pingpong loops need.
@@ -262,8 +262,8 @@ def normalize_plan(document: Any, *, protect_feather: float = DEFAULT_PROTECT_FE
 def load_plan(path: str | os.PathLike, **options: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     """Read and normalise a motion plan file; returns (normalised plan, original document)."""
     try:
-        document = json.loads(Path(path).read_text(encoding="utf-8-sig"))
-    except json.JSONDecodeError as error:
+        document = forge_core.read_json(path, strict=True)  # D28
+    except ValueError as error:
         raise ValueError(f"{Path(path).name} is not valid JSON: {error}") from None
     return normalize_plan(document, **options), document
 
@@ -495,7 +495,8 @@ class Clip:
             reference = file_ref(self.path, base)
         else:
             digests = "\n".join(forge_core.sha256_file(path) for path in self.files)
-            reference = {"path": _relative(self.path, base), "sha256": forge_core.sha256_bytes(digests.encode())}
+            reference = {"path": forge_core.manifest_path(self.path, base),  # D30: relPath or the bare name
+                         "sha256": forge_core.sha256_bytes(digests.encode())}
         return {**reference, "kind": self.kind, "frames": self.count, "size": list(self.size), "fps": self.fps}
 
 
@@ -760,19 +761,9 @@ def render_overlay(plate_rgb: np.ndarray, build: MaskBuild) -> Image.Image:
 
 # --------------------------------------------------------------------------- files
 
-def _relative(path: Path, base: Path) -> str:
-    """Manifest-relative POSIX path, or the bare file name when no relative route exists (another drive)."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        return Path(path).name
-    return relative
-
-
 def file_ref(path: str | os.PathLike, base: str | os.PathLike, sha256: str | None = None) -> dict[str, Any]:
-    """A common fileRef: manifest-relative path (or file name on another drive), sha256 and bytes."""
-    path = Path(path)
-    return {"path": _relative(path, Path(base)), "sha256": sha256 or forge_core.sha256_file(path),
-            "bytes": path.stat().st_size}
+    """A common fileRef (forge_core.file_ref, D30): manifest-relative path, or the file name on another drive."""
+    return forge_core.file_ref(path, base, sha256=sha256)
 
 
 def load_plate(path: str | os.PathLike, plan: dict[str, Any] | None = None) -> tuple[np.ndarray, dict[str, Any]]:
@@ -910,21 +901,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = run(args)
-    except (ValueError, OSError, forge_av.ForgeAVError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
-    except Exception as error:  # never show a traceback to the user
-        print(f"error: unexpected {type(error).__name__}: {forge_core.ascii_text(str(error))}", file=sys.stderr)
-        return 1
+    summary = run(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
+    printed as one error: line, D27), 2 (usage)."""
+    return forge_core.run_cli(_main, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (forge_av.ForgeAVError,))
 
 
 if __name__ == "__main__":

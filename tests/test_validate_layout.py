@@ -15,7 +15,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli,
                              script_path)
 
 
@@ -24,112 +24,10 @@ SCRIPT = script_path("generate2dmap", "validate_layout")
 SKILL = "generate2dmap"
 PHYSICS = {"jumpHeight": 72, "jumpDistance": 120, "maxSlopeDeg": 35, "stepUp": 8, "colliderSubstep": 3}
 
-# The $def this module asks integration to add to map.schema.json (handoff section 5), applied in memory.
-REQUESTED_MAP_DEFS = {
-    "layout_validation_v1": {
-        "description": "validate_layout.py report: standable spans, ledges and steep faces, gaps with their jump "
-                       "numbers, prop support, arena widths, reachability, and the QA envelope.",
-        "type": "object",
-        "required": ["schema", "tool", "status", "extent", "physics", "spans", "gaps", "props", "qa"],
-        "properties": {
-            "schema": {"const": "generate2dmap.layout_validation.v1"},
-            "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "status": {"enum": ["pass", "warn", "fail"]},
-            "extent": {"type": "object", "required": ["x0", "x1"],
-                       "properties": {"x0": {"type": "integer"}, "x1": {"type": "integer"}}},
-            "physics": {"type": "object", "required": ["jumpHeight", "jumpDistance", "maxSlopeDeg", "stepUp",
-                                                       "minDeckThickness", "groundTolerance"]},
-            "spans": {"type": "array", "items": {
-                "type": "object", "required": ["id", "kind", "x0", "x1", "reachable"],
-                "properties": {"id": {"type": "string"}, "kind": {"enum": ["ground", "deck"]},
-                               "x0": {"type": "integer"}, "x1": {"type": "integer"},
-                               "top_min": {"type": "number"}, "top_max": {"type": "number"},
-                               "reachable": {"type": "boolean"}}}},
-            "pieces": {"type": "array", "items": {"type": "object", "required": ["kind"],
-                                                  "properties": {"kind": {"enum": ["ledge", "steep"]}}}},
-            "gaps": {"type": "array", "items": {
-                "type": "object", "required": ["x0", "x1", "width", "kind", "crossable"],
-                "properties": {"kind": {"enum": ["gap", "hazard"]}, "crossable": {"type": ["boolean", "null"]},
-                               "direct": {"anyOf": [{"type": "null"}, {"type": "object",
-                                                                       "required": ["distance", "rise", "reach",
-                                                                                    "feasible"]}]}}}},
-            "props": {"type": "array", "items": {
-                "type": "object", "required": ["id", "x", "y", "status"],
-                "properties": {"status": {"enum": ["supported", "floating", "sunk", "allowed"]}}}},
-            "arenas": {"type": "array", "items": {"type": "object", "required": ["arena", "viewport", "needed",
-                                                                                 "status"]}},
-            "reachability": {"type": "object"},
-            "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-        },
-    },
-}
-
-
-# Additions to the existing layout_v1 contract that validate_layout.py reads (handoff section 5).
-_POINT = {"$ref": "common.schema.json#/$defs/point2"}
-REQUESTED_MAP_PATCHES = {
-    "/$defs/layout_v1/properties/surface": {
-        "description": "Ground surface polyline [[x, y], ...] in world pixels (y down); x never decreases and a "
-                       "repeated x is a vertical step. Give surface or groundY.",
-        "type": "array", "minItems": 2, "items": _POINT},
-    "/$defs/layout_v1/properties/groundY": {"description": "Flat ground height when there is no surface.",
-                                            "type": "number"},
-    "/$defs/layout_v1/properties/kinds": {"description": "Extra segment kinds and the class each one maps to.",
-                                          "type": "object", "additionalProperties": {"enum": ["ground", "gap",
-                                                                                               "hazard"]}},
-    "/$defs/layout_v1/properties/props/items": {
-        "description": "A prop: (x, y) is the middle of its base and w its width; floating opts out of the support "
-                       "check. Kinds deck, platform, plank and bridge are one-way standable surfaces "
-                       "{x0, x1, y, thickness} (or x and w).",
-        "type": "object",
-        "properties": {"id": {"type": "string", "minLength": 1}, "kind": {"type": "string"},
-                       "x": {"type": "number"}, "y": {"type": "number"}, "w": {"type": "number", "minimum": 0},
-                       "x0": {"type": "number"}, "x1": {"type": "number"},
-                       "thickness": {"type": "number", "minimum": 0}, "floating": {"type": "boolean"}}},
-    "/$defs/layout_v1/properties/spawns/items": {
-        "type": "object", "required": ["x", "y"],
-        "properties": {"id": {"type": "string", "minLength": 1}, "x": {"type": "number"}, "y": {"type": "number"}}},
-    "/$defs/layout_v1/properties/exits": {
-        "description": "Places that must be reachable from the first spawn (default: the level end).",
-        "type": "array", "items": {"type": "object", "required": ["x"],
-                                   "properties": {"id": {"type": "string", "minLength": 1}, "x": {"type": "number"},
-                                                  "y": {"type": "number"}}}},
-    "/$defs/layout_v1/properties/arenas": {
-        "description": "Ranges that must be at least the view width plus camera travel (default: the level).",
-        "type": "array", "items": {"type": "object", "required": ["x0", "x1"],
-                                   "properties": {"id": {"type": "string", "minLength": 1}, "x0": {"type": "number"},
-                                                  "x1": {"type": "number"},
-                                                  "travel": {"type": "number", "minimum": 0}}}},
-    "/$defs/layout_v1/properties/camera": {
-        "type": "object", "properties": {"viewHeight": {"type": "number", "exclusiveMinimum": 0},
-                                         "travel": {"type": "number", "minimum": 0}}},
-    "/$defs/layout_v1/properties/physics/properties/minDeckThickness": {"type": "number", "minimum": 0},
-    "/$defs/layout_v1/properties/physics/properties/groundTolerance": {"type": "number", "minimum": 0},
-    "/$defs/layout_v1/not": {"required": ["surface", "groundY"]},
-}
-
 
 def requested_contract_errors(document, name="layout_validation_v1"):
-    """Errors against the vendored generate2dmap schemas plus REQUESTED_MAP_DEFS and REQUESTED_MAP_PATCHES
-    (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    for pointer, fragment in REQUESTED_MAP_PATCHES.items():  # JSON pointer into map.schema.json -> new value
-        *parents, leaf = pointer.lstrip("/").split("/")
-        node = map_schema
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[leaf] = fragment
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def level(**overrides):

@@ -27,6 +27,13 @@ Checks (physics: jumpHeight, jumpDistance, maxSlopeDeg, stepUp, colliderSubstep)
   arena_width      each arena (default the level) is at least the viewport width plus
                    camera travel at 16:9, 19.5:9 and every listed viewport
 
+Segment bounds are whole world pixels (columns are pixels). A gap is measured
+between the centres of its edge columns, so the widest gap a jump of
+jumpDistance crosses is jumpDistance - 1 px wide. Reachability searches the
+directed graph of spans linked by walks, drops and jump arcs; it is a side-view
+graph, not the top-down collision grid of forge_nav (whose grid_bfs serves the
+4-neighbour grids of validate_chunks and the map tools).
+
 Without --output-dir only the one-line summary is printed; with it,
 layout-report.json and layout-debug.png are published into the new folder.
 Exit 1 when a check fails; --strict-qc then publishes nothing.
@@ -55,7 +62,7 @@ import forge_core  # noqa: E402  (this skill's vendored copy)
 
 INPUT_SCHEMA = "generate2dmap.layout.v1"
 REPORT_SCHEMA = "generate2dmap.layout_validation.v1"
-TOOL = {"name": "validate_layout", "version": "1.0"}
+TOOL = {"name": "validate_layout", "version": forge_core.FORGE_PACKAGE_VERSION}
 KIND_CLASSES = {
     "ground": "ground", "floor": "ground", "solid": "ground", "crest": "ground", "c": "ground",
     "slope": "ground", "s": "ground",
@@ -797,16 +804,11 @@ def render_debug(report: dict[str, Any]) -> Image.Image:
 
 # --------------------------------------------------------------------------- CLI
 
-def _local_file_ref(path: Path, base_dir: Path) -> dict[str, Any]:
-    """Manifest-relative POSIX path, or only the file name when there is no relative route (another drive)."""
-    relative = forge_core.portable_path(path, base_dir)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": Path(path).stat().st_size}
-
-
 def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
-    document = json.loads(Path(args.layout).read_text(encoding="utf-8"))
+    try:
+        document = forge_core.read_json(args.layout, strict=True)  # D28
+    except ValueError as error:
+        raise ValueError(f"{Path(args.layout).name} is not valid JSON ({error}).") from None
     report = validate(document)
     failed = [check["id"] for check in report["checks"] if check["status"] == "fail"]
     summary: dict[str, Any] = {"status": report["status"], "spans": len(report["spans"]), "failed": failed,
@@ -826,8 +828,8 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                                    "jumpDistance) checked for clearance over solid columns; breadth-first search "
                                    "from the first spawn; base-line support for props.",
                          "notProven": list(NOT_PROVEN), "checks": report["checks"],
-                         "inputs": [_local_file_ref(Path(args.layout), final)],
-                         "outputs": [_local_file_ref(stage / "layout-debug.png", stage)], "tool": dict(TOOL)}}
+                         "inputs": [forge_core.file_ref(Path(args.layout), final)],
+                         "outputs": [forge_core.file_ref(stage / "layout-debug.png", stage)], "tool": dict(TOOL)}}
         forge_core.write_json(stage / "layout-report.json", record)
     summary.update(output_dir=str(final.resolve()), report=str((final / "layout-report.json").resolve()),
                    metadata=str((final / "layout-report.json").resolve()),
@@ -846,19 +848,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary, code = run(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary, code = run(args)
     if code:
         print("error: layout validation failed: " + "; ".join(summary["problems"][:3] or summary["failed"]),
               file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return code
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Exit 0 (pass or warn), 1 (a failed check, its report published when --output-dir is given; or an error),
+    2 (usage) (D26, D27)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

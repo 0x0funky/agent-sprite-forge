@@ -49,7 +49,7 @@ LIGHTS_SCHEMA = "generate2dmap.lights.v1"
 LIGHTS_QA_SCHEMA = "generate2dmap.lights_qa.v1"
 ATMOSPHERE_SCHEMA = "generate2dmap.atmosphere.v1"
 ATMOSPHERE_QA_SCHEMA = "generate2dmap.atmosphere_qa.v1"
-TOOL = {"name": "extract_scene_lights", "version": "1.0"}
+TOOL = {"name": "extract_scene_lights", "version": forge_core.FORGE_PACKAGE_VERSION}
 LUMA = np.array([0.2126, 0.7152, 0.0722])
 COLOR_MODES = ("warm", "any", "cool")
 HUE_MARGIN = 0.08
@@ -458,10 +458,10 @@ def publish_lights(final: Path, lights: list[dict[str, Any]], *, source_size: tu
         if overlay is not None:
             forge_core.save_png(overlay, stage_dir / "lights-overlay.png")
             names.append("lights-overlay.png")
-        cookie_ref = vs._local_file_ref(stage_dir / "light-cookie.png", stage_dir)
+        cookie_ref = forge_core.file_ref(stage_dir / "light-cookie.png", stage_dir)
         document: dict[str, Any] = {"schema": LIGHTS_SCHEMA, "tool": dict(TOOL)}
         if plate_input is not None:
-            document["plate"] = vs._local_file_ref(plate_input[0], final, plate_input[1])
+            document["plate"] = forge_core.file_ref(plate_input[0], final, sha256=plate_input[1])
         document.update({
             "sourceSize": list(source_size), "radiusUnit": "plate-width", "ambient": hex_color(ambient),
             "cookie": cookie_ref["path"], "cookieSize": list(cookie_size), "cookieSha256": cookie_ref["sha256"],
@@ -469,8 +469,8 @@ def publish_lights(final: Path, lights: list[dict[str, Any]], *, source_size: tu
                                    if key in light}, 5) for light in lights],
         })
         forge_core.write_json(stage_dir / "lights.json", document)
-        outputs = [vs._local_file_ref(stage_dir / name, stage_dir) for name in names]
-        refs = [vs._local_file_ref(path, final, sha) for path, sha in inputs]
+        outputs = [forge_core.file_ref(stage_dir / name, stage_dir) for name in names]
+        refs = [forge_core.file_ref(path, final, sha256=sha) for path, sha in inputs]
         report = {"schema": LIGHTS_QA_SCHEMA,
                   **vs._local_qa_envelope(checks, method=method, not_proven=LIGHTS_NOT_PROVEN, inputs=refs,
                                           outputs=outputs, tool=TOOL, visual=plate is not None),
@@ -573,7 +573,7 @@ def cmd_cookie(args: argparse.Namespace) -> dict[str, Any]:
     vs.refuse_existing(final)
     path = Path(args.lights)
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc = forge_core.read_json(path, strict=True)  # D28
         lights, recorded = parse_lights(doc)
     except ValueError as error:
         raise ValueError(f"{path.name}: {error}") from None
@@ -611,8 +611,8 @@ def cmd_atmosphere(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("--max-motes and --max-mobile-motes must be at least 0")
     path = Path(args.atmosphere)
     try:
-        doc = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+        doc = forge_core.read_json(path, strict=True)  # D28
+    except ValueError as error:
         raise ValueError(f"{path.name} is not valid JSON: {error}") from None
     try:
         checks, summary = atmosphere_checks(doc, max_motes=args.max_motes, max_mobile_motes=args.max_mobile_motes)
@@ -624,7 +624,7 @@ def cmd_atmosphere(args: argparse.Namespace) -> dict[str, Any]:
                   "0..1, non-negative bloom and saturation), colours, blend modes and mote counts against budgets.")
         report = {"schema": ATMOSPHERE_QA_SCHEMA,
                   **vs._local_qa_envelope(checks, method=method, not_proven=ATMOSPHERE_NOT_PROVEN,
-                                          inputs=[vs._local_file_ref(path, final)], outputs=[], tool=TOOL),
+                                          inputs=[forge_core.file_ref(path, final)], outputs=[], tool=TOOL),
                   "summary": summary}
         forge_core.write_json(stage_dir / "atmosphere-qa.json", report)
     return {"output_dir": str(final.resolve()), "metadata": str((final / "atmosphere-qa.json").resolve()),
@@ -704,18 +704,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = {"extract": cmd_extract, "cookie": cmd_cookie, "atmosphere": cmd_atmosphere}[args.verb](args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary = {"extract": cmd_extract, "cookie": cmd_cookie, "atmosphere": cmd_atmosphere}[args.verb](args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 1 if summary["status"] == "fail" else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
+    printed as one error: line, D27), 2 (usage)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

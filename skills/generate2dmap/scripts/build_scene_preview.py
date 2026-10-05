@@ -6,17 +6,29 @@ references/runtime/map-runtime.mjs verbatim, so it opens straight from disk
 with no server and no network. Image layers are drawn at the world origin,
 tile layers are pre-rendered from their tileset manifests, and objects plus a
 debug actor are Y-sorted by (sortY, x, id) with the actor in front on ties.
-The actor walks with the runtime's Appendix C collision (keyboard, or click to
-walk). The Debug toggle draws walk regions, solids, footprints, blocked
-material cells, portals with their zones, spawns, interactions, anchors and
-the path; window.__scene exposes a snapshot and a route check that walks from
-the spawns to every exit, interaction, approach point and slot.
+Object art is found in the D6 order: objects[].image, the bundle's
+props[prop], prop packs by label (the bundle's prop_packs, then --prop-pack),
+occluder.source; objects with flip_x are drawn mirrored around their anchor.
+
+Collision is the D2 blocking set read by forge_nav (scripts/forge_nav.py):
+collision.solids and rects, solid object footprints, the per-tile collision
+of placed tiles (converted into world solids here, since the runtime reads no
+files) and the blocking material_map classes, including one_way. The actor
+walks it with map-runtime.mjs, which mirrors forge_nav rule for rule
+(keyboard, or click to walk). The Debug toggle draws walk regions, solids,
+footprints, tile collision, blocking and one_way material pixels, portals with
+their zones, spawns, interactions, anchors and the path; window.__scene
+exposes a snapshot and a route check that walks from the starts to every
+exit, interaction, approach point and slot.
 
 Outputs, in a new --output-dir that is staged and published only after QA:
   preview.html     the page (ASCII, deterministic for the same inputs)
   preview-qa.json  QA envelope: inputs and outputs with sha256, checks, warnings
 With --verify, when node and the playwright npm package can open headless
 Chromium: scene-snapshot.json, preview-screen.png and preview-debug.png.
+Exit 0 when the published report passes or warns, 1 when it fails (a failed
+--verify without --strict publishes the report first) or nothing is
+published, 2 on a usage error.
 """
 
 from __future__ import annotations
@@ -33,7 +45,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Any
 
 import numpy as np
 from PIL import Image
@@ -42,9 +54,10 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_nav  # noqa: E402  (this skill's vendored copy: the D2 blocking set, rules N1-N15)
 
 
-TOOL = {"name": "build_scene_preview", "version": "1.0"}
+TOOL = {"name": "build_scene_preview", "version": forge_core.FORGE_PACKAGE_VERSION}
 REPORT_SCHEMA = "generate2dmap.scene_preview_qa.v1"
 RUNTIME_PATH = Path(__file__).resolve().parents[1] / "references" / "runtime" / "map-runtime.mjs"
 BUNDLE_SCHEMAS = ("generate2dmap.map_bundle.v1", "generate2dmap.map_bundle.v2")
@@ -58,22 +71,24 @@ DEFAULT_MAX_BYTES = 16_000_000
 MAX_ZOOM = 8
 AUTO_ZOOM_SPAN = 1280
 EMBED_FORMATS = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp", "GIF": "image/gif"}
-MATERIAL_CLASSES = ("solid", "one_way", "liquid", "hazard", "decor")
 ACTIVATIONS = ("crossing", "intent")
 FOOTPRINT_SHAPES = ("ellipse", "rect", "none")
-IMAGE_BASES = ("image_px", "prop_px", "world_px")
+FOOTPRINT_BASES = forge_nav.FOOTPRINT_BASES  # D7: prop_px (default), world_px, legacy image_px
+ART_SOURCES = ("object.image", "props", "prop-pack", "occluder.source")
 
 NOT_PROVEN = [
-    "Collision parity with map_nav.py: this build runs no collision code; integration tests the JS and Python queries "
-    "against each other.",
+    "Collision is forge_nav's D2 blocking set and the page walks it with map-runtime.mjs, which mirrors forge_nav rule "
+    "for rule; their agreement is tested on synthetic fixtures (tests/test_map_runtime_js.py), not on this map. Rotated "
+    "shapes can differ by one ulp of sin and cos between a browser and Python.",
     "Without --verify, or when it prints SKIPPED, the page was assembled and scanned but never run in a browser.",
     "The actor is a debug marker sized from collision.actorRadius, not character art; animation, lights, atmosphere, "
     "stage data, camera bounds and occluder masks are not drawn.",
     "Draw order is whole-object Y-sort by (sortY, x, id); per-pixel occlusion, fades and cut-aways are not simulated.",
-    "Route checks walk the Appendix C grid with the runtime walker at --speed; an engine controller (acceleration, "
-    "physics colliders, other speeds) may behave differently.",
-    "Validity is sampled (Appendix C): a solid thinner than half a nav cell can be crossed. Tile collision shapes and "
-    "tileset walkable flags are not read; walls must be in collision or material_map.",
+    "Route checks walk the forge_nav grid with the runtime walker at --speed; an engine controller (acceleration, "
+    "physics colliders, other speeds) may behave differently. one_way material blocks moving down onto it on every map "
+    "(N11); a top-down map should not use it.",
+    "Footprint samples lie half a nav cell apart (N10): a solid thinner than that can fall between the samples of the "
+    "footprint's rim; the actor's centre path is tested exactly (thin-gap rule).",
     "Only headless Chromium is exercised (with --verify); other browsers, devices and touch input are not tested.",
 ]
 
@@ -163,6 +178,9 @@ function keyIntent() {
   return {x: Math.sign(x), y: Math.sign(y)};
 }
 
+// Interactions without reach are point targets (N14); the page treats one nav cell around them as in reach.
+function reachOf(item) { return item.reach === null ? world.cell : item.reach; }
+
 function exitFired(portal) {
   record({type: "exit", id: portal.id, to: portal.to});
   if (!state.exitsFired.includes(portal.id)) state.exitsFired.push(portal.id);
@@ -186,7 +204,7 @@ function tick() {
   for (const item of world.interactions) {
     if (state.reached.has(item.id)) continue;
     const dx = actor.x - item.x, dy = actor.y - item.y;
-    if (Math.sqrt(dx * dx + dy * dy) <= item.reach) {
+    if (Math.sqrt(dx * dx + dy * dy) <= reachOf(item)) {
       state.reached.add(item.id);
       record({type: "reach", id: item.id});
     }
@@ -202,7 +220,7 @@ function interact() {
   let best = null, bestDistance = Infinity;
   for (const item of world.interactions) {
     const distance = Math.hypot(actor.x - item.x, actor.y - item.y);
-    if (distance <= item.reach && distance < bestDistance) {
+    if (distance <= reachOf(item) && distance < bestDistance) {
       best = item;
       bestDistance = distance;
     }
@@ -302,12 +320,24 @@ function drawPortal(portal) {
   if (portal.hasDirection) arrow(portal.cx, portal.cy, portal.dirX, portal.dirY, Math.max(10, portal.radius), "#ff9f43");
 }
 
+// flip_x mirrors the art around the anchor x (D6): the mirrored image ends where the anchor column lands.
+function objectLeft(object) {
+  const s = object.scale;
+  return object.flipX ? Math.round(object.x + object.anchor[0] * s) : Math.round(object.x - object.anchor[0] * s);
+}
+
 function drawObject(object) {
   const image = object.image === null ? null : images[object.image];
   if (image) {
-    const s = object.scale;
-    ctx.drawImage(image, Math.round(object.x - object.anchor[0] * s), Math.round(object.y - object.anchor[1] * s),
-      image.width * s, image.height * s);
+    const s = object.scale, top = Math.round(object.y - object.anchor[1] * s);
+    if (object.flipX) {
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(image, -objectLeft(object), top, image.width * s, image.height * s);
+      ctx.restore();
+    } else {
+      ctx.drawImage(image, objectLeft(object), top, image.width * s, image.height * s);
+    }
   } else {
     ctx.fillStyle = "rgba(255, 0, 255, 0.85)";
     ctx.fillRect(object.x - 2, object.y - 12, 4, 12);
@@ -345,7 +375,8 @@ function buildMaterialCanvas() {
   canvas.height = grid.height;
   const g = canvas.getContext("2d"), image = g.createImageData(grid.width, grid.height);
   for (let k = 0; k < grid.width * grid.height; k++) {
-    if ((grid.bytes[k >> 3] >> (k & 7)) & 1) image.data.set([52, 152, 219, 150], k * 4);
+    if (grid.codes[k] === BLOCK) image.data.set([52, 152, 219, 150], k * 4);
+    else if (grid.codes[k] === ONE_WAY) image.data.set([241, 196, 15, 150], k * 4);
   }
   g.putImageData(image, 0, 0);
   return canvas;
@@ -384,16 +415,16 @@ function drawDebug() {
   }
   for (const shape of world.solids) {
     traceShape(shape);
-    const prop = shape.objectId !== undefined;
-    ctx.fillStyle = prop ? "rgba(255, 77, 255, 0.30)" : "rgba(231, 76, 60, 0.30)";
-    ctx.strokeStyle = prop ? "#ff4dff" : "#e74c3c";
+    const prop = shape.objectId !== undefined, tile = String(shape.source).startsWith("tiles:");
+    ctx.fillStyle = prop ? "rgba(255, 77, 255, 0.30)" : tile ? "rgba(230, 126, 34, 0.30)" : "rgba(231, 76, 60, 0.30)";
+    ctx.strokeStyle = prop ? "#ff4dff" : tile ? "#e67e22" : "#e74c3c";
     ctx.fill();
     ctx.stroke();
   }
   for (const portal of world.portals) drawPortal(portal);
   for (const spawn of world.spawns) dot(spawn.x, spawn.y, 3.5 / Z, "#4aa3ff");
   for (const item of world.interactions) {
-    ring(item.x, item.y, item.reach, "#1abc9c");
+    ring(item.x, item.y, reachOf(item), "#1abc9c");
     dot(item.x, item.y, 3 / Z, "#1abc9c");
   }
   for (const anchor of world.anchors) {
@@ -446,7 +477,7 @@ function render() {
 function updateStatus() {
   const parts = [`x ${actor.x.toFixed(1)} y ${actor.y.toFixed(1)}`, isBlocked(world, actor.x, actor.y) ? "BLOCKED" : "free"];
   if (actor.latched.size) parts.push("latched " + [...actor.latched].join(","));
-  const near = world.interactions.filter((item) => Math.hypot(actor.x - item.x, actor.y - item.y) <= item.reach);
+  const near = world.interactions.filter((item) => Math.hypot(actor.x - item.x, actor.y - item.y) <= reachOf(item));
   if (near.length) parts.push("in reach " + near.map((item) => item.id).join(",") + " (E)");
   if (state.message) parts.push(state.message);
   statusLine.textContent = parts.join(" | ");
@@ -470,9 +501,9 @@ function alphaAt(imageId, ix, iy) {
 }
 
 function objectAlpha(object, wx, wy) {
-  const s = object.scale;
-  const left = Math.round(object.x - object.anchor[0] * s), top = Math.round(object.y - object.anchor[1] * s);
-  return alphaAt(object.image, Math.floor((wx + 0.5 - left) / s), Math.floor((wy + 0.5 - top) / s));
+  const s = object.scale, left = objectLeft(object), top = Math.round(object.y - object.anchor[1] * s);
+  const column = object.flipX ? Math.floor((left - (wx + 0.5)) / s) : Math.floor((wx + 0.5 - left) / s);
+  return alphaAt(object.image, column, Math.floor((wy + 0.5 - top) / s));
 }
 
 function canvasPixel(wx, wy) {
@@ -810,12 +841,6 @@ class QAFailure(ValueError):
     """A QA gate failed; nothing is published."""
 
 
-class _Parser(argparse.ArgumentParser):
-    def error(self, message: str) -> NoReturn:
-        print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
-        raise SystemExit(1)
-
-
 def _number(value: Any, where: str, *, minimum: float | None = None, positive: bool = False) -> float | int:
     if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
         raise ValueError(f"{where} must be a finite number.")
@@ -871,13 +896,12 @@ def _unique(items: list[dict[str, Any]], what: str) -> None:
         seen.add(item["id"])
 
 
-def _local_file_ref(path: Path, base_dir: Path, sha256: str | None = None) -> dict[str, Any]:
-    """fileRef for a manifest in base_dir: a relative POSIX path, or the bare file name when no
-    relative route exists (another drive), since forge_core.portable_path then returns an absolute path."""
-    relative = forge_core.portable_path(path, base_dir)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": sha256 or forge_core.sha256_file(path), "bytes": Path(path).stat().st_size}
+def _parse_json(data: bytes, name: str) -> Any:
+    """Strict JSON (D28): UTF-8 with an optional BOM, no NaN, Infinity or duplicate keys, as forge_nav reads it."""
+    try:
+        return forge_core.parse_json(data, strict=True)
+    except ValueError as error:
+        raise ValueError(f"{name} is not valid JSON ({error}).") from None
 
 
 # --------------------------------------------------------------------------- build context
@@ -933,7 +957,7 @@ class Build:
         key = os.path.normcase(str(path))
         if key not in self._input_keys:
             self._input_keys.add(key)
-            self.inputs.append(_local_file_ref(path, self.report_dir, digest))
+            self.inputs.append(forge_core.file_ref(path, self.report_dir, sha256=digest, size=len(data)))
         return data
 
     def embed_file(self, path: Path, where: str, expected_sha256: Any = None) -> tuple[str, list[int]]:
@@ -1052,9 +1076,11 @@ def clean_portals(value: Any) -> list[dict[str, Any]]:
             entry["radius"] = _number(portal["radius"], f"{where}.radius", minimum=0)
         if activation == "intent" and ("travelDirection" not in entry or "radius" not in entry):
             raise ValueError(f"{where}: intent portals need travelDirection and radius.")
-        if "entranceByFrom" in portal:
+        if "entranceByFrom" in portal:  # a spawn id of this map, or an [x, y] arrival point
             mapping = _object(portal["entranceByFrom"], f"{where}.entranceByFrom")
-            entry["entranceByFrom"] = {str(key): _text(spawn, f"{where}.entranceByFrom.{key}") for key, spawn in mapping.items()}
+            entry["entranceByFrom"] = {str(key): (_text(spawn, f"{where}.entranceByFrom.{key}") if isinstance(spawn, str)
+                                                  else _point(spawn, f"{where}.entranceByFrom.{key}"))
+                                       for key, spawn in mapping.items()}
         for flag in ("latch", "requiresMovement"):
             if flag in portal:
                 if not isinstance(portal[flag], bool):
@@ -1114,7 +1140,7 @@ def clean_anchors(value: Any) -> dict[str, Any]:
     return anchors
 
 
-def _clean_footprint(value: Any, where: str, build: Build) -> dict[str, Any]:
+def _clean_footprint(value: Any, where: str) -> dict[str, Any]:
     footprint = _object(value, where)
     shape = footprint.get("shape")
     if shape not in FOOTPRINT_SHAPES:
@@ -1128,40 +1154,38 @@ def _clean_footprint(value: Any, where: str, build: Build) -> dict[str, Any]:
         out["offset"] = _point(footprint["offset"], f"{where}.offset")
     if "rotate" in footprint:
         out["rotate"] = _number(footprint["rotate"], f"{where}.rotate")
-    basis = footprint.get("basis")
-    if basis is not None:
-        if basis not in IMAGE_BASES:
-            build.warn(f"{where}.basis {basis!r} is not image_px, prop_px or world_px; it is scaled like image_px.")
-        out["basis"] = str(basis)
+    if "basis" in footprint:
+        if footprint["basis"] not in FOOTPRINT_BASES:
+            raise ValueError(f"{where}.basis must be prop_px, world_px or the legacy image_px (D7), "
+                             f"not {footprint['basis']!r}.")
+        out["basis"] = footprint["basis"]
     return out
 
 
 # --------------------------------------------------------------------------- props and objects
 
 class PropPacks:
-    """Prop labels from prop-pack manifests (v1 or v2): label -> (manifest dir, image, sha256, where)."""
+    """Prop labels from prop-pack manifests (v1 or v2): label -> (manifest dir, image, sha256, where).
+    The bundle's prop_packs come first, then --prop-pack (D6 step 3)."""
 
     def __init__(self, build: Build, bundle: dict[str, Any], cli_paths: list[Path]) -> None:
         self.items: dict[str, tuple[Path, Any, Any, str]] = {}
         manifests: list[tuple[Path, str, Any]] = []
+        for index, entry in enumerate(_list(bundle.get("prop_packs"), "prop_packs")):
+            where = f"prop_packs[{index}]"
+            entry = _object(entry, where)
+            manifests.append((build.resolve(entry.get("manifest"), f"{where}.manifest"), where, entry.get("sha256")))
         for path in cli_paths:
             resolved = Path(path).resolve()
             if not resolved.is_file():
                 raise FileNotFoundError(f"--prop-pack names a missing file: {path}")
             manifests.append((resolved, f"--prop-pack {Path(path).name}", None))
-        for index, entry in enumerate(_list(bundle.get("prop_packs"), "prop_packs")):
-            where = f"prop_packs[{index}]"
-            entry = _object(entry, where)
-            manifests.append((build.resolve(entry.get("manifest"), f"{where}.manifest"), where, entry.get("sha256")))
         seen: set[str] = set()
         for path, where, sha in manifests:
             if os.path.normcase(str(path)) in seen:
                 continue
             seen.add(os.path.normcase(str(path)))
-            try:
-                manifest = json.loads(build.read(path, where, sha).decode("utf-8-sig"))
-            except json.JSONDecodeError as error:
-                raise ValueError(f"{where}: {path.name} is not valid JSON (line {error.lineno}).") from None
+            manifest = _parse_json(build.read(path, where, sha), f"{where}: {path.name}")
             for item in _list(_object(manifest, where).get("accepted"), f"{where} accepted"):
                 if not isinstance(item, dict) or item.get("status", "accepted") != "accepted":
                     continue
@@ -1174,12 +1198,62 @@ class PropPacks:
                 self.items[label] = (path.parent, image, item.get("sha256"), f"{where} item {label!r}")
 
 
-def _object_art(obj: dict[str, Any], where: str, build: Build, packs: PropPacks) -> tuple[str | None, list[int] | None, str]:
-    """(image id, [w, h], source) for an object: its image, its prop's prop-pack image, its occluder source."""
+class PropRegistry:
+    """The bundle's props registry (D6 step 2, N6): name -> the item as forge_nav merges it (an inline item, or
+    the accepted prop-pack item named by pack + label with the entry's own fields on top), plus where its
+    image is: an image the entry gives is relative to the bundle, one from the pack item to the pack."""
+
+    def __init__(self, build: Build, bundle: dict[str, Any]) -> None:
+        self.items: dict[str, dict[str, Any]] = {}
+        self.art: dict[str, tuple[Path, Any, str] | None] = {}
+        registry = bundle.get("props")
+        if registry is None:
+            return
+        for name, value in _object(registry, "props").items():
+            where = f"props[{name!r}]"
+            entry = _object(value, where)
+            item: dict[str, Any] = {}
+            pack_dir: Path | None = None
+            if "pack" in entry:
+                pack_path = build.resolve(entry["pack"], f"{where}.pack")
+                manifest = _object(_parse_json(build.read(pack_path, f"{where}.pack"), pack_path.name), f"{where}.pack")
+                matches = [dict(i) for i in _list(manifest.get("accepted"), f"{where}.pack accepted")
+                           if isinstance(i, dict) and i.get("label") == entry.get("label")]
+                if not matches:
+                    raise ValueError(f"{where}: prop pack {entry['pack']} has no accepted item {entry.get('label')!r}.")
+                item, pack_dir = matches[0], pack_path.parent
+            merged = {**item, **{key: val for key, val in entry.items() if key not in ("pack", "label")}}
+            if merged.get("solid") is not None and not isinstance(merged["solid"], bool):
+                raise ValueError(f"{where}.solid must be true or false.")
+            self.items[str(name)] = merged
+            if isinstance(entry.get("image"), str):
+                self.art[str(name)] = (build.resolve(entry["image"], f"{where}.image"), entry.get("sha256"),
+                                       f"{where}.image")
+            elif pack_dir is not None and isinstance(item.get("image"), str):
+                self.art[str(name)] = (build.resolve(item["image"], f"{where} pack item image", base=pack_dir),
+                                       item.get("sha256"), f"{where} pack item image")
+            else:
+                self.art[str(name)] = None
+
+    def for_runtime(self) -> dict[str, dict[str, Any]] | None:
+        """The registry map-runtime.mjs reads (N6): each item's footprint and solid, resolved inline."""
+        if not self.items:
+            return None
+        return {name: {key: item[key] for key in ("footprint", "solid") if key in item}
+                for name, item in self.items.items()}
+
+
+def _object_art(obj: dict[str, Any], where: str, build: Build, registry: PropRegistry,
+                packs: PropPacks) -> tuple[str | None, list[int] | None, str]:
+    """(image id, [w, h], source) in the D6 order: objects[].image, the bundle's props[prop], prop packs by
+    label, occluder.source."""
     if "image" in obj:
         path = build.resolve(obj["image"], f"{where}.image")
         return (*build.embed_file(path, f"{where}.image", obj.get("image_sha256")), "object.image")
     label = obj.get("prop")
+    if isinstance(label, str) and registry.art.get(label) is not None:
+        path, sha, item_where = registry.art[label]
+        return (*build.embed_file(path, item_where, sha), "props")
     if isinstance(label, str) and label in packs.items:
         base, image, sha, item_where = packs.items[label]
         path = build.resolve(image, f"{item_where} image", base=base)
@@ -1187,11 +1261,12 @@ def _object_art(obj: dict[str, Any], where: str, build: Build, packs: PropPacks)
     occluder = obj.get("occluder")
     if isinstance(occluder, dict) and occluder.get("source") is not None:
         path = build.resolve(occluder["source"], f"{where}.occluder.source")
-        return (*build.embed_file(path, f"{where}.occluder.source"), "occluder.source")
+        return (*build.embed_file(path, f"{where}.occluder.source", occluder.get("sha256")), "occluder.source")
     return None, None, "missing"
 
 
-def compile_objects(bundle: dict[str, Any], build: Build, packs: PropPacks) -> tuple[list[dict], list[dict]]:
+def compile_objects(bundle: dict[str, Any], build: Build, registry: PropRegistry,
+                    packs: PropPacks) -> tuple[list[dict], list[dict]]:
     """(objects for the runtime, objects for drawing in draw order: sortY or y, x, id, bundle order)."""
     runtime: list[dict[str, Any]] = []
     drawn: list[dict[str, Any]] = []
@@ -1206,27 +1281,38 @@ def compile_objects(bundle: dict[str, Any], build: Build, packs: PropPacks) -> t
         seen.add(ident)
         x, y = _number(obj.get("x"), f"{where}.x"), _number(obj.get("y"), f"{where}.y")
         scale = _number(obj.get("scale", 1), f"{where}.scale", positive=True)
+        flip = obj.get("flip_x", False)
+        if not isinstance(flip, bool):
+            raise ValueError(f"{where}.flip_x must be true or false.")
         entry: dict[str, Any] = {"id": ident, "x": x, "y": y, "scale": scale}
-        if obj.get("footprint") is not None:
-            entry["footprint"] = _clean_footprint(obj["footprint"], f"{where}.footprint", build)
+        if isinstance(obj.get("prop"), str):
+            entry["prop"] = obj["prop"]
+        if flip:
+            entry["flip_x"] = True
+        if "footprint" in obj:
+            entry["footprint"] = (None if obj["footprint"] is None
+                                  else _clean_footprint(obj["footprint"], f"{where}.footprint"))
         if "solid" in obj:
             if not isinstance(obj["solid"], bool):
                 raise ValueError(f"{where}.solid must be true or false.")
             entry["solid"] = obj["solid"]
         runtime.append(entry)
-        image_id, size, art = _object_art(obj, where, build, packs)
+        image_id, size, art = _object_art(obj, where, build, registry, packs)
         if image_id is None:
-            build.warn(f"{where} ({ident}): no art (object image, prop pack label or occluder source); "
-                       f"drawn as a magenta post.")
+            build.warn(f"{where} ({ident}): no art (object image, props registry, prop pack label or occluder "
+                       f"source); drawn as a magenta post.")
+        prop_item = registry.items.get(obj["prop"]) if isinstance(obj.get("prop"), str) else None
         if obj.get("anchor_px") is not None:
             anchor = _point(obj["anchor_px"], f"{where}.anchor_px")
+        elif prop_item is not None and prop_item.get("anchor_px") is not None:
+            anchor = _point(prop_item["anchor_px"], f"props[{obj['prop']!r}].anchor_px")
         elif size is not None:
             anchor = [size[0] / 2, size[1]]
             build.warn(f"{where} ({ident}) has no anchor_px; the bottom centre of its image is used.")
         else:
             anchor = [0, 0]
         sort_y = _number(obj["sortY"], f"{where}.sortY") if "sortY" in obj else y
-        drawn.append({"id": ident, "prop": str(obj.get("prop", "")), "x": x, "y": y, "scale": scale,
+        drawn.append({"id": ident, "prop": str(obj.get("prop", "")), "x": x, "y": y, "scale": scale, "flipX": flip,
                       "anchor": anchor, "sortY": sort_y, "image": image_id, "size": size, "art": art})
         keys.append((sort_y, x, ident, index))
     order = sorted(range(len(drawn)), key=keys.__getitem__)
@@ -1260,10 +1346,8 @@ def load_tilesets(bundle: dict[str, Any], build: Build) -> dict[str, Tileset]:
         if ident in tilesets:
             raise ValueError(f"Duplicate tileset id {ident!r}.")
         manifest_path = build.resolve(entry.get("manifest"), f"{where}.manifest")
-        try:
-            manifest = json.loads(build.read(manifest_path, f"{where}.manifest", entry.get("sha256")).decode("utf-8-sig"))
-        except json.JSONDecodeError as error:
-            raise ValueError(f"{where}: {manifest_path.name} is not valid JSON (line {error.lineno}).") from None
+        manifest = _parse_json(build.read(manifest_path, f"{where}.manifest", entry.get("sha256")),
+                               f"{where}: {manifest_path.name}")
         manifest = _object(manifest, f"{where} manifest")
         if manifest.get("schema") not in (None, TILESET_SCHEMA):
             raise ValueError(f"{where}: {manifest_path.name} is not a {TILESET_SCHEMA} manifest.")
@@ -1301,16 +1385,14 @@ def _tile_rows(data: Any, where: str) -> list[list[Any]]:
 
 
 def read_tile_grid(layer: dict[str, Any], where: str, build: Build) -> np.ndarray:
-    """Tile indices of a tiles layer: 0-based into the tileset; a negative index or null is an empty cell."""
+    """Tile indices of a tiles layer: 0-based into the tileset; -1 or null is an empty cell (mapLayer)."""
     data = layer.get("data")
     if isinstance(data, str):
         path = build.resolve(data, f"{where}.data")
-        raw = build.read(path, f"{where}.data", layer.get("sha256")).decode("utf-8-sig")
+        data_bytes = build.read(path, f"{where}.data", layer.get("sha256"))
+        raw = data_bytes.decode("utf-8-sig")
         if path.suffix.lower() == ".json":
-            try:
-                rows = _tile_rows(json.loads(raw), f"{where}.data")
-            except json.JSONDecodeError as error:
-                raise ValueError(f"{where}.data: {path.name} is not valid JSON (line {error.lineno}).") from None
+            rows = _tile_rows(_parse_json(data_bytes, f"{where}.data: {path.name}"), f"{where}.data")
         else:  # CSV; one comma ending a row (Tiled style) is a row separator, not an empty cell
             lines = [line.strip() for line in raw.splitlines() if line.strip()]
             rows = [[cell.strip() for cell in (line[:-1] if line.endswith(",") else line).split(",")] for line in lines]
@@ -1324,8 +1406,9 @@ def read_tile_grid(layer: dict[str, Any], where: str, build: Build) -> np.ndarra
             value: Any = -1 if cell is None or cell == "" else cell
             if isinstance(value, str):
                 value = int(value) if re.fullmatch(r"-?\d+", value) else None
-            if isinstance(value, bool) or not isinstance(value, int):
-                raise ValueError(f"{where}.data row {j} column {i}: {cell!r} is not a tile index.")
+            if isinstance(value, bool) or not isinstance(value, int) or value < -1:
+                raise ValueError(f"{where}.data row {j} column {i}: {cell!r} is not a tile index (-1 or null is an "
+                                 f"empty cell).")
             grid[j, i] = value
     return grid
 
@@ -1398,83 +1481,57 @@ def compile_layers(bundle: dict[str, Any], build: Build, canvas_size: tuple[int,
     return layers
 
 
-# --------------------------------------------------------------------------- material map
+# --------------------------------------------------------------------------- collision (forge_nav, D2)
 
-def _color(value: Any, where: str) -> tuple[int, int, int]:
-    if isinstance(value, str) and re.fullmatch(r"#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", value):
-        return int(value[1:3], 16), int(value[3:5], 16), int(value[5:7], 16)
-    if (isinstance(value, list) and len(value) == 3
-            and all(isinstance(v, int) and not isinstance(v, bool) and 0 <= v <= 255 for v in value)):
-        return value[0], value[1], value[2]
-    raise ValueError(f"{where} must be #rrggbb or [r, g, b].")
-
-
-def material_blocks(material_class: str, walkable: Any) -> bool:
-    """Appendix C for a top-down walker: solid blocks; liquid and hazard block unless walkable is true."""
-    return material_class == "solid" or (material_class in ("liquid", "hazard") and walkable is not True)
+def read_blocking_set(bundle: dict[str, Any], build: Build) -> Any:
+    """The D2 blocking set of the bundle through forge_nav, the one reader every map tool shares (D4)."""
+    try:
+        return forge_nav.blocking_set_from_document(bundle, build.bundle_dir)
+    except forge_nav.NavError as error:
+        raise ValueError(f"collision (forge_nav): {error}") from None
 
 
-def compile_material_grid(bundle: dict[str, Any], build: Build,
-                          world: tuple[float, float]) -> tuple[dict | None, dict | None]:
-    """The blocked-cell bit grid of material_map for map-runtime.mjs, and a summary for the report."""
+def tile_solids_for_runtime(blocking: Any) -> list[dict[str, Any]]:
+    """forge_nav's tile collision (N7: per-tile shapes moved to each placed tile, whole-pixel rects merged) as
+    collision.solids entries map-runtime.mjs reads; their source is tiles:<layer>."""
+    solids: list[dict[str, Any]] = []
+    for solid in blocking.tiles:
+        if solid["shape"] == "rect":
+            entry = {"shape": "rect", "x": solid["x"], "y": solid["y"], "w": solid["w"], "h": solid["h"]}
+        elif solid["shape"] == "ellipse":
+            entry = {"shape": "ellipse", "cx": solid["cx"], "cy": solid["cy"], "rx": solid["rx"], "ry": solid["ry"],
+                     "rotate": solid.get("rotate", 0)}
+        else:
+            entry = {"shape": "polygon", "points": [[point[0], point[1]] for point in solid["points"]]}
+        solids.append({**entry, "source": solid["source"]})
+    return solids
+
+
+def compile_material_grid(bundle: dict[str, Any], build: Build, blocking: Any) -> tuple[dict | None, dict | None]:
+    """The material grid map-runtime.mjs reads (N8): forge_nav's codes as a BLOCK and a ONE_WAY bit plane on square
+    pixels of material_scale world px, and a summary for the report. The image is recorded as an input."""
     spec = bundle.get("material_map")
-    if spec is None:
+    if spec is None or blocking.material_codes is None:
         return None, None
     spec = _object(spec, "material_map")
-    path = build.resolve(spec.get("image"), "material_map.image")
-    build.read(path, "material_map.image", spec.get("sha256"))
-    materials = _object(spec.get("materials"), "material_map.materials")
-    try:
-        with Image.open(path) as source:
-            if int(getattr(source, "n_frames", 1)) > 1:
-                raise ValueError("material_map.image is animated; export one still frame.")
-            source.load()
-            mode = source.mode
-            indices = np.asarray(source) if mode in ("P", "L") else None
-            rgba = np.asarray(source.convert("RGBA"))
-    except OSError:
-        raise ValueError(f"material_map.image: {path.name} is not a readable image.") from None
-    height, width = rgba.shape[:2]
-    opaque = rgba[..., 3] > 0
-    matched = np.zeros((height, width), np.uint16)
-    blocked = np.zeros((height, width), bool)
-    counts: dict[str, int] = {}
-    for name, item in materials.items():
-        where = f"material_map.materials.{name}"
-        material = _object(item, where)
-        material_class = material.get("class")
-        if material_class not in MATERIAL_CLASSES:
-            raise ValueError(f"{where}.class must be one of {', '.join(MATERIAL_CLASSES)}.")
-        walkable = material.get("walkable")
-        if walkable is not None and not isinstance(walkable, bool):
-            raise ValueError(f"{where}.walkable must be true or false.")
-        if "color" in material:
-            r, g, b = _color(material["color"], f"{where}.color")
-            hit = (rgba[..., 0] == r) & (rgba[..., 1] == g) & (rgba[..., 2] == b) & opaque
-        elif "index" in material:
-            if indices is None:
-                raise ValueError(f"{where}.index needs a palette or greyscale material image; {path.name} is {mode}.")
-            hit = (indices == int(_number(material["index"], f"{where}.index", minimum=0))) & opaque
-        else:
-            raise ValueError(f"{where} needs color or index.")
-        matched += hit
-        if material_blocks(material_class, walkable):
-            blocked |= hit
-        counts[str(name)] = int(hit.sum())
-    overlap = int((matched > 1).sum())
-    if overlap:
-        raise ValueError(f"material_map: {overlap} pixels match more than one material.")
-    unclassified = int((opaque & (matched == 0)).sum())
-    if unclassified:
-        build.warn(f"material_map: {unclassified} opaque pixels match no material and do not block.")
-    cell_w, cell_h = world[0] / width, world[1] / height
-    if not math.isclose(cell_w, cell_h, rel_tol=1e-9):
-        build.warn(f"material_map: cells are {cell_w:g}x{cell_h:g} world px (the image and world aspects differ).")
-    bits = np.packbits(blocked.ravel(), bitorder="little")
-    grid = {"width": width, "height": height, "cellWidth": cell_w, "cellHeight": cell_h,
-            "bits": base64.b64encode(bits.tobytes()).decode("ascii")}
-    info = {"size": [width, height], "cell": [cell_w, cell_h], "blockedCells": int(blocked.sum()),
-            "pixelsPerMaterial": counts, "unclassified": unclassified}
+    build.read(build.resolve(spec.get("image"), "material_map.image"), "material_map.image", spec.get("sha256"))
+    codes = blocking.material_codes
+    scale = int(blocking.material_scale)
+
+    def plane(mask: np.ndarray) -> str:
+        return base64.b64encode(np.packbits(mask.ravel(), bitorder="little").tobytes()).decode("ascii")
+
+    height, width = codes.shape
+    grid: dict[str, Any] = {"width": int(width), "height": int(height), "cellWidth": scale, "cellHeight": scale,
+                            "bits": plane(codes == forge_nav.BLOCK)}
+    one_way = codes == forge_nav.ONE_WAY
+    if one_way.any():
+        grid["oneWay"] = plane(one_way)
+    info = {"size": [int(width), int(height)], "cell": [scale, scale], "blockedCells": int((codes == forge_nav.BLOCK).sum()),
+            "oneWayCells": int(one_way.sum()),
+            "materials": [{"name": entry["name"], "class": entry["class"], "walkable": entry["walkable"],
+                           "blocks": entry["code"] == forge_nav.BLOCK, "oneWay": entry["code"] == forge_nav.ONE_WAY}
+                          for entry in blocking.materials]}
     return grid, info
 
 
@@ -1579,6 +1636,19 @@ def page_checks(page: str, data: bytes, runtime: str, texts: tuple[str, str], sc
 
 # --------------------------------------------------------------------------- verification
 
+def _arrival_problem(item: dict[str, Any]) -> str:
+    """Why a portal arrival is unusable (map_nav's arrival checks), or an empty string."""
+    if not item.get("found"):
+        return "is missing"
+    if item.get("bounceBack"):
+        return f"lies inside the trigger of {', '.join(map(str, item['bounceBack']))} (bounce-back)"
+    if item.get("valid") is False:
+        return "is not a valid actor position"
+    if item.get("joined") is False:
+        return "cannot reach any grid node"
+    return ""
+
+
 def run_verify(stage: Path, page_path: Path, timeout: float) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Open the staged page in headless Chromium (node + playwright). Returns (summary, checks); the
     summary status is SKIPPED when node, the playwright package or its browser are missing."""
@@ -1615,10 +1685,11 @@ def run_verify(stage: Path, page_path: Path, timeout: float) -> tuple[dict[str, 
     routes = result.get("routes") or {}
     failing = [f"{item.get('target')}: {item.get('reason')}" for item in routes.get("results", []) if not item.get("ok")]
     failing += [f"spawn {item.get('id')} is blocked" for item in routes.get("spawns", []) if not item.get("valid")]
-    failing += [f"portal {portal.get('id')}: arrival spawn {item.get('spawn')} "
-                + ("is missing" if not item.get("found") else "lies inside the trigger")
+    failing += [f"start {item.get('id')} is blocked" for item in routes.get("spawns", [])
+                if item.get("valid") and not item.get("reachableCells")]
+    failing += [f"portal {portal.get('id')}: arrival {item.get('spawn')} " + _arrival_problem(item)
                 for portal in routes.get("portals", []) for item in portal.get("arrivals", [])
-                if not item.get("found") or item.get("insideTrigger")]
+                if _arrival_problem(item)]
     ysort = (result.get("ysort") or {}).get("status", "fail")
     checks = [
         _check("browser-page-errors", "pass" if not errors else "fail",
@@ -1642,7 +1713,7 @@ def run_verify(stage: Path, page_path: Path, timeout: float) -> tuple[dict[str, 
 # --------------------------------------------------------------------------- command line
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = _Parser(
+    parser = argparse.ArgumentParser(
         prog="build_scene_preview.py",
         description="Build preview.html, a single-file playable preview of a map_bundle.v2 scene: data-URI art, "
                     "the inlined map-runtime.mjs collision walker, Y-sort, a debug overlay and a window.__scene "
@@ -1659,7 +1730,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="New folder for preview.html and preview-qa.json; it must not exist.")
     parser.add_argument("--prop-pack", action="append", default=[], type=Path, metavar="MANIFEST",
                         help="prop-pack.json whose labels name the objects' prop (repeatable). Object art is "
-                             "looked up in this order: object image, prop pack label, occluder source.")
+                             "looked up in this order (D6): object image, the bundle's props registry, prop packs "
+                             "by label (the bundle's prop_packs, then these), occluder source.")
     parser.add_argument("--spawn", help="Spawn id where the actor starts (default: the first spawn).")
     parser.add_argument("--speed", type=float,
                         help="Walking speed in world px per second (default: 12 x actorRadius, at least 60).")
@@ -1679,7 +1751,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--verify-timeout", type=float, default=120.0,
                         help="Seconds allowed for --verify (default 120).")
     parser.add_argument("--strict", action="store_true",
-                        help="Warnings and failed --verify checks become errors; nothing is published.")
+                        help="Warnings and failed --verify checks become errors; nothing is published. Without "
+                             "it a failed --verify publishes the report with status fail and exits 1.")
     return parser
 
 
@@ -1707,14 +1780,13 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     if not bundle_path.is_file():
         raise FileNotFoundError(f"No such bundle: {args.bundle}")
     build = Build(bundle_path, final)
-    try:
-        bundle = _object(json.loads(build.read(bundle_path, "bundle").decode("utf-8-sig")), "bundle")
-    except json.JSONDecodeError as error:
-        raise ValueError(f"{bundle_path.name} is not valid JSON (line {error.lineno}).") from None
+    bundle = _object(_parse_json(build.read(bundle_path, "bundle"), bundle_path.name), "bundle")
     schema = bundle.get("schema")
     if schema not in BUNDLE_SCHEMAS:
         raise ValueError(f"{bundle_path.name} is not a map bundle (schema {schema!r}; "
                          f"expected {' or '.join(BUNDLE_SCHEMAS)}).")
+    if schema == BUNDLE_SCHEMAS[0]:  # v1 footprints read the way map_bundle and forge_nav read them
+        bundle = forge_nav.upgrade_v1_footprints(bundle)
     world = _object(bundle.get("world"), "world")
     world_w = _number(world.get("width"), "world.width", positive=True)
     world_h = _number(world.get("height"), "world.height", positive=True)
@@ -1730,15 +1802,20 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     portals = clean_portals(bundle.get("portals"))
     for portal in portals:
         for spawn in portal.get("entranceByFrom", {}).values():
-            if spawn not in spawn_ids:
+            if isinstance(spawn, str) and spawn not in spawn_ids:
                 build.warn(f"portal {portal['id']}: entranceByFrom names spawn {spawn!r}, which is not in this map.")
     interactions = clean_interactions(bundle.get("interactions"))
     anchors = clean_anchors(bundle.get("anchors"))
     speed, actor_height, zoom = _defaults(args, collision["actorRadius"], size)
+    registry = PropRegistry(build, bundle)
     packs = PropPacks(build, bundle, args.prop_pack)
-    runtime_objects, drawn = compile_objects(bundle, build, packs)
+    runtime_objects, drawn = compile_objects(bundle, build, registry, packs)
     layers = compile_layers(bundle, build, size, bool(drawn))
-    material_grid, material_info = compile_material_grid(bundle, build, (world_w, world_h))
+    blocking = read_blocking_set(bundle, build)  # D2: the same blocking set as forge_nav and map_nav
+    tile_solids = tile_solids_for_runtime(blocking)
+    if tile_solids:
+        collision["solids"] = collision.get("solids", []) + tile_solids
+    material_grid, material_info = compile_material_grid(bundle, build, blocking)
     runtime, runtime_sha, runtime_version = read_runtime()
     title = args.title or next((bundle[key] for key in ("name", "title") if isinstance(bundle.get(key), str)
                                 and bundle[key]), bundle_path.stem)
@@ -1747,6 +1824,7 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
         "world": {"width": world_w, "height": world_h}, "zoom": zoom, "speed": speed, "start": start,
         "actor": {"height": actor_height}, "layers": layers, "objects": drawn,
         "bundle": {"world": {"width": world_w, "height": world_h}, "collision": collision, "objects": runtime_objects,
+                   **({"props": registry.for_runtime()} if registry.for_runtime() else {}),
                    "portals": portals, "spawns": spawns, "interactions": interactions, "anchors": anchors},
         "materialGrid": material_grid,
     }
@@ -1759,8 +1837,7 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
     gates = [f"{check['id']} {check['value']}" for check in checks if check["status"] == "fail"]
     if gates:
         raise QAFailure("; ".join(forge_core.ascii_text(gate)[:300] for gate in gates))
-    art = {source: sum(1 for item in drawn if item["art"] == source)
-           for source in ("object.image", "prop-pack", "occluder.source")}
+    art = {source: sum(1 for item in drawn if item["art"] == source) for source in ART_SOURCES}
     missing_art = [item["id"] for item in drawn if item["image"] is None]
     checks.append(_check("object-art", "pass" if not missing_art else "warn", missing_art, []))
 
@@ -1780,12 +1857,14 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
             failed = ", ".join(check["id"] for check in checks if check["status"] in ("fail", "warn"))
             first = f"; first warning: {build.warnings[0]}" if build.warnings else ""
             raise QAFailure(f"--strict: {failed} did not pass{first}")
-        outputs = [_local_file_ref(stage / name, stage)
+        outputs = [forge_core.file_ref(stage / name, stage)
                    for name in (PREVIEW_NAME, SNAPSHOT_NAME, SCREEN_NAME, DEBUG_NAME) if (stage / name).is_file()]
         report = {
             "schema": REPORT_SCHEMA, "status": status,
             "method": "build_scene_preview: bundle files resolved relative to the bundle and checked against their "
-                      "sha256 when given; tiles layers pre-rendered from tileset manifests; art embedded as data "
+                      "sha256 when given; collision read through forge_nav (the D2 blocking set; tile collision "
+                      "converted into world solids, material classes into BLOCK and one_way pixel planes); tiles "
+                      "layers pre-rendered from tileset manifests; art found in the D6 order and embedded as data "
                       "URIs; map-runtime.mjs inlined verbatim; the page scanned for anything that loads from "
                       "outside it; size gate; optional headless-Chromium run (--verify).",
             "notProven": NOT_PROVEN, "checks": checks, "inputs": build.inputs, "outputs": outputs, "tool": TOOL,
@@ -1800,6 +1879,9 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
                            "interactions": len(interactions), "anchors": len(anchors)},
                 "images": {"count": len(build.images), "bytes": build.image_bytes},
                 "materialMap": material_info,
+                "collision": {"collisionSolids": len(blocking.collision_solids), "rects": len(blocking.rects),
+                              "footprints": len(blocking.footprints), "tileSolids": len(tile_solids),
+                              "blockingMaterialClasses": blocking.blocking_material_classes},
                 "hashes": {"checked": build.hashes_checked, "unchecked": build.hashes_missing},
             },
             "warnings": build.warnings, "verify": verify,
@@ -1807,22 +1889,27 @@ def build_preview(args: argparse.Namespace) -> dict[str, Any]:
         forge_core.write_json(stage / REPORT_NAME, report)
     return {"status": status, "output_dir": str(final), "preview": str(final / PREVIEW_NAME),
             "metadata": str(final / REPORT_NAME), "bytes": len(data), "verify": verify["status"],
-            "warnings": len(build.warnings)}
+            "warnings": len(build.warnings), "failed": [check["id"] for check in checks if check["status"] == "fail"]}
 
 
-def main(argv: list[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         summary = build_preview(args)
     except QAFailure as error:
         print(f"error: QA failed, nothing published: {forge_core.ascii_text(error)}", file=sys.stderr)
         return 1
-    except (ValueError, OSError) as error:
-        print(f"error: {forge_core.ascii_text(error)}", file=sys.stderr)
-        return 1
     print(json.dumps(summary, ensure_ascii=True))
+    if summary["status"] == "fail":
+        print(f"error: the preview was published with status fail ({', '.join(summary['failed'])}); "
+              f"see {forge_core.ascii_text(summary['metadata'])}", file=sys.stderr)
+        return 1
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Exit 0 (pass or warn), 1 (a published report with status fail, D26; or nothing published), 2 (usage)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

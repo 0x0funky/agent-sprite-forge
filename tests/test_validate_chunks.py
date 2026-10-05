@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
+from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli,
                              script_path)
 
 
@@ -22,95 +22,10 @@ SIZE = (160, 96)  # 10 x 6 cells
 EAST_WEST = {"offset": 32, "width": 32, "material": "floor"}  # rows 2-3
 NORTH_SOUTH = {"offset": 64, "width": 32, "material": "floor"}  # columns 4-5
 
-# The $def this module asks integration to add to map.schema.json (handoff section 5), applied in memory.
-REQUESTED_MAP_DEFS = {
-    "chunk_validation_v1": {
-        "description": "validate_chunks.py report: placements, socket pairing per shared edge, chunk-graph and "
-                       "walkability-grid reachability, and the QA envelope.",
-        "type": "object",
-        "required": ["schema", "tool", "status", "mode", "placements", "sockets", "qa"],
-        "properties": {
-            "schema": {"const": "generate2dmap.chunk_validation.v1"},
-            "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "status": {"enum": ["pass", "warn", "fail"]},
-            "mode": {"enum": ["rows", "edges", "kit"]},
-            "start": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["chunk"],
-                                                   "properties": {"chunk": {"type": "string", "minLength": 1},
-                                                                  "point": {"anyOf": [
-                                                                      {"type": "null"},
-                                                                      {"$ref": "common.schema.json#/$defs/point2"}]}}}]},
-            "unused": {"type": "array", "items": {"type": "string"}},
-            "unplaced": {"type": "array", "items": {"type": "string"}},
-            "placements": {"type": "array", "items": {
-                "type": "object", "required": ["id", "rect"],
-                "properties": {"id": {"type": "string", "minLength": 1},
-                               "rect": {"$ref": "common.schema.json#/$defs/rectXYWH"}}}},
-            "contacts": {"type": "array", "items": {
-                "type": "object", "required": ["a", "side", "b", "start", "end"],
-                "properties": {"a": {"type": "string"}, "b": {"type": "string"}, "side": {"enum": ["E", "S"]},
-                               "b_side": {"enum": ["W", "N"]}, "start": {"type": "number"},
-                               "end": {"type": "number"}}}},
-            "sockets": {"type": "array", "items": {
-                "type": "object", "required": ["chunk", "side", "index", "offset", "width", "status"],
-                "properties": {"chunk": {"type": "string"}, "side": {"enum": ["N", "E", "S", "W"]},
-                               "index": {"type": "integer", "minimum": 0}, "offset": {"type": "number"},
-                               "width": {"type": "number"}, "material": {"type": ["string", "null"]},
-                               "status": {"enum": ["paired", "mismatch", "straddle", "dangling", "unplaced"]},
-                               "world_span": {"anyOf": [{"type": "null"}, {"type": "array", "items": {
-                                   "type": "number"}, "minItems": 2, "maxItems": 2}]},
-                               "partner": {"anyOf": [{"type": "null"}, {"type": "object"}]}}}},
-            "reachability": {"anyOf": [{"type": "null"}, {"type": "object"}]},
-            "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-        },
-    },
-}
-
-
-# Additions to the existing room_chunk_v1 contract that validate_chunks.py reads (handoff section 5).
-REQUESTED_MAP_PATCHES = {
-    "/$defs/room_chunk_v1/properties/cell": {"description": "Pixels per grid character (chunks may override).",
-                                             "type": "integer", "minimum": 1},
-    "/$defs/room_chunk_v1/properties/start": {
-        "description": "Start chunk (or chunk instance such as corridor@0,1), optionally with a point in its pixels.",
-        "anyOf": [{"type": "string", "minLength": 1},
-                  {"type": "object", "required": ["chunk"],
-                   "properties": {"chunk": {"type": "string", "minLength": 1}, "x": {"type": "number"},
-                                  "y": {"type": "number"}}}]},
-    "/$defs/room_chunk_v1/properties/chunks/items/properties/grid": {
-        "description": "Walkability rows, top first: '.' walkable, '#' blocked; size = grid size x cell.",
-        "type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^[.#]+$"}},
-    "/$defs/room_chunk_v1/properties/chunks/items/properties/cell": {"type": "integer", "minimum": 1},
-    "/$defs/room_chunk_v1/properties/graph/items": {
-        "description": "Either layout rows of chunk ids (null for an empty cell; a repeated id is one instance per "
-                       "cell) or edges: b sits on a's side, shifted offset px along it.",
-        "anyOf": [{"type": "array", "items": {"anyOf": [{"type": "string", "minLength": 1}, {"type": "null"}]}},
-                  {"type": "object", "required": ["from", "to", "side"],
-                   "properties": {"from": {"type": "string", "minLength": 1}, "to": {"type": "string", "minLength": 1},
-                                  "side": {"enum": ["N", "E", "S", "W"]}, "offset": {"type": "number"}}}]},
-}
-
 
 def requested_contract_errors(document, name="chunk_validation_v1"):
-    """Errors against the vendored generate2dmap schemas plus REQUESTED_MAP_DEFS and REQUESTED_MAP_PATCHES
-    (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    for pointer, fragment in REQUESTED_MAP_PATCHES.items():  # JSON pointer into map.schema.json -> new value
-        *parents, leaf = pointer.lstrip("/").split("/")
-        node = map_schema
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[leaf] = fragment
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def room(ident, sockets, *, walls=(), grid=True):
@@ -233,6 +148,29 @@ class ValidateChunksTests(unittest.TestCase):
         self.assertIn("chunk c cannot be reached on foot from a", grid["problems"])
         self.assertTrue(any("b: " in warning and "cannot be reached (islands)" in warning
                             for warning in grid["warnings"]))
+
+    def test_walk_crosses_between_chunks_only_through_paired_doors(self):
+        """D4: the stitched search is forge_nav.grid_bfs on one world grid; open cells that meet across a chunk edge
+        without a socket do not connect (they warn as an undeclared door), a paired door does."""
+        def open_room(ident, sockets):
+            chunk = room(ident, sockets)
+            chunk["grid"] = ["." * (SIZE[0] // CELL)] * (SIZE[1] // CELL)  # no walls: open edges everywhere
+            return chunk
+        document = {"schema": "generate2dmap.room_chunk.v1", "cell": CELL, "graph": [["a", "b"]],
+                    "chunks": [open_room("a", {"E": [EAST_WEST]}), open_room("b", {"W": [EAST_WEST]})]}
+        from unittest import mock
+        with mock.patch.object(CHUNKS.forge_nav, "grid_bfs", wraps=CHUNKS.forge_nav.grid_bfs) as search:
+            report = CHUNKS.validate(document)
+        self.assertEqual(search.call_count, 1, "one grid search over the stitched grid")
+        grid = report["reachability"]["grid"]
+        self.assertEqual(grid["chunks"]["b"]["reached_cells"], grid["chunks"]["b"]["walkable_cells"])
+        self.assertTrue(any("without a socket (a door the data does not declare)" in w for w in grid["warnings"]))
+        # without the door the open edge alone joins nothing
+        document["chunks"] = [open_room("a", {"E": [{**EAST_WEST, "material": "floor"}]}), open_room("b", {})]
+        report = CHUNKS.validate(document)
+        self.assertIn("chunk b cannot be reached on foot from a", report["reachability"]["grid"]["problems"])
+        passable = report["reachability"]["grid"]["chunks"]["b"]
+        self.assertEqual((passable["reached_cells"], passable["walkable_cells"]), (0, 60))
 
     def test_reused_chunk_becomes_instances(self):
         corridor = room("corridor", {"W": [EAST_WEST], "E": [EAST_WEST]})

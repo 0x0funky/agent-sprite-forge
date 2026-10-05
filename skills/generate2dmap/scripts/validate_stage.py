@@ -51,7 +51,7 @@ import forge_core  # noqa: E402  (this skill's vendored copy)
 
 STAGE_SCHEMA = "generate2dmap.stage.v1"
 QA_SCHEMA = "generate2dmap.stage_qa.v1"
-TOOL = {"name": "validate_stage", "version": "1.0"}
+TOOL = {"name": "validate_stage", "version": forge_core.FORGE_PACKAGE_VERSION}
 FITS = ("cover", "contain")
 EFFECT_KINDS = ("ripple", "shimmer", "sway", "glow")
 WATER_KINDS = frozenset({"ripple"})
@@ -352,8 +352,8 @@ def load_stage(path: str | os.PathLike) -> Stage:
     """Read and parse a stage file; JSON and contract problems raise StageError naming the file."""
     path = Path(path)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+        data = forge_core.read_json(path, strict=True)  # D28: BOM-tolerant, strict JSON
+    except ValueError as error:
         raise StageError(f"{path.name} is not valid JSON: {error}") from None
     try:
         return parse_stage(data)
@@ -417,17 +417,6 @@ def _local_box_mean(plane: np.ndarray, radius: int) -> np.ndarray:
     table[1:, 1:] = padded.cumsum(0).cumsum(1)
     window = table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]
     return window / (size * size)
-
-
-def _local_dilate(mask: np.ndarray, radius: int) -> np.ndarray:
-    """Chebyshev (square) dilation of a boolean mask by ``radius`` pixels, from a summed-area table."""
-    if radius <= 0:
-        return mask.copy()
-    size = 2 * radius + 1
-    table = np.zeros((mask.shape[0] + size, mask.shape[1] + size), np.int64)
-    table[1:, 1:] = np.pad(mask, radius).astype(np.int64).cumsum(0).cumsum(1)
-    window = table[size:, size:] - table[:-size, size:] - table[size:, :-size] + table[:-size, :-size]
-    return window > 0
 
 
 def polygon_problems(polygon: Sequence[Point], size: tuple[int, int]) -> list[str]:
@@ -510,8 +499,7 @@ def ground_band(stage: Stage) -> tuple[float, float]:
 
 # --------------------------------------------------------------------------- shared output helpers
 
-def round_half_up(value: float) -> int:
-    return int(math.floor(value + 0.5))
+round_half_up = forge_core.round_half_up  # D30: floor(value + 0.5), never banker's rounding
 
 
 def rounded(value: Any, digits: int = 4) -> Any:
@@ -527,15 +515,6 @@ def rounded(value: Any, digits: int = 4) -> Any:
     if isinstance(value, (list, tuple)):
         return [rounded(item, digits) for item in value]
     return value
-
-
-def _local_file_ref(path: str | os.PathLike, base: str | os.PathLike, sha256: str | None = None) -> dict[str, Any]:
-    """fileRef of ``path`` relative to the directory ``base``; only the file name when there is no
-    relative route (another drive), never an absolute path (plan Appendix A, portable_path note)."""
-    relative = forge_core.portable_path(path, base)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": sha256 or forge_core.sha256_file(path), "bytes": Path(path).stat().st_size}
 
 
 def _local_qa_envelope(checks: list[dict[str, Any]], *, method: str, not_proven: Sequence[str],
@@ -622,7 +601,10 @@ def load_ui(profile: str, path: Path | None) -> dict[str, tuple[tuple[str, Box],
     ``{"landscape": [{"id", "box": [x0, y0, x1, y1]}], "portrait": [...]}`` (missing orientation: none)."""
     if path is None:
         return UI_PROFILES[profile]
-    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    try:
+        data = forge_core.read_json(path, strict=True)  # D28
+    except ValueError as error:
+        raise ValueError(f"{Path(path).name} is not valid JSON: {error}") from None
     if not isinstance(data, dict):
         raise ValueError(f"{path}: the UI file must be an object with landscape and portrait panel lists")
     panels: dict[str, tuple[tuple[str, Box], ...]] = {}
@@ -1149,10 +1131,10 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         forge_core.save_png(overlay, stage_dir / "stage-overlay.png")
         for filename, image in renders:
             forge_core.save_png(image, stage_dir / filename)
-        inputs = [_local_file_ref(stage_path, final)]
+        inputs = [forge_core.file_ref(stage_path, final)]
         if plate_path is not None:
-            inputs.append(_local_file_ref(plate_path, final, info["sha256"]))
-        outputs = [_local_file_ref(stage_dir / name, stage_dir)
+            inputs.append(forge_core.file_ref(plate_path, final, sha256=info["sha256"]))
+        outputs = [forge_core.file_ref(stage_dir / name, stage_dir)
                    for name in ["stage-overlay.png", *(filename for filename, _ in renders)]]
         report = {"schema": QA_SCHEMA,
                   **_local_qa_envelope(checks, method=method, not_proven=NOT_PROVEN, inputs=inputs, outputs=outputs,
@@ -1202,18 +1184,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = run(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary = run(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 1 if summary["status"] == "fail" else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
+    printed as one error: line, D27), 2 (usage)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

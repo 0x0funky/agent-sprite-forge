@@ -1,14 +1,16 @@
-// Node tests for skills/generate2dmap/references/runtime/map-runtime.mjs (B17-T1).
-// Run: node --test tests/js/map-runtime.test.mjs (tests/test_map_runtime_js.py runs it under pytest).
+// Node tests for skills/generate2dmap/references/runtime/map-runtime.mjs (B17-T1; forge_nav rules N1-N15).
+// Run: node --test tests/js/map-runtime.test.mjs (tests/test_map_runtime_js.py runs it under pytest and
+// compares the same queries with forge_nav itself).
 import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
-  FOOTPRINT_DIRECTIONS, INTENT_MIN_COS, SNAPSHOT_SCHEMA, TICK_HZ, actorDrawIndex, advanceAlongPath, arrive,
-  cellCenter, cellValid, createActor, createMapRuntime, decodeMaterialGrid, exitCandidate, findPath, flood,
-  footprintSamples, insidePolygon, isBlocked, materialBlocks, materialGridFromRGBA, moveWithCollision, navCellSize,
-  navGrid, pointFree, portalArrivals, returnSpawn, runtimeSnapshot, segmentClear, sortForDrawing, stepActor,
-  traverseRoutes,
+  BLOCK, FOOTPRINT_DIRECTIONS, FREE, INTENT_MIN_COS, ONE_WAY, SNAPSHOT_SCHEMA, TICK_HZ, actorDrawIndex,
+  advanceAlongPath, arrive, cellCenter, cellValid, createActor, createMapRuntime, decodeMaterialGrid, exitCandidate,
+  exitTarget, findPath, flood, floodFrom, footprintSamples, footprintSolid, insidePolygon, isBlocked, isValid,
+  joinCells, materialAt, materialBlocks, materialCode, materialGridFromRGBA, moveOpen, moveWithCollision, navCellSize,
+  navGrid, objectSolid, onPolygonEdge, pointFree, pointTarget, portalArrivals, returnSpawn, routeStarts,
+  runtimeSnapshot, segmentClear, segmentStatus, sortForDrawing, stepActor, traverseRoutes,
 } from "../../skills/generate2dmap/references/runtime/map-runtime.mjs";
 
 const BUDGET = 112 / TICK_HZ;
@@ -40,47 +42,53 @@ function walkPath(world, actor, budget, onStep) {
   for (let tick = 0; actor.path !== null && tick < 10000; tick++) onStep(stepActor(world, actor, null, budget), tick);
 }
 
-// ------------------------------------------------------------------- Appendix C point and footprint semantics
+const open = (solids, extra = {}) => createMapRuntime({world: {width: 200, height: 200},
+  collision: {actorRadius: 0, solids, ...extra}});
 
-test("rect solids are half-open and collision.rects block like rect solids", () => {
-  const world = createMapRuntime({
-    world: {width: 100, height: 100},
-    collision: {actorRadius: 0, solids: [{shape: "rect", x: 10, y: 10, w: 10, h: 10}], rects: [[50, 50, 5, 5]]},
-  });
+// ------------------------------------------------------------------- N3-N5: points
+
+test("rect solids and collision.rects are closed sets (D1, N5)", () => {
+  const world = open([{shape: "rect", x: 10, y: 10, w: 10, h: 10}], {rects: [[50, 50, 5, 5]]});
   assert.equal(pointFree(world, 10, 10), false);
-  assert.equal(pointFree(world, 19.999, 19.999), false);
-  assert.equal(pointFree(world, 20, 15), true);
-  assert.equal(pointFree(world, 15, 20), true);
+  assert.equal(pointFree(world, 20, 15), false, "the right edge x = x + w is blocked");
+  assert.equal(pointFree(world, 15, 20), false, "the bottom edge is blocked");
+  assert.equal(pointFree(world, 20.001, 15), true);
   assert.equal(pointFree(world, 9.999, 15), true);
-  assert.equal(pointFree(world, 52, 52), false);
-  assert.equal(pointFree(world, 55, 52), true);
+  assert.equal(pointFree(world, 55, 52), false, "collision.rects are exact closed blocking rectangles (D3)");
+  assert.equal(pointFree(world, 55.001, 52), true);
 });
 
-test("ellipse solids have an open boundary, zero radii never block, rotation is clockwise in degrees", () => {
-  const world = createMapRuntime({
-    world: {width: 200, height: 200},
-    collision: {actorRadius: 0, solids: [
-      {shape: "ellipse", cx: 50, cy: 50, rx: 10, ry: 5},
-      {shape: "ellipse", cx: 150, cy: 50, rx: 10, ry: 5, rotate: 90},
-      {shape: "ellipse", cx: 50, cy: 150, rx: 0, ry: 5},
-    ]},
-  });
-  assert.equal(pointFree(world, 59.999, 50), false);
-  assert.equal(pointFree(world, 60, 50), true);
-  assert.equal(pointFree(world, 50, 54.999), false);
-  assert.equal(pointFree(world, 50, 55), true);
+test("ellipses are closed, rotate clockwise in degrees; shapes without area block nothing (N4, N5)", () => {
+  const world = open([
+    {shape: "ellipse", cx: 50, cy: 50, rx: 10, ry: 5},
+    {shape: "ellipse", cx: 150, cy: 50, rx: 10, ry: 5, rotate: 90},
+    {shape: "ellipse", cx: 50, cy: 150, rx: 0, ry: 5},
+    {shape: "rect", x: 20, y: 80, w: 0, h: 10},
+    {shape: "rect", x: 30, y: 80, w: -4, h: 10},
+  ]);
+  assert.equal(pointFree(world, 60, 50), false, "nu * nu + nv * nv <= 1");
+  assert.equal(pointFree(world, 60.001, 50), true);
+  assert.equal(pointFree(world, 50, 55), false);
+  assert.equal(pointFree(world, 50, 55.001), true);
   assert.equal(pointFree(world, 150, 59.9), false, "rotated 90 degrees: the long axis points down");
   assert.equal(pointFree(world, 159.9, 50), true);
-  assert.equal(pointFree(world, 50, 150), true, "rx 0 has no interior");
+  assert.equal(pointFree(world, 50, 150), true, "rx 0 has no area");
+  assert.equal(pointFree(world, 20, 85), true, "a zero-width rect blocks nothing, not even its line");
+  assert.equal(world.solids.length, 2);
 });
 
-test("polygons use the even-odd rule; walk regions are a union and holes belong to their region", () => {
+test("polygon solids are closed; walk regions use the even-odd rule with their own holes (N3, N5)", () => {
   const concave = [[0, 0], [30, 0], [30, 30], [20, 30], [20, 10], [10, 10], [10, 30], [0, 30]];
   const xs = Float64Array.from(concave, (p) => p[0]), ys = Float64Array.from(concave, (p) => p[1]);
   assert.equal(insidePolygon(xs, ys, 5, 20), true);
   assert.equal(insidePolygon(xs, ys, 15, 20), false, "the notch is outside");
-  assert.equal(insidePolygon(xs, ys, 0, 0), true, "the polygon is half-open: top-left edge in");
-  assert.equal(insidePolygon(xs, ys, 30, 5), false, "right edge out");
+  assert.equal(insidePolygon(xs, ys, 0, 0), true, "pnpoly: the left and top boundaries count as inside");
+  assert.equal(insidePolygon(xs, ys, 30, 5), false, "pnpoly: the right boundary does not");
+  assert.equal(onPolygonEdge(xs, ys, 30, 5), true);
+  const solid = open([{shape: "polygon", points: concave}]);
+  assert.equal(pointFree(solid, 30, 5), false, "a polygon solid's right edge is blocked");
+  assert.equal(pointFree(solid, 15, 10), false, "and the notch's edge");
+  assert.equal(pointFree(solid, 15, 20), true, "the notch interior is free");
   const world = createMapRuntime({
     world: {width: 100, height: 100},
     collision: {actorRadius: 0, walkRegions: [
@@ -92,19 +100,20 @@ test("polygons use the even-odd rule; walk regions are a union and holes belong 
   assert.equal(pointFree(world, 25, 25), false, "inside region A's hole and outside region B");
   assert.equal(pointFree(world, 35, 35), true, "inside region A's hole but inside region B");
   assert.equal(pointFree(world, 95, 95), false, "outside every region, although inside the map");
+  assert.throws(() => open([{shape: "polygon", points: [[0, 0], [5, 5], [10, 10]]}]), /zero area/);
 });
 
-test("without walk regions the map bounds are [0, width) x [0, height)", () => {
+test("without walk regions the walk area is the closed box [0, W] x [0, H] (N3)", () => {
   const world = createMapRuntime({world: {width: 50, height: 40}, collision: {actorRadius: 0}});
   assert.equal(pointFree(world, 0, 0), true);
-  assert.equal(pointFree(world, 49.999, 39.999), true);
-  assert.equal(pointFree(world, 50, 10), false);
-  assert.equal(pointFree(world, 10, 40), false);
+  assert.equal(pointFree(world, 50, 40), true);
+  assert.equal(pointFree(world, 50.001, 10), false);
+  assert.equal(pointFree(world, 10, 40.001), false);
   assert.equal(pointFree(world, -0.001, 10), false);
   assert.equal(pointFree(world, NaN, 10), false, "NaN is never free");
 });
 
-test("the footprint is the point plus 8 exact samples on the ySquash ellipse", () => {
+test("the footprint is the point plus 8 samples on the ySquash ellipse, in forge_nav's order (N2, N9)", () => {
   assert.equal(FOOTPRINT_DIRECTIONS.length, 8);
   for (const [ux, uy] of FOOTPRINT_DIRECTIONS) assert.ok(Math.abs(ux * ux + uy * uy - 1) < 1e-15);
   const bundle = (ySquash) => ({
@@ -115,61 +124,177 @@ test("the footprint is the point plus 8 exact samples on the ySquash ellipse", (
   const samples = footprintSamples(squashed, 50, 57);
   assert.deepEqual(samples[0], [50, 57], "the centre comes first");
   assert.deepEqual(samples[1], [60, 57], "then east, clockwise on screen");
-  assert.deepEqual(samples[2], [50 + 10 * Math.sqrt(0.5), 57 + 5 * Math.sqrt(0.5)]);
+  assert.deepEqual(samples[2], [50 + 10 * Math.SQRT1_2, 57 + 5 * Math.SQRT1_2]);
   assert.deepEqual(samples[7], [50, 52], "north sample at y - r * ySquash");
   assert.equal(isBlocked(round, 50, 57), true, "the round footprint reaches y = 47");
-  assert.equal(isBlocked(squashed, 50, 57), false, "the squashed footprint stops at y = 52");
-  assert.equal(isBlocked(squashed, 50, 54.9), true);
+  assert.equal(isBlocked(squashed, 50, 57.001), false, "the squashed footprint stops just below y = 50");
+  assert.equal(isBlocked(squashed, 50, 55), true, "y = 50 is the rect's closed bottom edge");
+  assert.equal(isValid(squashed, 50, 57.001), true);
 });
 
-test("object footprints are scaled once by the instance scale; world_px, solid false and none do not scale or block", () => {
+// ------------------------------------------------------------------- N6: footprints
+
+test("object footprints are scaled once; world_px is not scaled; solid false and none do not block (N6, D7)", () => {
   const object = (extra) => ({id: "tree", prop: "tree", x: 100, y: 100, anchor_px: [8, 30], scale: 2,
     footprint: {shape: "ellipse", width: 10, depth: 4, offset: [0, -2]}, ...extra});
   const make = (objects) => createMapRuntime({world: {width: 200, height: 200}, collision: {actorRadius: 0}, objects});
   const scaled = make([object()]);
   assert.equal(pointFree(scaled, 100, 96), false, "centre moves by offset * scale");
-  assert.equal(pointFree(scaled, 109.9, 96), false, "rx = width * scale / 2 = 10");
+  assert.equal(pointFree(scaled, 110, 96), false, "rx = width * scale / 2 = 10, closed");
   assert.equal(pointFree(scaled, 110.1, 96), true);
   const world = make([object({footprint: {shape: "ellipse", width: 10, depth: 4, offset: [0, -2], basis: "world_px"}})]);
   assert.equal(pointFree(world, 104.9, 98), false, "world_px: rx = 5, offset not scaled");
   assert.equal(pointFree(world, 105.1, 98), true);
+  const legacy = make([object({footprint: {shape: "ellipse", width: 10, depth: 4, offset: [0, -2], basis: "image_px"}})]);
+  assert.equal(pointFree(legacy, 109.9, 96), false, "image_px is the legacy alias of prop_px: scaled");
+  assert.throws(() => make([object({footprint: {shape: "ellipse", width: 1, depth: 1, basis: "metres"}})]), /basis/);
   assert.equal(pointFree(make([object({solid: false})]), 100, 96), true);
   assert.equal(pointFree(make([object({footprint: {shape: "none"}})]), 100, 96), true);
   const rect = make([object({footprint: {shape: "rect", width: 10, depth: 4}})]);
-  assert.equal(pointFree(rect, 90, 96), false, "rect from cx - w / 2, half-open");
-  assert.equal(pointFree(rect, 110, 98), true);
+  assert.equal(pointFree(rect, 90, 96), false, "rect from cx - w / 2, closed");
+  assert.equal(pointFree(rect, 110, 98), false, "its right edge is blocked too");
+  assert.equal(pointFree(rect, 110.01, 98), true);
   const turned = make([object({footprint: {shape: "rect", width: 10, depth: 2, rotate: 90}})]);
   assert.equal(pointFree(turned, 100, 109), false, "a rotated rect becomes its corner polygon");
   assert.equal(pointFree(turned, 109, 100), true);
+  const flat = make([object({footprint: {shape: "rect", width: 0, depth: 4}})]);
+  assert.equal(flat.solids.length, 0, "a footprint without area blocks nothing");
 });
 
-test("material grids block solid cells, and liquid or hazard cells unless walkable", () => {
+test("flip_x mirrors the footprint around the anchor x: offset x and rotate change sign (D6, N6)", () => {
+  const make = (flip) => createMapRuntime({world: {width: 200, height: 200}, collision: {actorRadius: 0}, objects: [
+    {id: "o", prop: "p", x: 100, y: 100, anchor_px: [4, 8], flip_x: flip,
+      footprint: {shape: "ellipse", width: 4, depth: 2, offset: [10, -3]}}]});
+  assert.equal(pointFree(make(false), 110, 97), false);
+  assert.equal(pointFree(make(false), 90, 97), true);
+  assert.equal(pointFree(make(true), 90, 97), false, "the mirrored footprint sits at x - 10");
+  assert.equal(pointFree(make(true), 110, 97), true);
+  const plain = footprintSolid(0, 0, {shape: "rect", width: 4, depth: 2, offset: [3, 0], rotate: 30}, {flipX: true});
+  const mirror = footprintSolid(0, 0, {shape: "rect", width: 4, depth: 2, offset: [-3, 0], rotate: -30});
+  assert.deepEqual([...plain.xs], [...mirror.xs]);
+  assert.deepEqual([...plain.ys], [...mirror.ys]);
+  assert.throws(() => make("yes"), /flip_x must be true or false/);
+});
+
+test("footprints and solid come from the object, else from the props registry (N6)", () => {
+  const bundle = (objects, props) => ({world: {width: 100, height: 100}, collision: {actorRadius: 0}, objects, props});
+  const props = {
+    tree: {image: "tree.png", footprint: {shape: "ellipse", width: 6, depth: 2}},
+    rock: {image: "rock.png", solid: false, footprint: {shape: "rect", width: 6, depth: 2}},
+  };
+  const world = createMapRuntime(bundle([
+    {id: "a", prop: "tree", x: 20, y: 20, anchor_px: [0, 0]},
+    {id: "b", prop: "rock", x: 50, y: 20, anchor_px: [0, 0]},
+    {id: "c", prop: "rock", x: 80, y: 20, anchor_px: [0, 0], solid: true},
+    {id: "d", prop: "tree", x: 20, y: 60, anchor_px: [0, 0], footprint: null},
+  ], props));
+  assert.equal(pointFree(world, 22, 20), false, "the registry footprint");
+  assert.equal(pointFree(world, 50, 20), true, "the registry's solid: false");
+  assert.equal(pointFree(world, 80, 20), false, "the object's own solid flag wins");
+  assert.equal(pointFree(world, 20, 60), true, "an explicit null footprint is no footprint");
+  assert.equal(objectSolid({id: "x", x: 0, y: 0}, props.tree).kind, "ellipse");
+  assert.throws(() => createMapRuntime(bundle([{id: "a", prop: "ghost", x: 1, y: 1, anchor_px: [0, 0]}], props)),
+    /unknown prop "ghost"/);
+  assert.throws(() => createMapRuntime(bundle([], {tree: {pack: "pack.json", label: "tree"}})), /resolve it/);
+});
+
+// ------------------------------------------------------------------- N8: materials
+
+test("material classes: solid blocks, liquid and hazard unless walkable, decor never, one_way never at a point", () => {
   assert.equal(materialBlocks({class: "solid"}), true);
   assert.equal(materialBlocks({class: "solid", walkable: true}), true);
   assert.equal(materialBlocks({class: "liquid"}), true);
   assert.equal(materialBlocks({class: "hazard", walkable: true}), false);
-  assert.equal(materialBlocks({class: "one_way"}), false, "one_way only stops side-scroll bodies from above");
-  assert.equal(materialBlocks({class: "decor"}), false);
-  // 4 x 3 cells over a 40 x 30 world; cell (1, 1) is k = 5.
+  assert.equal(materialBlocks({class: "one_way"}), false);
+  assert.equal(materialCode({class: "one_way"}), ONE_WAY);
+  assert.equal(materialCode({class: "decor"}), FREE);
+  assert.equal(materialCode({class: "liquid"}), BLOCK);
+  assert.throws(() => materialCode({class: "lava"}), /not one of/);
+  assert.throws(() => materialCode({class: "liquid", walkable: "yes"}), /true or false/);
+  // 4 x 3 pixels over a 40 x 30 world; pixel (1, 1) is k = 5.
   const bits = btoa(String.fromCharCode(1 << 5, 0));
   const world = createMapRuntime({world: {width: 40, height: 30}, collision: {actorRadius: 0}},
     {materialGrid: {width: 4, height: 3, cellWidth: 10, cellHeight: 10, bits}});
   assert.equal(pointFree(world, 15, 15), false);
   assert.equal(pointFree(world, 10, 10), false);
-  assert.equal(pointFree(world, 20, 15), true);
+  assert.equal(pointFree(world, 20, 15), true, "pixel squares are half-open: x = 20 reads the next pixel");
   assert.equal(pointFree(world, 9.999, 15), true);
+  assert.throws(() => createMapRuntime({world: {width: 41, height: 30}, collision: {actorRadius: 0}},
+    {materialGrid: {width: 4, height: 3, cellWidth: 10, cellHeight: 10, bits}}), /does not cover/);
+  assert.throws(() => decodeMaterialGrid({width: 4, height: 3, cellWidth: 10, cellHeight: 7.5, bits}), /squares/);
+});
+
+test("materialGridFromRGBA classifies every opaque pixel by exact colour (N8)", () => {
   const rgba = new Uint8ClampedArray(4 * 3 * 4);
   rgba.set([10, 20, 200, 255], 5 * 4);
   rgba.set([200, 0, 0, 255], 6 * 4);
   rgba.set([10, 20, 200, 0], 7 * 4);
-  const fromPixels = materialGridFromRGBA(rgba, 4, 3, {materials: {
-    water: {class: "liquid", color: "#0a14c8"}, flowers: {class: "decor", color: [200, 0, 0]},
-  }}, 40, 30);
-  assert.deepEqual([...fromPixels.bytes], [1 << 5, 0], "alpha 0 has no material; decor never blocks");
-  assert.deepEqual(decodeMaterialGrid({...fromPixels, bits: fromPixels.bytes}).bytes, fromPixels.bytes);
+  rgba.set([255, 255, 0, 255], 8 * 4);
+  const map = {materials: {water: {class: "liquid", color: "#0a14c8"}, flowers: {class: "decor", color: [200, 0, 0]},
+    ledge: {class: "one_way", color: "#ffff00"}}};
+  const grid = materialGridFromRGBA(rgba, 4, 3, map, 40, 30);
+  assert.deepEqual([...grid.bits], [1 << 5, 0], "alpha 0 has no material; decor never blocks");
+  assert.deepEqual([...grid.oneWay], [0, 1], "pixel 8 is one_way");
+  const decoded = decodeMaterialGrid(grid);
+  assert.deepEqual([decoded.codes[5], decoded.codes[6], decoded.codes[8]], [BLOCK, FREE, ONE_WAY]);
+  assert.equal(decoded.hasOneWay, true);
+  rgba.set([1, 2, 3, 255], 0);
+  assert.throws(() => materialGridFromRGBA(rgba, 4, 3, map, 40, 30), /matches no material/);
+  assert.throws(() => materialGridFromRGBA(new Uint8Array(48), 4, 3, map, 30, 30), /whole squares/);
+  assert.throws(() => materialGridFromRGBA(new Uint8Array(48), 4, 3, {materials: {a: {class: "solid"}}}, 40, 30), /color/);
 });
 
-test("the nav cell is max(1, round half up (r / 2))", () => {
+// ------------------------------------------------------------------- N10, N11: segments
+
+test("segmentClear samples every cell / 2, then applies the thin-gap rule to the centre path (N10)", () => {
+  // r = 0: cell 1, samples 0.5 apart.
+  const make = (x, w) => open([{shape: "rect", x, y: 0, w, h: 100}]);
+  assert.equal(segmentClear(make(10, 0.6), 5, 5, 15, 5), false, "a sample lands in the wall");
+  const thin = make(10.1, 0.3);
+  assert.equal(segmentClear(thin, 5, 5, 15, 5), false, "the thin-gap rule closes a wall between two samples");
+  assert.equal(segmentClear(thin, 5, 5, 15, 5, {thinGap: false}), true, "the sampled rule alone misses it");
+  assert.match(segmentStatus(thin, 5, 5, 15, 5), /thin-gap/);
+  assert.equal(segmentClear(make(15, 1), 5, 5, 15, 5), false, "the end point is sampled");
+  assert.equal(segmentClear(make(30, 1), 5, 5, 5, 5), true, "a zero-length segment checks its point");
+  const corner = open([{shape: "rect", x: 10, y: 0, w: 5, h: 10}]);
+  assert.equal(segmentClear(corner, 0, 0, 20, 20), true, "touching the corner (10, 10) at a single point is not a failure");
+  assert.equal(segmentClear(corner, 0, 20, 20, 0), false, "this diagonal enters the rect after its corner");
+});
+
+function ledgeWorld() {
+  // A side view: a one_way ledge row at pixel row 3 (y in [12, 16)) across the middle of the room.
+  const width = 10, height = 8, rgba = new Uint8Array(width * height * 4);
+  for (let k = 0; k < width * height; k++) rgba.set([64, 160, 64, 255], k * 4);
+  for (let i = 2; i < 8; i++) rgba.set([224, 224, 0, 255], (3 * width + i) * 4);
+  const map = {materials: {air: {class: "decor", color: "#40a040"}, ledge: {class: "one_way", color: "#e0e000"}}};
+  return createMapRuntime({world: {width: 40, height: 32}, collision: {actorRadius: 0}},
+    {materialGrid: materialGridFromRGBA(rgba, width, height, map, 40, 32)});
+}
+
+test("one_way blocks moving down onto it, never up or sideways, and never a point (N11)", () => {
+  const world = ledgeWorld();
+  assert.equal(materialAt(world, 20, 13), ONE_WAY);
+  assert.equal(pointFree(world, 20, 13), true, "standing on one_way is allowed");
+  assert.equal(segmentClear(world, 20, 6, 20, 20), false, "dropping through the ledge is blocked");
+  assert.match(segmentStatus(world, 20, 6, 20, 13), /one_way/);
+  assert.equal(segmentClear(world, 20, 20, 20, 6), true, "jumping up through it is allowed");
+  assert.equal(segmentClear(world, 4, 13, 36, 13), true, "walking along it is allowed");
+  assert.equal(segmentClear(world, 4, 6, 4, 20), true, "dropping beside it is allowed");
+  const nav = navGrid(world), above = 11 * nav.cols + 20; // node (20.5, 11.5), just above the ledge
+  assert.equal(moveOpen(world, above, above + nav.cols), false, "moving down onto the ledge");
+  assert.equal(moveOpen(world, above + nav.cols, above), true, "moving up off it");
+  assert.equal(moveOpen(world, above + nav.cols, above + 2 * nav.cols), true, "moving down inside it enters nothing");
+  const field = flood(world, 20.5, 6.5);
+  const [cx, cy] = cellCenter(nav, (20 * nav.cols) + 20);
+  assert.ok(cy > 16 && cx === 20.5);
+  assert.ok(field.dist[20 * nav.cols + 20] > 0, "the floor below is still reached around the ledge");
+  const straight = Math.abs(20 - 6);
+  assert.ok(field.dist[20 * nav.cols + 20] > straight, "but not straight down through it");
+});
+
+// ------------------------------------------------------------------- N12-N14: grid and reachability
+
+test("the nav cell is max(1, round half up (r / 2)) (N12)", () => {
   assert.equal(navCellSize(0), 1);
   assert.equal(navCellSize(1), 1);
   assert.equal(navCellSize(3), 2);
@@ -181,22 +306,12 @@ test("the nav cell is max(1, round half up (r / 2))", () => {
   const nav = navGrid(world);
   assert.deepEqual([nav.cell, nav.cols, nav.rows], [3, 67, 40]);
   assert.deepEqual(cellCenter(nav, 67 + 2), [7.5, 4.5]);
+  assert.throws(() => navGrid(createMapRuntime({world: {width: 5000, height: 5000}, collision: {actorRadius: 0}})),
+    /navigation grid would have/);
 });
 
-test("segmentClear samples every cell / 2 including both ends", () => {
-  // r = 0: cell 1, samples 0.5 apart. A wall covering x in [10, 10.6) is hit by the sample at 10.0 or 10.5.
-  const make = (x, w) => createMapRuntime({world: {width: 40, height: 20}, collision: {actorRadius: 0,
-    solids: [{shape: "rect", x, y: 0, w, h: 20}]}});
-  assert.equal(segmentClear(make(10, 0.6), 5, 5, 15, 5), false);
-  assert.equal(segmentClear(make(10.1, 0.3), 5, 5, 15, 5), true, "thinner than the spacing and between samples");
-  assert.equal(segmentClear(make(15, 1), 5, 5, 15, 5), false, "the end point is sampled");
-  assert.equal(segmentClear(make(30, 1), 5, 5, 5, 5), true, "a zero-length segment checks its point");
-});
-
-// ------------------------------------------------------------------- navigation
-
-test("the grid search uses 4-neighbour moves whose segment is clear, so it cannot jump a thin wall", () => {
-  // r = 0, cell 1: centres 10.5 and 11.5 are free, the wall [10.9, 11.1) covers the midpoint 11.0.
+test("the grid search uses 4-neighbour moves whose segment is clear, so it cannot jump a thin wall (N13)", () => {
+  // r = 0, cell 1: centres 10.5 and 11.5 are free, the wall [10.9, 11.1] covers the midpoint 11.0.
   const world = createMapRuntime({world: {width: 30, height: 10}, collision: {actorRadius: 0,
     solids: [{shape: "rect", x: 10.9, y: 0, w: 0.2, h: 10}]}});
   assert.equal(cellValid(world, 10), true);
@@ -205,6 +320,49 @@ test("the grid search uses 4-neighbour moves whose segment is clear, so it canno
   assert.ok(field.dist[3 * 30 + 5] >= 0);
   assert.equal(field.dist[3 * 30 + 20], -1, "the east side is unreachable");
   assert.equal(findPath(world, 2.5, 5.5, 20.5, 5.5), null);
+  // A wall thinner than the midpoint spacing, between the samples 10.5, 11.0 and 11.5: only the thin-gap rule sees it.
+  const sliver = createMapRuntime({world: {width: 30, height: 10}, collision: {actorRadius: 0,
+    solids: [{shape: "rect", x: 11.1, y: 0, w: 0.2, h: 10}]}});
+  assert.equal(flood(sliver, 2.5, 5.5).dist[3 * 30 + 20], -1);
+});
+
+test("a start joins every valid node within two cells that it reaches in a straight line (N14)", () => {
+  const world = createMapRuntime({world: {width: 20, height: 20}, collision: {actorRadius: 0,
+    solids: [{shape: "rect", x: 10, y: 0, w: 0.2, h: 20}]}});
+  const joined = joinCells(world, 9.9, 5.5);
+  assert.ok(joined.length > 1);
+  const nav = navGrid(world);
+  assert.ok(joined.every((k) => (k % nav.cols) <= 9), "never across the wall it would have to cross");
+  assert.equal(joined[0], 5 * nav.cols + 9, "nearest first");
+  assert.deepEqual(joinCells(world, 10.1, 5.5), [], "a point on the wall joins nothing");
+  const field = floodFrom(world, [[2.5, 2.5], [15.5, 15.5]]);
+  assert.ok(field.dist[2 * nav.cols + 2] === 0 && field.dist[15 * nav.cols + 15] === 0, "every start seeds the search");
+  assert.equal(pointTarget(world, field, 10.1, 5).reason, "the actor cannot stand here (footprint blocked)");
+  assert.equal(pointTarget(world, field, 3, 3).node >= 0, true);
+});
+
+test("crossing exits are reached inside the closed trigger, or by a clear move to its closest point (N14)", () => {
+  const world = createMapRuntime({world: {width: 60, height: 30}, collision: {actorRadius: 2,
+    solids: [{shape: "rect", x: 50, y: 0, w: 10, h: 30}]},
+  portals: [{id: "door", rect: [56, 10, 4, 10], to: "next"}], spawns: [{id: "s", x: 10, y: 15}]});
+  const field = flood(world, 10, 15);
+  const answer = exitTarget(world, field, world.portals[0]);
+  assert.equal(answer.node, -1, "the trigger sits inside a wall: no node can enter it");
+  const wide = createMapRuntime({world: {width: 60, height: 30}, collision: {actorRadius: 2},
+    portals: [{id: "door", rect: [55, 10, 5, 10], to: "next"}], spawns: [{id: "s", x: 10, y: 15}]});
+  const inside = exitTarget(wide, flood(wide, 10, 15), wide.portals[0]);
+  assert.ok(inside.node >= 0);
+  assert.equal(inside.entry, null, "a valid node centre (x = 57.5) lies inside the closed trigger");
+  // A 2 px trigger at the border: every node centre inside it is too close to the edge for the footprint,
+  // but the node at x = 57.5 can step onto the trigger's closest point (58, y) in a clear straight line.
+  const narrow = createMapRuntime({world: {width: 60, height: 30}, collision: {actorRadius: 2},
+    portals: [{id: "door", rect: [58, 10, 2, 10], to: "next"}], spawns: [{id: "s", x: 10, y: 15}]});
+  const entry = exitTarget(narrow, flood(narrow, 10, 15), narrow.portals[0]);
+  assert.ok(entry.node >= 0);
+  assert.equal(entry.entry[0], 58, "entered at the trigger's closest point");
+  const report = traverseRoutes(narrow, {speed: 60});
+  assert.equal(report.results[0].ok, true, report.results[0].reason);
+  assert.equal(report.results[0].fired, true, "the walker steps onto the closed trigger and fires it");
 });
 
 test("findPath routes around the wall and every leg is clear", () => {
@@ -221,7 +379,7 @@ test("findPath routes around the wall and every leg is clear", () => {
   }
   assert.ok(path.some((point) => point.y >= 80), "the route passes the gap below the wall");
   const snapped = findPath(world, 30, 60, 100, 40);
-  assert.ok(snapped && isBlocked(world, 100, 40), "a goal inside a solid snaps to a reachable cell nearby");
+  assert.ok(snapped && isBlocked(world, 100, 40), "a goal inside a solid snaps to a reachable node nearby");
   assert.equal(isBlocked(world, snapped.at(-1).x, snapped.at(-1).y), false);
 });
 
@@ -247,6 +405,8 @@ test("a blocked walker stays put", () => {
   pinned.path = [{x: 100, y: 40}];
   const step = stepActor(world, pinned, null, BUDGET);
   assert.ok(step.travelled > 0, "following a path into a wall moves until the wall");
+  const stuck = moveWithCollision(world, 100, 40, 0, 0.5);
+  assert.deepEqual(stuck, {x: 100, y: 40}, "inside a wall, a move to another invalid spot is refused");
 });
 
 // Distance from (x, y) to the polyline start -> path[0] -> path[1] ...
@@ -287,22 +447,24 @@ test("the movement budget is never exceeded and there are no zero-motion ticks",
 });
 
 test("a planned path is walked as planned even where tick positions fall between its samples", () => {
-  // r = 0, cell 1, samples 0.5 apart: a 0.3 px wall between the samples at 5.0 and 5.5 is
-  // invisible to segmentClear (the Appendix C sampling limit), so the plan crosses it. The walker
-  // follows the plan; re-checking each tick position would stall it inside the plan instead.
-  const world = createMapRuntime({world: {width: 12, height: 12}, collision: {actorRadius: 0,
-    solids: [{shape: "rect", x: 5.1, y: 0, w: 0.3, h: 12}]}});
-  const path = findPath(world, 0.5, 5.5, 10.5, 5.5);
+  // r = 4 (cell 2, samples 1 px apart): a sliver [15.2, 15.4] x [0.5, 1.5] sits on the north sample's track
+  // y = 1 while the centre walks along y = 5. The samples at x = 15 and 16 miss it and the centre path does
+  // not cross it, so the plan passes (N10); a tick position at x = 15.3 would put the north sample inside it.
+  const world = createMapRuntime({world: {width: 40, height: 12}, collision: {actorRadius: 4,
+    solids: [{shape: "rect", x: 15.2, y: 0.5, w: 0.2, h: 1}]}});
+  const path = findPath(world, 5, 5, 35, 5);
   assert.ok(path);
-  assert.equal(moveWithCollision(world, 4.9, 5.5, 0.3, 0).x, 4.9, "a free step onto the wall is refused");
-  const actor = createActor(world, 0.5, 5.5);
+  assert.equal(isValid(world, 15.3, 5), false, "the north sample (15.3, 1) lies in the sliver");
+  assert.equal(isValid(world, 15, 5) && isValid(world, 16, 5), true, "the samples around it are valid");
+  assert.equal(moveWithCollision(world, 15.1, 5, 0.2, 0).x, 15.1, "a free step onto the sliver is refused");
+  const actor = createActor(world, 5, 5);
   actor.path = path;
   let stalled = 0;
   walkPath(world, actor, 0.3, (step) => {
     if (step.travelled <= 1e-9 && !step.arrived) stalled++;
   });
   assert.equal(stalled, 0);
-  assert.deepEqual([actor.x, actor.y], [10.5, 5.5]);
+  assert.deepEqual([actor.x, actor.y], [35, 5]);
 });
 
 test("advanceAlongPath carries the budget across waypoints without changing the input path", () => {
@@ -321,7 +483,7 @@ test("advanceAlongPath carries the budget across waypoints without changing the 
   assert.equal(advanceAlongPath(world, short, short.path, 5).travelled, 0);
 });
 
-// ------------------------------------------------------------------- exits and latches
+// ------------------------------------------------------------------- exits and latches (N15)
 
 test("walking inward never exits; outward intent within the radius does, even against the border", () => {
   const world = corridor();
@@ -369,14 +531,15 @@ test("an arrival inside the zone is latched until the actor departs; a fired exi
   assert.equal(createActor(unlatched, 185, 60).latched.size, 0, "latch false: arrival does not latch");
 });
 
-test("crossing portals fire inside the trigger with movement, or without it when requiresMovement is false", () => {
+test("crossing portals fire inside the closed trigger with movement, or without it when requiresMovement is false", () => {
   const pad = (requiresMovement) => createMapRuntime(corridorBundle({portals: [
-    {id: "pad", circle: [40, 100, 8], to: "cellar", requiresMovement},
+    {id: "pad", circle: [40, 100, 8], to: "cellar", ...(requiresMovement === undefined ? {} : {requiresMovement})},
   ]}));
   const world = pad(undefined);
   assert.equal(exitCandidate(world, 40, 100, 0, 0, null), null);
   assert.equal(exitCandidate(world, 40, 100, 0, -1, null).id, "pad");
-  assert.equal(exitCandidate(world, 48, 100, 1, 0, null), null, "the circle is open");
+  assert.equal(exitCandidate(world, 48, 100, 1, 0, null).id, "pad", "the circle is closed (N14 triggers)");
+  assert.equal(exitCandidate(world, 48.01, 100, 1, 0, null), null);
   assert.equal(exitCandidate(pad(false), 40, 100, 0, 0, null).id, "pad");
   const actor = createActor(world, 40, 80);
   actor.path = findPath(world, 40, 80, 40, 100);
@@ -406,9 +569,30 @@ test("traverseRoutes reaches every exit, interaction, approach point and slot", 
   }
   assert.deepEqual(report.results[2].end, [150, 50]);
   assert.deepEqual(report.portals, [{id: "exit-east", activation: "intent", to: "meadow:west", arrivals: [
-    {from: "meadow", spawn: "east", found: true, insideTrigger: false, inZone: false, latchedOnArrival: false},
+    {from: "meadow", spawn: "east", found: true, insideTrigger: false, inZone: false, latchedOnArrival: false,
+      valid: true, joined: true, bounceBack: []},
   ]}]);
   assert.deepEqual(traverseRoutes(corridor(), {speed: 112}), report, "deterministic");
+});
+
+test("an interaction without reach is a point target; arrivals given as points are starts (N14, map_nav)", () => {
+  const world = corridor({
+    interactions: [{id: "post", x: 60, y: 30}],
+    portals: [{...corridorBundle().portals[0], entranceByFrom: {meadow: [150, 100]}}],
+    spawns: [{id: "west", x: 30, y: 60}],
+  });
+  assert.deepEqual(routeStarts(world).map((start) => start.id), ["west", "exit-east<-meadow"]);
+  const report = traverseRoutes(world, {speed: 112});
+  assert.equal(report.ok, true, JSON.stringify(report.results.filter((item) => !item.ok)));
+  const post = report.results.find((item) => item.target === "post");
+  assert.deepEqual(post.end, [60, 30], "the walker stands on the point");
+  assert.deepEqual(report.spawns[1], {id: "exit-east<-meadow", kind: "arrival", valid: true,
+    reachableCells: report.spawns[1].reachableCells});
+  assert.deepEqual(returnSpawn(world, world.portals[0]), {id: "exit-east<-meadow", x: 150, y: 100, facing: null});
+  const blocked = traverseRoutes(corridor({interactions: [{id: "wall", x: 100, y: 40}]}), {speed: 112});
+  const wall = blocked.results.find((item) => item.target === "wall");
+  assert.equal(wall.reachable, false);
+  assert.match(wall.reason, /cannot stand here/);
 });
 
 test("traverseRoutes leaves an arrival latch before using the exit", () => {
@@ -431,12 +615,12 @@ test("traverseRoutes reports unreachable targets, inward exits, blocked spawns a
     spawns: [{id: "west", x: 30, y: 60}]}), {speed: 112});
   const unreachable = lonely.results.find((item) => item.target === "exit-east");
   assert.equal(unreachable.reachable, false);
-  assert.equal(unreachable.reason, "unreachable from every spawn");
+  assert.match(unreachable.reason, /^unreachable from every start \(no reachable node within the activation radius 10 px\)$/);
   const boxed = traverseRoutes(corridor({collision: {actorRadius: 6, solids: [
     {shape: "rect", x: 96, y: 0, w: 8, h: 80}, {shape: "rect", x: 170, y: 0, w: 30, h: 120},
   ]}}), {speed: 112});
   const sealed = boxed.results.find((item) => item.target === "exit-east");
-  assert.equal(sealed.ok, false, "an exit whose zone holds no standable cell is unreachable");
+  assert.equal(sealed.ok, false, "an exit whose zone holds no standable node is unreachable");
   assert.equal(sealed.reachable, false);
   const blockedSpawn = traverseRoutes(corridor({spawns: [{id: "wall", x: 100, y: 40}, {id: "west", x: 30, y: 60}]}),
     {speed: 112});
@@ -445,7 +629,8 @@ test("traverseRoutes reports unreachable targets, inward exits, blocked spawns a
   const bounce = corridor({spawns: [{id: "west", x: 30, y: 60}, {id: "east", x: 195, y: 60}]});
   const arrivals = portalArrivals(bounce);
   assert.equal(arrivals[0].arrivals[0].insideTrigger, true);
-  assert.equal(traverseRoutes(bounce, {speed: 112}).ok, false, "an arrival spawn inside its own trigger fails");
+  assert.deepEqual(arrivals[0].arrivals[0].bounceBack, ["exit-east"]);
+  assert.equal(traverseRoutes(bounce, {speed: 112}).ok, false, "an arrival inside a trigger bounces back");
   const missing = portalArrivals(corridor({spawns: [{id: "west", x: 30, y: 60}]}));
   assert.equal(missing[0].arrivals[0].found, false);
 });
@@ -472,6 +657,7 @@ test("runtimeSnapshot is plain JSON with the schema id", () => {
   assert.equal(snapshot.schema, SNAPSHOT_SCHEMA);
   assert.deepEqual(snapshot.actor, {x: 30, y: 60, valid: true, facing: [1, 0], latched: [], travelled: 0, pathLength: 0});
   assert.equal(snapshot.world.cell, 3);
+  assert.equal(snapshot.world.oneWay, false);
   assert.equal(snapshot.tick, 3);
   assert.deepEqual(JSON.parse(JSON.stringify(snapshot)), snapshot);
 });
@@ -496,6 +682,10 @@ test("malformed bundles fail with the field path", () => {
       portals: [{id: "p", to: "x", rect: [0, 0, 1, 1]}, {id: "p", to: "y", circle: [5, 5, 1]}]}, /duplicate portal id/],
     [{world: {width: 10, height: 10}, collision: {actorRadius: 1},
       objects: [{id: "o", x: 1, y: 1, scale: 0, footprint: {shape: "rect", width: 1, depth: 1}}]}, /scale must be positive/],
+    [{world: {width: 10, height: 10}, collision: {actorRadius: 1},
+      objects: [{id: "o", x: 1, y: 1, solid: "no", footprint: {shape: "rect", width: 1, depth: 1}}]}, /solid must be true or false/],
+    [{world: {width: 10, height: 10}, collision: {actorRadius: 1},
+      objects: [{id: "o", x: 1, y: 1, footprint: {shape: "rect", width: -1, depth: 1}}]}, /width must not be negative/],
   ];
   for (const [bundle, pattern] of cases) assert.throws(() => createMapRuntime(bundle), pattern);
   assert.throws(() => traverseRoutes(corridor(), {speed: 0}), /speed must be positive/);

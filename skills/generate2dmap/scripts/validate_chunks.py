@@ -20,9 +20,12 @@ socket on the other side with the same span and material. A socket on an edge
 that touches nothing is reported as dangling (a warning: it may be a world exit).
 Chunks are reachable when doors connect them to the start chunk. When every
 placed chunk also has a walkability `grid` (rows of '.' walkable and '#'
-blocked, `cell` px per character), the stitched grid is searched as well:
-every chunk and door must be reachable on foot (4-neighbour moves), and doors
-must not open into walls. Without --output-dir only the one-line summary is
+blocked, `cell` px per character), the stitched grid is searched as well
+with forge_nav.grid_bfs, the grid search every map tool shares (D4): the
+chunk grids are laid on one world grid, 4-neighbour moves stay inside a chunk
+and cross into the next one only through the cells of a paired door. Every
+chunk and door must be reachable on foot, and doors must not open into
+walls. Without --output-dir only the one-line summary is
 printed; with it, chunk-report.json and chunk-debug.png are published into the
 new folder. Exit 1 when a check fails; --strict-qc then publishes nothing.
 """
@@ -46,11 +49,12 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (this skill's vendored copy)
+import forge_nav  # noqa: E402  (this skill's vendored copy: grid_bfs, D4)
 
 
 INPUT_SCHEMA = "generate2dmap.room_chunk.v1"
 REPORT_SCHEMA = "generate2dmap.chunk_validation.v1"
-TOOL = {"name": "validate_chunks", "version": "1.0"}
+TOOL = {"name": "validate_chunks", "version": forge_core.FORGE_PACKAGE_VERSION}
 SIDES = ("N", "E", "S", "W")
 OPPOSITE = {"N": "S", "S": "N", "E": "W", "W": "E"}
 WALKABLE, BLOCKED = ".", "#"
@@ -487,24 +491,6 @@ def graph_reachability(placed: list[str], pairs: list[tuple[Socket, Socket]], st
     return reached
 
 
-class _UnionFind:
-    def __init__(self, size: int) -> None:
-        self.parent = np.arange(size)
-
-    def find(self, item: int) -> int:
-        root = item
-        while self.parent[root] != root:
-            root = self.parent[root]
-        while self.parent[item] != root:
-            self.parent[item], item = root, self.parent[item]
-        return int(root)
-
-    def union(self, first: int, second: int) -> None:
-        a, b = self.find(first), self.find(second)
-        if a != b:
-            self.parent[max(a, b)] = min(a, b)
-
-
 def _socket_cells(socket: Socket, chunk: Chunk) -> tuple[np.ndarray, np.ndarray]:
     """Grid (row, col) indices of the cells along a socket's span on its own edge."""
     cell = chunk.cell
@@ -522,13 +508,10 @@ def _socket_cells(socket: Socket, chunk: Chunk) -> tuple[np.ndarray, np.ndarray]
     return along, np.full_like(along, cols - 1)
 
 
-def _local_grid_reachability(placed: list[str], chunks: dict[str, Chunk], placements: dict[str, tuple[float, float]],
-                             pairs: list[tuple[Socket, Socket]],
-                             start: tuple[str, tuple[float, float] | None]) -> dict[str, Any]:
-    """Stitched walkability search: per-chunk 4-connected components joined through paired doors.
-
-    Private on purpose: integration consolidates it into map_nav's grid search (plan B14-T3).
-    """
+def grid_reachability(placed: list[str], chunks: dict[str, Chunk], placements: dict[str, tuple[float, float]],
+                      pairs: list[tuple[Socket, Socket]], start: tuple[str, tuple[float, float] | None]) -> dict[str, Any]:
+    """Stitched walkability search with forge_nav.grid_bfs (D4): every placed chunk's grid on one world grid; a
+    4-neighbour move stays inside one chunk, or crosses into a neighbouring chunk at the cells of a paired door."""
     cells = {chunks[ident].cell for ident in placed}
     if len(cells) != 1:
         return {"status": "fail", "problems": [f"placed chunks use different cell sizes {sorted(cells)}"]}
@@ -540,30 +523,47 @@ def _local_grid_reachability(placed: list[str], chunks: dict[str, Chunk], placem
             problems.append(f"chunk {ident} sits at ({x:g}, {y:g}), off the {cell} px grid")
     if problems:
         return {"status": "fail", "problems": problems}
-    labels, offsets, total = {}, {}, 0
-    for ident in placed:
-        label, count = forge_core.label_components(chunks[ident].grid, connectivity=4)
-        labels[ident], offsets[ident] = label, total
-        total += count
-    if total == 0:
+    left = min(placements[ident][0] for ident in placed)
+    top = min(placements[ident][1] for ident in placed)
+    origin = {ident: (round((placements[ident][1] - top) / cell), round((placements[ident][0] - left) / cell))
+              for ident in placed}
+    rows = max(origin[ident][0] + chunks[ident].grid.shape[0] for ident in placed)
+    cols = max(origin[ident][1] + chunks[ident].grid.shape[1] for ident in placed)
+    passable = np.zeros((rows, cols), bool)
+    owner = np.full((rows, cols), -1, np.int32)
+    for number, ident in enumerate(placed):
+        (r0, c0), grid = origin[ident], chunks[ident].grid
+        passable[r0:r0 + grid.shape[0], c0:c0 + grid.shape[1]] = grid
+        owner[r0:r0 + grid.shape[0], c0:c0 + grid.shape[1]] = number
+    if not passable.any():
         return {"status": "fail", "problems": ["no chunk has a walkable cell"]}
-    union = _UnionFind(total + 1)
+    moves = forge_nav.moves_from_mask(passable)
+    across_h, across_v = owner[:, :-1] != owner[:, 1:], owner[:-1, :] != owner[1:, :]
+    moves[:, :-1][across_h] &= ~np.uint8(forge_nav.MOVE_E)
+    moves[:, 1:][across_h] &= ~np.uint8(forge_nav.MOVE_W)
+    moves[:-1, :][across_v] &= ~np.uint8(forge_nav.MOVE_S)
+    moves[1:, :][across_v] &= ~np.uint8(forge_nav.MOVE_N)
     doors = []
     for first, second in pairs:
         if first.status != "paired" or second.status != "paired":
             continue
         rows_a, cols_a = _socket_cells(first, chunks[first.chunk])
         rows_b, cols_b = _socket_cells(second, chunks[second.chunk])
-        label_a = labels[first.chunk][rows_a, cols_a]
-        label_b = labels[second.chunk][rows_b, cols_b]
-        count = min(len(label_a), len(label_b))
-        open_cells = (label_a[:count] > 0) & (label_b[:count] > 0)
-        for a, b in zip(label_a[:count][open_cells], label_b[:count][open_cells]):
-            union.union(offsets[first.chunk] + int(a), offsets[second.chunk] + int(b))
-        if not open_cells.any():
+        count = min(len(rows_a), len(rows_b))
+        ra, ca = rows_a[:count] + origin[first.chunk][0], cols_a[:count] + origin[first.chunk][1]
+        rb, cb = rows_b[:count] + origin[second.chunk][0], cols_b[:count] + origin[second.chunk][1]
+        for step_r, step_c, out, back in ((0, 1, forge_nav.MOVE_E, forge_nav.MOVE_W),
+                                          (0, -1, forge_nav.MOVE_W, forge_nav.MOVE_E),
+                                          (1, 0, forge_nav.MOVE_S, forge_nav.MOVE_N),
+                                          (-1, 0, forge_nav.MOVE_N, forge_nav.MOVE_S)):
+            through = (rb - ra == step_r) & (cb - ca == step_c)  # the two door cells face each other
+            moves[ra[through], ca[through]] |= np.uint8(out)
+            moves[rb[through], cb[through]] |= np.uint8(back)
+        open_a, open_b = passable[ra, ca], passable[rb, cb]
+        if not (open_a & open_b).any():
             problems.append(f"door {first.key} <-> {second.key} opens into a wall on "
-                            f"{'both sides' if not (label_a > 0).any() and not (label_b > 0).any() else 'one side'}")
-        doors.append((first, second, label_a, label_b))
+                            f"{'both sides' if not open_a.any() and not open_b.any() else 'one side'}")
+        doors.append((first, second, ra, ca))
     start_chunk, point = start
     grid = chunks[start_chunk].grid
     if point is not None:
@@ -571,37 +571,32 @@ def _local_grid_reachability(placed: list[str], chunks: dict[str, Chunk], placem
         if not (0 <= row < grid.shape[0] and 0 <= col < grid.shape[1]) or not grid[row, col]:
             return {"status": "fail", "problems": [f"start point {point} in chunk {start_chunk} is not on a "
                                                    f"walkable cell"]}
-        start_label = int(labels[start_chunk][row, col])
-    else:
-        sizes = np.bincount(labels[start_chunk].ravel())
+    else:  # the largest 4-connected walkable area of the start chunk
+        labels, _ = forge_core.label_components(grid, connectivity=4)
+        sizes = np.bincount(labels.ravel())
         sizes[0] = 0
         if not sizes.any():
             return {"status": "fail", "problems": [f"start chunk {start_chunk} has no walkable cell"]}
-        start_label = int(np.argmax(sizes))
-    root = union.find(offsets[start_chunk] + start_label)
-    roots = np.array([union.find(item) for item in range(total + 1)])
-    per_chunk = {}
+        row, col = (int(v) for v in np.argwhere(labels == int(np.argmax(sizes)))[0])
+    reached = forge_nav.grid_bfs(passable, [(origin[start_chunk][0] + row, origin[start_chunk][1] + col)], moves) >= 0
+    per_chunk, masks = {}, {}
     for ident in placed:
-        label = labels[ident]
-        reached_mask = (label > 0) & (roots[offsets[ident] + label] == root)
-        walkable = int((label > 0).sum())
-        reached = int(reached_mask.sum())
-        per_chunk[ident] = {"walkable_cells": walkable, "reached_cells": reached}
-        if reached == 0:
+        (r0, c0), walkable_mask = origin[ident], chunks[ident].grid
+        mask = reached[r0:r0 + walkable_mask.shape[0], c0:c0 + walkable_mask.shape[1]] & walkable_mask
+        walkable, count = int(walkable_mask.sum()), int(mask.sum())
+        per_chunk[ident], masks[ident] = {"walkable_cells": walkable, "reached_cells": count}, mask
+        if count == 0:
             problems.append(f"chunk {ident} cannot be reached on foot from {start_chunk}")
-        elif reached < walkable:
-            warnings.append(f"chunk {ident}: {walkable - reached} walkable cells cannot be reached (islands)")
-    for first, second, label_a, label_b in doors:
-        hit = (label_a > 0) & (roots[offsets[first.chunk] + label_a] == root)
-        if not hit.any() and not any(p.startswith(f"door {first.key}") for p in problems):
+        elif count < walkable:
+            warnings.append(f"chunk {ident}: {walkable - count} walkable cells cannot be reached (islands)")
+    for first, second, ra, ca in doors:
+        if not reached[ra, ca].any() and not any(p.startswith(f"door {first.key}") for p in problems):
             problems.append(f"door {first.key} <-> {second.key} cannot be reached on foot")
     warnings += _open_edges_without_sockets(placed, chunks, placements)
     return {"status": "fail" if problems else ("warn" if warnings else "pass"), "cell": cell,
             "start": {"chunk": start_chunk, "component_cells": int(sum(item["reached_cells"]
                                                                         for item in per_chunk.values()))},
-            "chunks": per_chunk, "problems": problems, "warnings": warnings,
-            "_reached": {ident: (labels[ident] > 0) & (roots[offsets[ident] + labels[ident]] == root)
-                         for ident in placed}}
+            "chunks": per_chunk, "problems": problems, "warnings": warnings, "_reached": masks}
 
 
 def _open_edges_without_sockets(placed: list[str], chunks: dict[str, Chunk],
@@ -745,7 +740,7 @@ def validate(document: Any, start_override: str | None = None) -> dict[str, Any]
                          {"start": start[0], "reached": sorted(reached), "unreached": unreached}))
     grid = None
     if placed and all(chunks[ident].grid is not None for ident in placed) and start[0] in placements:
-        grid = _local_grid_reachability(placed, chunks, placements, pairs, start)
+        grid = grid_reachability(placed, chunks, placements, pairs, start)
         checks.append(_check("grid_reachability", grid["status"],
                              {"problems": grid["problems"], "warnings": grid.get("warnings", [])}))
     else:
@@ -872,20 +867,15 @@ def render_debug(report: dict[str, Any]) -> Image.Image:
 
 # --------------------------------------------------------------------------- CLI
 
-def _local_file_ref(path: Path, base_dir: Path) -> dict[str, Any]:
-    """Manifest-relative POSIX path, or only the file name when there is no relative route (another drive)."""
-    relative = forge_core.portable_path(path, base_dir)
-    if relative.startswith("/") or re.match(r"^[A-Za-z]:", relative):
-        relative = Path(path).name
-    return {"path": relative, "sha256": forge_core.sha256_file(path), "bytes": Path(path).stat().st_size}
-
-
 def _public(report: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in report.items() if not key.startswith("_")}
 
 
 def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
-    document = json.loads(Path(args.chunks).read_text(encoding="utf-8"))
+    try:
+        document = forge_core.read_json(args.chunks, strict=True)  # D28
+    except ValueError as error:
+        raise ValueError(f"{Path(args.chunks).name} is not valid JSON ({error}).") from None
     report = validate(document, args.start)
     failed = [check["id"] for check in report["checks"] if check["status"] == "fail"]
     summary: dict[str, Any] = {"status": report["status"], "mode": report["mode"],
@@ -901,15 +891,16 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         outputs = []
         if report["placements"]:
             forge_core.save_png(render_debug(report), stage / "chunk-debug.png")
-            outputs.append(_local_file_ref(stage / "chunk-debug.png", stage))
+            outputs.append(forge_core.file_ref(stage / "chunk-debug.png", stage))
         checks = report["checks"]
         document_out = {"schema": REPORT_SCHEMA, "tool": dict(TOOL), **_public(report),
                         "qa": {"status": report["status"],
                                "method": "validate_chunks: socket spans on placed chunk edges compared exactly "
                                          "(offset, width, material); chunk graph search through paired doors; "
-                                         "with walkability grids, 4-connected components joined through doors.",
+                                         "with walkability grids, forge_nav.grid_bfs on the stitched grid, crossing "
+                                         "between chunks only through paired door cells.",
                                "notProven": list(NOT_PROVEN), "checks": checks,
-                               "inputs": [_local_file_ref(Path(args.chunks), final)], "outputs": outputs,
+                               "inputs": [forge_core.file_ref(Path(args.chunks), final)], "outputs": outputs,
                                "tool": dict(TOOL)}}
         document_out.pop("checks")
         forge_core.write_json(stage / "chunk-report.json", document_out)
@@ -935,19 +926,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary, code = run(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary, code = run(args)
     if code:
         print("error: chunk validation failed: " + "; ".join(summary["problems"][:3] or summary["failed"]),
               file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return code
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Exit 0 (pass or warn), 1 (a failed check, its report published when --output-dir is given; or an error),
+    2 (usage) (D26, D27)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

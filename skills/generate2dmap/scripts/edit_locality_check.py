@@ -45,7 +45,7 @@ import validate_stage as vs  # noqa: E402  (the stage library beside this script
 
 
 QA_SCHEMA = "generate2dmap.edit_locality.v1"
-TOOL = {"name": "edit_locality_check", "version": "1.0"}
+TOOL = {"name": "edit_locality_check", "version": forge_core.FORGE_PACKAGE_VERSION}
 RESIZE_MODES = ("cover", "stretch")
 ASPECT_WARN = 0.01
 TOP_COMPONENTS = 8
@@ -101,8 +101,8 @@ def _uv_box(text: str) -> vs.Box:
 def read_conform(path: Path, before: tuple[int, int], after: tuple[int, int]) -> Transform:
     """Transform from a conform.json (generate2dmap.conform.v1) or a bare {scale, src_rect, out_size} object."""
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as error:
+        data = forge_core.read_json(path, strict=True)  # D28
+    except ValueError as error:
         raise ValueError(f"{path.name} is not valid JSON: {error}") from None
     block = data.get("transform", data) if isinstance(data, dict) else None
     if not isinstance(block, dict) or not {"scale", "src_rect", "out_size"} <= set(block):
@@ -283,7 +283,7 @@ def render_diff(variant: np.ndarray, peak: np.ndarray, changed: np.ndarray, thre
 def _eroded(mask: np.ndarray, radius: int) -> np.ndarray:
     """Chebyshev erosion: pixels whose whole (2r+1)^2 neighbourhood is in the mask. Pixels beyond the image
     count as inside, so a region running off the image gets no outline along the border."""
-    return ~vs._local_dilate(~mask, radius)
+    return ~forge_core.dilate_square(~mask, radius)
 
 
 # --------------------------------------------------------------------------- CLI
@@ -355,7 +355,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         edit = np.zeros((size[1], size[0]), bool)
         for box in args.edit_box:
             edit |= region_mask("box", box, before.size, space)
-        allowed = vs._local_dilate(edit, vs.round_half_up(args.edit_margin * size[0]))
+        allowed = forge_core.dilate_square(edit, vs.round_half_up(args.edit_margin * size[0]))
         outside = measure(~allowed, diff, changed, **kw)
         status = verdict(outside, args, min_component_px)
         checks.append(vs.check("outside the edit unchanged", status, outside, _thresholds(args, min_component_px)))
@@ -377,19 +377,19 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     image = render_diff(variant, peak, changed, threshold, outlines, header)
     with forge_core.staged_output(final) as stage_dir:
         forge_core.save_png(image, stage_dir / "locality-diff.png")
-        inputs = [vs._local_file_ref(args.before, final, before_info["sha256"]),
-                  vs._local_file_ref(args.after, final, after_info["sha256"])]
+        inputs = [forge_core.file_ref(args.before, final, sha256=before_info["sha256"]),
+                  forge_core.file_ref(args.after, final, sha256=after_info["sha256"])]
         if args.stage is not None:
-            inputs.append(vs._local_file_ref(args.stage, final))
+            inputs.append(forge_core.file_ref(args.stage, final))
         if args.conform is not None:
-            inputs.append(vs._local_file_ref(args.conform, final))
+            inputs.append(forge_core.file_ref(args.conform, final))
         method = (f"edit_locality_check: {space['name']}-space comparison at {size[0]}x{size[1]} "
                   f"({transform.kind} transform, Lanczos), {2 * blur + 1}x{2 * blur + 1} box blur, per-pixel peak "
                   f"channel difference > {threshold:g} counts as changed; per region: changed fraction, mean "
                   f"absolute difference and 8-connected change components.")
         report = {"schema": QA_SCHEMA,
                   **vs._local_qa_envelope(checks, method=method, not_proven=NOT_PROVEN, inputs=inputs,
-                                          outputs=[vs._local_file_ref(stage_dir / "locality-diff.png", stage_dir)],
+                                          outputs=[forge_core.file_ref(stage_dir / "locality-diff.png", stage_dir)],
                                           tool=TOOL),
                   "transform": transform.record(),
                   "comparison": {"space": space["name"], "size": list(size), "blur": blur,
@@ -447,18 +447,19 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = run(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary = run(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 1 if summary["status"] == "fail" else 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
+    printed as one error: line, D27), 2 (usage)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

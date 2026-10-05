@@ -2,6 +2,7 @@
 
 No engine is installed here, so every check is structural: the files are parsed back
 (independent regexes and struct decoding where it matters) and compared with the bundle.
+Collision is the forge_nav blocking set (D2, D33); prop art follows the D6 lookup order.
 """
 from __future__ import annotations
 
@@ -16,87 +17,20 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
+from forge_testutils import (assert_cli_help, assert_valid_contract, contract_errors, load_script, run_cli,
                              script_path)
 
 
 GODOT = load_script("generate2dmap", "export_godot")
+NAV = load_script("generate2dmap", "forge_nav")
 SCRIPT = script_path("generate2dmap", "export_godot")
 SKILL = "generate2dmap"
 T = 16
 
-# The $defs this module asks integration to add to map.schema.json (handoff section 5), applied in memory.
-_REL = {"$ref": "common.schema.json#/$defs/relPath"}
-_SHA = {"$ref": "common.schema.json#/$defs/sha256"}
-REQUESTED_MAP_DEFS = {
-    "engine_export_v1": {
-        "description": "export_godot.py and export_ldtk.py report: the engine files written from one map bundle, "
-                       "the copied assets, what the engine files do not carry, and the parse-back QA.",
-        "type": "object",
-        "required": ["schema", "tool", "engine", "bundle", "files", "assets", "notExported", "warnings", "qa"],
-        "properties": {
-            "schema": {"const": "generate2dmap.engine_export.v1"},
-            "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "engine": {"type": "object", "required": ["name", "target", "verified"],
-                       "properties": {"name": {"enum": ["godot", "ldtk"]},
-                                      "target": {"type": "string", "minLength": 1},
-                                      "format": {"type": ["integer", "string"]},
-                                      "verified": {"type": "string", "minLength": 1}}},
-            "bundle": {"$ref": "common.schema.json#/$defs/fileRef"},
-            "files": {"type": "object", "additionalProperties": {"anyOf": [_REL, {"type": "null"}]}},
-            "assets": {"type": "array", "items": {
-                "type": "object", "required": ["role", "id", "path", "sha256"],
-                "properties": {"role": {"enum": ["tileset", "layer", "prop"]},
-                               "id": {"type": "string", "minLength": 1}, "path": _REL, "sha256": _SHA,
-                               "source": _REL}}},
-            "tilesets": {"type": "array", "items": {"type": "object"}},
-            "layers": {"type": "array", "items": {"type": "object"}},
-            "counts": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
-            "level": {"type": "object"},
-            "notExported": {"type": "array", "items": {"type": "string"}},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-            "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-        },
-    },
-}
-
-
-# Additions to existing contracts that the exporters read (handoff section 5).
-REQUESTED_MAP_PATCHES = {
-    "/$defs/map_bundle_v2/properties/prop_packs": {
-        "description": "Prop pack manifests whose accepted labels give objects[].prop its image (after "
-                       "objects[].image, before occluder.source).",
-        "type": "array", "items": {"type": "object", "required": ["manifest"],
-                                   "properties": {"manifest": _REL, "sha256": _SHA}}},
-    "/$defs/mapObject/properties/image": dict(_REL, description="The prop's image (relative to the bundle)."),
-    "/$defs/mapObject/properties/image_sha256": _SHA,
-    "/$defs/tileset_v1/properties/blob_inside": {
-        "description": "blob47: the material that is the blob's inside (default: the last material).",
-        "type": "string", "minLength": 1},
-}
-
 
 def requested_contract_errors(document, name):
-    """Errors against the vendored generate2dmap schemas plus REQUESTED_MAP_DEFS and REQUESTED_MAP_PATCHES
-    (handoff section 5)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    for pointer, fragment in REQUESTED_MAP_PATCHES.items():  # JSON pointer into map.schema.json -> new value
-        *parents, leaf = pointer.lstrip("/").split("/")
-        node = map_schema
-        for part in parents:
-            node = node.setdefault(part, {})
-        node[leaf] = fragment
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def _sha(path):
@@ -157,6 +91,10 @@ def build_bundle(root, *, object_x=40.0, extra_objects=(), blob=False):
          "anchor_px": anchor} for label, anchor in (("tree", [12, 39]), ("rock", [7, 10]))]}
     (root / "props" / "prop-pack.json").write_text(json.dumps(pack), encoding="utf-8")
     Image.new("RGBA", (160, 96), (200, 220, 180, 255)).save(root / "base.png")
+    # material map: 16 px squares (N8); the top-left cell is deep water, every other pixel has no material
+    materials = np.zeros((6, 10, 4), np.uint8)
+    materials[0, 0] = (50, 100, 200, 255)
+    Image.fromarray(materials).save(root / "materials.png")
     objects = [
         {"id": "tree-1", "prop": "tree", "x": object_x, "y": 60, "anchor_px": [12, 39], "sortY": 60, "solid": True,
          "footprint": {"shape": "ellipse", "width": 8, "depth": 4}},
@@ -189,7 +127,7 @@ def build_bundle(root, *, object_x=40.0, extra_objects=(), blob=False):
         "anchors": {"well": {"point": [80, 40], "facing": "south", "slots": [[76, 44], [84, 44]],
                              "approach": [80, 46]}},
         "interactions": [{"id": "well", "x": 80, "y": 40, "reach": 10}, {"id": "sign", "x": 30, "y": 30}],
-        "material_map": {"image": "base.png", "materials": {"water": {"class": "liquid"}}},
+        "material_map": {"image": "materials.png", "materials": {"water": {"class": "liquid", "color": "#3264c8"}}},
         "art_source": "code",
     }
     path = root / "map-bundle.json"
@@ -257,6 +195,9 @@ class ExportGodotTests(unittest.TestCase):
         self.assertEqual(requested_contract_errors(dict(manifest, blob_inside="grass"), "tileset_v1"), [])
         bundle["prop_packs"] = [{"sha256": "0" * 64}]
         self.assertTrue(requested_contract_errors(bundle, "map_bundle_v2"))
+        bundle["prop_packs"] = []
+        bundle["objects"][0]["sortY"] = None
+        self.assertTrue(requested_contract_errors(bundle, "map_bundle_v2"), "sortY is a number")
 
     def test_tres_parses_and_peering_bits(self):
         summary = self.run_export()
@@ -336,7 +277,12 @@ class ExportGodotTests(unittest.TestCase):
         collision = [s for (parent, _), s in nodes.items() if parent == "collision"]
         self.assertEqual([s.fields["type"] for s in collision],
                          ["CollisionShape2D", "CollisionPolygon2D", "CollisionShape2D", "CollisionPolygon2D",
-                          "CollisionShape2D"])
+                          "CollisionShape2D", "CollisionPolygon2D"])
+        footprint = nodes[("collision", "footprint_tree-1")]  # D33: tree-1 is solid with an 8 x 4 ellipse footprint
+        self.assertEqual(footprint.properties["metadata/object"], "tree-1")
+        points = np.array(footprint.properties["polygon"].args, float).reshape(-1, 2)
+        self.assertEqual(len(points), GODOT.ELLIPSE_SEGMENTS)
+        np.testing.assert_allclose((points[:, 0] - 40) ** 2 / 16 + (points[:, 1] - 60) ** 2 / 4, 1, atol=1e-5)
         rect = nodes[("collision", "solid_0")]
         self.assertEqual(rect.properties["position"].args, (40, 60))
         self.assertEqual(subs[rect.properties["shape"].args[0]].properties["size"].args, (8, 4))
@@ -409,6 +355,151 @@ class ExportGodotTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 1)
                 self.assertTrue(result.stderr.startswith("error: "), result.stderr)
                 self.assertFalse((self.root / f"out-{name}").exists())
+
+    def scene_nodes(self, out=None):
+        sections = GODOT.parse_godot_text(((out or self.out) / "town.tscn").read_text(encoding="utf-8"))
+        nodes = {(s.fields.get("parent"), s.fields["name"]): s for s in sections if s.tag == "node"}
+        subs = {s.fields["id"]: s for s in sections if s.tag == "sub_resource"}
+        return nodes, subs
+
+    def test_solid_footprints_become_collision_shapes(self):
+        """D33: every solid footprint is a CollisionShape2D or CollisionPolygon2D under the collision body, scaled once
+        by the instance scale (basis world_px is not), with offset, rotation and flip_x applied, exactly the shape
+        forge_nav blocks; the parse-back QA covers them."""
+        root = self.root / "feet"
+        extra = [
+            {"id": "pot", "prop": "rock", "x": 30, "y": 70, "anchor_px": [7, 10],
+             "footprint": {"shape": "ellipse", "width": 6, "depth": 6}},
+            {"id": "crate", "prop": "rock", "x": 60, "y": 80, "anchor_px": [7, 10], "scale": 2,
+             "footprint": {"shape": "rect", "width": 6, "depth": 4, "offset": [1, -2]}},
+            {"id": "log", "prop": "rock", "x": 90, "y": 30, "anchor_px": [7, 10],
+             "footprint": {"shape": "rect", "width": 10, "depth": 3, "rotate": 30}},
+            {"id": "slab", "prop": "rock", "x": 110, "y": 30, "anchor_px": [7, 10], "scale": 3,
+             "footprint": {"shape": "rect", "width": 8, "depth": 2, "basis": "world_px"}},
+            {"id": "mirror", "prop": "rock", "x": 140, "y": 30, "anchor_px": [7, 10], "flip_x": True,
+             "footprint": {"shape": "rect", "width": 4, "depth": 2, "offset": [5, 0]}},
+            {"id": "ghost", "prop": "rock", "x": 60, "y": 20, "anchor_px": [7, 10], "solid": False,
+             "footprint": {"shape": "ellipse", "width": 6, "depth": 6}},
+        ]
+        bundle, _ = build_bundle(root, extra_objects=extra)
+        self.run_export(bundle=bundle, out=self.root / "feet-godot")
+        nodes, subs = self.scene_nodes(self.root / "feet-godot")
+        footprints = {name.removeprefix("footprint_"): node for (parent, name), node in nodes.items()
+                      if parent == "collision" and name.startswith("footprint_")}
+        expected = {solid["source"].split(":", 1)[1]: solid for solid in NAV.read_blocking_set(bundle).footprints}
+        self.assertEqual(sorted(footprints), sorted(expected))
+        self.assertNotIn("ghost", footprints, "solid: false blocks nothing")
+        circle = footprints["pot"]
+        self.assertEqual(circle.properties["position"].args, (30, 70))
+        self.assertEqual(subs[circle.properties["shape"].args[0]].properties["radius"], 3.0)
+        crate = footprints["crate"]  # scaled once: 12 x 8 at (60 + 2, 80 - 4)
+        self.assertEqual(crate.properties["position"].args, (62, 76))
+        self.assertEqual(subs[crate.properties["shape"].args[0]].properties["size"].args, (12, 8))
+        slab = footprints["slab"]  # world_px is not scaled
+        self.assertEqual(subs[slab.properties["shape"].args[0]].properties["size"].args, (8, 2))
+        mirror = footprints["mirror"]  # flip_x mirrors the offset around the anchor x
+        self.assertEqual(mirror.properties["position"].args, (135, 30))
+        log = np.array(footprints["log"].properties["polygon"].args, float).reshape(-1, 2)
+        np.testing.assert_allclose(log, expected["log"]["points"], atol=1e-5)
+        report = json.loads((self.root / "feet-godot" / "godot-export.json").read_text(encoding="utf-8"))
+        checks = {check["id"]: check for check in report["qa"]["checks"]}
+        self.assertEqual(checks["collision_shapes_roundtrip"]["status"], "pass")
+        self.assertEqual(checks["collision_shapes_roundtrip"]["threshold"]["shapes"], 5 + len(expected), "4 solids, 1 rect")
+        self.assertEqual(report["counts"]["footprints"], len(expected))
+
+    def test_collision_qa_catches_a_shape_that_does_not_round_trip(self):
+        self.run_export()
+        report = json.loads((self.out / "godot-export.json").read_text(encoding="utf-8"))
+        assets = {item["sha256"]: item["path"] for item in report["assets"]}
+        bundle = GODOT._local_read_bundle(self.bundle)
+        terrain = bundle.tilesets["terrain"]
+        plans = {"terrain": GODOT.TilesetPlan(0, terrain, assets[terrain.image_sha256], 0, "match_corners", None)}
+        text, layout = GODOT.build_scene(bundle, "town", plans, "town.tileset.tres", assets, "inherit")
+        self.assertEqual(text, (self.out / "town.tscn").read_text(encoding="utf-8"), "the same scene as the export")
+        self.assertEqual({c["id"]: c["status"] for c in GODOT.qa_scene(text, layout, self.out)}
+                         ["collision_shapes_roundtrip"], "pass")
+        broken = text.replace("size = Vector2(8, 4)", "size = Vector2(8, 5)", 1)
+        self.assertNotEqual(broken, text)
+        checks = {check["id"]: check for check in GODOT.qa_scene(broken, layout, self.out)}
+        self.assertEqual(checks["collision_shapes_roundtrip"]["status"], "fail")
+        self.assertIn("rectangle size differs", " ".join(checks["collision_shapes_roundtrip"]["value"]))
+
+    def test_props_registry_art_and_flip_x(self):
+        """D6: a layout_build-style bundle (props{label} with an inline image, objects with flip_x and no prop_packs)
+        exports; a flipped prop is a Sprite2D with flip_h whose mirrored anchor still lands on (x, y)."""
+        data = json.loads(self.bundle.read_text(encoding="utf-8"))
+        data.pop("prop_packs")
+        data["props"] = {"tree": {"label": "tree", "image": "props/tree/prop.png", "anchor_px": [12, 39],
+                                  "sha256": _sha(self.root / "map" / "props" / "tree" / "prop.png"),
+                                  "footprint": {"shape": "ellipse", "width": 6, "depth": 3, "offset": [2, 0]}},
+                         "rock": {"pack": "props/prop-pack.json", "label": "rock"}}
+        data["objects"][1]["flip_x"] = True
+        path = self.root / "map" / "registry.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        assert_valid_contract(data, "map", "map_bundle_v2", skill=SKILL)
+        summary = self.run_export(bundle=path, out=self.root / "registry-godot")
+        self.assertEqual(summary["status"], "pass")
+        nodes, _ = self.scene_nodes(self.root / "registry-godot")
+        tree = nodes[("objects", "tree-2")]
+        self.assertIs(tree.properties["flip_h"], True)
+        self.assertNotIn("flip_h", nodes[("objects", "tree-1")].properties)
+        position, offset = tree.properties["position"].args, tree.properties["offset"].args
+        self.assertEqual(offset[0], 12 - 24, "flip_h mirrors the texture in place: offset.x = anchor_x - width")
+        scale = tree.properties["scale"].args[0]
+        self.assertAlmostEqual(position[0] + scale * (offset[0] + 24 - 12), 100, places=6, msg="the anchor lands on x")
+        report = json.loads((self.root / "registry-godot" / "godot-export.json").read_text(encoding="utf-8"))
+        self.assertEqual({check["id"]: check["status"] for check in report["qa"]["checks"]}["prop_anchors_roundtrip"],
+                         "pass")
+        footprints = {name for (parent, name) in nodes if parent == "collision" and name.startswith("footprint_")}
+        self.assertEqual(footprints, {"footprint_tree-1", "footprint_tree-2"}, "tree-2 takes the registry footprint")
+
+    def test_sort_y_must_be_a_number(self):
+        """The Wave B review's traceback: a schema-invalid sortY: null is a clean error (exit 1, nothing written)."""
+        data = json.loads(self.bundle.read_text(encoding="utf-8"))
+        data["objects"][0]["sortY"] = None
+        path = self.root / "map" / "null-sort.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        result = export(path, self.root / "null-sort")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "error: object tree-1 sortY must be a finite number.")
+        self.assertFalse((self.root / "null-sort").exists())
+
+    def test_walkable_false_tiles_without_shapes_block_their_cell(self):
+        """N7: a tile with no collision shapes whose properties.walkable is false gets a whole-cell physics polygon."""
+        manifest_path = self.root / "map" / "tiles" / "terrain.tileset.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["tiles"][15]["properties"]["walkable"] = False
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        data = json.loads(self.bundle.read_text(encoding="utf-8"))
+        data["tilesets"][0]["sha256"] = _sha(manifest_path)
+        self.bundle.write_text(json.dumps(data), encoding="utf-8")
+        self.run_export()
+        tiles = tres_tiles((self.out / "town.tileset.tres").read_text(encoding="utf-8"))
+        self.assertEqual(tiles[(3, 3)]["polygons"], {0: [-8, -8, 8, -8, 8, 8, -8, 8]})
+
+    def test_blocking_material_classes_are_listed_as_not_exported(self):
+        """D2: a class the exporter cannot represent is listed in notExported, never dropped silently."""
+        self.run_export()
+        report = json.loads((self.out / "godot-export.json").read_text(encoding="utf-8"))
+        notes = [note for note in report["notExported"] if note.startswith("material_map blocking classes")]
+        self.assertEqual(len(notes), 1)
+        self.assertIn("liquid", notes[0])
+
+    def test_bundles_forge_nav_refuses_are_refused(self):
+        data = json.loads(self.bundle.read_text(encoding="utf-8"))
+        data["material_map"]["materials"]["water"].pop("color")
+        path = self.root / "map" / "no-colour.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        result = export(path, self.root / "no-colour")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("error: collision (forge_nav): material_map.materials: every material needs a color", result.stderr)
+        self.assertFalse((self.root / "no-colour").exists())
+
+    def test_usage_errors_exit_2(self):
+        result = export(self.bundle, self.out, "--texture-filter", "blurry")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("usage:", result.stderr)
+        self.assertFalse(self.out.exists())
 
     def test_help_works_under_cp1252_and_cp950(self):
         assert_cli_help(SKILL, "export_godot")  # cp1252 and cp950

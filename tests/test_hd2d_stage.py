@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from forge_testutils import (FIXTURES_DIR, SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, run_cli,
-                             script_path)
+from forge_testutils import (FIXTURES_DIR, SKILLS_DIR, assert_cli_help, assert_valid_contract, contract_errors,
+                             load_script, run_cli, script_path)
 
 SKILL = "generate2dmap"
 STAGE = load_script(SKILL, "validate_stage")
@@ -20,130 +20,10 @@ GUIDE = load_script(SKILL, "scene_layout_guide")
 STAGE_SCRIPT = script_path(SKILL, "validate_stage")
 GUIDE_SCRIPT = script_path(SKILL, "scene_layout_guide")
 
-# The schema additions this module asks integration to make (handoff section 5), applied in memory.
-_SIZE = {"$ref": "common.schema.json#/$defs/size2"}
-_POINT = {"$ref": "common.schema.json#/$defs/point2"}
-_BOX = {"$ref": "common.schema.json#/$defs/box"}
-_PERCENT = {"type": "integer", "minimum": 0, "maximum": 100}
-_PERCENT_PAIR = {"type": "array", "items": _PERCENT, "minItems": 2, "maxItems": 2}
-_PERCENT_BOX = {"type": "array", "items": _PERCENT, "minItems": 4, "maxItems": 4}
-REQUESTED_MAP_DEFS = {
-    "stageLayout": {
-        "description": "One solved battle layout of validate_stage.py: the plate projected onto a reference viewport "
-                       "(fit, scale, offset), the reserved UI panels and each actor's slot, chosen foot (viewport "
-                       "pixels and plate UV), box [x0, y0, x1, y1) in viewport pixels, scale-ladder factor (null when "
-                       "unplaced) and the foot-y draw order.",
-        "type": "object",
-        "required": ["aspect", "ratio", "formation", "render", "viewport", "scale", "actors", "drawOrder"],
-        "properties": {
-            "aspect": {"type": "string", "minLength": 1},
-            "ratio": {"type": "number", "exclusiveMinimum": 0},
-            "formation": {"enum": ["party-vs-enemies", "party-vs-boss"]},
-            "render": {"$ref": "common.schema.json#/$defs/relPath"},
-            "viewport": _SIZE,
-            "fit": {"enum": ["cover", "contain"]},
-            "scale": {"type": "number", "exclusiveMinimum": 0},
-            "offset": _POINT,
-            "visibleUv": {"$ref": "#/$defs/uvBox"},
-            "ui": {"type": "array", "items": {"type": "object", "required": ["id", "box"],
-                                              "properties": {"id": {"type": "string", "minLength": 1}, "box": _BOX}}},
-            "actors": {"type": "array", "items": {
-                "type": "object",
-                "required": ["id", "role", "slot", "foot", "footUv", "box", "sizePx", "scale", "placed", "grounded"],
-                "properties": {
-                    "id": {"type": "string", "minLength": 1}, "role": {"enum": ["hero", "enemy", "boss"]},
-                    "slot": {"$ref": "#/$defs/uvPoint"}, "desired": _POINT, "foot": _POINT, "footUv": _POINT,
-                    "box": _BOX, "sizePx": {"type": "number", "exclusiveMinimum": 0},
-                    "scale": {"type": ["number", "null"], "exclusiveMinimum": 0, "maximum": 1},
-                    "placed": {"type": "boolean"}, "grounded": {"type": "boolean"},
-                    "movedPx": {"type": "number", "minimum": 0}}}},
-            "drawOrder": {"type": "array", "items": {"type": "string", "minLength": 1}},
-            "overlaps": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2,
-                                                    "maxItems": 2}},
-            "errors": {"type": "array", "items": {"type": "string"}},
-        },
-    },
-    "stage_qa_v1": {
-        "description": "validate_stage.py report (stage-qa.json): a QA envelope over a stage.v1 file plus the stage "
-                       "summary, the solver settings and every solved layout.",
-        "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-        "type": "object",
-        "required": ["schema", "stage", "settings", "layouts"],
-        "properties": {
-            "schema": {"const": "generate2dmap.stage_qa.v1"},
-            "stage": {"type": "object", "required": ["sourceSize", "fit", "reviewedAspectRange"],
-                      "properties": {"sourceSize": _SIZE, "fit": {"enum": ["cover", "contain"]},
-                                     "reviewedAspectRange": {"type": "array", "items": {"type": "number"},
-                                                             "minItems": 2, "maxItems": 2},
-                                     "objectPosition": {"$ref": "#/$defs/uvPoint"},
-                                     "slots": {"type": "integer", "minimum": 0}}},
-            "settings": {"type": "object"},
-            "layouts": {"type": "array", "items": {"$ref": "#/$defs/stageLayout"}},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-        },
-    },
-    "scene_guide_v1": {
-        "description": "scene_layout_guide.py metadata (guide.json): the files written, the plan restated in whole "
-                       "percent of the canvas (x from the left, y from the top), the forbidden-in-walk list, "
-                       "bakedContent and a QA envelope of the plan's own consistency.",
-        "type": "object",
-        "required": ["schema", "stage", "canvas", "guide", "promptBlock", "percent", "forbiddenInWalk",
-                     "bakedContent", "qa"],
-        "properties": {
-            "schema": {"const": "generate2dmap.scene_guide.v1"},
-            "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
-            "stage": {"$ref": "common.schema.json#/$defs/fileRef"},
-            "canvas": _SIZE,
-            "guide": {"$ref": "common.schema.json#/$defs/fileRef"},
-            "promptBlock": {"$ref": "common.schema.json#/$defs/fileRef"},
-            "percent": {"type": "object", "required": ["ground", "slots"], "properties": {
-                "ground": {"type": "object", "required": ["box", "polygons"], "properties": {
-                    "box": _PERCENT_BOX,
-                    "polygons": {"type": "array", "items": {"type": "array", "items": _PERCENT_PAIR, "minItems": 3}}}},
-                "band": {"anyOf": [{"type": "null"}, {"type": "object", "required": ["y"], "properties": {
-                    "y": _PERCENT_PAIR, "x": {"anyOf": [{"type": "null"}, _PERCENT_PAIR]}}}]},
-                "alwaysVisible": _PERCENT_BOX,
-                "slots": {"type": "array", "items": {"type": "object", "required": ["id", "role", "x", "y"],
-                                                     "properties": {"id": {"type": "string", "minLength": 1},
-                                                                    "role": {"enum": ["hero", "enemy", "boss"]},
-                                                                    "x": _PERCENT, "y": _PERCENT}}},
-                "approach": {"type": "array", "items": {"type": "object", "required": ["x", "y"],
-                                                        "properties": {"x": _PERCENT, "y": _PERCENT}}},
-                "landmarks": {"type": "array", "items": {"type": "object", "required": ["id", "box"],
-                                                         "properties": {"id": {"type": "string"},
-                                                                        "box": _PERCENT_BOX}}},
-                "surfaces": {"type": "array", "items": {"type": "object", "required": ["id", "kind", "box"],
-                                                        "properties": {"id": {"type": "string"},
-                                                                       "kind": {"enum": ["ripple", "shimmer", "sway",
-                                                                                         "glow"]},
-                                                                       "box": _PERCENT_BOX}}}}},
-            "forbiddenInWalk": {"type": "array", "items": {"type": "string", "minLength": 1}},
-            "bakedContent": {"type": "object"},
-            "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
-            "warnings": {"type": "array", "items": {"type": "string"}},
-        },
-    },
-}
-# Optional properties added to the existing stage_v1 (handoff section 5).
-REQUESTED_STAGE_PROPERTIES = {"objectPosition": {"$ref": "#/$defs/uvPoint"}}
-
 
 def requested_errors(document, name):
-    """Errors against the vendored generate2dmap schemas with the requested additions applied."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    for key, fragment in REQUESTED_MAP_DEFS.items():
-        map_schema["$defs"].setdefault(key, fragment)
-    for key, fragment in REQUESTED_STAGE_PROPERTIES.items():
-        map_schema["$defs"]["stage_v1"]["properties"].setdefault(key, fragment)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 # --------------------------------------------------------------------------- fixtures

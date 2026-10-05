@@ -8,8 +8,9 @@ Writes into a new --output-dir:
                            each tileset's per-tile wang / blob / collision / walkable
                            data rides in the tileset's customData as JSON),
                          - an Entities layer of props (one entity definition per prop
-                           image and anchor; the pivot is the prop's anchor, so an
-                           entity's px is the bundle's (x, y)),
+                           image, anchor and flip_x; the pivot is the prop's anchor,
+                           so an entity's px is the bundle's (x, y); a flip_x prop
+                           uses a mirrored atlas copy with the mirrored pivot),
                          - a Markers Entities layer: Spawn, Portal, Interaction, Anchor,
                          - the bottom image layer as the level background.
   assets/...           byte-identical tileset and background copies, plus
@@ -22,6 +23,12 @@ checked, and tiles and entity positions are read back and compared with the
 bundle. LDtk positions are whole pixels: fractional bundle positions are rounded
 half up and reported (--strict-qc refuses them). Verified at parse level only:
 the LDtk editor is not run by this tool.
+
+Prop images are found in the D6 order: objects[].image, the bundle's
+props[prop], prop packs by label (the bundle's prop_packs, then --prop-pack),
+occluder.source. LDtk gets no collision: walk regions, solids, rects, solid
+footprints and blocking material classes are listed in notExported (D2); the
+per-tile collision rides in tileset customData only.
 """
 
 from __future__ import annotations
@@ -44,12 +51,12 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 import forge_core  # noqa: E402  (this skill's vendored copy)
-from export_godot import (BundleInfo, ImageInfo, _local_file_ref, _local_not_exported,  # noqa: E402
-                          _local_read_bundle, _local_safe_name, _local_world_warnings)
+from export_godot import (BundleInfo, ImageInfo, _local_not_exported, _local_read_bundle,  # noqa: E402
+                          _local_safe_name, _local_world_warnings)
 
 
 REPORT_SCHEMA = "generate2dmap.engine_export.v1"
-TOOL = {"name": "export_ldtk", "version": "1.0"}
+TOOL = {"name": "export_ldtk", "version": forge_core.FORGE_PACKAGE_VERSION}
 LDTK_VERSION = "1.5.3"
 IID_NAMESPACE = uuid.UUID("6f1c2a52-9a43-4f7e-8d0e-6b2f3f7f0b14")
 DEFAULT_GRID = 16
@@ -59,8 +66,8 @@ NOT_PROVEN = [
     "and read back by this tool; the LDtk editor was not run.",
     "Terrain is exported as placed tiles, not as IntGrid plus auto-layer rules; re-painting terrain in LDtk needs "
     "rules made there.",
-    "Collision shapes, walk regions, the material map and the nav grid stay in the map bundle; per-tile collision "
-    "rides in tileset customData only.",
+    "Collision shapes, walk regions, solid object footprints, the material map and the nav grid stay in the map "
+    "bundle; per-tile collision rides in tileset customData only.",
 ]
 
 # LDtk 1.5.3 JSON (https://ldtk.io/json, schema https://ldtk.io/files/JSON_SCHEMA.json): the fields this
@@ -414,8 +421,15 @@ def _layer_instance(definition: dict[str, Any], level: dict[str, Any], *, tiles:
     }
 
 
-def pack_props(images: list[tuple[str, ImageInfo]], grid: int) -> tuple[np.ndarray, dict[str, tuple[int, int]]]:
-    """Shelf-pack distinct prop images on the tile grid; returns the atlas and sha256 -> top-left."""
+def _prop_pixels(info: ImageInfo, flip: bool) -> np.ndarray:
+    """A prop image's RGBA pixels, mirrored left-right for a flip_x prop (D6)."""
+    pixels = np.asarray(forge_core.load_rgba(info.path)[0])
+    return pixels[:, ::-1] if flip else pixels
+
+
+def pack_props(images: list[tuple[tuple[str, bool], ImageInfo]],
+               grid: int) -> tuple[np.ndarray, dict[tuple[str, bool], tuple[int, int]]]:
+    """Shelf-pack distinct prop images (sha256, flip) on the tile grid; returns the atlas and key -> top-left."""
     aligned = [(sha, info, math.ceil(info.size[0] / grid) * grid, math.ceil(info.size[1] / grid) * grid)
                for sha, info in images]
     area = sum(w * h for _, _, w, h in aligned)
@@ -427,14 +441,19 @@ def pack_props(images: list[tuple[str, ImageInfo]], grid: int) -> tuple[np.ndarr
         positions[sha] = (x, y)
         x, row = x + w, max(row, h)
     atlas = np.zeros((y + row, width, 4), np.uint8)
-    for sha, info, _, _ in aligned:
-        image, _ = forge_core.load_rgba(info.path)
-        px, py = positions[sha]
-        atlas[py:py + info.size[1], px:px + info.size[0]] = np.asarray(image)
+    for key, info, _, _ in aligned:
+        px, py = positions[key]
+        atlas[py:py + info.size[1], px:px + info.size[0]] = _prop_pixels(info, key[1])
     return atlas, positions
 
 
 # --------------------------------------------------------------------------- export
+
+def _prop_key(item: dict[str, Any]) -> tuple[str, str, float, float, bool]:
+    """One entity definition per (prop, image, anchor, flip_x)."""
+    return (str(item.get("prop") or item["id"]), item["_image"].sha256, float(item["anchor_px"][0]),
+            float(item["anchor_px"][1]), item.get("flip_x") is True)
+
 
 def build_project(bundle: BundleInfo, name: str, stage: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """The LDtk project dict plus what QA needs to read it back."""
@@ -452,7 +471,7 @@ def build_project(bundle: BundleInfo, name: str, stage: Path) -> tuple[dict[str,
         (stage / relative).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(info.path, stage / relative)
         assets.append({"role": role, "id": ident, "path": relative, "sha256": info.sha256,
-                       "source": _local_file_ref(info.path, bundle.path.parent, info.sha256)["path"]})
+                       "source": forge_core.file_ref(info.path, bundle.path.parent, sha256=info.sha256)["path"]})
         return relative
 
     tileset_defs: dict[str, dict[str, Any]] = {}
@@ -477,9 +496,9 @@ def build_project(bundle: BundleInfo, name: str, stage: Path) -> tuple[dict[str,
                            "data": json.dumps({"index": index, **tile}, sort_keys=True, separators=(",", ":"))})
         tileset_defs[tileset.id] = _tileset_def(uids, ldtk_identifier(tileset.id, names["tilesets"], "Tileset"),
                                                 relative, tileset.image_size, grid, custom)
-    distinct: dict[str, ImageInfo] = {}
+    distinct: dict[tuple[str, bool], ImageInfo] = {}
     for item in bundle.objects:
-        distinct.setdefault(item["_image"].sha256, item["_image"])
+        distinct.setdefault((item["_image"].sha256, item.get("flip_x") is True), item["_image"])
     props_tileset = None
     atlas_positions: dict[str, tuple[int, int]] = {}
     if distinct:
@@ -515,20 +534,21 @@ def build_project(bundle: BundleInfo, name: str, stage: Path) -> tuple[dict[str,
                               fields=[("BundleId", "str"), ("Facing", "str"), ("Slots", "str"), ("Approach", "str")]),
     }
     entity_defs += marker_defs.values()
-    prop_defs: dict[tuple[str, str, float, float], dict[str, Any]] = {}
+    prop_defs: dict[tuple[str, str, float, float, bool], dict[str, Any]] = {}
     for item in bundle.objects:
-        info = item["_image"]
-        key = (str(item.get("prop") or item["id"]), info.sha256, float(item["anchor_px"][0]),
-               float(item["anchor_px"][1]))
+        key = _prop_key(item)
         if key in prop_defs:
             continue
-        ax, ay = atlas_positions[info.sha256]
+        info, flip = item["_image"], key[4]
+        ax, ay = atlas_positions[(info.sha256, flip)]
         rect = {"tilesetUid": props_tileset["uid"], "x": ax, "y": ay, "w": info.size[0], "h": info.size[1]}
+        anchor_x = info.size[0] - key[2] if flip else key[2]  # the mirrored copy's anchor column (D6)
         prop_defs[key] = _entity_def(
-            uids, ldtk_identifier(f"Prop_{key[0]}", names["entities"], "Prop"), width=info.size[0],
-            height=info.size[1], pivot=(key[2] / info.size[0], key[3] / info.size[1]), color=_color(key[0]),
+            uids, ldtk_identifier(f"Prop_{key[0]}" + ("_flip_x" if flip else ""), names["entities"], "Prop"),
+            width=info.size[0], height=info.size[1], pivot=(anchor_x / info.size[0], key[3] / info.size[1]),
+            color=_color(key[0]),
             fields=[("BundleId", "str"), ("Prop", "str"), ("Scale", "float"), ("SortY", "float"), ("Solid", "bool"),
-                    ("Occlusion", "str"), ("Footprint", "str")], tile=rect, resizable=True)
+                    ("Occlusion", "str"), ("Footprint", "str"), ("FlipX", "bool")], tile=rect, resizable=True)
     entity_defs += prop_defs.values()
 
     level = {"identifier": ldtk_identifier(name, names["levels"], "Level"), "iid": _iid("level", bundle.sha256, name),
@@ -602,8 +622,7 @@ def build_project(bundle: BundleInfo, name: str, stage: Path) -> tuple[dict[str,
         instances = []
         for item in bundle.objects:
             info = item["_image"]
-            definition = prop_defs[(str(item.get("prop") or item["id"]), info.sha256, float(item["anchor_px"][0]),
-                                    float(item["anchor_px"][1]))]
+            definition = prop_defs[_prop_key(item)]
             scale = float(item.get("scale", 1))
             px = place("object", item["id"], item["x"], item["y"])
             key = f"object:{item['id']}"
@@ -611,7 +630,8 @@ def build_project(bundle: BundleInfo, name: str, stage: Path) -> tuple[dict[str,
             instances.append(_entity(definition, px, size, grid, {
                 "BundleId": item["id"], "Prop": item.get("prop"), "Scale": scale, "SortY": item.get("sortY"),
                 "Solid": item.get("solid"), "Occlusion": item.get("occlusion"),
-                "Footprint": None if "footprint" not in item else json.dumps(item["footprint"], sort_keys=True)},
+                "Footprint": None if "footprint" not in item else json.dumps(item["footprint"], sort_keys=True),
+                "FlipX": item.get("flip_x") is True},
                 key))
             expected_entities[key] = {"x": item["x"], "y": item["y"], "iid": instances[-1]["iid"]}
         definition = _layer_def(uids, ldtk_identifier(layer_name, names["layers"]), "Entities", grid)
@@ -728,9 +748,9 @@ def qa_project(project: dict[str, Any], context: dict[str, Any], stage: Path) ->
                if forge_core.sha256_file(stage / record["path"]) != record["sha256"]]
     if context["distinct_props"]:
         atlas = np.asarray(Image.open(stage / "assets" / "props-atlas.png").convert("RGBA"))
-        for sha, info in context["distinct_props"].items():
-            x, y = context["atlas_positions"][sha]
-            source = np.asarray(forge_core.load_rgba(info.path)[0])
+        for key, info in context["distinct_props"].items():
+            x, y = context["atlas_positions"][key]
+            source = _prop_pixels(info, key[1])
             region = atlas[y:y + info.size[1], x:x + info.size[0]]
             if not (np.array_equal(region[..., 3], source[..., 3])
                     and np.array_equal(region[..., :3][source[..., 3] > 0], source[..., :3][source[..., 3] > 0])):
@@ -748,7 +768,7 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
         project, context = build_project(bundle, name, stage)
         project_path = stage / f"{name}.ldtk"
         forge_core.write_json(project_path, project)
-        reread = json.loads(project_path.read_text(encoding="utf-8"))
+        reread = forge_core.read_json(project_path, strict=True)
         checks = qa_project(reread, context, stage)
         checks.append(_check("objects_in_world", "warn" if outside else "pass", outside,
                              {"world": list(bundle.world)}))
@@ -759,22 +779,23 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
         warned = [check["id"] for check in checks if check["status"] == "warn"]
         if args.strict_qc and warned:
             raise ValueError(f"strict QC failed ({', '.join(warned)}); nothing was written.")
-        outputs = [_local_file_ref(project_path, stage)]
+        outputs = [forge_core.file_ref(project_path, stage)]
         if context["distinct_props"]:
-            outputs.append(_local_file_ref(stage / "assets" / "props-atlas.png", stage))
-        outputs += [_local_file_ref(stage / record["path"], stage, record["sha256"]) for record in context["assets"]]
+            outputs.append(forge_core.file_ref(stage / "assets" / "props-atlas.png", stage))
+        outputs += [forge_core.file_ref(stage / record["path"], stage, sha256=record["sha256"]) for record in context["assets"]]
         status = "warn" if warned else "pass"
         level = project["levels"][0]
         not_exported = _local_not_exported(bundle)
-        if bundle.data.get("collision"):
-            not_exported.append("collision: walk regions and solids stay in the map bundle (per-tile collision "
-                                "is in tileset customData)")
+        if bundle.data.get("collision") or (bundle.blocking is not None and bundle.blocking.footprints):
+            not_exported.append("collision: walk regions, solids, rects and the footprints of solid objects stay in "
+                                "the map bundle; LDtk gets no collision layer (per-tile collision is in tileset "
+                                "customData only)")
         report = {
             "schema": REPORT_SCHEMA, "tool": dict(TOOL),
             "engine": {"name": "ldtk", "target": LDTK_VERSION, "format": "json",
                        "verified": "parse-level (required-field snapshot and read-back by this tool); LDtk editor "
                                    "not run"},
-            "bundle": _local_file_ref(bundle.path, final, bundle.sha256),
+            "bundle": forge_core.file_ref(bundle.path, final, sha256=bundle.sha256),
             "files": {"project": f"{name}.ldtk", "props_atlas": "assets/props-atlas.png"
                       if context["distinct_props"] else None},
             "assets": context["assets"],
@@ -791,9 +812,10 @@ def export(args: argparse.Namespace) -> dict[str, Any]:
             "qa": {"status": status,
                    "method": "export_ldtk: built the project, wrote it, re-read the JSON, checked it against the "
                              f"LDtk {LDTK_VERSION} required-field snapshot, uid/iid/identifier rules, decoded every "
-                             "grid tile and compared entity positions and sizes with the bundle.",
+                             "grid tile, compared entity positions and sizes with the bundle and every props-atlas "
+                             "region (mirrored for flip_x) with its source image.",
                    "notProven": list(NOT_PROVEN), "checks": checks,
-                   "inputs": [_local_file_ref(bundle.path, final, bundle.sha256)], "outputs": outputs,
+                   "inputs": [forge_core.file_ref(bundle.path, final, sha256=bundle.sha256)], "outputs": outputs,
                    "tool": dict(TOOL)},
         }
         forge_core.write_json(stage / "ldtk-export.json", report)
@@ -818,18 +840,18 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Sequence[str] | None = None) -> int:
-    forge_core.utf8_stdio()
+def _main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    try:
-        summary = export(args)
-    except (ValueError, OSError, Image.DecompressionBombError) as error:
-        print(f"error: {forge_core.ascii_text(str(error) or type(error).__name__)}", file=sys.stderr)
-        return 1
+    summary = export(args)
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     return 0
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    """Exit 0 when published, 1 on an error (nothing published), 2 on a usage error (D26, D27)."""
+    return forge_core.run_cli(_main, argv)
 
 
 if __name__ == "__main__":

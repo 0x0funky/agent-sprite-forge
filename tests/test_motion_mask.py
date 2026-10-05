@@ -15,81 +15,18 @@ from unittest import mock
 import numpy as np
 from PIL import Image
 
-from forge_testutils import (FIXTURES_DIR, SKILLS_DIR, assert_cli_help, assert_valid_contract, load_script, load_shared,
-                             run_cli, script_path)
+from forge_testutils import (FIXTURES_DIR, assert_cli_help, assert_valid_contract, contract_errors, load_script,
+                             load_shared, run_cli, script_path)
 
 
 MASK = load_script("generate2dmap", "build_motion_mask")
 SCRIPT = script_path("generate2dmap", "build_motion_mask")
 SKILL = "generate2dmap"
 
-# The schema additions this module asks integration to make to map.schema.json (handoff section 5), applied in
-# memory: optional plan fields read by build_motion_mask.py and the mask-qa.json document it writes.
-_REGION_MOTION = {"enum": ["flow", "flicker", "sway"]}
-_PROTECTED_FEATHER = {"type": "number", "minimum": 0}
-_REGISTRATION = {
-    "type": "object",
-    "properties": {"fit": {"enum": ["contain", "cover"]}, "scale": {"type": "number", "exclusiveMinimum": 0},
-                   "offset": {"$ref": "common.schema.json#/$defs/point2"}},
-    "dependentRequired": {"scale": ["offset"], "offset": ["scale"]},
-}
-MOTION_MASK_QA_V1 = {
-    "description": "build_motion_mask.py mask-qa.json: a QA envelope plus the figures of the published mask. A mask "
-                   "is published only when its protected cores are exactly 0.",
-    "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
-    "type": "object",
-    "required": ["schema", "plateSize", "protectedMax", "coverage", "coverageOver50", "meanOpacity", "regions",
-                 "protected"],
-    "properties": {
-        "schema": {"const": "generate2dmap.motion_mask_qa.v1"},
-        "plateSize": {"$ref": "common.schema.json#/$defs/size2"},
-        "protectedMax": {"const": 0},
-        "coverage": {"type": "number", "minimum": 0, "maximum": 1},
-        "coverageOver50": {"type": "number", "minimum": 0, "maximum": 1},
-        "meanOpacity": {"type": "number", "minimum": 0, "maximum": 1},
-        "regions": {"type": "array", "items": {
-            "type": "object", "required": ["id", "kind", "motion", "supportPx", "visiblePx", "meanOpacity"],
-            "properties": {"id": {"type": "string", "minLength": 1},
-                           "kind": {"enum": ["polygon", "rect", "luma_band", "landmark"]},
-                           "motion": {"enum": ["flow", "flicker", "sway"]},
-                           "supportPx": {"type": "integer", "minimum": 0},
-                           "visiblePx": {"type": "integer", "minimum": 0},
-                           "meanOpacity": {"type": "number", "minimum": 0, "maximum": 1}}}},
-        "protected": {"type": "array", "items": {
-            "type": "object", "required": ["id", "corePx", "max"],
-            "properties": {"id": {"type": "string", "minLength": 1}, "corePx": {"type": "integer", "minimum": 0},
-                           "max": {"const": 0}}}},
-        "envelope": {"anyOf": [{"type": "null"}, {
-            "type": "object",
-            "required": ["movingPx", "admittedPx", "containedPx", "uncoveredPx", "excludedProtectedPx",
-                         "excludedOutsidePx", "reach", "threshold", "frames", "transform"],
-            "properties": {key: {"type": "integer", "minimum": 0} for key in (
-                "movingPx", "admittedPx", "containedPx", "reducedByProtectionPx", "excludedProtectedPx",
-                "excludedOutsidePx", "frames")} | {"uncoveredPx": {"const": 0},
-                                                   "reach": {"type": "number", "minimum": 0},
-                                                   "threshold": {"type": "number", "minimum": 0}}}]},
-        "settings": {"type": "object"},
-    },
-}
-
 
 def requested_errors(document, name):
-    """Errors against the vendored generate2dmap schemas plus this module's requested additions (in memory)."""
-    from jsonschema import Draft202012Validator
-    from referencing import Registry
-    from referencing.jsonschema import DRAFT202012
-
-    folder = SKILLS_DIR / SKILL / "references" / "schemas"
-    schemas = [json.loads(path.read_text(encoding="utf-8")) for path in sorted(folder.glob("*.schema.json"))]
-    map_schema = next(schema for schema in schemas if schema["$id"].endswith("/map.schema.json"))
-    defs = map_schema["$defs"]
-    defs["motionRegion"]["properties"].setdefault("motion", _REGION_MOTION)
-    defs["motion_plan_v1"]["properties"]["protected"]["items"]["properties"].setdefault("feather", _PROTECTED_FEATHER)
-    defs["motion_plan_v1"]["properties"].setdefault("registration", _REGISTRATION)
-    defs.setdefault("motion_mask_qa_v1", MOTION_MASK_QA_V1)
-    registry = Registry().with_resources((schema["$id"], DRAFT202012.create_resource(schema)) for schema in schemas)
-    validator = Draft202012Validator({"$ref": f"{map_schema['$id']}#/$defs/{name}"}, registry=registry)
-    return [f"{error.json_path}: {error.message}" for error in validator.iter_errors(document)]
+    """Errors against the vendored generate2dmap schemas, which hold this module's section 5 requests (D33)."""
+    return contract_errors(document, "map", name, skill=SKILL)
 
 
 def smoothstep(value):
