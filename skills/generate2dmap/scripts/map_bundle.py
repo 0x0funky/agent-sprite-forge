@@ -1362,43 +1362,43 @@ def _solid_bounds(shape: dict) -> tuple[float, float, float, float] | None:
     return float(points[:, 0].min()), float(points[:, 1].min()), float(points[:, 0].max()), float(points[:, 1].max())
 
 
-def _orient(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> float:
-    """Twice the signed area of the triangle p, q, r: > 0 counter-clockwise (y up), 0 collinear."""
-    return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+def _orient(p: np.ndarray, q: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """Twice the signed area of the triangles p, q, r (rows of points, broadcast): 0 when collinear."""
+    return (q[..., 0] - p[..., 0]) * (r[..., 1] - p[..., 1]) - (q[..., 1] - p[..., 1]) * (r[..., 0] - p[..., 0])
 
 
-def _on_segment(p: tuple[float, float], q: tuple[float, float], r: tuple[float, float]) -> bool:
-    """r, collinear with p -> q, lies within the segment's bounding box."""
-    return min(p[0], q[0]) <= r[0] <= max(p[0], q[0]) and min(p[1], q[1]) <= r[1] <= max(p[1], q[1])
-
-
-def _segments_meet(a: tuple[float, float], b: tuple[float, float], c: tuple[float, float],
-                   d: tuple[float, float]) -> bool:
-    """The closed segments a -> b and c -> d cross or touch."""
-    d1, d2, d3, d4 = _orient(c, d, a), _orient(c, d, b), _orient(a, b, c), _orient(a, b, d)
-    if ((d1 > 0 > d2) or (d1 < 0 < d2)) and ((d3 > 0 > d4) or (d3 < 0 < d4)):
-        return True
-    return ((d1 == 0 and _on_segment(c, d, a)) or (d2 == 0 and _on_segment(c, d, b))
-            or (d3 == 0 and _on_segment(a, b, c)) or (d4 == 0 and _on_segment(a, b, d)))
+def _within(p: np.ndarray, q: np.ndarray, r: np.ndarray) -> np.ndarray:
+    """r lies inside the bounding box of the segment p -> q (for r collinear with it: on the segment)."""
+    return ((np.minimum(p[..., 0], q[..., 0]) <= r[..., 0]) & (r[..., 0] <= np.maximum(p[..., 0], q[..., 0]))
+            & (np.minimum(p[..., 1], q[..., 1]) <= r[..., 1]) & (r[..., 1] <= np.maximum(p[..., 1], q[..., 1])))
 
 
 def ring_self_intersects(points: Any) -> bool:
     """True when two edges of a closed polygon ring cross or touch anywhere but at the vertex two neighbouring
     edges share (a bow tie, a figure eight, a ring that pinches itself or runs back along an edge). Repeated
-    consecutive points, including a closing copy of the first point, are ignored."""
+    consecutive points, including a closing copy of the first point, are ignored. Exact orientation tests on the
+    given coordinates, one edge against all later edges at a time."""
     ring = [(float(x), float(y)) for x, y in points]
     ring = [point for k, point in enumerate(ring) if point != ring[k - 1]]
     count = len(ring)
-    edges = [(ring[k], ring[(k + 1) % count]) for k in range(count)]
-    for i in range(count):
-        for j in range(i + 1, count):
-            (a, b), (c, d) = edges[i], edges[j]
-            if j == i + 1 or (i == 0 and j == count - 1):  # neighbours: they share one vertex
-                shared, p, q = (b, a, d) if j == i + 1 else (a, b, c)
-                back = (p[0] - shared[0]) * (q[0] - shared[0]) + (p[1] - shared[1]) * (q[1] - shared[1]) > 0
-                if _orient(p, shared, q) == 0 and back:  # collinear and running back along each other
-                    return True
-            elif _segments_meet(a, b, c, d):
+    if count < 3:
+        return count == 2  # two points: the ring runs back along its only edge
+    starts = np.array(ring, np.float64)
+    ends = np.roll(starts, -1, axis=0)  # edge k runs from starts[k] to ends[k]
+    for i in range(count - 1):
+        a, b = starts[i], ends[i]
+        later = np.arange(i + 1, count)
+        c, d = starts[later], ends[later]
+        d1, d2, d3, d4 = _orient(c, d, a), _orient(c, d, b), _orient(a, b, c), _orient(a, b, d)
+        cross = (((d1 > 0) & (d2 < 0)) | ((d1 < 0) & (d2 > 0))) & (((d3 > 0) & (d4 < 0)) | ((d3 < 0) & (d4 > 0)))
+        touch = (((d1 == 0) & _within(c, d, a)) | ((d2 == 0) & _within(c, d, b))
+                 | ((d3 == 0) & _within(a, b, c)) | ((d4 == 0) & _within(a, b, d)))
+        neighbour = (later == i + 1) | ((i == 0) & (later == count - 1))
+        if ((cross | touch) & ~neighbour).any():
+            return True
+        for j in later[neighbour]:  # neighbours share one vertex: they overlap only by running back along it
+            shared, p, q = (b, a, ends[j]) if j == i + 1 else (a, b, starts[j])
+            if _orient(p, shared, q) == 0 and float(np.dot(p - shared, q - shared)) > 0:
                 return True
     return False
 
