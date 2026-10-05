@@ -307,6 +307,8 @@ class PipelineTests(unittest.TestCase):
 
     def test_code_art_pixelspec_rig_and_fx(self):
         require_node()
+        if not load_script("codeart2d", "codeart_core").available_backends():  # the resvg marker rule: skip
+            self.skipTest("no SVG rasterizer (resvg-py, resvg-js-cli or Chrome/Edge)")
         p = self.project
         art = p.root / "art"
         art.mkdir()

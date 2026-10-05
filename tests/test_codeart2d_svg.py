@@ -107,9 +107,52 @@ def test_render_strict_qc_failure_publishes_nothing(tmp_path, capsys):
                                    tmp_path / "out", "--crisp", "--backend", "resvg_py", "--strict-qc")
     assert code == 1 and stdout == "" and "strict QC failed" in stderr and "off_palette 36" in stderr
     assert not (tmp_path / "out").exists() and not [p for p in tmp_path.iterdir() if ".stage-" in p.name]
+    # Without --strict-qc the render is published for inspection, and the failed QA still exits 1 (D26)
     code, stdout, stderr = svg_cli(capsys, "render", "--svg", svg, "--palette", palette, "--output-dir",
                                    tmp_path / "loose", "--crisp", "--backend", "resvg_py")
-    assert code == 0 and summary_of(stdout)["qa"] == "fail" and "warning: QA status fail" in stderr
+    summary = summary_of(stdout)
+    assert code == 1 and summary["qa"] == "fail" and summary["failed_checks"] == ["off_palette"]
+    assert stderr.startswith("error: published with QA status fail: off_palette (see ") and stderr.isascii()
+    assert (tmp_path / "loose" / "codeart-meta.json").is_file()
+
+
+@pytest.mark.resvg
+def test_a_resvg_panic_is_one_error_line_and_publishes_nothing(tmp_path):
+    """r2-conventions F1 repro (repro/panic/big.svg): a circle of radius 1e10 makes resvg's tiny-skia panic, and
+    pyo3_runtime.PanicException (a BaseException) leaked as a Python traceback. Now: one 'error:' line, exit 1,
+    no traceback, nothing published."""
+    require_resvg()
+    big = write(tmp_path, "big.svg", HEAD + '<circle cx="8" cy="8" r="10000000000" fill="#ff0000"/></svg>')
+    result = run_cli([script_path("codeart2d", "svg_render"), "render", "--svg", big, "--output-dir",
+                      tmp_path / "o-new"], "cp1252", cwd=tmp_path)
+    if result.returncode == 0:
+        pytest.skip("this resvg-py renders a radius of 1e10 without panicking")
+    assert result.returncode == 1 and "Traceback" not in result.stderr, result.stderr
+    assert result.stderr.strip().splitlines()[-1].startswith("error: resvg_py failed: PanicException: ")
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["big.svg"]  # no output, no stage
+
+
+def test_main_reports_any_base_exception_as_one_internal_error_line(capsys, monkeypatch):
+    """r2-conventions F1, defence in depth: the hand-written main turns any BaseException (a Rust panic from an
+    extension) into one 'internal error' line with exit 1; SystemExit still passes through."""
+    class PanicException(BaseException):
+        pass
+
+    def panics(args):
+        raise PanicException("called `Option::unwrap()` on a `None` value")
+
+    monkeypatch.setattr(SVG, "cmd_lint", panics)
+    code, stdout, stderr = svg_cli(capsys, "lint", "--svg", POTIONS)
+    assert (code, stdout) == (1, "")
+    assert stderr == "error: internal error (PanicException: called `Option::unwrap()` on a `None` value)\n"
+
+    def exits(args):
+        raise SystemExit(5)
+
+    monkeypatch.setattr(SVG, "cmd_lint", exits)
+    with pytest.raises(SystemExit) as exited:
+        SVG.main(["lint", "--svg", str(POTIONS)])
+    assert exited.value.code == 5
 
 
 def test_render_stops_on_profile_problems_before_rasterizing(tmp_path, capsys):

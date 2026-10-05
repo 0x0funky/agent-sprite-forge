@@ -581,6 +581,10 @@ def _parse_props(raw: Any, spec: Mapping, spec_dir: Path, layout: Layout) -> dic
     prop_ids = [variant.prop_id for kind in kinds.values() for variant in kind.variants]
     if len(set(prop_ids)) != len(prop_ids):
         raise LayoutError("prop variant ids collide; a kind named '<other>-v<n>' clashes with a variant id")
+    clash = codeart_core.case_clash(prop_ids)
+    if clash:  # each prop id names props/<id>.png: one file on Windows and macOS
+        raise LayoutError(f"prop ids {clash[0]!r} and {clash[1]!r} differ only in letter case; they name the "
+                          "prop images, so prop kinds must differ in more than case")
     return kinds
 
 
@@ -976,7 +980,7 @@ def load_tilesets(paths: Sequence[Path], layout: Layout) -> list[Tileset]:
         identity = data.get("id") if isinstance(data.get("id"), str) and ID_PATTERN.fullmatch(data.get("id", "")) \
             else "-".join(str(name) for name in materials)
         identity = _ident(re.sub(r"[^A-Za-z0-9_.-]", "-", identity).strip("-.") or "tileset", "tileset id")
-        while identity in {item.id for item in tilesets}:
+        while identity.casefold() in {item.id.casefold() for item in tilesets}:  # it names tilesets/<id>/
             identity += "-2"
         layout.inputs.extend([path, image_path])
         tilesets.append(Tileset(identity, path, dict(data), image_path, stack,
@@ -1930,7 +1934,8 @@ def build(args: argparse.Namespace) -> dict:
             "metadata": (final / "codeart-meta.json").as_posix(), "qa": (final / "layout-qa.json").as_posix(),
             "objects": len(objects), "solids": len(blocking.collision_solids) + len(blocking.footprints)
             + len(blocking.tiles), "rects": len(rects), "portals": len(portals),
-            "valid_cells": nav_report["valid_cells"], "reachable_fraction": nav_report["reachable_fraction"]}
+            "valid_cells": nav_report["valid_cells"], "reachable_fraction": nav_report["reachable_fraction"],
+            "failed_checks": [check["id"] for check in checks if check["status"] == "fail"]}
 
 
 def _seed_arg(text: str) -> int:
@@ -1993,6 +1998,10 @@ def _run(argv: Sequence[str] | None = None) -> int:
         print(f"error: {forge_core.ascii_text(str(error))}", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
+    if summary["status"] == "fail":  # D26: published for inspection (debug.png), and the failed QA still exits 1
+        print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
+                                    f"(see {summary['qa']})"), file=sys.stderr)
+        return 1
     return 0
 
 

@@ -17,7 +17,7 @@ python "<skill-dir>/scripts/rig_animate.py" --anim hero.anim.json --output-dir o
 python "<skill-dir>/scripts/rig_animate.py" --anim hero.anim.json --output-dir out/hero-godot --godot-world-height 1.8
 ```
 
-In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. `--rig` defaults to the `rig` path inside the animation (relative to the animation file). On success the script prints one JSON line with `output`, `metadata` (codeart-meta.json), `report` (rig-report.json), the clips and the frame count. Errors print `error: ...` and exit 1 (an unexpected failure too, as one `error: internal error (...)` line); a wrong argument is a usage error with exit 2, and `--help` works even before numpy is installed. JSON may be saved with a UTF-8 BOM. `--output-dir` must not exist; the work is staged beside it and published only after QA, so with `--strict-qc` a failed check leaves nothing behind.
+In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. `--rig` defaults to the `rig` path inside the animation (relative to the animation file). On success the script prints one JSON line with `output`, `metadata` (codeart-meta.json), `report` (rig-report.json), the clips and the frame count. Errors print `error: ...` and exit 1 (an unexpected failure too, as one `error: internal error (...)` line); a wrong argument is a usage error with exit 2, and `--help` works even before numpy is installed. JSON may be saved with a UTF-8 BOM. `--output-dir` must not exist; the work is staged beside it and published only after QA, so with `--strict-qc` a failed check leaves nothing behind. Without `--strict-qc` a failing result is published for inspection (the summary's `qa` is `fail` and `failed_checks` names the checks) and the script still exits 1, with `error: published with QA status fail: <check ids> (see rig-report.json)`; exit 0 means pass or warn.
 
 | Flag | Meaning |
 |---|---|
@@ -77,6 +77,8 @@ Never send these frames through `generate2dsprite.py process`: its fit and align
    "ik": {"leg_f": {"bones": ["thigh_f", "shin_f"], "end": "foot_f", "pole": [1, 0],
                     "gait": {"phase": 0.0625, "stance": 0.625, "lift": 3, "roll": 15, "x": 33.5}}}}}}
 ```
+
+Clip names name the files (`frames/<clip>-NN.png`, `review/<clip>.png`), so they must differ in more than letter case: `walk` and `WALK` are refused, because Windows and macOS would store them as one file.
 
 Clip fields:
 

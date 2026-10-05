@@ -78,6 +78,17 @@ def report_checks(output: Path) -> dict:
     return {item["id"]: item for item in report["qa"]["checks"]}
 
 
+def published_with_failed(result, check_id: str) -> bool:
+    """D26: without --strict-qc a failing run is published (the summary line names the failed checks) and exits
+    1 with one ASCII 'error: published with QA status fail: ...' line."""
+    assert result.returncode == 1, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["qa"] == "fail" and check_id in summary["failed_checks"], summary
+    assert result.stderr.startswith("error: published with QA status fail: ") and check_id in result.stderr
+    assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
+    return True
+
+
 # ----------------------------------------------------------------------------- CLI conventions
 
 def test_help_cp1252_and_cp950():
@@ -107,6 +118,24 @@ def test_strict_qc_failure_publishes_nothing(tmp_path):
     assert "nothing was published" in result.stderr
     assert not output.exists()
     assert not [path for path in tmp_path.iterdir() if path.name.startswith(".out.stage-")]
+
+
+def test_clip_names_that_differ_only_in_case_are_refused(tmp_path):
+    """r2-conventions F2 (casecollide2.py): clips walk and WALK both wrote frames/walk-NN.png on Windows and
+    macOS, so WALK's poses replaced walk's while clips.json listed both and QA passed. Clip names must differ
+    in more than letter case; the animation is refused before anything is drawn."""
+    anim = json.loads(HERO_ANIM.read_text(encoding="utf-8"))
+    twin = copy.deepcopy(anim["clips"]["walk"])
+    twin["duration_ms"] = 50
+    anim["clips"]["WALK"] = twin
+    path = tmp_path / "hero.case.anim.json"
+    path.write_text(json.dumps(anim), encoding="utf-8")
+    output = tmp_path / "out"
+    result = run_cli([SCRIPT, "--rig", HERO_RIG, "--anim", path, "--output-dir", output, "--route", "pixel"])
+    assert result.returncode == 1, result.stdout
+    assert result.stderr.startswith("error: hero.case.anim.json: clip names 'walk' and 'WALK' differ only in "
+                                    "letter case"), result.stderr
+    assert not output.exists() and sorted(p.name for p in tmp_path.iterdir()) == ["hero.case.anim.json"]
 
 
 # ----------------------------------------------------------------------------- easing and sampling
@@ -384,7 +413,7 @@ def test_lint_ik_clamp(tmp_path):
     require_resvg()
     anim = write_case(tmp_path / "case", anim=leg_anim(ik={"leg": dict(LEG_IK, target=[[0, [30, 29]]])}))
     output = tmp_path / "out"
-    assert run_rig(anim, output).returncode == 0
+    assert published_with_failed(run_rig(anim, output), "ik_clamp")
     checks = report_checks(output)
     assert checks["ik_clamp"]["status"] == "fail" and checks["ik_clamp"]["value"] == 4
     clamp = read_json(output / "rig-report.json")["ik_clamps"][0]
@@ -399,7 +428,7 @@ def test_lint_ground_row(tmp_path):
     anim = write_case(tmp_path / "case", anim={"schema": "codeart2d.rig_anim.v1", "rig": "leg.rig.svg",
                                                "clips": {"stand": {"frames": 2, "loop": True, "duration_ms": 100}}})
     output = tmp_path / "out"
-    assert run_rig(anim, output).returncode == 0
+    assert published_with_failed(run_rig(anim, output), "ground_row")
     assert report_checks(output)["ground_row"]["status"] == "fail"
     failures = read_json(output / "rig-report.json")["ground_failures"]
     assert [failure["gap_px"] for failure in failures] == [-1, -1]
@@ -410,7 +439,7 @@ def test_lint_margins(tmp_path):
     require_resvg()
     anim = write_case(tmp_path / "case", LEG_RIG.replace('x="12" y="7" width="8"', 'x="0" y="7" width="20"'))
     output = tmp_path / "out"
-    assert run_rig(anim, output).returncode == 0
+    assert published_with_failed(run_rig(anim, output), "margins")
     checks = report_checks(output)
     assert checks["margins"]["status"] == "fail" and checks["margins"]["value"] == 4
     assert read_json(output / "rig-report.json")["margin_failures"][0]["margin_px"] == 0
@@ -622,7 +651,9 @@ def test_outline_none_draws_no_lines_and_stays_on_palette(tmp_path):
     line colour), so every pixel is a slot fill."""
     require_resvg()
     output = tmp_path / "out"
-    assert run_rig(write_case(tmp_path / "case"), output, "--outline", "none").returncode == 0
+    # published; the synthetic 4-frame stand loop fails only the seam gate (not what this test is about), so D26
+    # makes the run exit 1
+    assert published_with_failed(run_rig(write_case(tmp_path / "case"), output, "--outline", "none"), "seam:stand")
     report = read_json(output / "rig-report.json")
     assert report["palette"] == ["#3b5dc9", "#4a5a85", "#5a3a2a"]
     for frame in report["clips"]["stand"]["frames"]:

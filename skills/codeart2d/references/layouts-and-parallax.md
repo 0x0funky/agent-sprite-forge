@@ -8,7 +8,7 @@ Three codeart2d tools make map data and stylised backgrounds as code. None of th
 | [parallax_build.py](../scripts/parallax_build.py) | Periodic parallax layers, a parallax plan and a camera sweep | Each repeating layer is exactly periodic and its loop step is at most the p95 of its own column steps; the plan passes the generate2dmap validator |
 | [ambient_bake.py](../scripts/ambient_bake.py) | A frame loop of ripples, haze, swaying foliage or glows on a static plate | The loop has an exact period; pixels outside the effect polygons never change |
 
-Run every command from your project root. `<skill-dir>` is the codeart2d folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs go to a new `--output-dir` inside your project: the tool refuses an existing path, works in a hidden stage folder beside it and publishes only a complete result. With `--strict-qc` a failed check exits 1 and leaves nothing behind; without it the output is published with a failing QA envelope, so you can open the debug images. Errors print one `error: ...` line and exit 1; a wrong argument is a usage error (argparse's `usage: ...` and exit 2). Success prints one JSON line with the output, metadata and QA paths. Spec files may be saved with a UTF-8 BOM.
+Run every command from your project root. `<skill-dir>` is the codeart2d folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs go to a new `--output-dir` inside your project: the tool refuses an existing path, works in a hidden stage folder beside it and publishes only a complete result. With `--strict-qc` a failed check exits 1 and leaves nothing behind; without it the output is published with a failing QA envelope, so you can open the debug images, and the tool still exits 1 after its summary line with `error: published with QA status fail: <check ids> (see <qa file>)`. Exit 0 means pass or warn. Errors print one `error: ...` line and exit 1; a wrong argument is a usage error (argparse's `usage: ...` and exit 2). Success prints one JSON line with the output, metadata and QA paths and `failed_checks`. Spec files may be saved with a UTF-8 BOM.
 
 ## Playable maps: layout_build.py
 
@@ -52,7 +52,7 @@ Terrain shapes use tile (vertex) coordinates; everything else is in world pixels
 | `materials` | `{name: {color, walkable, priority}}` in order. The first is the base unless `base` names another walkable material. A higher `priority` wins when hygiene must remove a material. |
 | `terrain` | Paint operations, in order. `ellipse {center, radius, rotate?, wobble?}`, `rect {box: [x0, y0, x1, y1]}`, `polygon {points}`, `road {points, width, smooth}`. A vertex is painted when its point lies inside the shape (boundary included); a road paints vertices within `width / 2` of its Catmull-Rom centre line. Run roads past the map edge where exits go. |
 | `actor` | `{radius, ySquash}`: the footprint judged by the reachability gate (defaults `round(0.3 * tile)` and 1.0). |
-| `props` | Prop kinds: `{image}`, `{pixelspec}` (inline or a path), `{pack}` (a label in `prop_pack`, a prop-pack v2 manifest) or nothing (a flat placeholder sprite of `size` and `color`). Optional `variants` (a list of those sources), `anchor_px` (default bottom centre), `footprint`, `solid`, `occlusion` (`low`, `tall`, `foreground`), `flip` (scatter may mirror it, default true), `scale` and `interactions` (`{name, offset, reach}` relative to the anchor). |
+| `props` | Prop kinds: `{image}`, `{pixelspec}` (inline or a path), `{pack}` (a label in `prop_pack`, a prop-pack v2 manifest) or nothing (a flat placeholder sprite of `size` and `color`). Optional `variants` (a list of those sources), `anchor_px` (default bottom centre), `footprint`, `solid`, `occlusion` (`low`, `tall`, `foreground`), `flip` (scatter may mirror it, default true), `scale` and `interactions` (`{name, offset, reach}` relative to the anchor). Kind names name the prop images (`props/<kind>.png`, `props/<kind>-v<n>.png`), so they must differ in more than letter case (`rock` and `Rock` are refused: one file on Windows and macOS). |
 | `objects` | Fixed placements `{id, prop, x, y, flip_x?, scale?, variant?}`; (x, y) is where the anchor lands. |
 | `scatter` | Seeded groups, see below. |
 | `exits` | `{id, edge, road \| span, to, depth?, radius?, arrival?}`, see below. |
@@ -109,7 +109,7 @@ Start from [examples/parallax-gen.json](../examples/parallax-gen.json): a dither
 | `foreground` | like `ridge`, plus `grass {count, height, color}`; role `foreground` |
 | `image` | your own PNG: `image`, `role`, `scroll`, `repeat`, `alpha`, `scale` (a whole number for pixel art, which is scaled by nearest neighbour), `anchor_px`, `offset`, `require_canvas_coverage` |
 
-Every non-sky layer needs `scroll` (its camera factor: about 0.1 to 0.3 far, 0.5 mid, 1.0 for the play layer, above 1 for foreground). Generated layers repeat horizontally with `period` px (default: the viewport width). Image layers repeat only when `repeat` says so.
+Every non-sky layer needs `scroll` (its camera factor: about 0.1 to 0.3 far, 0.5 mid, 1.0 for the play layer, above 1 for foreground). Generated layers repeat horizontally with `period` px (default: the viewport width). Image layers repeat only when `repeat` says so. A layer's `id` names its PNG (`<id>.png`), so ids must differ in more than letter case (`far` and `FAR` are refused).
 
 ### What it proves
 

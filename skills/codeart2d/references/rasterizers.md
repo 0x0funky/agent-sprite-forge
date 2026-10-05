@@ -17,6 +17,10 @@ Rules the library follows ([codeart_core.py](../scripts/codeart_core.py)):
 
 - A render error never falls through to another backend, so one output never mixes
   renderers. Pick one with `--backend` when you need a specific one.
+- Any resvg-py failure is one `error: resvg_py failed: <Type>: <message>` line and exit 1,
+  also a crash inside its Rust code (a `PanicException`, for example from a circle of
+  radius 1e10); Rust may print its own `panicked at` note first, but never a Python
+  traceback. Keep geometry within a sane range of the canvas.
 - `codeart-meta.json` records the backend, name, version and, for resvg-py, the bundled
   resvg engine version, plus the zoom and output size.
 - Chrome renders a `file://` copy of the SVG with `--headless`, a throwaway profile, a

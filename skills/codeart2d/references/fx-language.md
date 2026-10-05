@@ -12,7 +12,7 @@ python "<skill-dir>/scripts/fx_build.py" --spec slash.fx.json --output-dir out/f
 node "<skill-dir>/scripts/fx_verify.mjs" out/fx-slash-v1/fx-runtime.mjs --report out/fx-slash-v1/fx-verify-again.json
 ```
 
-In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success one JSON line names the output folder, `codeart-meta.json`, `fx-report.json` and the runtime module. Errors print `error: ...` and exit 1 (an unexpected failure too, as one `error: internal error (...)` line); a wrong argument is a usage error with exit 2. `--output-dir` must not exist, and `--strict-qc` publishes nothing when a check fails. clips.json is `animation_clips.v2` by default, so the hit events reach the compiled clips; `routes`, when given, is a list of route names.
+In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success one JSON line names the output folder, `codeart-meta.json`, `fx-report.json` and the runtime module. Errors print `error: ...` and exit 1 (an unexpected failure too, as one `error: internal error (...)` line); a wrong argument is a usage error with exit 2. `--output-dir` must not exist, and `--strict-qc` publishes nothing when a check fails; without it a failing result is published for inspection and the script still exits 1, with `error: published with QA status fail: <check ids> (see fx-report.json)` (exit 0 means pass or warn). clips.json is `animation_clips.v2` by default, so the hit events reach the compiled clips; `routes`, when given, is a list of route names.
 
 | Flag | Meaning |
 |---|---|
@@ -38,7 +38,7 @@ In Claude Code `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. On success one JSON line 
 
 - `canvas` [w, h] (default [48, 48]) is shared by every effect of the spec, so one clips manifest holds them all. `origin` (default: the canvas centre) is the effect's anchor: `anchor_px` in clips.json and the point the runtime places at `env.x, env.y`.
 - `palette` is required: a `{name: "#rrggbb"}` object, a list, or a palette file path. Every colour must be opaque and every shape colour must come from it, by name or exact hex.
-- Effect fields: `id` (ASCII; names the frames), `durationMs`, `impactMs` (the gameplay hit, below the duration for one-shots), `seed` (0 to 2^31-1), `frameMs` (default 50 = 3 ticks at 60 Hz), `loop` (default false), `outline` (a palette colour for a 1 px dark outline, recommended for busy backgrounds), `ramps` (`{name: [colours]}`, brightest first), `primitives`, and `events` (`[{atMs, name}]`, extra clip events).
+- Effect fields: `id` (ASCII; names the frames, so ids must differ in more than letter case: `slash` and `SLASH` are refused), `durationMs`, `impactMs` (the gameplay hit, below the duration for one-shots), `seed` (0 to 2^31-1), `frameMs` (default 50 = 3 ticks at 60 Hz), `loop` (default false), `outline` (a palette colour for a 1 px dark outline, recommended for busy backgrounds), `ramps` (`{name: [colours]}`, brightest first), `primitives`, and `events` (`[{atMs, name}]`, extra clip events).
 - Primitive fields: `type`, then `ramp` (a ramp name) or `colors` (a colour list, brightest first); without either, the effect's first ramp or else the palette order. Unknown parameters are refused. Times accept `"impact"`.
 
 ## The six presets

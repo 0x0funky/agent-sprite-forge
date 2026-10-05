@@ -14,7 +14,7 @@ Sections:
   qa         qa_pixels, detect_grid
   review     upscale_nearest, review_sheet
   masks      inside_polygon, distance_field (shared by the codeart2d map and plate tools)
-  output     save_png, write_codeart_meta
+  output     case_clash, save_png, write_codeart_meta
 
 Only numpy and Pillow are required (scipy is optional and only speeds up
 distance_field). Rasterizing SVG needs one backend: resvg-py
@@ -24,9 +24,11 @@ they silently ignore crispEdges, <style>, clipPath or gradients.
 
 API 1.1 (Phase 3 integration) adds, without changing any 1.0 name or behaviour:
 write_codeart_meta(placeholder=...) (B21 request, D30), FORGE_PACKAGE_VERSION as the
-QA envelope tool version (D29), inside_polygon and distance_field, and the lint code
-"reference" (an href that does not point inside the document). Hashing and JSON
-writing go through the vendored forge_core (D30).
+QA envelope tool version (D29), inside_polygon and distance_field, the lint code
+"reference" (an href that does not point inside the document), and case_clash (ids
+that name files must differ in more than letter case). Hashing and JSON writing go
+through the vendored forge_core (D30). A resvg_py failure of any kind, a Rust panic
+too, is a RasterError.
 
 Sibling scripts load this file by path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -946,8 +948,13 @@ def _render_resvg_py(svg: str, zoom: float, timeout: float) -> bytes:
         options["zoom"] = float(zoom)
     try:
         return bytes(resvg_py.svg_to_bytes(**options))
-    except Exception as exc:  # resvg_py reports parse and size errors as plain exceptions
-        raise RasterError(f"resvg_py: {exc}") from None
+    except (KeyboardInterrupt, SystemExit, GeneratorExit):
+        raise
+    except BaseException as exc:  # noqa: BLE001
+        # resvg_py reports parse and size errors as plain exceptions, but a Rust panic inside resvg or
+        # tiny-skia (a circle of radius 1e10, say) arrives as pyo3_runtime.PanicException, which derives
+        # from BaseException; both are a failed render (D27: never a traceback).
+        raise RasterError(f"resvg_py failed: {type(exc).__name__}: {exc}") from None
 
 
 def _render_resvg_js_cli(svg: str, zoom: float, timeout: float) -> bytes:
@@ -2045,6 +2052,20 @@ def distance_field(target: Any, cap: float) -> np.ndarray:
 
 
 # ----------------------------------------------------------------------------- output
+
+def case_clash(names: Sequence[str]) -> tuple[str, str] | None:
+    """The first two of `names` that differ only in letter case (str.casefold), or None.
+
+    Ids that name output files (effect ids, clip names, prop kinds, layer ids) must differ in more
+    than case: Windows and default macOS volumes treat "walk-00.png" and "WALK-00.png" as one file,
+    so one entry's pixels would silently replace the other's. Exact repeats are not reported here."""
+    seen: dict[str, str] = {}
+    for name in map(str, names):
+        first = seen.setdefault(name.casefold(), name)
+        if first != name:
+            return first, name
+    return None
+
 
 def save_png(image: Any, path: str | os.PathLike) -> None:
     """Write 8-bit straight-alpha RGBA PNG (RGB zeroed under alpha 0, no metadata chunks).

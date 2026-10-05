@@ -455,6 +455,15 @@ def test_strict_qc_failure_publishes_nothing(tmp_path):
                  "--max-repetition", "0", "--strict-qc")
     assert result.returncode == 1 and "repetition_index" in result.stderr and not result.stdout.strip()
     assert list(tmp_path.iterdir()) == []
+    # Without --strict-qc the tileset is published for inspection, and the failed QA still exits 1 (D26)
+    result = cli("--material-spec", WATER_GRASS, "--kind", "wang", "--output-dir", out, "--preview-map", "none",
+                 "--max-repetition", "0")
+    summary = json.loads(result.stdout)
+    (failed,) = summary["failed_checks"]
+    assert result.returncode == 1 and summary["status"] == "fail" and failed.endswith("/repetition_index")
+    assert result.stderr.startswith(f"error: published with QA status fail: {failed} (see ")
+    assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
+    assert json.loads((out / "autotile-qa.json").read_text(encoding="utf-8"))["status"] == "fail"
 
 
 def test_strict_mode_fails_without_a_seam_proof(tmp_path):

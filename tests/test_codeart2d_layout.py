@@ -16,6 +16,7 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
 
 import numpy as np
 from PIL import Image
@@ -121,8 +122,11 @@ def node_lattice(bundle):
 
 
 def independent_reachability(bundle, start):
-    """4-neighbour components of the valid node centres (no segment rule): a superset of forge_nav's reach."""
-    from scipy import ndimage
+    """4-neighbour components of the valid node centres (no segment rule): a superset of forge_nav's reach.
+
+    scipy is optional for the product (numpy fallbacks), so without it the tests that use this check skip
+    rather than fail (r3-platform F6)."""
+    ndimage = pytest.importorskip("scipy.ndimage")
 
     cell, xs, ys = node_lattice(bundle)
     valid = valid_points(xs, ys, bundle)
@@ -221,11 +225,15 @@ def test_strict_qc_failure_publishes_nothing(tmp_path):
     assert result.returncode == 1
     assert "exits_reachable" in result.stderr and "east" in result.stderr
     assert sorted(p.name for p in tmp_path.iterdir()) == ["layout.json"]
-    # without --strict-qc the same map is published with a failing QA envelope, for the debug overlay
+    # without --strict-qc the same map is published with a failing QA envelope, for the debug overlay, and the
+    # failed QA still exits 1 with one error line naming the checks (D26; r2-conventions F9)
     result = build(write_spec(tmp_path, spec), tmp_path / "map", "--preview")
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr
     summary = json.loads(result.stdout)
-    assert summary["status"] == "fail"
+    assert summary["status"] == "fail" and summary["failed_checks"][0] == "exits_reachable"
+    assert result.stderr.startswith(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
+                                    f"(see {summary['qa']})")
+    assert len(result.stderr.strip().splitlines()) == 1 and result.stderr.isascii()
     qa = json.loads((tmp_path / "map" / "layout-qa.json").read_text(encoding="utf-8"))
     failed = {check["id"]: check["value"] for check in qa["checks"] if check["status"] == "fail"}
     assert failed["exits_reachable"] == ["east"]
@@ -263,6 +271,50 @@ def test_usage_errors_exit_2_and_malformed_specs_never_trace_back(tmp_path):
         result = build(path, tmp_path / f"out-{index}")
         assert result.returncode == 1 and "Traceback" not in result.stderr, (index, result.stderr)
         assert result.stderr.startswith("error:") and "internal error" not in result.stderr, (index, result.stderr)
+
+
+def test_prop_kinds_that_differ_only_in_case_are_refused(tmp_path):
+    """r2-conventions F2 (casecollide3.py): prop kinds rock and Rock both named props/rock.png on Windows and
+    macOS, so one image silently replaced the other and the published bundle failed its own map_bundle
+    validate --require-sha256. Prop kinds must differ in more than letter case; nothing is published."""
+    spec = small_spec(props={"rock": {"occlusion": "low"}, "Rock": {"occlusion": "tall"}},
+                      scatter=[{"id": "rocks", "kinds": {"rock": 1, "Rock": 1}, "count": 6, "spacing": 20}])
+    result = build(write_spec(tmp_path, spec), tmp_path / "map")
+    assert result.returncode == 1 and result.stderr.startswith("error: prop ids 'rock' and 'Rock' differ only in "
+                                                               "letter case"), result.stderr
+    assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["layout.json"]  # no output, no stage
+    assert codeart_core.case_clash(["tree", "rock", "rock-v1", "Rock-V1"]) == ("rock-v1", "Rock-V1")
+
+
+def test_tileset_ids_that_differ_only_in_case_get_their_own_folders(tmp_path):
+    """r2-conventions F2: each tileset is copied into tilesets/<id>/, so a second id that differs only in case
+    gets the -2 suffix a repeated id gets, instead of colliding with the first folder on Windows and macOS."""
+    tiles = [write_wang_tileset(tmp_path / "tiles", ["grass", "path"]),
+             write_wang_tileset(tmp_path / "tiles", ["grass", "water"])]
+    for path, identity in zip(tiles, ("Ground", "ground")):
+        manifest = json.loads(path.read_text(encoding="utf-8"))
+        path.write_text(json.dumps(dict(manifest, id=identity)), encoding="utf-8")
+    spec = small_spec(terrain=[
+        {"id": "pond", "shape": "ellipse", "material": "water", "center": [10, 3.2], "radius": [3.2, 2.4]},
+        {"id": "road", "shape": "road", "material": "path", "width": 1.7, "points": [[-1, 6], [10, 5.2], [21, 6]]}])
+    out = tmp_path / "map"
+    result = build(write_spec(tmp_path, spec), out, "--tiles", str(tiles[0]), "--tiles", str(tiles[1]), "--strict-qc")
+    assert result.returncode == 0, result.stderr
+    bundle = json.loads((out / "map-bundle.json").read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in bundle["tilesets"]] == ["Ground", "ground-2"]
+    assert sorted(p.name for p in (out / "tilesets").iterdir()) == ["Ground", "ground-2"]
+    for entry in bundle["tilesets"]:
+        assert sha256_of(out / entry["manifest"]) == entry["sha256"]
+
+
+def test_the_independent_check_skips_without_scipy(monkeypatch):
+    """r3-platform F6: scipy is optional for the product (numpy fallbacks), so the independent reachability
+    check skips without it instead of failing with ModuleNotFoundError."""
+    monkeypatch.setitem(sys.modules, "scipy", None)
+    monkeypatch.setitem(sys.modules, "scipy.ndimage", None)
+    with pytest.raises(pytest.skip.Exception):
+        independent_reachability({"world": {"width": 32, "height": 32}}, (8, 8))
 
 
 def test_reference_commands_are_single_line_and_use_real_flags():
@@ -791,7 +843,8 @@ def test_unreachable_interaction_and_spawn_are_reported(tmp_path):
         scatter=[])
     out = tmp_path / "map"
     result = build(write_spec(tmp_path, spec), out)
-    assert result.returncode == 0, result.stderr
+    assert result.returncode == 1, result.stderr  # published, and the failed QA exits 1 (D26)
+    assert "spawns_reachable, interactions_reachable" in result.stderr
     qa = json.loads((out / "layout-qa.json").read_text(encoding="utf-8"))
     checks = {check["id"]: check for check in qa["checks"]}
     assert checks["spawns_reachable"]["value"] == ["island"]

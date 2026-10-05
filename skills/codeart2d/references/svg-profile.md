@@ -107,7 +107,7 @@ expanded) and reports compile errors as `compile:` lines.
 | For | flat vector characters, props, UI, icons at any size | pixel art at its native size |
 | Lint profile | portable | pixel |
 | Render | anti-aliased at `--zoom` (any positive scale that gives whole pixels) | crispEdges at 1x; `--zoom N` adds `<name>@Nx.png` by integer nearest upscaling |
-| QA gates | lint only; partial alpha and blended colours are expected | 0 partial-alpha and 0 off-palette pixels (`--strict-qc` publishes nothing otherwise) |
+| QA gates | lint only; partial alpha and blended colours are expected | 0 partial-alpha and 0 off-palette pixels (`--strict-qc` publishes nothing otherwise; without it a failing render is published and exits 1) |
 
 ```text
 python "<skill-dir>/scripts/svg_render.py" render --svg art/potion-icons.svg --palette art/palette.json --output-dir out/potions-v1 --zoom 4

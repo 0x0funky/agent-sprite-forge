@@ -362,6 +362,71 @@ def test_resvg_js_cli_backend_command(monkeypatch, tmp_path):
     assert info["backend"] == "resvg_js_cli" and info["version"] == "2.6.2" and pixels.shape == (32, 32, 4)
 
 
+class PanicException(BaseException):
+    """Stands in for pyo3_runtime.PanicException, which derives from BaseException, not Exception."""
+
+
+def test_any_resvg_py_failure_is_a_raster_error_but_interrupts_pass_through(monkeypatch):
+    """r2-conventions F1: a Rust panic inside resvg_py arrives as pyo3_runtime.PanicException (a BaseException)
+    and escaped `except Exception` as a traceback. Every resvg_py failure is a RasterError now, a panic too;
+    Ctrl+C, SystemExit and GeneratorExit are never swallowed. No resvg-py is needed: a fake module stands in."""
+    raised: list[BaseException] = []
+
+    def svg_to_bytes(**options):
+        raise raised[-1]
+
+    fake = type(sys)("resvg_py")
+    fake.svg_to_bytes, fake.__version__, fake.__resvg_version__ = svg_to_bytes, "0.5.0", "0.48.1"
+    monkeypatch.setitem(sys.modules, "resvg_py", fake)
+    raised.append(PanicException("range start index 2048 out of range for slice of length 256"))
+    with pytest.raises(core.RasterError, match=r"^resvg_py failed: PanicException: range start index 2048 "):
+        core.rasterize(CASES["t01"].svg, 1, "resvg_py")
+    raised.append(ValueError("SVG data parsing failed cause unknown token"))
+    with pytest.raises(core.RasterError, match=r"^resvg_py failed: ValueError: SVG data parsing failed"):
+        core.rasterize(CASES["t01"].svg, 1, "resvg_py")
+    for passthrough in (KeyboardInterrupt(), SystemExit(3), GeneratorExit()):
+        raised.append(passthrough)
+        with pytest.raises(type(passthrough)):
+            core.rasterize(CASES["t01"].svg, 1, "resvg_py")
+
+
+def test_a_radius_of_1e10_panics_inside_resvg_and_is_a_raster_error():
+    """r2-conventions F1 repro (repro/panic/big.svg) on the real resvg-py: radii up to 1e9 render, 1e10 panics
+    in tiny-skia; rasterize raises RasterError instead of leaking the PanicException."""
+    pytest.importorskip("resvg_py")
+    svg = SVG_HEAD + '<circle cx="8" cy="8" r="10000000000" fill="#ff0000"/></svg>'
+    try:
+        core.rasterize(svg, 1, "resvg_py")
+    except core.RasterError as error:
+        assert str(error).startswith("resvg_py failed: PanicException: "), error
+    else:
+        pytest.skip("this resvg-py renders a radius of 1e10 without panicking")
+
+
+def test_case_clash_finds_names_that_differ_only_in_letter_case():
+    """r2-conventions F2: ids that name files must differ in more than case (one file on Windows and macOS)."""
+    assert core.case_clash([]) is None and core.case_clash(["walk", "idle", "walk"]) is None  # repeats: not here
+    assert core.case_clash(["walk", "idle", "WALK"]) == ("walk", "WALK")
+    assert core.case_clash(["far", "near", "Near", "FAR"]) == ("near", "Near")
+    assert core.case_clash(["slash", "slash-2", "slash_2", "\u8d70\u8def"]) is None
+
+
+def test_the_e2e_code_art_pipeline_skips_without_a_rasterizer(monkeypatch):
+    """r3-platform F6: with no SVG rasterizer (resvg-py, resvg-js-cli, Chrome/Edge) the e2e code-art pipeline
+    skips, like every other resvg test, instead of failing at rig_animate."""
+    import unittest
+
+    from forge_testutils import load_script
+
+    e2e = importlib.import_module("test_e2e_smoke")
+    monkeypatch.setattr(load_script("codeart2d", "codeart_core"), "available_backends", lambda: [])
+    result = unittest.TestResult()
+    e2e.PipelineTests("test_code_art_pixelspec_rig_and_fx").run(result)
+    assert not result.errors and not result.failures and len(result.skipped) == 1, (result.errors, result.failures)
+    reason = result.skipped[0][1]
+    assert "no SVG rasterizer" in reason or "node is not on PATH" in reason, reason
+
+
 # ----------------------------------------------------------------------------- A3-T4 pixel finishing
 
 SS = 8

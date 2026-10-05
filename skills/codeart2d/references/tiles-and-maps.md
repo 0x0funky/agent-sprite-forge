@@ -24,7 +24,7 @@ Fill a material with a one-tile image that wraps seamlessly (for example a textu
 
     python "<skill-dir>/scripts/autotile_build.py" --material-spec my-tiles.material.json --material-texture grass=textures/grass16.png --quantize-textures --output-dir out/tiles-textured --strict-qc
 
-Success prints one ASCII line of JSON: `status`, `output`, `metadata` (codeart-meta.json), `qa` (autotile-qa.json), `tilesets` (one manifest per set), `preview`, per-set `seamless_verified`, `pixels_compared`, `mismatches` and `repetition_index`, the overall `repetition_index` and `failed_checks`. Errors print `error: ...` on stderr and exit 1; a wrong argument is a usage error (argparse's `usage: ...` and exit 2). The material spec may be saved with a UTF-8 BOM. `--output-dir` must not exist; nothing is written until every check has run, and with `--strict-qc` a failed check publishes nothing.
+Success prints one ASCII line of JSON: `status`, `output`, `metadata` (codeart-meta.json), `qa` (autotile-qa.json), `tilesets` (one manifest per set), `preview`, per-set `seamless_verified`, `pixels_compared`, `mismatches` and `repetition_index`, the overall `repetition_index` and `failed_checks`. Errors print `error: ...` on stderr and exit 1; a wrong argument is a usage error (argparse's `usage: ...` and exit 2). The material spec may be saved with a UTF-8 BOM. `--output-dir` must not exist; nothing is written until every check has run, and with `--strict-qc` a failed check publishes nothing. Without `--strict-qc` a failing result is published for inspection and the tool still exits 1 after its summary line, with `error: published with QA status fail: <check ids> (see autotile-qa.json)`; exit 0 means pass or warn.
 
 ## Choosing a kind
 
@@ -125,7 +125,7 @@ Per set: `kind`, `materials`, optional `id` (default for example `water-grass-wa
 | `partial_alpha`, `off_palette` | Any semi-transparent pixel; any colour outside the ramps and rule colours (`skipped` for image textures used as given). |
 | `texture_wrap/<material>` | An image texture's steps across its wrap edges exceed 1.25 times the 95th percentile of its inside steps. |
 
-Without `--strict-qc` the result is published with its QA status (`fail` checks included) and manifests say `seamless_verified: false` unless the proof ran and found no mismatch.
+Without `--strict-qc` the result is published with its QA status (`fail` checks included, which exits 1) and manifests say `seamless_verified: false` unless the proof ran and found no mismatch.
 
 ## Outputs
 

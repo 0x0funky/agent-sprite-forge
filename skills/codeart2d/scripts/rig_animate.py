@@ -1058,6 +1058,10 @@ class Animation:
         if not isinstance(raw_clips, dict) or not raw_clips:
             raise CodeArtError(f"{label}: clips must be a non-empty object")
         self.rig = rig
+        clash = core.case_clash(list(raw_clips))
+        if clash:  # clip names name files (frames/<clip>-NN.png, review/<clip>.png), one file on Windows and macOS
+            raise CodeArtError(f"{label}: clip names {clash[0]!r} and {clash[1]!r} differ only in letter case; "
+                               "they name files, so clip names must differ in more than case")
         self.clips = {name: self._clip(str(name), raw, f"clip {name}") for name, raw in raw_clips.items()}
         states = data.get("states", {})
         if not isinstance(states, dict) or not all(isinstance(v, str) and v in self.clips for v in states.values()):
@@ -1976,7 +1980,8 @@ def build(args: argparse.Namespace) -> dict:
                                "Run without --strict-qc to inspect rig-report.json")
     return {"status": "ok", "qa": meta["qa"]["status"], "output": str(final),
             "metadata": str(final / "codeart-meta.json"), "report": str(final / "rig-report.json"),
-            "clips": names, "frames": len(unique), "route": options.route}
+            "clips": names, "frames": len(unique), "route": options.route,
+            "failed_checks": [item["id"] for item in envelope["checks"] if item["status"] == "fail"]}
 
 
 def _route_options(args: argparse.Namespace, rig: Rig, animation: Animation) -> RouteOptions:
@@ -2313,7 +2318,17 @@ def _run(argv: Sequence[str] | None = None) -> int:
         print(forge_core.ascii_text(f"error: {describe_error(exc)}"), file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
-    return 0
+    return published_fail_status(summary)
+
+
+def published_fail_status(summary: dict) -> int:
+    """D26: an output published with QA status fail (no --strict-qc) still exits 1, with one error line that
+    names the failed checks and the report; pass and warn exit 0. fx_build uses it too."""
+    if summary.get("qa") != "fail":
+        return 0
+    print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
+                                f"(see {summary['report']})"), file=sys.stderr)
+    return 1
 
 
 def main(argv: Sequence[str] | None = None) -> int:
