@@ -1537,7 +1537,15 @@ def cmd_build_godot_bundle(args: argparse.Namespace) -> dict[str, Any]:
             raise ValueError(f"Action contract '{action}' is not valid JSON ({contract_path.name}): {error}") from None
         if not isinstance(contract, dict):
             raise ValueError(f"Action contract '{action}' must be a JSON object: {contract_path.name}")
-        missing = [frame for frame in contract.get("frames") or []
+        frames = contract.get("frames") or []
+        if (contract.get("schema") != "generate2dsprite.godot_sprite3d.v1" or not isinstance(frames, list)
+                or not all(isinstance(frame, str) for frame in frames)):
+            # A natural mistake: process prints pipeline-meta.json, whose frames are records (r2-conventions 12).
+            raise ValueError(f"Action contract '{action}' ({contract_path.name}) is not a Godot Sprite3D metadata "
+                             "file (generate2dsprite.godot_sprite3d.v1); write one with process "
+                             "--godot-world-height (godot-sprite3d.json in its output folder) or "
+                             "--write-godot-sprite3d-meta.")
+        missing = [frame for frame in frames
                    if not (contract_path.parent / frame).is_file()]
         if missing:
             raise ValueError(f"Action '{action}' lists frames that do not resolve next to its contract: "
@@ -1849,6 +1857,16 @@ def cmd_list_options() -> None:
 
 
 def cmd_build_prompt(args: argparse.Namespace) -> None:
+    """Print the prompt; --write/--write-json also save it, refusing an existing file unless --overwrite (the
+    pre-0.4 behaviour, Appendix H; r2-conventions finding 11). A refusal writes and prints nothing."""
+    overwrite = bool(getattr(args, "overwrite", False))
+    outputs = [path for path in (args.write, args.write_json) if path is not None]
+    if len(outputs) == 2 and outputs[0].resolve() == outputs[1].resolve():
+        raise ValueError("--write and --write-json must name different files.")
+    existing = [] if overwrite else [path for path in outputs if os.path.lexists(path)]
+    if existing:
+        raise FileExistsError(f"Refusing to overwrite existing file: {existing[0].resolve()} "
+                              "(--overwrite replaces it, the pre-0.4 behaviour)")
     legacy_style = bool(getattr(args, "legacy_style", False))
     prompt_text, seed = build_prompt(args.target, args.mode, args.prompt, args.role, args.seed, legacy_style)
     intentional = getattr(args, "intentional_low_frame_count", False)
@@ -1866,12 +1884,22 @@ def cmd_build_prompt(args: argparse.Namespace) -> None:
         "intentional_low_frame_count": intentional,
         "planning_warnings": [warning] if warning else [],
     }
-    if args.write:
-        args.write.parent.mkdir(parents=True, exist_ok=True)
-        args.write.write_text(prompt_text, encoding="utf-8")
-    if args.write_json:
-        args.write_json.parent.mkdir(parents=True, exist_ok=True)
-        args.write_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    created: list[Path] = []
+    try:
+        for path, text in ((args.write, prompt_text), (args.write_json, json.dumps(payload, indent=2))):
+            if path is None:
+                continue
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if overwrite:
+                path.write_text(text, encoding="utf-8")
+                continue
+            with open(path, "x", encoding="utf-8") as stream:  # exclusive: never replaces a file
+                created.append(path)
+                stream.write(text)
+    except BaseException:
+        for path in created:  # no partial output: remove what this run created
+            path.unlink(missing_ok=True)
+        raise
     print(prompt_text)
 
 
@@ -2498,8 +2526,13 @@ def build_parser() -> argparse.ArgumentParser:
     build_prompt_parser.add_argument("--prompt", required=True)
     build_prompt_parser.add_argument("--role")
     build_prompt_parser.add_argument("--seed", type=int)
-    build_prompt_parser.add_argument("--write", type=Path)
-    build_prompt_parser.add_argument("--write-json", type=Path)
+    build_prompt_parser.add_argument("--write", type=Path, help="Also save the prompt text to this new file.")
+    build_prompt_parser.add_argument("--write-json", type=Path,
+                                     help="Also save the prompt and its settings as JSON to this new file.")
+    build_prompt_parser.add_argument(
+        "--overwrite", action="store_true",
+        help="Replace an existing --write/--write-json file (the pre-0.4 behaviour); by default it is refused.",
+    )
     build_prompt_parser.add_argument(
         "--intentional-low-frame-count", action="store_true",
         help="Record deliberately sparse locomotion and suppress its advisory pose-count warning; does not change the grid.",
@@ -2517,7 +2550,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--action",
         action="append",
         required=True,
-        help="Action contract in ACTION=PATH form; repeat for each action.",
+        help="Action contract in ACTION=PATH form, a Godot Sprite3D metadata file written by process "
+             "(godot-sprite3d.json or --write-godot-sprite3d-meta), not pipeline-meta.json; repeat for each action.",
     )
     bundle_parser.add_argument("--default-action", required=True)
     bundle_parser.add_argument(

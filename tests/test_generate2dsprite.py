@@ -123,7 +123,9 @@ class LocomotionPlanningTests(unittest.TestCase):
             self.assertNotIn("same bounding box", payload["generated_prompt"])
             stderr = io.StringIO()
             with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
-                MODULE.cmd_build_prompt(MODULE.build_parser().parse_args(argv + ["--intentional-low-frame-count"]))
+                # --overwrite: an existing --write-json file is refused otherwise (r2-conventions finding 11)
+                MODULE.cmd_build_prompt(MODULE.build_parser().parse_args(
+                    argv + ["--intentional-low-frame-count", "--overwrite"]))
             payload = json.loads(path.read_text(encoding="utf-8"))
             self.assertEqual(stderr.getvalue(), "")
             self.assertTrue(payload["intentional_low_frame_count"])
@@ -997,8 +999,11 @@ def leftovers(root: Path) -> list[str]:
     return sorted(path.name for path in root.iterdir() if path.name.startswith("."))
 
 
-# Times `process` on <root>/sheet.png in a fresh interpreter after one warm-up run on <root>/warm.png; prints the
-# seconds of three runs as one JSON list. argv: the generate2dsprite.py path, the work folder.
+# Times ONE `process` run on <root>/sheet.png in a fresh interpreter, after one warm-up run on <root>/warm.png, and
+# prints its seconds as a JSON number. argv: the generate2dsprite.py path, the work folder, the attempt number.
+# One timed run per process (r1-findings finding 3): inside one interpreter the second and third runs of the same
+# sheet take about 60% longer than the first (2.4 s, then 3.9 s and 3.9 s), so a best of 3 inside one process
+# measured the first run only.
 _FRESH_PROCESS_TIMING = r"""
 import contextlib, importlib.util, io, json, sys, time
 from pathlib import Path
@@ -1007,7 +1012,7 @@ spec = importlib.util.spec_from_file_location("generate2dsprite_perf", sys.argv[
 module = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = module
 spec.loader.exec_module(module)
-root = Path(sys.argv[2])
+root, attempt = Path(sys.argv[2]), sys.argv[3]
 common = ["--target", "asset", "--mode", "sheet", "--rows", "4", "--cols", "4"]
 
 
@@ -1018,13 +1023,10 @@ def run(source, output):
         module.cmd_process(args)
 
 
-run("warm.png", "warm")
-times = []
-for attempt in range(3):
-    started = time.perf_counter()
-    run("sheet.png", f"run{attempt}")
-    times.append(round(time.perf_counter() - started, 3))
-print(json.dumps(times))
+run("warm.png", f"warm{attempt}")
+started = time.perf_counter()
+run("sheet.png", f"run{attempt}")
+print(json.dumps(round(time.perf_counter() - started, 3)))
 """
 
 
@@ -1146,21 +1148,52 @@ class SharedCoreAdoptionTests(unittest.TestCase):
         """D15: with forge_matte.key_still's region matte the DEFAULT path (auto -> soft key) also processes
         the 2048^2 4x4 perf sheet end to end in at most 3 s (best of 3); before D15 it took 3.1-4.4 s.
 
-        Timed in a fresh interpreter, as the CLI runs once per sheet: on Windows a long-lived process
-        (a full test session) runs the same numpy work up to about 50% slower after its first heavy runs,
-        a property of the process, not of the tool (a plain numpy loop shows it too). Measured at
-        integration with other agents running: 2.2-2.6 s for the first run of a fresh process."""
+        Each attempt is a warm-up plus ONE timed run in its own fresh interpreter, as the CLI runs once per
+        sheet: on Windows a long-lived process runs the same numpy work up to about 60% slower after its
+        first heavy run, a property of the process, not of the tool (a plain numpy loop shows it too).
+        r1-findings finding 3: with three timed runs in one process, runs 2 and 3 always took about 3.9 s,
+        so the best of 3 was really the first run only, and one slow first run under load failed the STD.
+        Measured at integration with other agents running: 2.2-2.6 s for the first run of a fresh process."""
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             make_magenta_sheet(4, 4, 512, margin=100, fringe=True).save(root / "sheet.png")
             make_magenta_sheet(4, 4, 64).save(root / "warm.png")
-            timed = run_cli(["-c", _FRESH_PROCESS_TIMING, SCRIPT_PATH, root], timeout=600)
-            self.assertEqual(timed.returncode, 0, timed.stderr)
-            times = json.loads(timed.stdout.strip().splitlines()[-1])
+            times = []
+            for attempt in range(3):  # best of 3 fresh processes, one after another
+                timed = run_cli(["-c", _FRESH_PROCESS_TIMING, SCRIPT_PATH, root, str(attempt)], timeout=600)
+                self.assertEqual(timed.returncode, 0, timed.stderr)
+                times.append(json.loads(timed.stdout.strip().splitlines()[-1]))
             meta = json.loads((root / "run0" / "pipeline-meta.json").read_text(encoding="utf-8"))
             self.assertEqual((meta["matte"]["quality"], meta["matte"]["requested_quality"]), ("soft", "auto"))
             self.assertEqual(meta["qc_summary"]["valid_frame_count"], 16)
             self.assertLessEqual(min(times), 3.0, f"2048^2 default soft path, seconds per run: {times}")
+
+    def test_perf_harness_times_one_run_per_fresh_interpreter(self) -> None:
+        """r1-findings finding 3: _FRESH_PROCESS_TIMING runs one warm-up and ONE timed run per interpreter, so the
+        soft-key gate's best of 3 compares three first runs (later runs in one process are about 60% slower)."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            fake = root / "fake_generate2dsprite.py"
+            fake.write_text(
+                "import argparse, json\n"
+                "from pathlib import Path\n"
+                "def build_parser():\n"
+                "    parser = argparse.ArgumentParser()\n"
+                "    process = parser.add_subparsers(dest='command').add_parser('process')\n"
+                "    for flag in ('--input', '--output-dir', '--target', '--mode', '--rows', '--cols'):\n"
+                "        process.add_argument(flag)\n"
+                "    return parser\n"
+                "def cmd_process(args):\n"
+                "    with open(Path(args.output_dir).parent / 'calls.log', 'a', encoding='utf-8') as log:\n"
+                "        log.write(json.dumps([Path(args.input).name, Path(args.output_dir).name]) + '\\n')\n",
+                encoding="utf-8")
+            for attempt in ("0", "1"):
+                timed = run_cli(["-c", _FRESH_PROCESS_TIMING, fake, root, attempt], timeout=120)
+                self.assertEqual(timed.returncode, 0, timed.stderr)
+                self.assertIsInstance(json.loads(timed.stdout.strip().splitlines()[-1]), float)
+            calls = [json.loads(line) for line in (root / "calls.log").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(calls, [["warm.png", "warm0"], ["sheet.png", "run0"],
+                                     ["warm.png", "warm1"], ["sheet.png", "run1"]])
 
 
 class SilentErrorTests(unittest.TestCase):
@@ -1470,6 +1503,33 @@ class CleanupTests(unittest.TestCase):
             self.assertIn("do not resolve next to its contract: idle-2.png", broken.stderr)
             self.assertFalse((root / "other.json").exists())
 
+    def test_bundle_refuses_pipeline_meta_as_an_action_contract(self) -> None:
+        """r2-conventions finding 12: process prints its pipeline-meta.json path, and passing that file to
+        build-godot-bundle --action was 'error: internal error (TypeError: ... WindowsPath and dict)'. A file
+        that is not Godot Sprite3D metadata is a clean error naming the file to write instead."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            make_magenta_sheet(1, 2, 64).save(root / "sheet.png")
+            run_process("--input", str(root / "sheet.png"), "--target", "asset", "--mode", "idle", "--rows", "1",
+                        "--cols", "2", "--align", "feet", "--godot-world-height", "0.7",
+                        "--output-dir", str(root / "idle"))
+            contract = json.loads((root / "idle" / "godot-sprite3d.json").read_text(encoding="utf-8"))
+            (root / "idle" / "records.json").write_text(
+                json.dumps({**contract, "frames": [{"path": name} for name in contract["frames"]]}), encoding="utf-8")
+            for name in ("pipeline-meta.json", "records.json"):
+                with self.subTest(contract=name):
+                    result = cli("build-godot-bundle", "--action", f"idle={root / 'idle' / name}",
+                                 "--default-action", "idle", "--output", str(root / "bundle.json"))
+                    self.assertEqual(result.returncode, 1)
+                    self.assertTrue(result.stderr.startswith(
+                        f"error: Action contract 'idle' ({name}) is not a Godot Sprite3D metadata file"), result.stderr)
+                    self.assertIn("--write-godot-sprite3d-meta", result.stderr)
+                    self.assertNotIn("internal error", result.stderr)
+                    self.assertFalse((root / "bundle.json").exists())
+            result = cli("build-godot-bundle", "--action", f"idle={root / 'idle' / 'godot-sprite3d.json'}",
+                         "--default-action", "idle", "--output", str(root / "bundle.json"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_default_prompt_has_no_franchise_names(self) -> None:
         """DOC-16, S26: default prompts name no franchise; --legacy-style keeps the old text."""
         franchises = ("digimon", "pokemon", "pokémon", "zelda", "final fantasy", "mario", "dragon quest",
@@ -1570,6 +1630,35 @@ class CliConventionTests(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertIn("error: QC failed: empty frames", result.stderr)
             self.assertEqual(sorted(path.name for path in root.iterdir()), ["blank.png"])
+
+    def test_build_prompt_refuses_existing_files_unless_overwrite(self) -> None:
+        """r2-conventions finding 11: build-prompt --write/--write-json replaced an existing file (cfed170
+        behaviour). They refuse it now, writing and printing nothing; --overwrite is the legacy switch."""
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            text, data = root / "p.txt", root / "p.json"
+            common = ("build-prompt", "--target", "asset", "--mode", "idle", "--prompt", "a slime")
+            for option, existing in (("--write", text), ("--write-json", data)):
+                with self.subTest(option=option):
+                    existing.write_text("user\n", encoding="utf-8")
+                    other = root / ("new.json" if option == "--write" else "new.txt")
+                    other_option = "--write-json" if option == "--write" else "--write"
+                    result = cli(*common, option, str(existing), other_option, str(other))
+                    self.assertEqual(result.returncode, 1)
+                    self.assertIn("error: Refusing to overwrite existing file", result.stderr)
+                    self.assertIn("--overwrite", result.stderr)
+                    self.assertEqual((result.stdout, existing.read_text(encoding="utf-8")), ("", "user\n"))
+                    self.assertFalse(other.exists())  # nothing is written when one target is refused
+            result = cli(*common, "--write", str(text), "--write-json", str(data), "--overwrite")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(text.read_text(encoding="utf-8").startswith("A 2x2"))
+            self.assertEqual(json.loads(data.read_text(encoding="utf-8"))["prompt"], "a slime")
+            fresh = root / "nested" / "fresh.txt"
+            self.assertEqual(cli(*common, "--write", str(fresh)).returncode, 0)
+            self.assertEqual(fresh.read_text(encoding="utf-8"), text.read_text(encoding="utf-8"))
+            same = cli(*common, "--write", str(root / "x.json"), "--write-json", str(root / "x.json"))
+            self.assertEqual(same.returncode, 1)
+            self.assertIn("must name different files", same.stderr)
 
 
 def _with_bom(path: Path) -> None:

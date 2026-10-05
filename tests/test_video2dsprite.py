@@ -245,6 +245,48 @@ def test_sample_meta_paths_are_output_relative(tmp_path, capsys):
     assert "README.txt" in {p.name for p in out.iterdir()}
 
 
+def soft_edged_frame(index: int) -> Image.Image:
+    """A dark ellipse body with a faint bright rim (a soft key edge); RGB is already zero under alpha 0."""
+    height, width = 128, 96
+    pixels = np.zeros((height, width, 4), np.uint8)
+    y, x = np.mgrid[:height, :width]
+    cx, cy, rx, ry = 48 + index % 3, 64, 20, 44
+    inside = (x - cx) ** 2 / rx ** 2 + (y - cy) ** 2 / ry ** 2 <= 1
+    rim = ((x - cx) ** 2 / (rx + 3) ** 2 + (y - cy) ** 2 / (ry + 3) ** 2 <= 1) & ~inside
+    pixels[inside] = (20, 24, 32, 255)
+    pixels[rim] = (250, 240, 200, 24)
+    return Image.fromarray(pixels, "RGBA")
+
+
+def colour_under_alpha_0(image: Image.Image | Path) -> int:
+    """How many fully transparent pixels still carry RGB."""
+    if isinstance(image, Path):
+        with Image.open(image) as opened:
+            pixels = np.asarray(opened.convert("RGBA"))
+    else:
+        pixels = np.asarray(image.convert("RGBA"))
+    return int(((pixels[..., 3] == 0) & pixels[..., :3].any(axis=2)).sum())
+
+
+def test_sample_zeroes_rgb_under_alpha_0(tmp_path, capsys):
+    """r2-conventions finding 4: sample (and process, which calls it) wrote sprites, strips and grids with a plain
+    Image.save after the LANCZOS resize, so alpha-0 pixels kept colour (6,2,1,0). Appendix D: RGB is zero there."""
+    frames = [soft_edged_frame(index) for index in range(8)]
+    fixed, _ = V.fixed_envelope(frames, 128, 100, 118, "feet")
+    assert sum(colour_under_alpha_0(sprite) for sprite in fixed) > 0  # the resize does leave colour behind
+    clean = tmp_path / "clean"
+    clean.mkdir()
+    for index, image in enumerate(frames):
+        image.save(clean / f"clean_{index:04d}.png")
+    out = tmp_path / "sampled"
+    code, _, stderr = run_main(["sample", "--clean-dir", clean, "--output-dir", out, "--frame-counts", "4,8"], capsys)
+    assert code == 0, stderr
+    written = {p.relative_to(out).as_posix(): colour_under_alpha_0(p) for p in sorted((out / "sprite").rglob("*.png"))}
+    assert {"sprite/sprite_01.png", "sprite/x8/sprite_08.png", "sprite/x4/sprite_04.png", "sprite/run-strip-8.png",
+            "sprite/run-grid-8.png", "sprite/run-strip-4.png", "sprite/run-grid-4.png"} <= set(written)
+    assert written == dict.fromkeys(written, 0)
+
+
 # --------------------------------------------------------------------------- B05-T7 preview timing
 
 def test_preview_durations_sum_exactly(tmp_path):

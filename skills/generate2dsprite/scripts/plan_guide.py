@@ -48,6 +48,10 @@ TOOL = {"name": "plan_guide.py", "version": forge_core.FORGE_PACKAGE_VERSION}  #
 SCHEMA = "generate2dsprite.sheet_plan.v1"
 PLAN_NAME = "sheet-plan.json"
 HOST_BUDGET_PX = 1536 * 1024  # observed host image area (3 of 3 calls within +-0.031%, report v2 3.3.1)
+# Most cells a planned grid may hold: about 39 px per cell on a 1.5-megapixel host image. It bounds --frames and
+# the layout search, which spun for minutes on --frames 99999999 (r2-conventions finding 13).
+MAX_CELLS = 1024
+MAX_BUDGET_PX = 4096 * 4096  # largest host image the guides are drawn for (they are drawn at the predicted size)
 STANDARD_ASPECTS = ("3:2", "2:3", "1:1", "16:9", "9:16", "2:1", "1:2")
 CYCLES = ("run", "walk", "none")
 NEAR = (255, 122, 0)
@@ -118,16 +122,18 @@ def predict_size(aspect: tuple[int, int], budget: int = HOST_BUDGET_PX) -> tuple
 
 def candidate_layouts(frames: int, aspects: Sequence[str], *, envelope_aspect: float, safe: float,
                       budget: int = HOST_BUDGET_PX, max_empty: int = 1) -> list[dict]:
-    """Every rows x cols grid holding ``frames`` poses (at most ``max_empty`` spare cells) for each aspect,
-    largest motion envelope first (report v2 plan_and_guide)."""
+    """Every rows x cols grid holding ``frames`` poses (at most ``max_empty`` spare cells, at most MAX_CELLS
+    cells) for each aspect, largest motion envelope first (report v2 plan_and_guide).
+
+    Only the columns that fit are visited, ceil(frames / rows) up to cells / rows, so the search is
+    linear in the cell count instead of quadratic."""
     layouts = []
+    cells_max = min(frames + max_empty, MAX_CELLS)
     for order, text in enumerate(aspects):
         aspect = parse_aspect(text)
         width, height = predict_size(aspect, budget)
-        for rows in range(1, frames + max_empty + 1):
-            for cols in range(1, frames + max_empty + 1):
-                if not frames <= rows * cols <= frames + max_empty:
-                    continue
+        for rows in range(1, cells_max + 1):
+            for cols in range(-(-frames // rows), cells_max // rows + 1):
                 cell_w, cell_h = width / cols, height / rows
                 safe_w, safe_h = cell_w * (1 - 2 * safe), cell_h * (1 - 2 * safe)
                 envelope_h = min(safe_h, safe_w / envelope_aspect)
@@ -447,14 +453,17 @@ def prompt_block(plan: dict, *, cycle: str, facing: str, phases: Sequence[dict])
 def run(args: argparse.Namespace) -> dict:
     if args.frames < 1:
         raise PlanError("--frames must be at least 1.")
+    if args.frames > MAX_CELLS:
+        raise PlanError(f"--frames must be at most {MAX_CELLS}: a host sheet of about 1.5 megapixels has no room "
+                        "for more poses; split the action into several sheets.")
     if args.cycle != "none" and (args.frames % 2 or args.frames < 4):
         raise PlanError("--cycle run|walk needs an even number of frames, at least 4 (two half-cycles).")
     if not 0.0 <= args.safe < 0.45:
         raise PlanError("--safe is a fraction of the cell in [0, 0.45).")
     if not 0.0 < args.gutter < 0.2:
         raise PlanError("--gutter is a fraction of the cell in (0, 0.2).")
-    if args.budget < 4096:
-        raise PlanError("--budget is the host image area in pixels (about 1572864).")
+    if not 4096 <= args.budget <= MAX_BUDGET_PX:  # the guides are drawn at this size; 1e10 px never finished
+        raise PlanError(f"--budget is the host image area in pixels (about 1572864, at most {MAX_BUDGET_PX}).")
     if args.max_empty < 0:
         raise PlanError("--max-empty must be 0 or more.")
     envelope_aspect = parse_ratio(args.envelope_aspect)
@@ -466,6 +475,8 @@ def run(args: argparse.Namespace) -> dict:
     if args.rows or args.cols:
         if not (args.rows and args.cols):
             raise PlanError("--rows and --cols go together.")
+        if args.rows < 1 or args.cols < 1 or args.rows * args.cols > MAX_CELLS:
+            raise PlanError(f"--rows and --cols must be positive with at most {MAX_CELLS} cells in all.")
         if args.rows * args.cols < args.frames:
             raise PlanError(f"{args.rows} x {args.cols} cells cannot hold {args.frames} frames.")
         layouts = candidate_layouts(args.frames, aspects, envelope_aspect=envelope_aspect, safe=args.safe,
@@ -534,7 +545,8 @@ def _aspect(text: str) -> str:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--frames", type=int, required=True, help="number of poses in the sheet")
+    parser.add_argument("--frames", type=int, required=True,
+                        help=f"number of poses in the sheet (1 to {MAX_CELLS})")
     parser.add_argument("--output-dir", required=True, help="new directory for the guide, prompt and plan")
     parser.add_argument("--cycle", choices=CYCLES, default="none",
                         help="run or walk draws the NEAR/FAR leg skeleton (default none: layout only)")
@@ -549,7 +561,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--gutter", type=float, default=0.04, help="empty band at each cell edge (default 0.04)")
     parser.add_argument("--max-empty", type=int, default=1, help="spare cells allowed (default 1)")
     parser.add_argument("--budget", type=int, default=HOST_BUDGET_PX,
-                        help=f"host image area in pixels (default {HOST_BUDGET_PX})")
+                        help=f"host image area in pixels (default {HOST_BUDGET_PX}, at most {MAX_BUDGET_PX})")
     parser.add_argument("--min-envelope-px", type=float, default=0.0,
                         help="fail when a pose gets less envelope height than this many host pixels")
     return parser

@@ -54,6 +54,12 @@ def _local_utf8_stdio() -> None:
             stream.reconfigure(errors="backslashreplace")
 
 
+def _ascii(text: object) -> str:
+    """Console-safe ASCII (Appendix D): non-ASCII characters, such as a folder name in --root, become
+    backslash escapes on every console code page, not only on one that cannot encode them."""
+    return str(text).encode("ascii", "backslashreplace").decode("ascii")
+
+
 def _repo_path(text: object, role: str) -> PurePosixPath:
     if not isinstance(text, str) or not text or "\\" in text or ":" in text:
         raise ManifestError(f"{role} must be a repository-relative POSIX path: {text!r}")
@@ -180,12 +186,12 @@ def main(argv: list[str] | None = None) -> int:
                 written.append(target)
             report = inspect(root, entries, strict)
     except (ManifestError, OSError) as error:
-        print(f"error: {error}", file=sys.stderr)
+        print(_ascii(f"error: {error}"), file=sys.stderr)
         return 1
     for kind, target, canonical in report.drift:
-        print(f"{kind}: {target} (canonical {canonical})", file=sys.stderr)
+        print(_ascii(f"{kind}: {target} (canonical {canonical})"), file=sys.stderr)
     for problem in report.problems:
-        print(problem, file=sys.stderr)
+        print(_ascii(problem), file=sys.stderr)
     if report.drift or report.problems:
         hint = "; run python tools/vendor_sync.py --write" if report.drift else ""
         print(f"error: {len(report.drift) + len(report.problems)} vendoring problem(s){hint}", file=sys.stderr)

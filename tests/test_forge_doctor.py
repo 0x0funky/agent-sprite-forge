@@ -244,6 +244,28 @@ def test_a_launcher_without_its_binary_is_never_run(tmp_path, cold, monkeypatch)
     assert forge_doctor.resolve_cli("codex").problem.startswith("FORGE_CODEX_EXE")
 
 
+def test_npm_target_reads_the_windows_architecture_without_a_child_process(monkeypatch):
+    """r3-platform finding 1: on Windows with Python 3.10 or 3.11, platform.machine() runs win32_ver(), which
+    spawns `cmd /c ver` (test_no_credential_reads then fails). On win32 the doctor reads PROCESSOR_ARCHITEW6432
+    or PROCESSOR_ARCHITECTURE, as platform itself does; other systems still ask platform.machine()."""
+    monkeypatch.setattr(forge_doctor.platform, "machine",
+                        lambda: pytest.fail("platform.machine() spawns `cmd /c ver` on Windows with Python <= 3.11"))
+    monkeypatch.setattr(forge_doctor.sys, "platform", "win32")
+    monkeypatch.delenv("PROCESSOR_ARCHITEW6432", raising=False)
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "AMD64")
+    assert forge_doctor._npm_target() == ("x86_64-pc-windows-msvc", "codex-win32-x64")
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "ARM64")
+    assert forge_doctor._npm_target() == ("aarch64-pc-windows-msvc", "codex-win32-arm64")
+    monkeypatch.setenv("PROCESSOR_ARCHITECTURE", "x86")  # 32-bit Python on 64-bit Windows (WOW64)
+    monkeypatch.setenv("PROCESSOR_ARCHITEW6432", "AMD64")
+    assert forge_doctor._npm_target() == ("x86_64-pc-windows-msvc", "codex-win32-x64")
+    monkeypatch.delenv("PROCESSOR_ARCHITEW6432")
+    assert forge_doctor._npm_target() is None  # codex ships no 32-bit Windows package
+    monkeypatch.setattr(forge_doctor.sys, "platform", "linux")
+    monkeypatch.setattr(forge_doctor.platform, "machine", lambda: "aarch64")
+    assert forge_doctor._npm_target() == ("aarch64-unknown-linux-musl", "codex-linux-arm64")
+
+
 def test_ladder_levels_follow_version_keyed_proofs(tmp_path, cold, monkeypatch):
     monkeypatch.setenv("FORGE_CODEX_EXE", str(fake_native(tmp_path / "bin" / ("codex" + EXE))))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))

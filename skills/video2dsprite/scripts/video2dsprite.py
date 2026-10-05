@@ -1150,10 +1150,12 @@ def build_exports(
     sub = _ensure_dir(out_sprite_dir / tag) if tag else out_sprite_dir
     for old in sub.glob("sprite_*.png"):
         old.unlink()
+    # Sprites, strips and grids are straight-alpha RGBA with RGB zeroed under alpha 0 (Appendix D): the
+    # LANCZOS resize leaves colour there, and paste() copies it (r2-conventions finding 4).
     paths = []
     for i, sp in enumerate(sprites):
         p = sub / f"sprite_{i + 1:02d}.png"
-        sp.save(p)
+        fc.save_png(sp, p)
         paths.append(str(p))
 
     size = sprites[0].size[0]
@@ -1161,7 +1163,7 @@ def build_exports(
     for i, sp in enumerate(sprites):
         strip.paste(sp, (i * size, 0))
     strip_path = out_sprite_dir / f"run-strip-{n_frames}.png"
-    strip.save(strip_path)
+    fc.save_png(strip, strip_path)
 
     cols = 8 if n_frames >= 16 else 4
     rows = int(math.ceil(len(sprites) / cols))
@@ -1170,7 +1172,7 @@ def build_exports(
         r, c = divmod(i, cols)
         grid.paste(sp, (c * size, r * size))
     grid_path = out_sprite_dir / f"run-grid-{n_frames}.png"
-    grid.save(grid_path)
+    fc.save_png(grid, grid_path)
 
     if durations_ms is None:
         if gif_ms is None:
