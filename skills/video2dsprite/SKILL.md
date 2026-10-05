@@ -1,92 +1,72 @@
 ---
 name: video2dsprite
-description: Animate approved 2D characters, creatures, props or local scene details through image-to-video, then package fixed-canvas frames, alpha video and engine metadata. Supports supplied video, available native tools or the optional generate2dmedia API route. Use for video-derived game animation and transparency/anchor repair; use generate2dsprite for authored discrete pose sheets.
+description: Turn an approved 2D character, creature, prop or scene detail into game animation through image-to-video, or process a supplied clip. Plan the chroma key and the image-to-video input, generate with the verified route, triage and key the clip with a soft matte, register it to the master, pick loops or retime actions, then package fixed-canvas frames, alpha WebM, packed MP4 for iPhone and a PNG fallback with engine metadata and a JS runtime. Use for fluid organic motion (breathing, hair, cloth, creature attacks) and any video-to-sprite work. Not for drawn pose sheets or small pixel animation (generate2dsprite, codeart2d), maps or plate loops (generate2dmap), or calling a video API by itself (generate2dmedia).
 ---
 
-# Video-derived 2D animation
+# Video to 2D Animation
 
-An approved still establishes identity and geometry; a video model supplies motion;
-deterministic processing prepares it for the engine. This is an optional asset path,
-not a promise that video is smaller, seamless, pixel-perfect or cheaper than sheets.
+An approved still sets identity and geometry, a video model supplies motion, and deterministic
+tools prepare it for the engine. Video is not promised to be smaller, seamless or cheaper than sheets.
 
-## Choose the route
+## Use when
 
-- **Already have a clip:** process it offline with the bundled scripts. No provider/account required.
-- **Native image-to-video tool available:** use its actual supported request schema; retain input, prompt and result.
-- **API generation:** use [generate2dmedia](../generate2dmedia/SKILL.md) for provider checks, dry-run, execution and resumable jobs. Codex/Claude can use this route; the processor is not Grok-only.
-- **Neither available:** prepare the motion brief and process any supplied clip. Report the missing generation capability; never invent a successful generation.
+- Fluid motion from an accepted master: idle breathing, walks, runs, attacks, casts, hair, capes, creatures.
+- A supplied clip must become transparent, registered, looped frames and engine video.
 
-Use [prompt-rules.md](references/prompt-rules.md) for character/prop/local-background briefs.
-Use [pipeline.md](references/pipeline.md) for CLI details, metadata and browser integration.
+## Do not use when
 
-## Geometry and motion contract
+- Discrete pose sheets, exact pixel animation or game FX: [generate2dsprite](../generate2dsprite/SKILL.md) and [codeart2d](../codeart2d/SKILL.md).
+- Water, fire or mist inside a still scene plate: [generate2dmap](../generate2dmap/SKILL.md). Only an API or CLI call: [generate2dmedia](../generate2dmedia/SKILL.md).
 
-Record `sourceSize` and `sourceAnchor` from the approved art before generation.
-Keep camera, body scale, facing and root position consistent. One clip contains one
-action; the game owns translation, hit timing, damage and state transitions.
+## Capability check (once per session)
 
-Review contact/identity drift before accepting a clip. Use one constant crop,
-scale and translation across a clip; do not crop/resize every frame to its current
-alpha bounds. That pumps body size, removes crouches and pins airborne feet.
-Do not freeze the original still's alpha over moving RGB: it clips moving leaves,
-hair and weapons. Capture dynamic alpha, or retain an opaque local patch + mask.
+Run `python "<skill-dir>/../generate2dmedia/scripts/forge_doctor.py" --host-tools <tools> --save <output>/doctor.json`, where `<tools>` lists the media tools in your own tool list (`image_gen`, `image_edit`, `image_to_video`) or `none`. Use only the routes its `ROUTES` block names, in its order. `ready` means usable now: your own tool, or Grok (local CLI) VERIFIED for the installed version. `consent` (the paid API) needs the user's consent for each request. An installed CLI is not a connected tool until a verified run ([cli-routes.md](../generate2dmedia/references/cli-routes.md)). If `encoding.stdout` fails, set `PYTHONUTF8=1`. `python "<skill-dir>/scripts/video2dsprite.py" doctor` checks ffmpeg (5.1+, VP9 alpha round trip).
 
-For idle/walk, trim an actual cycle and inspect the seam. For attacks, export a
-one-shot and return to idle in the engine; don't ping-pong an impact. Matching
-first/last generation references can help but cannot guarantee intermediate motion
-or a seamless loop. More sampled frames do not fix drifting geometry.
+## Art source
 
-Use [animation-review.md](references/animation-review.md) for the local frame
-scrubber, light/dark alpha review, candidate intervals and byte-preserved cuts.
-Recurrence suggestions require visual phase/contact review; they do not certify a loop.
+The master comes from [generate2dsprite](../generate2dsprite/SKILL.md) or the user, by its art-source rules (code art first for small pixel sprites, then the host image tool, a VERIFIED local agent, the paid API with consent, existing art). Small pixel loops and FX stay code art. Motion, local agent first; record the route as `art_source` and name it in your reply:
 
-## Process and package
+1. the host's own image-to-video tool, with its real schema;
+2. Grok (local CLI) in ACP mode when the doctor reports it VERIFIED: `python "<skill-dir>/../generate2dmedia/scripts/cli_media.py" video --route auto --reference <job>/input.png --prompt-file <job>/prompt.txt --output-dir <new> --execute`. No per-call question within the session cap; say "Grok (local CLI)" ran;
+3. the paid xAI REST API (generate2dmedia `generate_media.py video`) only with the user's explicit consent for that request;
+4. a clip the user supplies (no account needed);
+5. otherwise prepare the job and prompt, explain the gap, and never invent a successful generation.
 
-`Pillow` and `numpy` are required. ffmpeg is optional for supplied PNG frames and
-required for decode/video encoding. Inspect installed encoders:
+## Host notes
 
-```bash
-python skills/video2dsprite/scripts/video2dsprite.py doctor
-```
+- **Codex:** no native image-to-video tool; use route 2 or 3. Look at review images with `view_image`.
+- **Claude Code:** no media tools. Look at review PNGs and contact sheets with Read; run tools with Bash; `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
+- **Grok:** its native `image_to_video` tool is the host tool; the same `grok` executable is the "Grok (local CLI)" route for other hosts.
 
-For an opaque magenta-key clip, select a reviewed interval. This example decodes
-2 seconds at 12fps; adjust to the actual motion, not a universal production default.
+## Commands
 
-```bash
-python skills/video2dsprite/scripts/video2dsprite.py process --video motion.mp4 --out-dir work --start 1 --duration 2 --fps 12 --key-mode magenta --frame-counts 12,24 --playback-duration 2
-python skills/video2dsprite/scripts/video2dsprite.py package --clean-dir work/frames-clean --out-dir assets/hero-idle --name hero-idle --fps 12 --source-size 448,448 --source-anchor 224,430 --max-side 320 --formats png,webm,packed --loop
-```
+Run each tool as one line from the user's project root: `python "<skill-dir>/scripts/<tool>.py" ...`. `<skill-dir>` is this skill's folder; sibling skills sit beside it. Keep inputs and outputs inside the project. Every verb writes a new `--output-dir`: it refuses an existing one and publishes only after its checks (`--strict` fails on residue). Success prints one JSON line; errors print `error: ...` and exit 1; usage errors exit 2. Needs Python 3.10+, numpy, Pillow and ffmpeg 5.1+. `--help` lists every flag.
 
-The geometry numbers must come from this asset. Default packaging keeps the source
-canvas; optional `--crop-union` stores a shared `sourceRect`. Output encoding size
-may shrink while `sourceSize`/`sourceAnchor` remain original art coordinates.
+## Pipeline
 
-`extract`, `clean`, `sample`, `process` remain supported. `sample`/`process` now use
-one fixed envelope; `--registration legacy-per-frame` exists only for reproducing
-old output. Package from **clean source frames**, not normalized sample cells.
-`--key-mode auto` preserves existing alpha; `none` skips keying. Transparent VP9
-WebM extraction needs `--decoder libvpx-vp9` because some ffmpeg decoders drop alpha.
-If a magenta fringe remains, `--despill 0.5` optionally reduces magenta only at the
-first visible edge; review intentional violet edge colors before accepting it.
-`package` requires a fresh output directory and publishes only after successful encoding.
-For detailed pixel sheets or careful contact registration use `generate2dsprite`.
+1. **Key plan.** `video2dsprite.py key-plan --master <master.png>`: paste `background_sentence` into the prompt; protect or recolour `design_colours_at_risk`.
+2. **Prepare.** `prepare_i2v_input.py prepare --master <art> --action <idle|walk|run|attack|cast|guard|hurt|victory|defeat|ambient|fx> --output-dir <job>`; send `input.png` and `prompt.txt`; `registration_job.json` keeps the transform. Check a hand-written prompt with `prepare_i2v_input.py lint`.
+3. **Generate** by the art-source order above.
+4. **Accept the take.** `register_clip.py qc --job <job>/registration_job.json --video <take>`; then `video2dsprite.py triage --video <take> --output-dir <new>`. A border touch inside the action means regenerate, never pad.
+5. **Key.** `video2dsprite.py process --video <take> --output-dir <new> --reference <master.png>` (soft matte); read `frames-clean/matte-report.json` and look at frames over light and dark. Same keying for every clip of a character: `--matte-profile <character-profile.json>`. A design colour near the key: `--protect-color #rrggbb`. Already decoded frames: `video2dsprite.py clean`.
+6. **Register.** `register_clip.py apply --job <job>/registration_job.json --frames <out>/frames-clean --output-dir <new>`; feet drift or jumps: `--lock feet`; spell or hit FX: `--profile fx`; one scale per character: `register_clip.py profile`, then `--character-profile`.
+7. **Loop or retime.** Walks, runs, idles: `gait_loop.py select --frames-dir <reg>/frames --fps N --output-dir <new>` (`--kind idle` or `hover`); play `aids/loop3x.gif`. Attacks, casts, FX: `retime.py --frames-dir <reg>/frames --fps N --output-dir <new> --spans <spans>` (impact, hold, ticks); walk cadence: `gait_loop.py measure-stride`.
+8. **Package.** `engine_export.py package --clean-dir <reg>/frames --output-dir <new> --selection <selection.json> --registration <registration.json> --formats png,webm,packed --tiers actor`. Refused for key residue: re-key; `--allow-key-residue` only with a recorded override.
+9. **Verify.** `engine_export.py verify --package <dir>`, then `validate_animation.py <character dir> --require-states idle,walk --require-verify`.
+
+Details: [pipeline.md](references/pipeline.md), keying [matte.md](references/matte.md), review and cuts [animation-review.md](references/animation-review.md), prompts [prompt-rules.md](references/prompt-rules.md).
+
+## Motion and geometry rules
+
+- One clip, one action. The game owns translation, hit timing, damage and state changes.
+- One fixed transform per clip; never crop or resize frames to their own alpha bounds (it pumps size and pins airborne feet). Never freeze the still's alpha over moving RGB.
+- Choose cycles with `gait_loop.py select`, never by eye alone, then confirm by eye. Walks never ping-pong; attacks never recover by playing frames backwards; retime actions to their impact and hold. Walks ship cadence and stride.
+- Keying claims quote the matte report's numbers and stay `needs-visual-review`. `--matte binary --despill-mode off` reproduces the cfed170 keyer.
 
 ## Runtime and acceptance
 
-Deliver `animation.json`, `animation-qa.json`, poster, paged PNG fallback and the
-requested video transports. Packed H.264 stores RGB left / grayscale alpha right;
-it is **not a natively transparent MP4**. A working Canvas2D reconstruction helper
-and anchor-aware draw function are in [packed-alpha-runtime.js](references/packed-alpha-runtime.js).
+- Acceptance order: package, then verify, then `validate_animation.py`. Deliver `animation.json` (3.0, keeps every 2.0 key; whole-ms `durationsMs`, exact `fpsRational`), QA, poster, PNG fallback and the requested transports. Geometry stays in source units (`sourceSize`, `sourceAnchor`, `sourceRect`).
+- Packed H.264 stores RGB left and alpha right; it is not a transparent MP4. Draw the compositor's `lease.drawable` ([packed-alpha-runtime.js](references/packed-alpha-runtime.js) over `references/runtime/packed-alpha-webgl.mjs`); show the poster until a decoded frame exists. Distance-driven walks, hit-stop and transitions: `references/runtime/forge-runtime.mjs`.
+- Inspect at game scale: face and silhouette stability, contact, moving alpha edges over light and dark, loop seam, readability. Verify real iPhone playback before claiming alpha or frame rate; compare bytes and decode cost before replacing sheets.
 
-Show the poster until the first decoded frame. Use the reconstructed canvas as the
-drawable, not the packed source video. Pause/release invisible assets; share decoders
-for identical clips, cap resolution/fps/active videos for the target device, and
-serve over HTTP with correct media headers. Verify actual iPhone playback and
-frame time; `canPlayType()` and successful desktop decode do not prove alpha or FPS.
-
-Inspect at game scale: silhouette/face stability, feet/root contact, moving alpha
-edges over light/dark backgrounds, loop seam, action readability and transitions.
-The report measures frame differences and bounding-box drift; it always retains
-`needs-visual-review` rather than falsely certifying identity/contact/seam quality.
-Compare actual package bytes and runtime decode cost before replacing sheets.
-Integrate into the game only when that is within the user's requested scope.
+Data contracts: `references/schemas/video.schema.json`.
