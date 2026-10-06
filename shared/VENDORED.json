@@ -32,7 +32,8 @@
       "canonical": "shared/forge_palette.py",
       "owner": "B04-palette-pixel",
       "targets": [
-        "skills/generate2dsprite/scripts/forge_palette.py"
+        "skills/generate2dsprite/scripts/forge_palette.py",
+        "skills/video2dsprite/scripts/forge_palette.py"
       ]
     },
     {
