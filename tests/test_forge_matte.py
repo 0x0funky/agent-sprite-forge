@@ -847,3 +847,20 @@ def test_key_still_auto_modes():
         fm.key_still(rgb, quality="hard", key="green")
     with pytest.raises(ValueError):
         fm.key_still(rgb, quality="best")
+
+
+def test_matte_qa_does_not_count_a_crimson_outline_as_magenta_spill():
+    # A finished sprite whose outline is a deep crimson scarf: min(R, B) - G is 21, but R >> B,
+    # so it is a design colour, not key spill (the residue gate refused clean frames before).
+    sprite = np.zeros((40, 40, 4), np.uint8)
+    sprite[8:32, 8:32] = (186, 12, 33, 255)
+    sprite[12:28, 12:28] = (90, 110, 140, 255)
+    report = fm.matte_qa(sprite, "magenta")
+    assert report["outer_ring_spill_fraction"] == 0.0
+    assert report["thresholds"]["spill_hue_balance"] == fm.SPILL_HUE_BALANCE
+
+    # Real magenta spill keeps R and B balanced and is still counted.
+    spilled = sprite.copy()
+    spilled[8:32, 8:32] = (200, 40, 170, 255)
+    spilled[12:28, 12:28] = (90, 110, 140, 255)
+    assert fm.matte_qa(spilled, "magenta")["outer_ring_spill_fraction"] == 1.0

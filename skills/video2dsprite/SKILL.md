@@ -35,7 +35,25 @@ The master still comes from [generate2dsprite](../generate2dsprite/SKILL.md) (im
 
 Every clip goes through one command: `python "<skill-dir>/../generate2dmedia/scripts/route_media.py" video --prompt-file <job>/prompt.txt --reference <job>/input.png --last-frame <job>/input.png --duration 6 --resolution 720p --out-dir <new>`. It prints one JSON line with `route`, `artifact`, `sha256`, `estimateUsd` and `lastFrameUsed`. The finish is HD by default; the pixel finish is an option when the user asks for pixel art.
 
-<!-- BLOCK:sprite-set -->
+## A whole sprite set from one still
+
+For a character's game set, use `sprite_set.py`: one approved master (generate2dsprite `master.json`) in, one image-to-video clip per action out, keyed, gated, registered, cut, finished and packaged. For one clip or a supplied video, use the pipeline below. Details: [sprite-set.md](references/sprite-set.md). Prompts and fix clauses: [motion-prompts.md](references/motion-prompts.md).
+
+1. **Plan.** `python "<skill-dir>/scripts/sprite_set.py" plan --master <art>/master.json --output-dir <set>`. Defaults: `--actions idle,walk,run,attack,jump,hurt`, `--finish` from the master (hd default), `--target-height` 256 hd or 80 pixel. Jump gets a 3:4 canvas with 34% headroom and attack a 16:9 one; idle and attack pin the end frame to the master. Read each action's `prompt` in `<set>/set_plan.json`, and edit `motion`, `negatives` or `gates` there before the run if needed.
+2. **Run.** `python "<skill-dir>/scripts/sprite_set.py" run --plan <set>/set_plan.json`. Clips come from generate2dmedia `route_media.py`, then:
+   - soft-matte keying;
+   - numeric gates: area 0.72-1.32, feet, identity NCC, zoom, turning around, edge, background, extra objects, motion, end pose;
+   - up to 3 takes, each retake carrying the fix clause for the gate that failed; if every take fails, the best usable window is kept;
+   - registration, then a loop or a ticked one-shot (attacks get a hit tick);
+   - `finish_frames.py` hd or pixel;
+   - png, webm and packed packages, verified.
+   Run it again to resume; nothing is generated twice.
+3. **No route (exit 3).** Make the clip with your own image-to-video tool from the input and prompt that the summary names, save it as the named `media/clip.mp4`, and run again.
+4. **Review.** `python "<skill-dir>/scripts/sprite_set.py" review --plan <set>/set_plan.json`, then LOOK at every `-sheet.png`, every `-final.png` and the `lineup` (Read in Claude Code, view_image in Codex). The numbers cannot see identity, facing, a changed weapon, text or a covered face.
+5. **Decide each action.**
+   - Approve: `accept --plan <set>/set_plan.json --action <id> --take <n>`. Add `--window START:END` to keep part of a failed take.
+   - Reject: `retake --plan <set>/set_plan.json --action <id> --fix <clause id or text>`, then `run` again. Clause ids include never-turn, weapon-shape, face-visible, no-text, no-flares and keep-colours.
+6. **Report.** `python "<skill-dir>/scripts/sprite_set.py" report --plan <set>/set_plan.json` lists the routes, takes, QC numbers, loops, timing and package paths. In your reply, name the route that made each clip. Never call an action approved before you have looked at its sheet.
 
 ## Host notes
 
@@ -56,12 +74,21 @@ Run each tool as one line from the user's project root: `python "<skill-dir>/scr
 5. **Key.** `video2dsprite.py process --video <take> --output-dir <new> --reference <master.png>` (soft matte); read `frames-clean/matte-report.json` and look at frames over light and dark. Same keying for every clip of a character: `--matte-profile <character-profile.json>`. A design colour near the key: `--protect-color #rrggbb`. Already decoded frames (`frame_*.png` or `raw_*.png`, one frame keys a still): `video2dsprite.py clean --raw-dir <dir> --output-dir <new>`.
 6. **Register.** `register_clip.py apply --job <job>/registration_job.json --frames <out>/frames-clean --output-dir <new>`; feet drift or jumps: `--lock feet`; spell or hit FX: `--profile fx`; one scale per character: `register_clip.py profile`, then `--character-profile`.
 7. **Loop or retime.** Walks, runs, idles: `gait_loop.py select --frames-dir <reg>/frames --fps N --output-dir <new>` (`--kind idle` or `hover`); play `aids/loop3x.gif`. Attacks, casts, FX: `retime.py --frames-dir <reg>/frames --fps N --output-dir <new> --spans <spans>` (impact, hold, ticks); walk cadence: `gait_loop.py measure-stride`.
-8. **Package.** `engine_export.py package --clean-dir <reg>/frames --output-dir <new> --selection <selection.json> --registration <registration.json> --formats png,webm,packed --tiers actor`. Refused for key residue: re-key; `--allow-key-residue` only with a recorded override.
+8. **Finish and package.** Finish the registered frames (Finish, below), then `engine_export.py package --clean-dir <fin>/frames --output-dir <new> --selection <selection.json> --source-size W,H --source-anchor X,Y --formats png,webm,packed --tiers actor` (W,H and X,Y from `finish.json`). Refused for key residue: re-key; `--allow-key-residue` only with a recorded override.
 9. **Verify.** `engine_export.py verify --package <dir>`, then `validate_animation.py <character dir> --require-states idle,walk --require-verify`. `--require-states` matches each package's `--name` (a package named `hero-run` needs `--require-states hero-run`, not `run`).
 
 Details: [pipeline.md](references/pipeline.md), keying [matte.md](references/matte.md), review and cuts [animation-review.md](references/animation-review.md), prompts [prompt-rules.md](references/prompt-rules.md).
 
-<!-- BLOCK:finishing -->
+## Finish (HD default, pixel option)
+
+Finish every registered action before packaging. Finished frames keep the source names, so gait_loop and retime selections still apply. Details: [finishing.md](references/finishing.md).
+
+- **HD (default):** `python "<skill-dir>/scripts/finish_frames.py" hd --frames <reg> --output-dir <new> --target-height <px> --role hero --character <id>`. The rest pose (frame 0 or `--rest-frame`) sets one scale. Box downscale with premultiplied alpha on a grid pinned to the feet, then clean alpha. Never nearest, never an upscale. `--display-sizes 1x,2x` rebuilds each size from the source.
+- **Same character, other actions:** `--scale-ref <idle finish dir>` instead of `--target-height` (scale x sqrt(rest-area ratio), clamped to +-3%). A warning means the rest frame is not the base still.
+- **Pixel (on request):** first `finish_frames.py palette build --frames <every action's reg dir> --colors 255 [--reserve #hex] --out <palette.json>`, then per action `finish_frames.py pixel ... --target-height <1/8 to 1/12 of the source> --palette <palette.json>`. Use `--loop-policy oneshot` for attacks and `--indexed-sheet` for an indexed sheet. No dither, temporal hysteresis, binary alpha.
+- **Cast check:** `finish_frames.py lineup --sets <finished dirs> --out <lineup.png>`. Roles come from `--role` or `ROLE=DIR`; the default rules are hero:1.0, mob:<=1.0, boss:~2.0, spirit:~1.0 (by area). Look at the x1/x3 sheet; a failed rule exits 1.
+- **Review:** look at `review-contact.png` and read `qa` in the JSON line (`flipsPerPair`, `specksRemoved`, `alphaBinary`). The status stays `needs-visual-review`.
+- **Package:** `engine_export.py package --clean-dir <fin>/frames --source-size W,H --source-anchor X,Y`, taking W,H and X,Y from `size` and `anchor` in `finish.json`. Do not pass `--registration`; pixel finishes add `--pixel-art --sampling nearest`.
 
 ## Motion and geometry rules
 

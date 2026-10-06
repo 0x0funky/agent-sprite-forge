@@ -37,7 +37,18 @@ Every image goes through one command: `python "<skill-dir>/../generate2dmedia/sc
 - **Characters:** approve one master still per character, then animate it with video2dsprite: one image-to-video clip per action, all from that master (`sprite_set.py`). Keep every action's body height from the master's rest pose.
 - **Sheets** are for FX, icons and props (and frames the user supplies), not for character animation.
 
-<!-- BLOCK:master -->
+## Master still (every character animation starts here)
+
+One approved master still per character, then one image-to-video clip per action from it ([video2dsprite](../video2dsprite/SKILL.md)); sheets are for FX, icons and props. Wording: [prompt-rules.md](references/prompt-rules.md); commands, framing and `master.json`: [master-still.md](references/master-still.md).
+
+1. Spec (`--spec <json>` and/or flags): `--name`, `--subject`, `--identity` (long and precise), `--facing left|right|front|back`, `--class hero|mob|boss|prop`, `--finish hd|pixel` (HD default; pixel only when asked), `--identity-ref` (FIRST image, copied exactly), `--style-ref` (SECOND: an approved peer sprite, style and framing only), `--key` (default `#FF00FF`; green or blue for purple and pink designs).
+2. Generate: `python "<skill-dir>/scripts/master_still.py" generate --spec <json> --takes 3 --output-dir <new>`. Each take goes through generate2dmedia `route_media.py` (API key first, then the local daemon); `takes.png` shows them side by side. Exit 3 means no route: say so; codeart2d is the fallback ("code-drawn, no image model"). With the host's own image tool: run `master_still.py prompt` and attach the listed references in that order.
+3. Choose by looking: identity, facing, nothing touching an edge, no text.
+4. Fix a near-miss by edit, never by re-roll: `master_still.py edit --run <dir> --take N --change "<one change>" --output-dir <new>` (or `--master <dir>`).
+5. Approve: `master_still.py approve --run <dir> --take N --output-dir <new>` (a still from elsewhere: `--still <png> --route <what made it>`). It keys the still, crops it with a 6 px margin, LANCZOS-scales it to the class framing on 1024x1024 (hero 788 px tall, top margin 138 px) and writes `master.png` (opaque, pure key), `master_rgba.png` and `master.json` (`generate2dsprite.master.v1`).
+6. Motion steps read `master.json` (`identity_recap`, `facing`, `finish`, `class`, `framing`, `key`, `files`, `transform`, `route`) and never re-measure the still; every clip prompt starts with "The same <identity_recap>".
+
+Report the route from `master.json` `route`. A `FORGE_ROUTE_MEDIA_FAKE` warning means the image is not a real generation.
 
 ## Host notes
 

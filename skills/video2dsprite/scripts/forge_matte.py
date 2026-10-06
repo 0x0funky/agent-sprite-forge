@@ -66,6 +66,7 @@ DESPILL_MODES = ("off", "edge", "all", "auto")
 KEY_MATERIAL_SHARE_MAX = 0.005   # subject owns no key-coloured material at or below this share (auto despill)
 KEY_TOLERANCE = 48.0             # RGB distance of key noise (codec ring noise p99.9 7, max 35)
 OVERLAP_DOMINANCE = 40.0         # a design colour this key-dominant fights the key (choose_key_color)
+SPILL_HUE_BALANCE = 0.5          # matte_qa: two-channel key spill keeps min/max of its channels at or above this
 LOCAL_BACKGROUND_RADIUS = 12     # px window of the local background estimate B(x)
 
 _LUMA = (0.299, 0.587, 0.114)
@@ -1334,6 +1335,14 @@ def matte_qa(rgba: Any, key: Any, *, key_tolerance: float = KEY_TOLERANCE, spill
     opaque = alpha >= 128
     distance = np.sqrt(((colour - key_rgb) ** 2).sum(-1))
     dominance = _dominance(colour, model)
+    key_hue = dominance > spill_threshold
+    if len(model.high) == 2:
+        # Spill of a two-channel key keeps its channels balanced (magenta: R close to B). A deep
+        # crimson such as (186, 12, 33) also beats G by more than the threshold, but it is a
+        # design colour, not key spill.
+        first, second = colour[..., model.high[0]], colour[..., model.high[1]]
+        balance = np.minimum(first, second) / np.maximum(np.maximum(first, second), 1.0)
+        key_hue &= balance >= SPILL_HUE_BALANCE
     padded = np.pad(visible, 1)
     inner = padded[1:-1, 1:-1] & padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:]
     ring = visible & ~inner
@@ -1342,15 +1351,17 @@ def matte_qa(rgba: Any, key: Any, *, key_tolerance: float = KEY_TOLERANCE, spill
     return {
         "key": [round(float(v), 2) for v in key_rgb],
         "opaque_key_px": int((opaque & (distance <= key_tolerance)).sum()),
-        "outer_ring_spill_fraction": float((dominance[ring] > spill_threshold).mean()) if ring.any() else 0.0,
+        "outer_ring_spill_fraction": float(key_hue[ring].mean()) if ring.any() else 0.0,
         "semitransparent_fraction": float(((alpha > 0) & (alpha < 255)).sum() / visible_px) if visible_px else 0.0,
         "enclosed_key_pockets": pockets,
-        "key_hued_px": int((opaque & (dominance >= 100)).sum()),
+        "key_hued_px": int((opaque & key_hue & (dominance >= 100)).sum()),
         "visible_px": visible_px,
         "outer_ring_px": int(ring.sum()),
         "thresholds": {"key_tolerance": key_tolerance, "spill_threshold": spill_threshold,
-                       "min_pocket_area": min_pocket_area, "opaque_alpha": 128},
-        "method": "forge_matte.matte_qa v1: straight-colour key distance and dominance on the keyed image",
+                       "min_pocket_area": min_pocket_area, "opaque_alpha": 128,
+                       "spill_hue_balance": SPILL_HUE_BALANCE},
+        "method": ("forge_matte.matte_qa v1: straight-colour key distance and dominance on the keyed image; "
+                   "two-channel keys count spill only where the key channels are balanced"),
     }
 
 
