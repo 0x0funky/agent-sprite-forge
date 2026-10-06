@@ -490,10 +490,12 @@ OPUS55_CLIP, OPUS55_SEGMENT_FRAMES = "a_homura_idle", 24  # the study's clip and
 
 
 def _opus55_root():
-    """FORGE_BENCH_OPUS55, else D:/chain/game-opus55; None when its pixelate tool or palette is missing."""
+    """The game-opus55 checkout named by FORGE_BENCH_OPUS55; None when unset or when its pixelate tool or palette is missing."""
     from pathlib import Path
 
-    root = Path(os.environ.get("FORGE_BENCH_OPUS55") or "D:/chain/game-opus55")
+    if not os.environ.get("FORGE_BENCH_OPUS55"):
+        return None
+    root = Path(os.environ["FORGE_BENCH_OPUS55"])
     needed = (root / "tools" / "pixelate.py", root / "tools" / "assets.json", root / "art" / "proc" / "manifest.json")
     return root if all(path.is_file() for path in needed) else None
 

@@ -207,7 +207,7 @@ def test_real_fixture_provenance():
     for entry in entries:
         assert {"file", "source", "sha256", "generator", "date", "usage", "size", "mode"} <= entry.keys()
         assert entry["usage"] == "owner-generated, test-only"
-        assert re.fullmatch(r"(?:src|outputs)/[^:\\]+", entry["source"]), "sources live in this repo (never D:/chain)"
+        assert re.fullmatch(r"(?:src|outputs)/[^:\\]+", entry["source"]), "sources live in this repo"
         path = real_fixture(entry["file"])
         with Image.open(path) as image:
             assert [image.width, image.height] == entry["size"] and image.mode == entry["mode"]

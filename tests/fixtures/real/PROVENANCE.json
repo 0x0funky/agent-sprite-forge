@@ -1,5 +1,5 @@
 {
-  "policy": "Real art may be used in tests only when listed here with a matching sha256. These images are owner-generated, kept for regression tests only, and are not shipped as assets. Nothing comes from D:/chain.",
+  "policy": "Real art may be used in tests only when listed here with a matching sha256. These images are owner-generated, kept for regression tests only, and are not shipped as assets. Nothing comes from outside this repository.",
   "fixtures": [
     {
       "file": "raw-fox-run-v1.png",
