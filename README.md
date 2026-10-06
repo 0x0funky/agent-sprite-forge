@@ -87,7 +87,7 @@ Before 0.4, character animation meant cutting frames out of an image-generated s
       <br />
       <strong>HD colour lock</strong>
       <br />
-      Video models drift colours on fast limbs. The lock holds every design colour on the master's (OKLab chroma, lightness kept), so the boots stop shimmering.
+      Video models drift colours on fast limbs. The lock holds every design colour on the master's (OKLab chroma, lightness kept): hue flips halve and most of the boot shimmer goes away.
     </td>
   </tr>
 </table>
