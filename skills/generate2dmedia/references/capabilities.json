@@ -1,0 +1,382 @@
+{
+  "schema": "generate2dmedia.capabilities.v1",
+  "verifiedAt": "2026-10-06",
+  "notes": "One record per model id, checked against each vendor's official documentation on verifiedAt. No live call was made (the owner has no keys): request shapes follow the docs only, and the community reports real-world differences. Fields follow provider-survey.md: image {generate, edit (none|instruct|mask), refs_max, transparent_bg (none|native|i2i_only), sizes}; video {i2v, last_frame, durations {min, max, step} or {values}, resolutions, fps, aspect_1_1 (yes|follows_input|no), audio_off (true: a documented switch is sent; false or unverified: nothing is sent)}; async (sync|poll); cost_unit; optional url_ttl_s, loop, camera_static, watermark_default. generate_media.py refuses what a record does not allow; route_media.py skips (or, for a last frame, keyframes or a duration, adapts and notes) a route whose record cannot serve the request. Every clip is published without audio (media_mp4.py), whatever the provider sent.",
+  "retired": [
+    {"provider": "openai", "model": "gpt-image-1", "shutdown": "2026-10-23", "dropped": true, "use": "gpt-image-2.5-sunburst", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "openai", "model": "gpt-image-1.5", "shutdown": "2026-12-01", "use": "gpt-image-2.5-sunburst", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "openai", "model": "gpt-image-1-mini", "shutdown": "2026-12-01", "use": "gpt-image-2.5-sunburst", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "openai", "model": "chatgpt-image-latest", "shutdown": "2026-12-01", "use": "gpt-image-2.5-sunburst", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "openai", "model": "dall-e-3", "shutdown": "2026-05-12", "use": "gpt-image-2.5-sunburst", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "openai", "model": "dall-e-2", "shutdown": "2026-05-12", "use": "gpt-image-2.5-sunburst", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "openai", "model": "sora-2", "shutdown": "2026-09-24", "dropped": true, "use": "an image-to-video route of xai, byteplus or fal", "source": "https://developers.openai.com/api/docs/deprecations"},
+    {"provider": "gemini", "model": "gemini-2.5-flash-image", "shutdown": "2026-10-02", "use": "gemini-3.1-flash-image", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "gemini-3.1-flash-image-preview", "shutdown": "2026-06-25", "use": "gemini-3.1-flash-image", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "gemini-3-pro-image-preview", "shutdown": "2026-06-25", "use": "gemini-3-pro-image", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "imagen-4.0-generate-001", "shutdown": "2026-08-17", "use": "gemini-3.1-flash-image", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "imagen-4.0-ultra-generate-001", "shutdown": "2026-08-17", "use": "gemini-3-pro-image", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "imagen-4.0-fast-generate-001", "shutdown": "2026-08-17", "use": "gemini-3.1-flash-image", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "veo-3.1-generate-preview", "shutdown": "2026-10-22", "dropped": true, "use": "fal:fal-ai/veo3.1/first-last-frame-to-video", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "veo-3.1-fast-generate-preview", "shutdown": "2026-10-22", "dropped": true, "use": "fal:fal-ai/veo3.1/fast/first-last-frame-to-video", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "gemini", "model": "veo-3.1-lite-generate-preview", "shutdown": "2026-10-22", "dropped": true, "use": "an image-to-video route of xai, byteplus or fal", "source": "https://ai.google.dev/gemini-api/docs/deprecations"},
+    {"provider": "xai", "model": "grok-imagine-image-quality", "shutdown": "2026-11-02", "use": "grok-imagine-image-2.0 with --quality low", "source": "https://docs.x.ai/developers/migration/imagine-image-quality-nov-2"}
+  ],
+  "providers": {
+    "openai": {
+      "label": "OpenAI API",
+      "keyEnv": ["OPENAI_API_KEY"],
+      "apiBase": "https://api.openai.com/v1",
+      "auth": "Authorization: Bearer <key>",
+      "kinds": ["image"],
+      "verifiedAt": "2026-10-06",
+      "docs": ["https://developers.openai.com/api/reference/resources/images", "https://developers.openai.com/api/docs/guides/image-generation", "https://developers.openai.com/api/docs/deprecations", "https://developers.openai.com/api/docs/pricing", "https://developers.openai.com/api/docs/guides/error-codes"],
+      "tiers": {"image": {"draft": {"model": "gpt-image-2.5-sunburst", "quality": "low"}, "standard": {"model": "gpt-image-2.5-sunburst"}, "hero": {"model": "gpt-image-2.5-sunburst", "quality": "high"}}},
+      "unknownModels": "image",
+      "models": {
+        "gpt-image-2.5-sunburst": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst"],
+          "image": {"generate": true, "edit": "mask", "refs_max": 16, "transparent_bg": "native", "sizes": ["auto", "WxH: both divisible by 16, aspect 1:3 to 3:1, 655,360 to 8,294,400 pixels, no edge above 3840"]},
+          "size_rule": {"multiple": 16, "max_edge": 3840, "min_pixels": 655360, "max_pixels": 8294400, "max_ratio": 3},
+          "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+          "async": "sync", "cost_unit": "image"
+        },
+        "gpt-image-2.5-flare": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://developers.openai.com/api/docs/models/gpt-image-2.5-flare"],
+          "image": {"generate": true, "edit": "mask", "refs_max": 16, "transparent_bg": "native", "sizes": ["auto", "WxH: both divisible by 16, aspect 1:3 to 3:1, 655,360 to 8,294,400 pixels, no edge above 3840"]},
+          "size_rule": {"multiple": 16, "max_edge": 3840, "min_pixels": 655360, "max_pixels": 8294400, "max_ratio": 3},
+          "qualities": ["auto", "low", "medium", "high", "xhigh", "max"],
+          "async": "sync", "cost_unit": "image"
+        },
+        "gpt-image-2": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://developers.openai.com/api/docs/models/gpt-image-2"],
+          "image": {"generate": true, "edit": "mask", "refs_max": 16, "transparent_bg": "native", "sizes": ["auto", "WxH: both divisible by 16, aspect 1:3 to 3:1, 655,360 to 8,294,400 pixels, no edge above 3840"]},
+          "size_rule": {"multiple": 16, "max_edge": 3840, "min_pixels": 655360, "max_pixels": 8294400, "max_ratio": 3},
+          "qualities": ["auto", "low", "medium", "high"],
+          "note": "transparent backgrounds are in preview on gpt-image-2",
+          "async": "sync", "cost_unit": "image"
+        },
+        "gpt-image-1.5": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://developers.openai.com/api/docs/models/gpt-image-1.5"],
+          "image": {"generate": true, "edit": "mask", "refs_max": 16, "transparent_bg": "native", "sizes": ["auto", "1024x1024", "1536x1024", "1024x1536"]},
+          "qualities": ["auto", "low", "medium", "high"],
+          "async": "sync", "cost_unit": "image"
+        },
+        "gpt-image-1-mini": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://developers.openai.com/api/docs/models/gpt-image-1-mini"],
+          "image": {"generate": true, "edit": "mask", "refs_max": 16, "transparent_bg": "native", "sizes": ["auto", "1024x1024", "1536x1024", "1024x1536"]},
+          "qualities": ["auto", "low", "medium", "high"],
+          "async": "sync", "cost_unit": "image"
+        }
+      }
+    },
+    "gemini": {
+      "label": "Google Gemini API",
+      "keyEnv": ["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+      "apiBase": "https://generativelanguage.googleapis.com/v1beta",
+      "auth": "x-goog-api-key: <key> (GOOGLE_API_KEY wins when both are set)",
+      "kinds": ["image"],
+      "verifiedAt": "2026-10-06",
+      "docs": ["https://ai.google.dev/gemini-api/docs/generate-content/image-generation", "https://ai.google.dev/api/generate-content", "https://ai.google.dev/gemini-api/docs/api-key", "https://ai.google.dev/gemini-api/docs/generate-content/api-errors", "https://ai.google.dev/gemini-api/docs/pricing", "https://ai.google.dev/gemini-api/docs/deprecations"],
+      "tiers": {"image": {"draft": {"model": "gemini-3.1-flash-lite-image"}, "standard": {"model": "gemini-3.1-flash-image"}, "hero": {"model": "gemini-3-pro-image"}}},
+      "unknownModels": "image",
+      "models": {
+        "gemini-3.1-flash-image": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-image"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 14, "transparent_bg": "none", "sizes": ["512", "1K", "2K", "4K"]},
+          "refs_note": "up to 10 object images and 4 character images",
+          "image_sizes": ["512", "1K", "2K", "4K"],
+          "aspect_ratios": ["1:1", "1:4", "4:1", "1:8", "8:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+          "watermark_default": "SynthID",
+          "async": "sync", "cost_unit": "image"
+        },
+        "gemini-3-pro-image": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://ai.google.dev/gemini-api/docs/models/gemini-3-pro-image"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 14, "transparent_bg": "none", "sizes": ["1K", "2K", "4K"]},
+          "refs_note": "up to 6 object, 5 character and 3 style images",
+          "image_sizes": ["1K", "2K", "4K"],
+          "aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+          "watermark_default": "SynthID",
+          "async": "sync", "cost_unit": "image"
+        },
+        "gemini-3.1-flash-lite-image": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://ai.google.dev/gemini-api/docs/models/gemini-3.1-flash-lite-image"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 14, "transparent_bg": "none", "sizes": ["1K"]},
+          "refs_note": "not optimised for several references",
+          "image_sizes": ["1K"],
+          "aspect_ratios": ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"],
+          "watermark_default": "SynthID and C2PA",
+          "async": "sync", "cost_unit": "image"
+        }
+      }
+    },
+    "xai": {
+      "label": "xAI API",
+      "keyEnv": ["XAI_API_KEY"],
+      "apiBase": "https://api.x.ai/v1",
+      "auth": "Authorization: Bearer <key>",
+      "kinds": ["image", "video"],
+      "verifiedAt": "2026-10-06",
+      "docs": ["https://docs.x.ai/developers/model-capabilities/video/generation", "https://docs.x.ai/developers/model-capabilities/video/reference-to-video", "https://docs.x.ai/developers/model-capabilities/images/generation", "https://docs.x.ai/developers/model-capabilities/images/multi-image-editing", "https://docs.x.ai/developers/rest-api-reference/inference/videos", "https://docs.x.ai/developers/pricing", "https://docs.x.ai/developers/debugging"],
+      "tiers": {"image": {"draft": {"model": "grok-imagine-image-2.0", "quality": "low"}, "standard": {"model": "grok-imagine-image-2.0"}, "hero": {"model": "grok-imagine-image-2.0", "quality": "medium"}},
+                "video": {"draft": {"model": "grok-imagine-video-1.5-lite"}, "standard": {"model": "grok-imagine-video-1.5"}, "hero": {"model": "grok-imagine-video-1.5"}}},
+      "unknownModels": "image",
+      "models": {
+        "grok-imagine-image-2.0": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://docs.x.ai/developers/models/grok-imagine-image-2.0"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 5, "transparent_bg": "none", "sizes": ["1k", "1.5k", "2k"]},
+          "resolutions": ["1k", "1.5k", "2k"],
+          "aspect_ratios": ["1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "9:19.5", "19.5:9", "9:20", "20:9", "1:2", "2:1", "21:9", "5:2", "auto"],
+          "qualities": ["auto", "low", "medium"],
+          "url_ttl_s": null,
+          "async": "sync", "cost_unit": "image"
+        },
+        "grok-imagine-image": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://docs.x.ai/developers/models/grok-imagine-image"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 1, "transparent_bg": "none", "sizes": ["1k", "2k"]},
+          "resolutions": ["1k", "2k"],
+          "aspect_ratios": ["1:1", "3:4", "4:3", "9:16", "16:9", "2:3", "3:2", "auto"],
+          "qualities": [],
+          "async": "sync", "cost_unit": "image"
+        },
+        "grok-imagine-video-1.5": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.x.ai/developers/models/grok-imagine-video-1.5", "https://docs.x.ai/developers/model-capabilities/video/reference-to-video"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 1, "max": 15, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "follows_input", "audio_off": true},
+          "pin_resolutions": ["480p", "720p"],
+          "keyframes_max": 4,
+          "url_ttl_s": "temporary (minutes; download at once)",
+          "async": "poll", "cost_unit": "second"
+        },
+        "grok-imagine-video-1.5-lite": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.x.ai/developers/models/grok-imagine-video-1.5-lite"],
+          "video": {"i2v": true, "last_frame": false, "durations": {"min": 1, "max": 15, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "follows_input", "audio_off": "unverified"},
+          "keyframes_max": 0,
+          "note": "the draft model: last_frame, keyframes and generate_audio are not documented for it, so none is sent",
+          "url_ttl_s": "temporary (minutes; download at once)",
+          "async": "poll", "cost_unit": "second"
+        },
+        "grok-imagine-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.x.ai/developers/models/grok-imagine-video"],
+          "video": {"i2v": true, "last_frame": false, "durations": {"min": 1, "max": 15, "step": 1}, "resolutions": ["480p", "720p"], "fps": 24, "aspect_1_1": "follows_input", "audio_off": "unverified"},
+          "keyframes_max": 0,
+          "note": "classic model: rejects last_frame and keyframes",
+          "async": "poll", "cost_unit": "second"
+        }
+      }
+    },
+    "byteplus": {
+      "label": "BytePlus ModelArk API",
+      "keyEnv": ["ARK_API_KEY"],
+      "apiBase": "https://ark.ap-southeast.bytepluses.com/api/v3",
+      "auth": "Authorization: Bearer <key>",
+      "kinds": ["image", "video"],
+      "verifiedAt": "2026-10-06",
+      "docs": ["https://docs.byteplus.com/en/docs/ModelArk/1541523", "https://docs.byteplus.com/en/docs/ModelArk/1520757", "https://docs.byteplus.com/en/docs/ModelArk/1521309", "https://docs.byteplus.com/en/docs/ModelArk/1330310", "https://docs.byteplus.com/en/docs/ModelArk/1544106", "https://docs.byteplus.com/en/docs/ModelArk/1299023"],
+      "tiers": {"image": {"draft": {"model": "dola-seedream-5-0-flash-260915"}, "standard": {"model": "dola-seedream-5-0-pro-260628"}, "hero": {"model": "dola-seedream-5-0-pro-260628"}},
+                "video": {"draft": {"model": "dreamina-seedance-2-0-mini-260615"}, "standard": {"model": "dreamina-seedance-2-0-260128"}, "hero": {"model": "dreamina-seedance-2-5-260628"}}},
+      "unknownModels": "none",
+      "models": {
+        "dola-seedream-5-0-pro-260628": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://docs.byteplus.com/en/docs/modelark/seedream-5-0-pro"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 10, "transparent_bg": "i2i_only", "sizes": ["1K", "1.5K", "2K", "WxH: 921,600 to 4,624,220 pixels, aspect 1:16 to 16:1"]},
+          "pixel_range": [921600, 4624220],
+          "watermark_default": true,
+          "url_ttl_s": 86400,
+          "async": "sync", "cost_unit": "image"
+        },
+        "dola-seedream-5-0-flash-260915": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://docs.byteplus.com/en/docs/ModelArk/1541523"],
+          "image": {"generate": true, "edit": "instruct", "refs_max": 10, "transparent_bg": "i2i_only", "sizes": ["1K", "1.5K", "2K", "WxH: 921,600 to 4,624,220 pixels, aspect 1:16 to 16:1"]},
+          "pixel_range": [921600, 4624220],
+          "watermark_default": true,
+          "url_ttl_s": 86400,
+          "async": "sync", "cost_unit": "image"
+        },
+        "dreamina-seedance-2-0-260128": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.byteplus.com/en/docs/modelark/seedance-2-0", "https://docs.byteplus.com/en/docs/ModelArk/1520757"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 4, "max": 15, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "yes", "audio_off": true},
+          "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+          "input_px": [300, 6000], "input_aspect": [0.4, 2.5],
+          "watermark_default": false,
+          "faces": "real human faces in inputs are refused",
+          "url_ttl_s": 86400,
+          "async": "poll", "cost_unit": "second"
+        },
+        "dreamina-seedance-2-0-mini-260615": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.byteplus.com/en/docs/modelark/seedance-2-0", "https://docs.byteplus.com/en/docs/ModelArk/1520757"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 4, "max": 15, "step": 1}, "resolutions": ["480p", "720p"], "fps": 24, "aspect_1_1": "yes", "audio_off": true},
+          "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+          "input_px": [300, 6000], "input_aspect": [0.4, 2.5],
+          "watermark_default": false,
+          "faces": "real human faces in inputs are refused",
+          "url_ttl_s": 86400,
+          "async": "poll", "cost_unit": "second"
+        },
+        "dreamina-seedance-2-0-fast-260128": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.byteplus.com/en/docs/ModelArk/1520757"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 4, "max": 15, "step": 1}, "resolutions": ["480p", "720p"], "fps": 24, "aspect_1_1": "yes", "audio_off": true},
+          "ratios": ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"],
+          "input_px": [300, 6000], "input_aspect": [0.4, 2.5],
+          "watermark_default": false,
+          "url_ttl_s": 86400,
+          "async": "poll", "cost_unit": "second"
+        },
+        "dreamina-seedance-2-5-260628": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://docs.byteplus.com/en/docs/ModelArk/2607688", "https://docs.byteplus.com/en/docs/ModelArk/1520757"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 4, "max": 30, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "follows_input", "audio_off": true},
+          "ratios": ["adaptive"],
+          "input_px": [300, 6000], "input_aspect": [0.4, 2.5],
+          "watermark_default": false,
+          "faces": "real human faces in inputs are refused",
+          "url_ttl_s": 86400,
+          "async": "poll", "cost_unit": "second"
+        }
+      }
+    },
+    "fal": {
+      "label": "fal.ai API",
+      "keyEnv": ["FAL_KEY"],
+      "apiBase": "https://queue.fal.run",
+      "auth": "Authorization: Key <key>",
+      "kinds": ["image", "video"],
+      "verifiedAt": "2026-10-06",
+      "docs": ["https://fal.ai/docs/model-apis/model-endpoints/queue", "https://fal.ai/docs/documentation/model-apis/errors.md", "https://fal.ai/docs/documentation/model-apis/media-expiration", "https://fal.ai/docs/documentation/setting-up/authentication.md", "https://github.com/fal-ai/fal/blob/main/projects/fal_client/src/fal_client/client.py"],
+      "uploads": "inputs go to the fal CDN first, as the official fal_client does (POST https://rest.fal.ai/storage/auth/token?storage_type=fal-cdn-v3, then POST https://v3.fal.media/files/upload): free requests made before the paid one; --provider-option fal_upload=data sends data URIs instead",
+      "tiers": {"image": {"draft": {"model": "fal-ai/nano-banana-2/edit"}, "standard": {"model": "fal-ai/nano-banana-2/edit"}, "hero": {"model": "fal-ai/nano-banana-pro/edit"}},
+                "video": {"draft": {"model": "alibaba/wan-3.0/image-to-video"}, "standard": {"model": "fal-ai/kling-video/v3/pro/image-to-video"}, "hero": {"model": "fal-ai/kling-video/v3/pro/image-to-video"}}},
+      "unknownModels": "none",
+      "models": {
+        "fal-ai/veo3.1/first-last-frame-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/veo3.1/first-last-frame-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"values": [4, 6, 8]}, "resolutions": ["720p", "1080p"], "fps": 24, "aspect_1_1": "no", "audio_off": true},
+          "fal": {"first": "first_frame_url", "last": "last_frame_url", "last_required": true, "duration": {"field": "duration", "format": "s"},
+                  "resolution": {"field": "resolution", "map": {"720p": "720p", "1080p": "1080p"}}, "aspect": {"field": "aspect_ratio", "pad": "16:9"},
+                  "audio": {"field": "generate_audio", "off": false}},
+          "note": "Google Veo 3.1 (first and last frame). 16:9 or 9:16 only: ASF pads the frames onto a 16:9 key-colour canvas and job.json records the crop back. safety_tolerance (\"1\" to \"6\") passes through --provider-option",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "fal-ai/veo3.1/fast/first-last-frame-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/veo3.1/fast/first-last-frame-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"values": [4, 6, 8]}, "resolutions": ["720p", "1080p"], "fps": 24, "aspect_1_1": "no", "audio_off": true},
+          "fal": {"first": "first_frame_url", "last": "last_frame_url", "last_required": true, "duration": {"field": "duration", "format": "s"},
+                  "resolution": {"field": "resolution", "map": {"720p": "720p", "1080p": "1080p"}}, "aspect": {"field": "aspect_ratio", "pad": "16:9"},
+                  "audio": {"field": "generate_audio", "off": false}},
+          "note": "Veo 3.1 Fast; padded to 16:9 like the standard model",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "fal-ai/kling-video/v3/pro/image-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/kling-video/v3/pro/image-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 3, "max": 15, "step": 1}, "resolutions": "any", "fps": null, "aspect_1_1": "follows_input", "audio_off": true},
+          "input_px": [300, 8192], "input_aspect": [0.4, 2.5],
+          "fal": {"first": "start_image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "str"},
+                  "audio": {"field": "generate_audio", "off": false}},
+          "note": "Kling 3.0 Pro: the end frame is end_image_url (Kling's own API calls it image_tail); the aspect follows the start image",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "fal-ai/kling-video/v3/standard/image-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/kling-video/v3/standard/image-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 3, "max": 15, "step": 1}, "resolutions": "any", "fps": null, "aspect_1_1": "follows_input", "audio_off": true},
+          "input_px": [300, 8192], "input_aspect": [0.4, 2.5],
+          "fal": {"first": "start_image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "str"},
+                  "audio": {"field": "generate_audio", "off": false}},
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "luma/agent/ray/v3.2/image-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/luma/agent/ray/v3.2/image-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"values": [5]}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "yes", "audio_off": "none"},
+          "loop": true,
+          "fal": {"first": "image_url", "last": "end_image_url", "loop": "loop", "duration": {"field": "duration", "format": "s"},
+                  "resolution": {"field": "resolution", "map": {"480p": "540p", "720p": "720p", "1080p": "1080p"}},
+                  "aspect": {"field": "aspect_ratio", "values": ["3:4", "4:3", "1:1", "9:16", "16:9", "21:9"]}},
+          "note": "Luma Ray 3.2: a last frame identical to the first is sent as loop: true (the model's own loop); 5 s with a start image",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "minimax/h3/image-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/minimax/h3/image-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 5, "max": 15, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "follows_input", "audio_off": "none"},
+          "fal": {"first": "image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "int"},
+                  "resolution": {"field": "resolution", "map": {"480p": "480P", "720p": "768P", "1080p": "2K"}},
+                  "fixed": {"prompt_expansion_mode": "disabled"}},
+          "note": "MiniMax H3: 768P for a 720p request; 2K is an upscale of 768P; prompt expansion is off so the prompt is used as written",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "alibaba/wan-3.0/image-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/alibaba/wan-3.0/image-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 2, "max": 15, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": null, "aspect_1_1": "yes", "audio_off": true},
+          "fal": {"first": "start_image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "int"},
+                  "resolution": {"field": "resolution", "map": {"480p": "480p", "720p": "720p", "1080p": "1080p"}},
+                  "aspect": {"field": "aspect_ratio", "values": ["16:9", "4:3", "1:1", "3:4", "9:16"], "default": "adaptive"},
+                  "audio": {"field": "audio", "off": false}, "fixed": {"enable_prompt_expansion": false}},
+          "note": "Wan 3.0 (a preview model); prompt expansion is off",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "fal-ai/vidu/q3/image-to-video": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/vidu/q3/image-to-video/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"min": 1, "max": 15, "step": 1}, "resolutions": ["480p", "720p", "1080p"], "fps": 24, "aspect_1_1": "follows_input", "audio_off": true},
+          "fal": {"first": "image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "int"},
+                  "resolution": {"field": "resolution", "map": {"480p": "540p", "720p": "720p", "1080p": "1080p"}},
+                  "audio": {"field": "audio", "off": false}},
+          "note": "Vidu Q3: the start-end endpoint is gone; the end frame is end_image_url here. Vidu may cut between shots: check the clip",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "lightricks/ltx-2.5/image-to-video/pro": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/lightricks/ltx-2.5/image-to-video/pro/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"values": [6, 8, 10]}, "resolutions": ["720p", "1080p"], "fps": 24, "aspect_1_1": "no", "audio_off": true},
+          "camera_static": true,
+          "fal": {"first": "image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "int"},
+                  "resolution": {"field": "resolution", "map": {"720p": "720p", "1080p": "1080p"}}, "aspect": {"field": "aspect_ratio", "pad": "16:9"},
+                  "audio": {"field": "generate_audio", "off": false}, "fixed": {"camera_motion": "static", "fps": 24}},
+          "note": "LTX-2.5 Pro: camera_motion static is always sent; 16:9 only, so the frames are padded and the crop recorded",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "lightricks/ltx-2.5/image-to-video/fast": {
+          "kind": "video", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/lightricks/ltx-2.5/image-to-video/fast/api"],
+          "video": {"i2v": true, "last_frame": true, "durations": {"values": [6, 8, 10, 12, 14]}, "resolutions": ["720p", "1080p"], "fps": 24, "aspect_1_1": "no", "audio_off": true},
+          "camera_static": true,
+          "fal": {"first": "image_url", "last": "end_image_url", "duration": {"field": "duration", "format": "int"},
+                  "resolution": {"field": "resolution", "map": {"720p": "720p", "1080p": "1080p"}}, "aspect": {"field": "aspect_ratio", "pad": "16:9"},
+                  "audio": {"field": "generate_audio", "off": false}, "fixed": {"camera_motion": "static", "fps": 24}},
+          "note": "LTX-2.5 Fast: clips over 10 s need 720p or 1080p at 24 or 25 fps",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "second"
+        },
+        "fal-ai/nano-banana-2/edit": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/nano-banana-2/edit/api"],
+          "image": {"generate": false, "edit": "instruct", "refs_max": 14, "transparent_bg": "none", "sizes": ["0.5K", "1K", "2K", "4K"]},
+          "fal": {"refs": "image_urls", "refs_min": 1,
+                  "size": {"kind": "aspect_resolution", "aspect_field": "aspect_ratio", "aspects": ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16", "4:1", "1:4", "8:1", "1:8"],
+                           "resolution_field": "resolution", "resolutions": {"0.5K": 512, "1K": 1024, "2K": 2048, "4K": 4096}, "default": "1K"},
+                  "fixed": {"num_images": 1, "output_format": "png"}},
+          "note": "Gemini 3.1 Flash Image on fal.ai (reference edits only)",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "image"
+        },
+        "fal-ai/nano-banana-pro/edit": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/fal-ai/nano-banana-pro/edit/api"],
+          "image": {"generate": false, "edit": "instruct", "refs_max": 14, "transparent_bg": "none", "sizes": ["1K", "2K", "4K"]},
+          "fal": {"refs": "image_urls", "refs_min": 1,
+                  "size": {"kind": "aspect_resolution", "aspect_field": "aspect_ratio", "aspects": ["21:9", "16:9", "3:2", "4:3", "5:4", "1:1", "4:5", "3:4", "2:3", "9:16"],
+                           "resolution_field": "resolution", "resolutions": {"1K": 1024, "2K": 2048, "4K": 4096}, "default": "1K"},
+                  "fixed": {"num_images": 1, "output_format": "png"}},
+          "note": "Gemini 3 Pro Image on fal.ai (reference edits only)",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "image"
+        },
+        "bytedance/seedream/v5/pro/edit": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/bytedance/seedream/v5/pro/edit/api"],
+          "image": {"generate": false, "edit": "instruct", "refs_max": 10, "transparent_bg": "none", "sizes": ["WxH up to 2048x2048"]},
+          "fal": {"refs": "image_urls", "refs_min": 1, "size": {"kind": "width_height", "field": "image_size"},
+                  "price_tiers": {"up-to-1536": 2359296, "up-to-2048": 4194304}, "extra_inputs_priced": true,
+                  "fixed": {"num_images": 1, "output_format": "png"}},
+          "note": "Seedream 5.0 Pro on fal.ai (reference edits only)",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "image"
+        },
+        "openai/gpt-image-2/edit": {
+          "kind": "image", "verifiedAt": "2026-10-06", "docs": ["https://fal.ai/models/openai/gpt-image-2/edit/api"],
+          "image": {"generate": false, "edit": "mask", "refs_max": 16, "transparent_bg": "native", "sizes": ["auto", "WxH"]},
+          "fal": {"refs": "image_urls", "refs_min": 1, "size": {"kind": "width_height", "field": "image_size"},
+                  "quality": "quality", "quality_default": "high", "background": "background",
+                  "fixed": {"num_images": 1, "output_format": "png"}},
+          "note": "GPT Image 2 on fal.ai (reference edits only); quality defaults to high as on fal.ai",
+          "url_ttl_s": 604800, "async": "poll", "cost_unit": "image"
+        }
+      }
+    }
+  }
+}

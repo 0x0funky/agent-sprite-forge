@@ -16,8 +16,10 @@ project, never in the skill folder.
 
 The owner's order (2026-10-06), which `route_media.py` follows for every image and clip:
 
-1. **the paid API**, when a key is configured (`OPENAI_API_KEY` / `XAI_API_KEY`, in the
-   environment or the user config file): the configured key is the owner's consent;
+1. **the paid API**, when a key is configured (each provider's own key, in the environment or the
+   user config file: `OPENAI_API_KEY`, `GOOGLE_API_KEY` or `GEMINI_API_KEY`, `XAI_API_KEY`,
+   `ARK_API_KEY`, `FAL_KEY`; see [route-media.md](route-media.md)): the configured key is the
+   owner's consent;
 2. **local**: the host's own image tool (Codex `image_gen`) when you have one, then
    **Codex (local CLI)**: `codex exec` with its native `image_gen`, reference images attached
    (route id `codex-cli`), then **Grok (local CLI)** in one-shot mode, `image_gen` or
@@ -138,8 +140,8 @@ the session usage.
 
 ## A Grok sign-in is never an API key
 
-The REST route (`generate_media.py --provider xai`) uses only `XAI_API_KEY` from the user's xAI
-API console. Forge never reads `~/.grok/auth.json` or any other Grok or Codex login file, never
+The REST routes (`generate_media.py`) use only each provider's own API key from that provider's
+console (`XAI_API_KEY` for xAI, and so on). Forge never reads `~/.grok/auth.json` or any other Grok or Codex login file, never
 turns a CLI sign-in into a REST credential and never sends one to an API. The local routes run the
 user's own CLI, which uses its own sign-in, and their children receive no API key. If the user
 wants API billing, use `generate_media.py`; if they want their subscription, use these routes.

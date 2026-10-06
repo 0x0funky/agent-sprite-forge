@@ -18,9 +18,11 @@ agent knows: declare your tools with --host-tools); UNKNOWN (cannot be proven
 without a real call). FAIL and MISSING always come with a remedy.
 
 ROUTES follows the owner's order (2026-10-06), the order route_media.py uses:
-  1. API, when a key is configured (OPENAI_API_KEY / XAI_API_KEY in the
-     environment or the user config file): images OpenAI, then xAI; video xAI.
-     A configured key is the owner's consent.
+  1. API, when a key is configured (in the environment or the user config file):
+     images OpenAI (OPENAI_API_KEY), Google Gemini (GOOGLE_API_KEY or
+     GEMINI_API_KEY), xAI (XAI_API_KEY), BytePlus ModelArk (ARK_API_KEY), fal.ai
+     (FAL_KEY, reference edits); video xAI, BytePlus, fal.ai. A configured key is
+     the owner's consent; providers.order in the user config file goes first.
   2. local: the calling agent's own media tool, then the user's signed-in
      CLIs: Codex (local CLI) image_gen, then Grok (local CLI) one-shot image or
      edit; video Grok (local CLI) in ACP mode.
@@ -93,10 +95,15 @@ HOST_TOOL_ALIASES = {
     "image_to_video": "image_to_video", "imagetovideo": "image_to_video", "image2video": "image_to_video",
     "img2video": "image_to_video",
 }
-API_KEYS = (("OPENAI_API_KEY", "openai"), ("XAI_API_KEY", "xai"))
+# Every API provider and its key variables, in the owner's route order (a copy of media_config.PROVIDER_KEYS,
+# kept here because the doctor imports no sibling at start-up; a test keeps the two equal).
+API_PROVIDERS = {"openai": ("OPENAI_API_KEY",), "gemini": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+                 "xai": ("XAI_API_KEY",), "byteplus": ("ARK_API_KEY",), "fal": ("FAL_KEY",)}
+API_KEYS = tuple((" or ".join(names), provider) for provider, names in API_PROVIDERS.items())
 # Removed from every CLI child: the CLI routes run on the user's sign-in (subscription
 # quota), never on a paid API key, and Grok login tokens are never reused for REST.
-STRIPPED_ENV = ("OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY")
+STRIPPED_ENV = ("OPENAI_API_KEY", "CODEX_API_KEY", "XAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ARK_API_KEY",
+                "FAL_KEY")
 # Also removed: anything that looks like a credential, and the calling agent's own session
 # variables (a nested CLI must not inherit the host's identity, sandbox or lifecycle
 # settings). The CLIs keep their own sign-in in CODEX_HOME / GROK_HOME.
@@ -131,18 +138,24 @@ SKIP_SUFFIXES = frozenset({".pyc", ".pyo"})
 # video; the internal ids stay codex-cli, grok-cli and grok-acp.
 ROUTE_LABEL = {"codex-cli": "Codex (local CLI)", "grok-cli": "Grok (local CLI, one-shot image mode)",
                "grok-acp": "Grok (local CLI, ACP video mode)"}
-API_LABEL = {"openai": "OpenAI API", "xai": "xAI API"}
+API_LABEL = {"openai": "OpenAI API", "gemini": "Google Gemini API", "xai": "xAI API", "byteplus": "BytePlus ModelArk API",
+             "fal": "fal.ai API"}
+API_KINDS = {"openai": ("image",), "gemini": ("image",), "xai": ("image", "video"), "byteplus": ("image", "video"),
+             "fal": ("image", "video")}
+API_ROLE = {"openai": "an image route (GPT Image)", "gemini": "an image route (Gemini image models)",
+            "xai": "an image and video route (Grok Imagine)", "byteplus": "an image and video route (Seedream, Seedance)",
+            "fal": "a reference-edit and video route (Kling, Veo, Luma, MiniMax, Wan, Vidu, LTX)"}
 # The owner's route order (2026-10-06), as route_media.py runs it: per need, the host tool, the API providers
 # in order, the local CLI capabilities in order (codex-cli attaches reference images, so it also edits) and the
-# model slot of each provider (media_config.MODEL_DEFAULTS).
+# model slot of each provider (media_config.MODEL_DEFAULTS). fal.ai's image models are reference edits only.
 ROUTE_NEEDS = (
-    ("image", "image_gen", ("openai", "xai"), ("codex-cli:image_gen", "grok-cli:image_gen")),
-    ("image_edit", "image_edit", ("openai", "xai"), ("codex-cli:image_gen", "grok-cli:image_edit")),
-    ("video", "image_to_video", ("xai",), ("grok-acp:image_to_video",)),
+    ("image", "image_gen", ("openai", "gemini", "xai", "byteplus"), ("codex-cli:image_gen", "grok-cli:image_gen")),
+    ("image_edit", "image_edit", ("openai", "gemini", "xai", "byteplus", "fal"),
+     ("codex-cli:image_gen", "grok-cli:image_edit")),
+    ("video", "image_to_video", ("xai", "byteplus", "fal"), ("grok-acp:image_to_video",)),
 )
-MODEL_SLOT = {("image", "openai"): "openai-image", ("image", "xai"): "xai-image",
-              ("image_edit", "openai"): "openai-image", ("image_edit", "xai"): "xai-image",
-              ("video", "xai"): "xai-video"}
+MODEL_SLOT = {(need, provider): f"{provider}-{'video' if need == 'video' else 'image'}"
+              for need, _tool, providers, _local in ROUTE_NEEDS for provider in providers}
 LAST_RESORT = "codeart2d"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ASCII_MAP = str.maketrans({"→": "->", "←": "<-", "—": "-", "–": "-", "×": "x",
@@ -752,8 +765,9 @@ def ledger_check(project: Path) -> Check | None:
     return Check("media.ledger", "OK", detail)
 
 
-def api_key_state() -> tuple[dict, dict, Check]:
-    """({provider: "environment" | "config" | None}, {model slot: model}, the media.config check).
+def api_key_state() -> tuple[dict, dict, Check, dict]:
+    """({provider: "environment" | "config" | None}, {model slot: model}, the media.config check,
+    {"variables": {provider: the variable the key came from}, "preference": {kind: [names]}}).
     Keys stay in this process: only where a key is configured leaves it, never the key."""
     try:
         here = str(Path(__file__).resolve().parent)
@@ -763,14 +777,20 @@ def api_key_state() -> tuple[dict, dict, Check]:
         path = media_config.config_path()
         settings, problem = media_config.load_config(path)
         sources = {provider: media_config.key_source(provider, settings) for provider in media_config.PROVIDERS}
+        variables = {provider: media_config.key_variable(provider, settings) for provider in media_config.PROVIDERS}
         models = {slot: media_config.model_for(slot, settings) for slot in media_config.MODEL_DEFAULTS}
+        preference = {kind: media_config.provider_order(kind, settings) for kind in ("image", "video")}
         loose = media_config.loose_permissions(path)
     except Exception as exc:  # noqa: BLE001  (a diagnostic must not crash on a damaged sibling)
-        sources = {provider: ("environment" if os.environ.get(variable, "").strip() else None)
-                   for variable, provider in API_KEYS}
+        variables = {provider: next((name for name in names if os.environ.get(name, "").strip()), None)
+                     for provider, names in API_PROVIDERS.items()}
+        sources = {provider: "environment" if variable else None for provider, variable in variables.items()}
         return sources, {}, Check("media.config", "UNKNOWN", f"media_config.py could not be loaded "
                                   f"({type(exc).__name__}); only the environment was checked for API keys",
-                                  "reinstall all five skills from one checkout")
+                                  "reinstall all five skills from one checkout"), {"variables": variables,
+                                                                                    "preference": {}}
+    extra = {"variables": variables, "preference": {kind: names for kind, (names, _) in preference.items() if names},
+             "problems": sorted({p for _, problems in preference.values() for p in problems})}
     where = display_path(path)
     if problem:
         check = Check("media.config", "WARN", f"{where}: {problem}; keys in it are ignored",
@@ -780,9 +800,13 @@ def api_key_state() -> tuple[dict, dict, Check]:
                       "from the environment)")
     elif loose:
         check = Check("media.config", "WARN", f"{where} can be read by other users", f"chmod 600 {where}")
+    elif extra["problems"]:
+        check = Check("media.config", "WARN", f"{where}: " + "; ".join(extra["problems"]),
+                      "use provider names (openai, gemini, xai, byteplus, fal) or local routes (codex-cli, grok-cli, "
+                      "grok-acp) in providers.order")
     else:
         check = Check("media.config", "OK", f"user config file {where} (key values are never shown)")
-    return sources, models, check
+    return sources, models, check, extra
 
 
 # --------------------------------------------------------------------------- the ladder and routes
@@ -875,13 +899,16 @@ def _option(route: str, status: str, detail: str, **extra) -> dict:
 
 
 def plan_routes(host: list[str], declared: bool, keys: dict, ladders: dict, ffmpeg: dict, deps: dict,
-                skills_root: Path, models: dict | None = None) -> tuple[dict, dict]:
+                skills_root: Path, models: dict | None = None, preference: dict | None = None) -> tuple[dict, dict]:
     """(routes, routeOrder) in the owner's order (2026-10-06), the order route_media.py uses: the API when a
     key is configured (the key is the owner's consent), then local: the calling agent's own media tool, then
     the user's signed-in Codex and Grok CLIs (installed natively; the first successful run records the
     VERIFIED proof), then codeart2d, only when the user asks for code-drawn art or no route exists.
-    ``route`` is the first ready option; routeOrder lists every ready option per need, ending with codeart2d."""
+    ``route`` is the first ready option; routeOrder lists every ready option per need, ending with codeart2d.
+    ``preference`` ({"image": [...], "video": [...]}, providers.order of the user config file) moves the named
+    providers and local routes to the front, as route_media.py does."""
     models = models or {}
+    preference = preference or {}
     undeclared = "" if declared else "; host tools undeclared (rerun with --host-tools)"
     fallback = {"image": "no image generation route: codeart2d is the last resort (disclose it as code-drawn), "
                          "or report the missing capability",
@@ -916,6 +943,9 @@ def plan_routes(host: list[str], declared: bool, keys: dict, ladders: dict, ffmp
             options.append(_option(f"local:{route}", "ready", f"{label}, {state}; route_media.py runs it on the "
                                    "user's own sign-in (subscription quota, not API credit)", consent="quota",
                                    level=ladder["level"], label=label, verified=verified))
+        wanted = preference.get("video" if need == "video" else "image") or []
+        first = [o for name in wanted for o in options if o["route"].split(":", 1)[-1] == name]
+        options = first + [o for o in options if o not in first]
         ready = [o for o in options if o["status"] == "ready"]
         order[need] = [o["route"] for o in ready] + [LAST_RESORT]
         if ready:
@@ -995,19 +1025,22 @@ def diagnose(*, host_tools: str | None = None, project_dir: str | os.PathLike = 
     if unrecognised:
         checks.append(Check("media.host-tools.names", "WARN", "unrecognised tool names: " + ", ".join(unrecognised),
                             "use image_gen, image_edit, image_to_video or none"))
-    sources, models, config_check = api_key_state()
+    sources, models, config_check, key_extra = api_key_state()
     checks.append(config_check)
-    keys = {}
+    keys, providers = {}, {}
     for variable, provider in API_KEYS:
         source = sources.get(provider)
         keys[provider] = source is not None
-        role = "the first image route" if provider == "openai" else "an image route and the first video route"
-        checks.append(Check(f"media.api.{provider}", "UNKNOWN", f"{variable} is configured ("
+        used = key_extra["variables"].get(provider) or variable
+        providers[provider] = {"label": API_LABEL[provider], "configured": source is not None,
+                               "keyEnv": list(API_PROVIDERS[provider]), "source": source,
+                               "variable": used if source else None, "kinds": list(API_KINDS[provider])}
+        checks.append(Check(f"media.api.{provider}", "UNKNOWN", f"{used} is configured ("
                             f"{'environment' if source == 'environment' else 'user config file'}; the value is never "
                             "shown); credit and model access are proven by the first call") if source else
                       Check(f"media.api.{provider}", "MISSING", f"{variable} is not configured",
                             f"optional: set {variable} in the environment or in the user config file to make the "
-                            f"{API_LABEL[provider]} {role}"))
+                            f"{API_LABEL[provider]} {API_ROLE[provider]}"))
     ledger = ledger_check(project)
     if ledger is not None:
         checks.append(ledger)
@@ -1047,7 +1080,8 @@ def diagnose(*, host_tools: str | None = None, project_dir: str | os.PathLike = 
             checks.append(Check(f"route.{capability.key}", status, f"{ladder['level']}: {top['detail']}",
                                 top.get("remedy") if status != "OK" else None))
     dep_ok = {c.id.removeprefix("deps."): c.status in ("OK", "WARN") for c in checks if c.id.startswith("deps.")}
-    routes, order = plan_routes(host, declared, keys, ladders, ffmpeg, dep_ok, root, models)
+    routes, order = plan_routes(host, declared, keys, ladders, ffmpeg, dep_ok, root, models,
+                                key_extra.get("preference"))
     proof_view = {}
     for key, ladder in ladders.items():
         capability = next(c for c in CAPABILITIES if c.key == key)
@@ -1060,8 +1094,9 @@ def diagnose(*, host_tools: str | None = None, project_dir: str | os.PathLike = 
     overall = "FAIL" if "FAIL" in statuses else "WARN" if "WARN" in statuses else "OK"
     return {"schema": DOCTOR_SCHEMA, "tool": {"name": TOOL_NAME, "version": TOOL_VERSION}, "createdAt": utc_timestamp(),
             "overall": overall, "host": {"declared": declared, "tools": host, "unrecognised": unrecognised},
-            "checks": [c.as_dict() for c in checks], "cli": ladders, "apiKeys": keys, "routes": routes,
-            "routeOrder": order, "proofs": proof_view, "elapsedMs": round((time.perf_counter() - started) * 1000)}
+            "checks": [c.as_dict() for c in checks], "cli": ladders, "apiKeys": keys, "providers": providers,
+            "providerPreference": key_extra.get("preference") or {}, "routes": routes, "routeOrder": order,
+            "proofs": proof_view, "elapsedMs": round((time.perf_counter() - started) * 1000)}
 
 
 def validate_report(report: dict) -> None:
@@ -1125,6 +1160,8 @@ def render_text(report: dict) -> str:
         lines.append(f"  {'api keys':<11} " + "  ".join(f"{provider}={'yes' if on else 'no'}"
                                                        for provider, on in keys.items())
                      + "  (environment or user config file; values are never shown)")
+    for kind, names in (report.get("providerPreference") or {}).items():
+        lines.append(f"  {'preference':<11} {kind}: {' > '.join(names)} (providers.order in the user config file)")
     for need, route in report["routes"].items():
         lines.append(f"  {need:<11} {route['route']:<15} {route['status']:<9} {route['detail']}")
         for option in route.get("options", []):

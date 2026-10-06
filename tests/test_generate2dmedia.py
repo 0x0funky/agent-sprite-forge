@@ -598,14 +598,15 @@ def test_custom_base_url_requires_opt_in(inputs, monkeypatch):
 
 
 def test_upload_url_is_sent_but_never_stored(inputs, monkeypatch):
-    """xAI ZDR (issue #11): upload_url goes in the body; the signed URL is not logged."""
+    """xAI ZDR (issue #11): the upload URL goes in the body as output.upload_url (the REST reference,
+    checked 2026-10-06); the signed URL is not logged."""
     signed = "https://bucket.example/out.mp4?X-Signature=SIGNED-PRIVATE"
     monkeypatch.setenv("XAI_API_KEY", XAI_KEY)
     with pytest.raises(media.MediaError, match="https"):
         media.prepare(args(inputs, "video", "xai", ["--reference", str(inputs[1]), "--upload-url", "ftp://x.example/a"]))
     transport = Fake([{"request_id": "req-zdr"}, {"status": "done", "video": {"url": "https://media.example/v.mp4"}}])
     job = media.execute(args(inputs, "video", "xai", ["--reference", str(inputs[1]), "--execute", "--upload-url", signed]), transport)
-    assert json.loads(transport.calls[0][2])["upload_url"] == signed
+    assert json.loads(transport.calls[0][2])["output"] == {"upload_url": signed}
     assert job["uploadUrl"]["host"] == "bucket.example"
     assert "SIGNED-PRIVATE" not in (inputs[2] / "job.json").read_text(encoding="utf-8")
     assert "upload_url" not in job["options"]
@@ -978,3 +979,61 @@ def test_secret_never_leaks(inputs, monkeypatch, capsys, surface):
     assert text.strip(), f"{surface} is empty, so the canary check would prove nothing"
     for key in (OPENAI_KEY, XAI_KEY):
         assert key not in text and key[12:30] not in text
+
+
+def test_api_usage_doc_commands_match_the_tool():
+    """api-usage.md: one-line commands whose verbs and options exist, and every provider documented."""
+    import re
+
+    text = (ROOT / "skills/generate2dmedia/references/api-usage.md").read_text(encoding="utf-8")
+    commands = [line for block in re.findall(r"```bash\n(.*?)```", text, re.S) for line in block.splitlines() if line]
+    verbs = next(a for a in media.parser()._actions if isinstance(a, media.argparse._SubParsersAction)).choices
+    checked = 0
+    for command in commands:
+        assert command.startswith('python "<skill-dir>/scripts/'), command
+        if "/generate_media.py" not in command:
+            continue
+        verb = command.split('generate_media.py" ', 1)[1].split()[0]
+        assert set(re.findall(r"\s(--[a-z-]+)", command)) <= set(verbs[verb]._option_string_actions), command
+        if "--provider" in command:
+            provider = command.split("--provider ", 1)[1].split()[0]
+            model = command.split("--model ", 1)[1].split()[0]
+            assert model in media.media_providers.adapter(provider).models(verb), command
+        checked += 1
+    assert checked >= 10
+    for provider, names in media.media_config.PROVIDER_KEYS.items():
+        assert f"`{provider}`" in text and all(name in text for name in names), provider
+
+
+def test_batch_dry_run_covers_every_provider_and_keyframe_paths(inputs, tmp_path, capsys, monkeypatch):
+    """A jobs file can mix providers; keyframe paths are relative to the jobs file like every other path."""
+    monkeypatch.setattr(media.media_providers, "TODAY", media.media_providers.date(2026, 10, 6))
+    (tmp_path / "p.txt").write_text("A slime idles in place.", encoding="utf-8")
+    (tmp_path / "art").mkdir()
+    (tmp_path / "art" / "still.png").write_bytes(png())
+    big = io.BytesIO()
+    Image.new("RGB", (512, 512), (255, 0, 255)).save(big, "PNG")
+    (tmp_path / "art" / "big.png").write_bytes(big.getvalue())
+    jobs = [
+        {"id": "a", "command": "image", "provider": "gemini", "model": "gemini-3.1-flash-image", "prompt_file": "p.txt",
+         "size": "1024x1024", "out_dir": "out/a"},
+        {"id": "b", "command": "image", "provider": "byteplus", "model": "dola-seedream-5-0-flash-260915",
+         "prompt_file": "p.txt", "size": "1024x1024", "out_dir": "out/b"},
+        {"id": "c", "command": "video", "provider": "xai", "model": "grok-imagine-video-1.5", "prompt_file": "p.txt",
+         "reference": ["art/still.png"], "keyframe": ["art/still.png@2"], "duration": 4, "out_dir": "out/c"},
+        {"id": "d", "command": "video", "provider": "byteplus", "model": "dreamina-seedance-2-0-mini-260615",
+         "prompt_file": "p.txt", "reference": ["art/big.png"], "last_frame": "art/big.png", "duration": 5,
+         "out_dir": "out/d"},
+        {"id": "e", "command": "video", "provider": "fal", "model": "fal-ai/kling-video/v3/pro/image-to-video",
+         "prompt_file": "p.txt", "reference": ["art/big.png"], "duration": 5, "out_dir": "out/e"},
+    ]
+    path = tmp_path / "jobs.json"
+    path.write_text(json.dumps({"jobs": jobs}), encoding="utf-8")
+    assert media.main(["batch", str(path), "--project-dir", str(project(inputs))], transport=Refuse()) == 0
+    summary = json.loads(capsys.readouterr().out)
+    rows = {row["id"]: row for row in summary["consent"]}
+    assert [rows[k]["provider"] for k in "abcde"] == ["gemini", "byteplus", "xai", "byteplus", "fal"]
+    assert rows["a"]["estimateUsd"] == 0.067 and rows["b"]["estimateUsd"] == 0.018
+    assert rows["c"]["estimateUsd"] == pytest.approx(4 * 0.14 + 2 * 0.01)  # the keyframe image is an input
+    assert rows["d"]["estimateUsd"] == pytest.approx(5 * 0.08) and rows["e"]["estimateUsd"] == pytest.approx(5 * 0.112)
+    assert summary["unpricedCalls"] == 0 and not (tmp_path / "out").exists()
