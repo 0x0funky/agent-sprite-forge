@@ -34,8 +34,12 @@ and `fal:<endpoint-id>` one fal.ai model. Every API route is checked against its
 is skipped with the reason: too many references, a resolution it does not render, a first frame it
 refuses, or a fal.ai image model with no reference to edit. A request is adapted, with a note, when:
 
-- the model renders other lengths: the duration is snapped to the nearest one;
-- the model cannot pin a last frame (the result says `lastFrameUsed: false`);
+- the model renders other lengths: the duration is snapped to the nearest one (the result says
+  `durationRequested` and `durationUsed`). The API models' lengths come from
+  [capabilities.json](capabilities.json); Grok (local CLI) renders 6 or 10 s, so 4 s becomes 6 s
+  and 9 s becomes 10 s (a tie takes the longer length);
+- the model cannot pin a last frame (the result says `lastFrameUsed: false`; Grok (local CLI)
+  never pins one);
 - the model takes no keyframes;
 - the model has no native transparent background.
 
@@ -67,7 +71,7 @@ python "<skill-dir>/scripts/route_media.py" video --prompt-file prompts/run.txt 
 | `--transparent` | image: a native transparent background where the model has one (OpenAI GPT Image); elsewhere a note says to key the backdrop |
 | `--last-frame` | video: pins the end frame (same canvas as the first frame) where the route can; the result says `lastFrameUsed` |
 | `--keyframe PATH@SECONDS` | video: an intermediate frame, up to 4 (xAI `grok-imagine-video-1.5` at 480p or 720p; other routes drop them with a note) |
-| `--duration`, `--resolution` | video: 1..15 seconds (default 6, snapped per model); `480p`, `720p` (default) or `1080p` |
+| `--duration`, `--resolution` | video: 1..15 seconds (default 6, snapped per model; Grok (local CLI) 6 or 10); `480p`, `720p` (default) or `1080p` |
 | `--model` | the API model (fal.ai: its endpoint id); with `auto`, only providers that list it are tried |
 | `--tier` | `draft`, `standard` (default) or `hero`: each provider's model for that tier, for example Gemini Pro for hero masters and xAI 1.5 Lite for draft clips |
 | `--provider-option [PROVIDER:]KEY=VALUE` | a request field passed as is (VALUE is JSON when it parses: `seed=7`, `safety_tolerance="5"`); `PROVIDER:` limits it to one provider; dotted keys nest; fields ASF sets itself are refused |
@@ -89,8 +93,9 @@ Success, exit 0 (one ASCII JSON line; the first five keys are the contract):
   `local:grok-cli` or `local:grok-acp`.
 - `estimateUsd` is the list-price estimate from [prices.json](prices.json), `null` when no verified
   price row exists, `0.0` for a local route (subscription quota).
-- Video adds `lastFrameUsed`, and `duration` when the length was snapped. `crop` appears when the
-  frames were padded to 16:9 for a model without 1:1 (fal.ai Veo 3.1 and LTX): crop every frame
+- Video adds `lastFrameUsed`, `durationRequested` and `durationUsed` (the length sent), and
+  `duration` when the length was snapped. `crop` appears when the frames were padded to 16:9 for
+  a model without 1:1 (fal.ai Veo 3.1 and LTX): crop every frame
   to that box (fractions of the frame) to return to the still's aspect. `notes` explains every
   adaptation. `attempts` lists earlier routes that refused the request (`route`, `code`,
   `message`, `keptIn`).

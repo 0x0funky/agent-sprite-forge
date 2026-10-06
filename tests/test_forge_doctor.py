@@ -435,7 +435,8 @@ def test_verify_route_execute_records_a_proof_the_ladder_uses(tmp_path, cold, mo
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("FAKE_CLI_LOG", str(tmp_path / "fake.log"))
-    monkeypatch.delenv("FAKE_CLI_MODE", raising=False)
+    for name in ("FAKE_CLI_MODE", "FAKE_GROK_DURATIONS", "FAKE_TOOL_ERROR"):
+        monkeypatch.delenv(name, raising=False)
 
     def fake(cli):
         path = FAKES / f"fake_{cli}.py"
@@ -445,6 +446,8 @@ def test_verify_route_execute_records_a_proof_the_ladder_uses(tmp_path, cold, mo
     assert forge_doctor.main(["--verify-route", route, "--execute", "--project-dir", str(cold)]) == 0, capsys.readouterr()
     summary = json.loads(capsys.readouterr().out.splitlines()[-1])
     assert summary["status"] == "done" and ".forge" in summary["output"]
+    if need == "video":  # the verification asks for a length Grok renders (6 or 10 s), so nothing is snapped
+        assert (summary["durationRequested"], summary["durationUsed"]) == (6, 6) and "notes" not in summary
     monkeypatch.setenv("FORGE_CODEX_EXE", str(fake_native(tmp_path / "bin" / ("codex" + EXE))))
     fake_native(tmp_path / "grok-home" / "bin" / ("grok" + EXE))
     stub_versions(monkeypatch)
@@ -460,7 +463,8 @@ def fake_route_clis(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
     monkeypatch.setenv("FAKE_CLI_LOG", str(tmp_path / "fake.log"))
-    for name in ("FAKE_CLI_MODE", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION", "FAKE_THREAD_ID", "FAKE_SESSION_ID"):
+    for name in ("FAKE_CLI_MODE", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION", "FAKE_THREAD_ID", "FAKE_SESSION_ID",
+                 "FAKE_GROK_DURATIONS", "FAKE_TOOL_ERROR"):
         monkeypatch.delenv(name, raising=False)
 
     def fake(cli):

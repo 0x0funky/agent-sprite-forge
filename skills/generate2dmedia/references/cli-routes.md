@@ -83,15 +83,19 @@ VERIFIED after one successful `cli_media.py edit --route grok-cli ... --execute`
 | `codex-cli` | `image` | `image_gen` | `codex exec`: read-only sandbox, ephemeral session, user config ignored, web search, shell, plugins, apps, hooks, browser, MCP and sub-agents disabled; prompt on stdin; `--reference` images (up to 8) are copied into the run folder and attached with `--image` |
 | `grok-cli` | `image` | `image_gen` | `grok` one-shot with `--output-format streaming-json`: only the one tool offered, web search and sub-agents off, Bash, WebFetch and MCP denied |
 | `grok-cli` | `edit` | `image_edit` | as above; the reference image is copied into the run folder |
-| `grok-acp` | `video` | `image_to_video` | `grok agent --no-leader --agent-profile references/agent-profiles/video-agent.md stdio` (ACP): one permission granted, only for the exact image, duration and resolution |
+| `grok-acp` | `video` | `image_to_video` | `grok agent --no-leader --agent-profile references/agent-profiles/video-agent.md stdio` (ACP): one permission granted, only for the exact image, duration and resolution. It renders 6 or 10 s at 480p or 720p: `--duration` (1..15) is snapped to the nearer length before anything is sent (the plan, the result and `job.json` say `durationRequested` and `durationUsed`), and it takes the first frame only (`lastFrameUsed: false`) |
 | `auto` | `image`, `edit`, `video` | as chosen | `cli_media.py`'s own auto: the first local route (Codex, then Grok) that is VERIFIED for the installed CLI version; `route_media.py` also runs a route that is not verified yet |
 
 Every CLI runs in a fresh temporary folder with API keys, other credential-like variables and
 the calling agent's own session variables removed from its environment (Grok also gets memory,
-managed MCPs, foreign agent rules and its auto-updater switched off). Any other tool call, a
-second media call, mismatched arguments, more output than allowed or `--timeout` (default 300 s
-for images, 600 s for video) stops it at once. The [agent profile](agent-profiles/video-agent.md)
-limits the ACP agent to `image_to_video`.
+managed MCPs, foreign agent rules and its auto-updater switched off). The folder is a plain new
+folder in the system temporary folder (`TMPDIR`, `TEMP` or `TMP`), removed after the run. On
+Windows it inherits that folder's permissions, which Codex's sandbox setup extends to its own
+users: `tempfile.mkdtemp` would make it owner-only (Python 3.12.4 and later), and the sandbox could
+then not read the attached references. On macOS and Linux it stays private to the user. Any other
+tool call, a second media call, mismatched arguments, more output than allowed or `--timeout`
+(default 300 s for images, 600 s for video) stops it at once. The
+[agent profile](agent-profiles/video-agent.md) limits the ACP agent to `image_to_video`.
 
 ```bash
 python "<skill-dir>/scripts/cli_media.py" image --route auto --prompt-file prompts/hero.txt --output-dir outputs/hero-local
@@ -203,8 +207,8 @@ job; an image job's `reference` may be a list (Codex attaches every image).
 | `SPAWN_FAILED` | the CLI could not start | `not_sent` | check the install |
 | `AUTH_REQUIRED`, `RATE_LIMIT`, `MODERATION` | sign-in, quota or content policy | `failed` | the user logs in, waits, or rewrites |
 | `UNEXPECTED_TOOL`, `TOOL_LIMIT`, `PERMISSION_MISMATCH` | the CLI tried something not authorised; it was stopped | `failed` | report it; do not retry blindly |
-| `TOOL_UNAVAILABLE`, `GENERATION_FAILED` | the sign-in has no such tool, or the tool failed | `failed` | another route |
-| `ARTIFACT_MISSING`, `ARTIFACT_COUNT`, `ARTIFACT_PATH_REJECTED`, `ARTIFACT_STALE`, `ARTIFACT_INVALID` | the output failed a provenance check | `failed` | inspect; `adopt --file` only for a file you checked |
+| `TOOL_UNAVAILABLE`, `GENERATION_FAILED` | the sign-in has no such tool, or the tool failed (a failed `image_to_video` call's own reason follows the code, scrubbed) | `failed` | read the reason; another route |
+| `ARTIFACT_MISSING`, `ARTIFACT_COUNT`, `ARTIFACT_PATH_REJECTED`, `ARTIFACT_STALE`, `ARTIFACT_INVALID` | the output failed a provenance check (when Codex made no image, its answer follows, scrubbed) | `failed` | inspect; `adopt --file` only for a file you checked |
 | `TIMEOUT`, `OUTPUT_LIMIT`, `PROTOCOL_ERROR`, `PROVIDER_ERROR`, `PUBLISH_FAILED`, `INTERRUPTED` | outcome unknown; the CLI may have produced something | `unknown` | `resume --run <id>`, then `--adopt` |
 
 A mistyped option exits 2 with the usage line; every other failure prints one `error:` line (a

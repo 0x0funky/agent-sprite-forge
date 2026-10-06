@@ -10,7 +10,9 @@ Speaks the subset of `codex` that cli_media.py and forge_doctor.py use:
 The behaviour of `exec` comes from a marker in the prompt, [[fake:MODE]], or else from
 FAKE_CLI_MODE (default success). Images go to $CODEX_HOME/generated_images/<thread>/ as
 Codex does. Every invocation is appended to FAKE_CLI_LOG as one JSON line (argv, cwd and
-the names, never the values, of environment variables that look like credentials).
+the names, never the values, of environment variables that look like credentials). The
+--image files are read as the image tool reads them; one that cannot be read (or mode
+access_denied) ends the turn without an image, as the live Windows sandbox failure did.
 """
 import json
 import os
@@ -91,6 +93,21 @@ def main(argv):
         return 0
     if mode == "unavailable":
         emit({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text": "IMAGE_UNAVAILABLE"}})
+        emit({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}})
+        return 0
+    attached = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "--image"]
+    unreadable = []
+    for image in attached:
+        try:
+            Path(image).read_bytes()
+        except OSError:
+            unreadable.append(image)
+    if mode == "access_denied" or unreadable:
+        # The live failure (2026-10-06): the sandboxed image tool could not read an attached reference, so the
+        # turn ended without an image and with only this answer.
+        denied = (unreadable or attached or ["the attached reference"])[0]
+        emit({"type": "item.completed", "item": {"id": "item_1", "type": "agent_message", "text":
+              f"The image tool could not read {denied}: access denied (os error 5). No image was generated."}})
         emit({"type": "turn.completed", "usage": {"input_tokens": 1, "output_tokens": 1}})
         return 0
     home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex")
