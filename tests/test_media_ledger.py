@@ -125,11 +125,15 @@ def test_cap_blocks_before_send(video_cli, tmp_path, monkeypatch):
     assert [line["status"] for line in ledger.lines()] == ["reserved", "unknown", "reserved", "done"]
 
 
-def test_unpriced_request_cannot_use_a_usd_budget(video_cli, monkeypatch):
+def test_unpriced_request_cannot_use_a_usd_budget(video_cli, monkeypatch, tmp_path):
     monkeypatch.setenv("XAI_API_KEY", KEY)
-    with pytest.raises(media.MediaError, match="no verified price"):  # 480p has no price row
+    shipped = json.loads(ml.PRICES_PATH.read_text(encoding="utf-8"))
+    table = tmp_path / "prices-without-480p.json"
+    table.write_text(json.dumps({**shipped, "rows": [r for r in shipped["rows"] if r.get("resolution") != "480p"]}),
+                     encoding="utf-8")
+    with pytest.raises(media.MediaError, match="no verified price"):  # this table has no 480p row
         media.execute(media.parser().parse_args(video_cli("job", "--execute", "--resolution", "480p",
-                                                          "--budget-usd", "100")), Fake())
+                                                          "--budget-usd", "100", "--prices", str(table))), Fake())
 
 
 def test_dry_run_prints_estimate(video_cli, tmp_path, capsys):
@@ -138,7 +142,7 @@ def test_dry_run_prints_estimate(video_cli, tmp_path, capsys):
     plan = json.loads(printed)
     assert len(printed.splitlines()) == 1 and printed.isascii()
     assert plan["execution"] == "dry-run" and plan["estimate"]["usd"] == 0.57
-    assert plan["estimate"]["pricesVersion"] == "2026-10-05" and "verified 2026-10-05" in plan["estimate"]["basis"]
+    assert plan["estimate"]["pricesVersion"] == "2026-10-06" and "verified 2026-10-06" in plan["estimate"]["basis"]
     assert plan["consent"] == {"provider": "xai", "model": "grok-imagine-video-1.5", "calls": 1,
                                "estimateUsd": 0.57, "apiHost": "api.x.ai"}
     assert plan["ledger"]["calls"] == 0 and plan["warnings"] == []
@@ -150,7 +154,7 @@ def test_dry_run_prints_estimate(video_cli, tmp_path, capsys):
 
 def test_prices_rows_carry_source_and_verified_at():
     prices = ml.load_prices()
-    assert prices["rows"] and ml.prices_version(prices) == "2026-10-05"
+    assert prices["rows"] and ml.prices_version(prices) == "2026-10-06"
     for row in prices["rows"]:
         assert row["source"].startswith("https://") and ml.DATE.fullmatch(row["verifiedAt"])
     bad = {"rows": [{"provider": "x", "model": "m", "unit": "output_image", "usd": 1}]}
@@ -172,12 +176,12 @@ def test_estimate_prices_known_rows_and_names_missing_ones():
     assert pinned["usd"] == round(6 * 0.14 + 2 * 0.01, 6)
     image = ml.estimate(plan(model="grok-imagine-image-2.0", kind="image", options={"n": 1, "resolution": "2k", "quality": "medium"}))
     assert image["usd"] == 0.09
-    for unpriced in (plan(options={"duration": 4, "resolution": "480p"}),
+    for unpriced in (plan(options={"duration": 4, "resolution": "4k"}),
                      plan(model="grok-imagine-image-2.0", kind="image", options={"n": 1}),
                      plan(provider="openai", model="gpt-image-2.5-sunburst", kind="image", options={"n": 1, "size": "1024x1024"})):
         result = ml.estimate(unpriced)
         assert result["usd"] is None and result["basis"].startswith("unpriced")
-    assert "known rows" in ml.estimate(plan(options={"duration": 4, "resolution": "480p"}))["basis"]
+    assert "known rows" in ml.estimate(plan(options={"duration": 4, "resolution": "4k"}))["basis"]
     quota = ml.estimate({"route": "grok-cli", "provider": "xai", "kind": "video"})
     assert quota["usd"] == 0.0 and "quota" in quota["basis"]
 

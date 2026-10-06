@@ -1,17 +1,22 @@
 #!/usr/bin/env python3
 """One-request media API adapter. Dry-run by default; no paid POST retries.
 
-Provider contracts checked 2026-10-05. Generation is separate from asset QA.
-Each executed request is first reserved in <project>/.forge/ledger.jsonl
-(opt-in spend caps, duplicate guard), then committed with its outcome.
-Keys come from OPENAI_API_KEY / XAI_API_KEY or the user config file
-(media_config.py); route_media.py is the entry point that sends at once
-when a key is configured. Uses stdlib HTTP and Pillow.
+Providers (media_providers.py, contracts checked against the vendors' docs on
+2026-10-06): OpenAI and Google Gemini images; xAI images and video; BytePlus
+ModelArk Seedream images and Seedance video; fal.ai image edits and video.
+Generation is separate from asset QA. Each executed request is first reserved
+in <project>/.forge/ledger.jsonl (opt-in spend caps, duplicate guard), then
+committed with its outcome, the provider's job id and the artifact's sha256.
+An asynchronous job's id is saved before polling and its media is downloaded
+as soon as it is done; every clip is published without audio. Keys come from
+each provider's own variables (OPENAI_API_KEY, GOOGLE_API_KEY or
+GEMINI_API_KEY, XAI_API_KEY, ARK_API_KEY, FAL_KEY) or the user config file
+(media_config.py); route_media.py is the entry point that sends at once when
+a key is configured. Uses stdlib HTTP and Pillow.
 """
 from __future__ import annotations
 
 import argparse
-import base64
 from datetime import datetime, timezone
 import hashlib
 import http.client
@@ -36,12 +41,14 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import media_config  # noqa: E402  (sibling modules in this skill's scripts/)
 import media_ledger  # noqa: E402
+import media_mp4  # noqa: E402
+import media_providers  # noqa: E402
 
 TOOL_VERSION = media_ledger.FORGE_PACKAGE_VERSION  # receipts name the package release (D29)
 TOOL = "generate_media/" + TOOL_VERSION
 USER_AGENT = "agent-sprite-forge-media/" + TOOL_VERSION
-API = {"openai": "https://api.openai.com/v1", "xai": "https://api.x.ai/v1"}
-KEY = {"openai": "OPENAI_API_KEY", "xai": "XAI_API_KEY"}
+API = {name: media_providers.adapter(name).api_base for name in media_providers.ORDER}
+KEY = dict(media_config.PROVIDERS)
 MIME = {"PNG": "image/png", "JPEG": "image/jpeg", "WEBP": "image/webp"}
 EXT = {"PNG": ".png", "JPEG": ".jpg", "WEBP": ".webp"}
 API_LIMIT = 100 * 1024 * 1024
@@ -58,24 +65,20 @@ CONTINUE_CODES = frozenset({"ok", "prior", "invalid_request", "duplicate", "outp
                             "failed", "expired", "pending_timeout"})
 BATCH_LEVEL_KEYS = frozenset({"execute", "allow_duplicate", "budget_usd", "max_calls", "project_dir",
                               "prices", "allow_custom_base_url", "help"})
-JOB_PATH_KEYS = frozenset({"prompt_file", "reference", "last_frame", "out_dir"})
+JOB_PATH_KEYS = frozenset({"prompt_file", "reference", "last_frame", "out_dir", "keyframe"})
+RAW_CLIP = "provider-download.mp4"  # the clip as downloaded, kept beside the silent generated.mp4
+MAX_REDIRECTS = 3
 # Id of the batch progress file (media.schema.json batch_progress_v1). Files from before the
 # namespacing say "batch_progress_v1"; nothing reads a progress file back (a re-run resumes from
 # each job folder and the ledger, then rewrites the file), so old files stay harmless.
 BATCH_PROGRESS_SCHEMA = "generate2dmedia.batch_progress.v1"
 
 
-class MediaError(Exception):
-    """Locally authored, secret-free failure.
-
-    code is the receipt outcomeCode. sent says whether a paid POST may have
-    reached the provider: False (certainly not), True (the provider answered),
-    None (unknown). provider holds whitelisted, scrubbed provider error fields.
-    """
-
-    def __init__(self, message, *, code="error", sent=None, provider=None):
-        super().__init__(message)
-        self.code, self.sent, self.provider = code, sent, provider
+# One error class for every module of this skill: code is the receipt outcomeCode, sent says whether
+# a paid POST may have reached the provider (False, True or None) and provider holds whitelisted,
+# scrubbed provider error fields.
+MediaError = media_providers.MediaError
+JobFailure = media_providers.JobFailure
 
 
 class PartialArtifact(MediaError):
@@ -93,6 +96,21 @@ class NotSent(OSError):
 class NoRedirect(request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise MediaError("API redirect refused; credentials were not forwarded", code="redirect", sent=True)
+
+
+class SafeRedirect(request.HTTPRedirectHandler):
+    """Media downloads follow at most MAX_REDIRECTS HTTPS redirects and never carry a credential to the
+    next host: the key (Gemini file downloads only) travels as an unredirected header, and every
+    redirected request is rebuilt with nothing but the User-Agent."""
+
+    max_redirections = MAX_REDIRECTS
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        target = parse.urlsplit(newurl)
+        if target.scheme != "https" or not target.hostname or target.username or target.password:
+            raise MediaError("Media download redirected to a non-HTTPS or credentialed URL; refused",
+                             code="redirect", sent=True)
+        return request.Request(newurl, headers={"User-Agent": USER_AGENT}, method="GET")
 
 
 class _TrackedHTTPSConnection(http.client.HTTPSConnection):
@@ -189,8 +207,27 @@ def provider_error_fields(status, body, headers, secrets=()):
     source = {}
     if isinstance(payload, dict):
         nested = payload.get("error")
-        if isinstance(nested, dict):  # OpenAI: {"error": {"message", "type", "param", "code"}}
-            source = nested
+        detail = payload.get("detail")
+        if isinstance(nested, dict):
+            # OpenAI and BytePlus: {"error": {"message", "type", "param", "code"}}; Google:
+            # {"error": {"code": 400, "message", "status": "INVALID_ARGUMENT", "details": [{"reason"}]}}
+            source = dict(nested)
+            if isinstance(nested.get("status"), str) and not nested.get("type"):
+                source["type"] = nested["status"]
+            reasons = [d["reason"] for d in nested.get("details") or [] if isinstance(d, dict)
+                       and isinstance(d.get("reason"), str)]
+            if reasons:
+                source["code"] = reasons[0]
+        elif detail is not None:  # fal.ai: {"detail": "text"} or {"detail": [{"loc", "msg", "type"}]}
+            if isinstance(detail, list) and detail and isinstance(detail[0], dict):
+                first = detail[0]
+                loc = first.get("loc")
+                source = {"message": first.get("msg"), "type": first.get("type"),
+                          "param": ".".join(str(p) for p in loc[1:]) if isinstance(loc, list) and len(loc) > 1 else None}
+            elif isinstance(detail, str):
+                source = {"message": detail}
+            if isinstance(payload.get("error_type"), str):
+                source.setdefault("type", payload["error_type"])
         else:  # xAI: {"code": "...", "error": "message"}
             source = {**payload, "message": nested if isinstance(nested, str) else payload.get("message")}
     for name in ERROR_FIELDS:
@@ -199,7 +236,11 @@ def provider_error_fields(status, body, headers, secrets=()):
             text = scrub(value, secrets, 300 if name == "message" else 100)
             if text:
                 fields[name] = text
-    rid = _header(headers, "x-request-id", "request-id")
+    if "type" not in fields:
+        kind = _header(headers, "x-fal-error-type")
+        if kind:
+            fields["type"] = scrub(kind, secrets, 100)
+    rid = _header(headers, "x-request-id", "request-id", "x-fal-request-id")
     if rid is None and isinstance(payload, dict):
         rid = payload.get("request_id")
     if _valid_id(rid, secrets):
@@ -309,22 +350,37 @@ def inspect_image(path):
             "mime": MIME[fmt], "bytes": len(data)}, data
 
 
-def data_uri(meta, data):
-    return "data:" + meta["mime"] + ";base64," + base64.b64encode(data).decode("ascii")
+data_uri = media_providers.data_uri
+multipart = media_providers.multipart
 
 
-def multipart(fields, refs):
-    boundary = "forge-" + uuid.uuid4().hex
-    chunks = []
-    for name, value in fields.items():
-        chunks.append((f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n').encode())
-    for i, (meta, data) in enumerate(refs):
-        suffix = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}[meta["mime"]]
-        # Synthetic filename avoids path disclosure and multipart header injection.
-        chunks.append((f'--{boundary}\r\nContent-Disposition: form-data; name="image[]"; filename="reference-{i}{suffix}"\r\nContent-Type: {meta["mime"]}\r\n\r\n').encode())
-        chunks.extend([data, b"\r\n"])
-    chunks.append(f"--{boundary}--\r\n".encode())
-    return b"".join(chunks), "multipart/form-data; boundary=" + boundary
+def parse_provider_options(items):
+    """--provider-option KEY=VALUE pairs: VALUE is JSON when it parses (numbers, true, "quoted"), else text."""
+    options = {}
+    for item in items or ():
+        key, sep, raw = str(item).partition("=")
+        key = key.strip()
+        if not sep or not media_providers.OPTION_KEY.fullmatch(key):
+            raise MediaError(f"--provider-option needs KEY=VALUE with a letter-and-digit key (got {key[:40]!r})",
+                             code="invalid_input", sent=False)
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            value = raw
+        options[key] = value
+    return options
+
+
+def parse_keyframe(text):
+    """PATH@SECONDS -> (path, seconds) for one --keyframe."""
+    path, sep, seconds = str(text).rpartition("@")
+    try:
+        value = float(seconds)
+    except ValueError:
+        value = None
+    if not sep or not path or value is None or not math.isfinite(value):
+        raise MediaError("--keyframe needs PATH@SECONDS, for example still.png@2.5", code="invalid_input", sent=False)
+    return path, round(value, 3)
 
 
 def bounded_time(args):
@@ -370,13 +426,18 @@ def upload_target(url):
 
 
 def prepare(args):
-    """Validate without keys, output writes, or network; return plan + transport."""
+    """Validate without keys, output writes, or network; return (plan, body, content type, prompt).
+
+    The provider's adapter (media_providers.py) gates the request against the model's capability
+    record and builds it. body is bytes, or a DeferredBody whose inputs are uploaded first (fal.ai)."""
     bounded_time(args)
     check_limits(args)
     prompt = Path(args.prompt_file).read_text(encoding="utf-8-sig").strip()
     if not prompt or len(prompt) > 30000:
         raise MediaError("Prompt must contain 1..30000 characters")
-    if not re.fullmatch(r"[A-Za-z0-9_.:-]{1,120}", args.model):
+    adapter = media_providers.adapter(args.provider)
+    pattern = media_providers.FAL_ID if args.provider == "fal" else media_providers.MODEL_ID
+    if not pattern.fullmatch(args.model) or ".." in args.model:
         raise MediaError("Specify a concrete provider model identifier")
     try:
         prices = media_ledger.load_prices(args.prices)
@@ -384,114 +445,101 @@ def prepare(args):
         raise MediaError(str(exc), code="invalid_input", sent=False) from None
     base = api_base(args)
     refs = [inspect_image(p) for p in args.reference]
-    max_refs = 16 if args.provider == "openai" and args.command == "image" else 1
-    if len(refs) > max_refs:
-        raise MediaError(f"This provider/mode supports at most {max_refs} references in this adapter")
-    if sum(len(data) for _, data in refs) > 40 * 1024 * 1024:
+    video = args.command == "video"
+    last = inspect_image(args.last_frame) if video and args.last_frame else None
+    keyframes = []
+    for item in (getattr(args, "keyframe", None) or []) if video else []:
+        path, seconds = parse_keyframe(item)
+        keyframes.append((inspect_image(path), seconds))
+    images = [data for _, data in refs] + ([last[1]] if last else []) + [image[1] for image, _ in keyframes]
+    if sum(len(data) for data in images) > 40 * 1024 * 1024:
         raise MediaError("References exceed this adapter's 40 MiB combined upload limit")
-    fields = {"model": args.model, "prompt": prompt}
-    last = upload = None
-    if args.command == "video":
-        if len(refs) != 1:
-            raise MediaError("Video requires one approved --reference image")
-        if not 1 <= args.duration <= 15:
-            raise MediaError("Video duration must be 1..15 seconds")
-        if args.model not in ("grok-imagine-video", "grok-imagine-video-1.5", "grok-imagine-video-1.5-lite"):
-            raise MediaError("Unsupported video model; verify capabilities before adding another model")
-        if args.resolution == "1080p" and args.model == "grok-imagine-video":
-            raise MediaError("Classic grok-imagine-video supports 480p/720p")
-        fields.update(image={"url": data_uri(*refs[0])}, duration=args.duration, resolution=args.resolution)
-        # Silent generation is documented for 1.5, not assumed for every model.
-        if args.model == "grok-imagine-video-1.5":
-            fields["generate_audio"] = False
-        if args.last_frame:
-            if args.model != "grok-imagine-video-1.5" or args.resolution == "1080p":
-                raise MediaError("Last-frame pinning is limited here to video-1.5 at 480p/720p")
-            last = inspect_image(args.last_frame)
-            if last[0]["size"] != refs[0][0]["size"]:
-                raise MediaError("First and last frames must have the same canvas size")
-            fields["last_frame"] = {"url": data_uri(*last)}
-        if args.upload_url:
-            # xAI zero-data-retention teams: the REST field name is unverified.
-            upload = upload_target(args.upload_url)
-            fields["upload_url"] = args.upload_url
-        endpoint = base + "/videos/generations"
-    else:
-        fields["n"] = 1
-        endpoint = base + ("/images/edits" if refs else "/images/generations")
-        if args.provider == "openai":
-            if args.resolution or args.aspect_ratio:
-                raise MediaError("OpenAI uses --size; --resolution/--aspect-ratio are xAI image options")
-            if args.size and not re.fullmatch(r"auto|[1-9]\d{1,4}x[1-9]\d{1,4}", args.size):
-                raise MediaError("Size must be auto or WIDTHxHEIGHT; provider validates model-specific limits")
-            fields["output_format"] = "png"
-            if args.size:
-                fields["size"] = args.size
-            if args.transparent:
-                fields["background"] = "transparent"
-        else:
-            if args.transparent or args.size:
-                raise MediaError("xAI has no transparency switch here; use a keyed backdrop and --resolution")
-            if args.quality and (args.model != "grok-imagine-image-2.0" or args.quality == "high"):
-                raise MediaError("xAI quality option requires image-2.0 and low/medium/auto")
-            fields["response_format"] = "b64_json"
-            if args.resolution:
-                fields["resolution"] = args.resolution
-            if args.aspect_ratio:
-                fields["aspect_ratio"] = args.aspect_ratio
-            if refs:
-                fields["image"] = {"url": data_uri(*refs[0]), "type": "image_url"}
-        if args.quality:
-            fields["quality"] = args.quality
-    options = {k: v for k, v in fields.items() if k not in ("image", "last_frame", "prompt", "upload_url")}
+    upload = None
+    if video and args.upload_url:
+        if args.provider != "xai":
+            raise MediaError("--upload-url is an xAI option", code="invalid_input", sent=False)
+        upload = upload_target(args.upload_url)
+    req = media_providers.MediaRequest(
+        kind=args.command, model=args.model, prompt=prompt, references=refs, last_frame=last, keyframes=keyframes,
+        size=getattr(args, "size", None), quality=getattr(args, "quality", None),
+        transparent=bool(getattr(args, "transparent", False)), resolution=args.resolution,
+        aspect_ratio=getattr(args, "aspect_ratio", None), duration=getattr(args, "duration", None),
+        upload_url=args.upload_url if upload else None,
+        options=parse_provider_options(getattr(args, "provider_option", None)))
+    notes = adapter.check(req)
+    built = adapter.build(req, base)
+    notes += built.warnings
+    record = adapter.model_record(args.model) or {}
     plan = {"schemaVersion": 2, "provider": args.provider, "kind": args.command, "route": "rest",
-            "apiBase": base, "endpoint": endpoint, "requestedModel": args.model, "options": options,
+            "apiBase": base, "endpoint": built.endpoint, "requestedModel": args.model, "options": built.options,
             "promptSha256": digest(prompt.encode()), "references": [m for m, _ in refs],
-            "lastFrame": last[0] if last else None, "keyEnv": KEY[args.provider],
-            "paidRequests": 1, "automaticPostRetries": 0,
-            "outDir": str(Path(args.out_dir).resolve()), "execution": "execute" if args.execute else "dry-run"}
+            "lastFrame": last[0] if last else None}
+    if keyframes:
+        plan["keyframes"] = [{**meta, "seconds": seconds} for (meta, _), seconds in keyframes]
+    plan.update({"keyEnv": adapter.key_env, "paidRequests": 1, "automaticPostRetries": 0,
+                 "outDir": str(Path(args.out_dir).resolve()), "execution": "execute" if args.execute else "dry-run",
+                 "capability": {"verifiedAt": record.get("verifiedAt") or adapter.record["verifiedAt"],
+                                "docs": record.get("docs") or adapter.record["docs"][:2],
+                                "async": adapter.is_async(args.command, args.model)}})
+    plan.update(built.extra)
     if upload:
         plan["uploadUrl"] = upload
-    ref_hashes = [m["sha256"] for m, _ in refs] + ([last[0]["sha256"]] if last else [])
+    if notes:
+        plan["notes"] = notes
+    ref_hashes = [m["sha256"] for m, _ in refs] + ([last[0]["sha256"]] if last else []) + \
+        [meta["sha256"] for (meta, _), _ in keyframes]
+    plan["pricing"] = built.pricing
     plan["fingerprint"] = media_ledger.fingerprint(plan, ref_hashes)
     plan["estimate"] = media_ledger.estimate(plan, prices)
     plan["consent"] = {"provider": args.provider, "model": args.model, "calls": 1,
                        "estimateUsd": plan["estimate"]["usd"], "apiHost": parse.urlsplit(base).hostname}
-    if args.provider == "openai" and refs:
-        body, content_type = multipart(fields, refs)
-    else:
-        body, content_type = json.dumps(fields).encode(), "application/json"
-    return plan, body, content_type, prompt
+    return plan, built.body, built.content_type, prompt
 
 
 class Transport:
-    """Real HTTPS transport; test fakes implement api() and download()."""
+    """Real HTTPS transport; test fakes implement api() and download().
+
+    Network boundary seams for tests: _https_handler() (the urllib HTTPS handler; a scripted
+    handler replaces the network but keeps every other step real), _open() and _fetch()."""
+
+    def _https_handler(self):
+        return _ConnectTracker()
 
     def _open(self, req, timeout, limit):
-        """Network boundary: return (headers, body) or raise NotSent when the
+        """Network boundary: return (headers, body, HTTP status) or raise NotSent when the
         connection failed before the request could be written."""
-        tracker = _ConnectTracker()
+        tracker = self._https_handler()
         try:
             with request.build_opener(NoRedirect(), tracker).open(req, timeout=timeout) as response:
-                return response.headers, response.read(limit + 1)
+                return response.headers, response.read(limit + 1), getattr(response, "status", None) or response.getcode()
         except error.HTTPError:
             raise
         except error.URLError as exc:
-            if not tracker.connected:
+            if not getattr(tracker, "connected", True):
                 raise NotSent(_reason_text(exc.reason, req.host)) from None
             raise
 
+    def _fetch(self, req, timeout, limit):
+        """Media download boundary: follows at most MAX_REDIRECTS HTTPS redirects (SafeRedirect)."""
+        with request.build_opener(SafeRedirect(), self._https_handler()).open(req, timeout=timeout) as response:
+            return response.read(limit + 1)
+
     def api(self, method, url, key, body=None, content_type="application/json", timeout=90, meta=None):
-        """One request without retries. meta (optional dict) may carry
-        clientRequestId in and receives providerRequestId."""
+        """One request without retries. meta (optional dict) may carry in clientRequestId, authHeader
+        (default Authorization), authScheme (default Bearer; empty for a bare key such as
+        x-goog-api-key), extraHeaders and free (a POST that costs nothing, such as an upload); it
+        receives providerRequestId and httpStatus. The credential is an unredirected header."""
         meta = {} if meta is None else meta
-        headers = {"Authorization": "Bearer " + key, "Content-Type": content_type, "User-Agent": USER_AGENT}
+        header = meta.get("authHeader") or "Authorization"
+        scheme = meta.get("authScheme", "Bearer")
+        headers = {"Content-Type": content_type, "User-Agent": USER_AGENT, **(meta.get("extraHeaders") or {})}
         if meta.get("clientRequestId"):
             headers["X-Client-Request-Id"] = meta["clientRequestId"]
-        paid = method == "POST"
+        paid = method == "POST" and not meta.get("free")
         req = request.Request(url, data=body, method=method, headers=headers)
+        req.add_unredirected_header(header, f"{scheme} {key}" if scheme else key)
         try:
-            response_headers, data = self._open(req, timeout, API_LIMIT)
+            response_headers, data, status = self._open(req, timeout, API_LIMIT)
         except error.HTTPError as exc:
             # Only whitelisted, scrubbed fields; never a raw body, URL, prompt or credential.
             fields = provider_error_fields(exc.code, _error_body(exc), exc.headers, (key,))
@@ -510,7 +558,8 @@ class Transport:
             raise _lost(paid, f"Connection failed while sending ({type(exc.reason).__name__})") from None
         except (OSError, http.client.HTTPException) as exc:
             raise _lost(paid, f"No complete response after the request was sent ({type(exc).__name__})") from None
-        rid = _header(response_headers, "x-request-id", "request-id")
+        meta["httpStatus"] = status
+        rid = _header(response_headers, "x-request-id", "request-id", "x-fal-request-id")
         if _valid_id(rid, (key,)):
             meta["providerRequestId"] = rid
         if len(data) > API_LIMIT:
@@ -523,20 +572,28 @@ class Transport:
             raise MediaError("API returned an unexpected JSON shape", code="bad_response")
         return result
 
-    def download(self, url, timeout=90):
+    def download(self, url, timeout=90, auth=None):
+        """GET finished media. No credential is sent unless ``auth`` = (header, value) is given (a
+        provider-hosted file, such as a Gemini file URI on the API host); it is an unredirected
+        header, so a redirect to a storage host never receives it."""
         parsed = parse.urlsplit(url)
         if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password:
             raise MediaError("Result download requires a public HTTPS URL without credentials", code="bad_response")
-        # No authorization header is sent to the media host. Reject redirects:
-        # the returned signed URL should already identify the final artifact.
+        req = request.Request(url, headers={"User-Agent": USER_AGENT}, method="GET")
+        if auth:
+            req.add_unredirected_header(*auth)
         try:
-            with request.build_opener(NoRedirect()).open(request.Request(url), timeout=timeout) as response:
-                data = response.read(DOWNLOAD_LIMIT + 1)
-            if len(data) > DOWNLOAD_LIMIT:
-                raise MediaError("Media exceeds the 256 MiB download limit", code="bad_response")
-            return data
+            data = self._fetch(req, timeout, DOWNLOAD_LIMIT)
+        except MediaError:
+            raise
+        except error.HTTPError as exc:
+            raise MediaError(f"Media download failed (HTTP {exc.code}); a known job can be resumed", code="network") \
+                from None
         except (OSError, http.client.HTTPException):
             raise MediaError("Media download failed; use resume for a known video request", code="network") from None
+        if len(data) > DOWNLOAD_LIMIT:
+            raise MediaError("Media exceeds the 256 MiB download limit", code="bad_response")
+        return data
 
 
 def _validate_artifact(content, kind):
@@ -633,8 +690,10 @@ def write_artifact(out, content, kind, adopt_identical=False):
     return record
 
 
-def _returned_model(result, secrets):
-    value = result.get("model")
+def _returned_model(value, secrets):
+    """The model id the provider reported (a result dict or the id itself), when it looks like one."""
+    if isinstance(value, dict):
+        value = value.get("model")
     return value if isinstance(value, str) and MODEL_ID.fullmatch(value) and not _secret_in(value, secrets) else None
 
 
@@ -643,72 +702,144 @@ def _duration(value):
     return value if ok else None
 
 
-def _usage(result):
-    usage = result.get("usage")
+def _usage(usage):
+    """Whole-number token counts a provider reported (a usage dict, or a result holding "usage")."""
+    if isinstance(usage, dict) and isinstance(usage.get("usage"), dict):
+        usage = usage["usage"]
     if not isinstance(usage, dict):
         return None
-    numbers = {k: usage[k] for k in ("input_tokens", "output_tokens", "total_tokens")
-               if isinstance(usage.get(k), int) and not isinstance(usage[k], bool) and usage[k] >= 0}
+    numbers = {k: v for k, v in usage.items()
+               if re.fullmatch(r"[a-z_]{1,40}", str(k)) and isinstance(v, int) and not isinstance(v, bool) and v >= 0}
     return numbers or None
 
 
-def _image_bytes(result):
-    items = result.get("data")
-    if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
-        raise MediaError("Expected exactly one generated image", code="bad_response")
-    encoded = items[0].get("b64_json")
-    if not isinstance(encoded, str):
-        raise MediaError("Expected base64 image response; no regeneration attempted", code="bad_response")
+def _left(deadline, clock):
+    return max(.1, min(90, deadline - clock()))
+
+
+def _call(adapter, transport, method, url, key, body=None, content_type="application/json", timeout=90, meta=None):
+    """One request with the provider's credential header; the adapter refines the outcome code of an
+    HTTP error (a 5xx stays provider_error, so a possibly processed POST is never called refused)."""
+    meta = {} if meta is None else meta
+    meta.update(adapter.auth_meta())
     try:
-        return base64.b64decode(encoded, validate=True)
-    except ValueError:
-        raise MediaError("Invalid base64 image response", code="bad_response") from None
+        return transport.api(method, url, key, body, content_type, timeout=timeout, meta=meta)
+    except MediaError as exc:
+        fields = exc.provider if isinstance(exc.provider, dict) else None
+        if fields and isinstance(fields.get("httpStatus"), int) and fields["httpStatus"] < 500:
+            code = adapter.classify(fields["httpStatus"], fields)
+            if code:
+                exc.code = code
+        raise
 
 
-def poll_video(job_path, job, key, transport, timeout, interval, clock=time.monotonic, sleep=time.sleep, *, api_base=None):
+def _fetch_media(adapter, transport, ref, key, timeout):
+    """The media bytes: inline, or downloaded at once (result URLs expire). The key goes only to a
+    provider-hosted file on the API host, and never across a redirect."""
+    if ref.data is not None:
+        return ref.data
+    if ref.auth:
+        value = f"{adapter.auth_scheme} {key}" if adapter.auth_scheme else key
+        return transport.download(ref.url, timeout=timeout, auth=(adapter.auth_header, value))
+    return transport.download(ref.url, timeout=timeout)
+
+
+def _keep_raw(folder, data):
+    """Keep the clip exactly as downloaded (with its audio) beside the silent generated.mp4."""
+    sha = digest(data)
+    for name in (RAW_CLIP, f"provider-download-{sha[:12]}.mp4"):
+        target = folder / name
+        if target.exists():
+            if digest(target.read_bytes()) == sha:
+                return {"path": name, "sha256": sha, "bytes": len(data)}
+            continue
+        try:
+            _write_new(target, data)
+        except OSError:
+            return None
+        return {"path": name, "sha256": sha, "bytes": len(data)}
+    return None
+
+
+def _publish(folder, job, data, ref, secrets, adopt_identical=False):
+    """Validate and publish the media into job["artifact"]. A clip is published without audio
+    (media_mp4.remove_audio); the download itself is kept when that changed any byte."""
+    kind = job.get("kind", "video")
+    if kind == "video":
+        silent, audio = media_mp4.remove_audio(data)
+        if silent != data:
+            audio["raw"] = _keep_raw(folder, data)
+        job["audio"] = audio
+        data = silent
+    job["artifact"] = write_artifact(folder, data, kind, adopt_identical=adopt_identical)
+    job["returnedModel"] = _returned_model(ref.returned_model, secrets)
+    if kind == "video":
+        job["durationReported"] = _duration(ref.duration)
+    usage = _usage(ref.usage)
+    if usage:
+        job["providerUsage"] = usage
+    if ref.cost_usd is not None:
+        job["costUsd"] = ref.cost_usd
+
+
+def _result(adapter, transport, url, key, timeout):
+    """fal.ai: GET the result of a completed request. A 400 or 422 answer is the request's own final error."""
+    try:
+        return _call(adapter, transport, "GET", url, key, timeout=timeout)
+    except MediaError as exc:
+        status = exc.provider.get("httpStatus") if isinstance(exc.provider, dict) else None
+        if exc.sent and status in (400, 422):
+            raise JobFailure(f"{exc}", status="failed", code=exc.code, provider=exc.provider) from None
+        raise
+
+
+def poll_job(job_path, job, key, transport, timeout, interval, clock=None, sleep=None, *, adapter=None, api_base=None):
+    """Poll a saved asynchronous job (GET only: a job is never submitted again) until its media is
+    downloaded and published, it fails for good, or the time is up."""
+    clock, sleep = clock or time.monotonic, sleep or time.sleep
+    adapter = adapter or media_providers.adapter(job.get("provider") or "xai")
+    base = api_base or adapter.api_base
     secrets = (key,)
     deadline = clock() + timeout
-    request_id = job.get("requestId", "")
-    if not _valid_id(request_id, secrets):
+    if not _valid_id(job.get("requestId", ""), secrets):
         raise MediaError("No valid request ID; automatic resubmission is deliberately disabled", sent=False)
     while clock() < deadline:
-        result = transport.api("GET", (api_base or API["xai"]) + "/videos/" + request_id, key,
-                               timeout=max(.1, min(90, deadline - clock())))
-        status = result.get("status")
-        if status == "done":
-            video = result.get("video")
-            if not isinstance(video, dict) or not isinstance(video.get("url"), str):
-                hint = "; with --upload-url, check that destination" if job.get("uploadUrl") else ""
-                raise MediaError("Completed video has no downloadable URL" + hint, code="bad_response")
-            if video.get("respect_moderation") is False:
-                job["status"] = "failed"
-                save_json(job_path, job, secrets)
-                raise MediaError("Provider did not release the video after moderation; no regeneration attempted",
-                                 code="moderation", sent=True)
+        meta = {}
+        result = _call(adapter, transport, "GET", adapter.status_url(job, base), key, timeout=_left(deadline, clock),
+                       meta=meta)
+        try:
+            state, value = adapter.status(result, job, meta.get("httpStatus"))
+            if state == "result":
+                value = adapter.result(_result(adapter, transport, value, key, _left(deadline, clock)), job)
+                state = "done"
+        except JobFailure as exc:
+            job["status"] = exc.status
+            if exc.provider:
+                job["error"] = exc.provider
+            save_json(job_path, job, secrets)
+            raise
+        if state == "done":
             receipt = job.get("receipt")
             if isinstance(receipt, dict):
                 receipt["providerMs"] = _ms_between(receipt.get("submittedAt"), _utcnow())
             job["status"] = "downloading"
             save_json(job_path, job, secrets)
-            data = transport.download(video["url"], timeout=max(.1, min(90, deadline - clock())))
-            job["artifact"] = write_artifact(job_path.parent, data, "video", adopt_identical=True)
-            job["returnedModel"] = _returned_model(result, secrets)
-            job["durationReported"] = _duration(video.get("duration"))
+            data = _fetch_media(adapter, transport, value, key, _left(deadline, clock))
+            _publish(job_path.parent, job, data, value, secrets, adopt_identical=True)
             job["status"] = "done"
             save_json(job_path, job, secrets)
             return job
-        if status in ("failed", "expired"):
-            job["status"] = status
-            save_json(job_path, job, secrets)
-            raise MediaError(f"Video job {status}; no regeneration attempted", code=status, sent=True)
-        if status != "pending":
-            raise MediaError("Unknown video status; request ID retained, no regeneration attempted", code="bad_response")
         job["status"] = "pending"
         save_json(job_path, job, secrets)
         sleep(min(interval, max(0, deadline - clock())))
     job["status"] = "pending_timeout"
     save_json(job_path, job, secrets)
     raise MediaError("Polling timeout; resume this job to poll again without a new paid request", code="pending_timeout")
+
+
+def poll_video(job_path, job, key, transport, timeout, interval, clock=None, sleep=None, *, api_base=None):
+    """The earlier name of poll_job: polls the provider recorded in job.json (xAI for old jobs)."""
+    return poll_job(job_path, job, key, transport, timeout, interval, clock, sleep, api_base=api_base)
 
 
 class _Run:
@@ -770,11 +901,16 @@ class _Run:
                 receipt["wallMs"] = _ms_between(receipt.get("startedAt"), now)
         info = self.job.get("ledger")
         if outcome is not None and self.ledger is not None and isinstance(info, dict) and info.get("reservationId"):
+            job_id = self.job.get("requestId")
+            artifact = self.job.get("artifact") if outcome == "done" else None
             try:
-                self.ledger.commit(info["reservationId"], status=outcome)
+                self.ledger.commit(info["reservationId"], status=outcome,
+                                   job_id=job_id if _valid_id(job_id, self.secrets) else None,
+                                   sha256=(artifact or {}).get("sha256"),
+                                   actual_usd=self.job.get("costUsd") if outcome == "done" else None)
                 info["status"] = outcome
                 info.pop("error", None)
-            except (media_ledger.LedgerError, OSError) as exc:
+            except (media_ledger.LedgerError, OSError, ValueError) as exc:
                 info["error"] = f"{type(exc).__name__}: outcome not committed; settle it with media_ledger.py"
         self.save()
 
@@ -782,7 +918,7 @@ class _Run:
 def dry_run_report(plan, args, ledger):
     """The plan plus read-only ledger facts. Writes nothing and needs no key."""
     report = dict(plan)
-    warnings = []
+    warnings = list(plan.get("notes", []))
     if Path(args.out_dir).exists():
         warnings.append("output directory already exists; --execute will refuse it")
     states = ledger.entries()
@@ -855,40 +991,72 @@ def execute(args, transport=None):
     return _submit(run, args, transport, body, content_type, key)
 
 
+def _upload_inputs(adapter, transport, key, deferred, timeout):
+    """fal.ai: upload the input images to the fal CDN (free requests, as the official fal_client does)
+    and return the request body with their URLs. Any failure here means the paid request was never sent."""
+    try:
+        token = transport.api("POST", adapter.TOKEN_URL, key, b"{}", "application/json", timeout=timeout,
+                              meta={**adapter.auth_meta(), "free": True})
+        value, scheme = token.get("token"), token.get("token_type")
+        if not isinstance(value, str) or len(value) < 8 or not isinstance(scheme, str) \
+                or not re.fullmatch(r"[A-Za-z]{1,20}", scheme):
+            raise MediaError("the fal.ai storage token answer is incomplete", code="bad_response")
+        urls = {}
+        for placeholder, meta, data, name in deferred.uploads:
+            reply = transport.api("POST", adapter.UPLOAD_URL, value, data, meta["mime"], timeout=timeout,
+                                  meta={"authScheme": scheme, "extraHeaders": {"X-Fal-File-Name": name}, "free": True})
+            url = reply.get("access_url")
+            if not isinstance(url, str) or parse.urlsplit(url).scheme != "https":
+                raise MediaError("the fal.ai upload answer has no HTTPS access_url", code="bad_response")
+            urls[placeholder] = url
+    except MediaError as exc:
+        code = exc.code if exc.code in ("auth", "quota", "rate_limit", "entitlement") else "not_sent"
+        if exc.code == "invalid_request" and isinstance(exc.provider, dict):
+            code = adapter.classify(exc.provider.get("httpStatus", 0), exc.provider) or code
+        raise MediaError(f"fal.ai input upload failed before the paid request: {exc}", code=code, sent=False,
+                         provider=exc.provider) from None
+    return deferred.render(urls)
+
+
 def _submit(run, args, transport, body, content_type, key):
+    """The one paid POST, then (asynchronous providers) the job id is saved and polled, or (synchronous
+    images) the answer is published. Nothing is ever sent twice."""
     job = run.job
+    adapter = media_providers.adapter(job["provider"])
+    is_async = adapter.is_async(job["kind"], job["requestedModel"])
     meta = {"clientRequestId": job["clientRequestId"]}
     try:
+        if isinstance(body, media_providers.DeferredBody):
+            body = _upload_inputs(adapter, transport, key, body, min(args.timeout, args.submit_timeout))
         job["receipt"]["submittedAt"] = media_ledger.utc_timestamp()
         run.save()
         started = time.monotonic()
         try:
-            result = transport.api("POST", job["endpoint"], key, body, content_type,
-                                   timeout=min(args.timeout, args.submit_timeout), meta=meta)
+            result = _call(adapter, transport, "POST", job["endpoint"], key, body, content_type,
+                           timeout=min(args.timeout, args.submit_timeout), meta=meta)
         except MediaError as exc:
-            if exc.sent and job["kind"] == "image":  # the provider answered: time it, success or not
+            if exc.sent and not is_async:  # the provider answered: time it, success or not
                 job["receipt"]["providerMs"] = round((time.monotonic() - started) * 1000)
             raise
         if meta.get("providerRequestId"):
             job["providerRequestId"] = meta["providerRequestId"]
-        if job["kind"] == "video":
-            rid = result.get("request_id")
-            if not _valid_id(rid, run.secrets):
-                raise MediaError("Submit response omitted a valid request ID; check provider history before any new submission",
-                                 code="bad_response")
-            job.update(status="pending", requestId=rid)
-            run.save()
-            poll_video(run.path, job, key, transport, args.timeout, args.poll_interval, api_base=job["apiBase"])
-        else:  # video providerMs is submit -> completion, set by poll_video
+        adapter.refusal(result)  # a 200 answer that withholds the media (moderation): a clean, final failure
+        if is_async:
+            handle = adapter.read_submit(result, job["kind"])
+            if not _valid_id(handle.id, run.secrets):
+                raise MediaError("Submit response omitted a valid request ID; check provider history before any "
+                                 "new submission", code="bad_response")
+            job.update(status="pending", requestId=handle.id, **handle.extra)
+            run.save()  # the job id is in job.json before the first poll; the ledger line gets it on commit
+            poll_job(run.path, job, key, transport, args.timeout, args.poll_interval, adapter=adapter,
+                     api_base=job["apiBase"])
+        else:  # an asynchronous job's providerMs is submit -> completion, set by poll_job
             job["receipt"]["providerMs"] = round((time.monotonic() - started) * 1000)
             job["status"] = "processing_result"
             run.save()
-            content = _image_bytes(result)
-            job["returnedModel"] = _returned_model(result, run.secrets)  # null if provider does not report it
-            usage = _usage(result)
-            if usage:
-                job["providerUsage"] = usage
-            job["artifact"] = write_artifact(run.path.parent, content, "image")
+            ref = adapter.read_submit(result, job["kind"])
+            content = _fetch_media(adapter, transport, ref, key, max(.1, min(90, args.timeout)))
+            _publish(run.path.parent, job, content, ref, run.secrets)
             job["status"] = "done"
         run.finish()
         return job
@@ -900,22 +1068,30 @@ def _submit(run, args, transport, body, content_type, key):
 
 
 def resume(args, transport=None):
+    """Poll and download a saved asynchronous job (xAI and Seedance video, every fal.ai request) without
+    a new paid request."""
     bounded_time(args)
     path = Path(args.job)
     job = json.loads(path.read_text(encoding="utf-8-sig"))
     version = job.get("schemaVersion")
-    if version not in (1, 2) or job.get("provider") != "xai" or job.get("kind") != "video":
-        raise MediaError("Only known xAI video jobs can be resumed")
-    base = API["xai"] if version == 1 else checked_base_url(job.get("apiBase") or API["xai"])
-    if base != API["xai"] and not args.allow_custom_base_url:
+    provider = job.get("provider")
+    if version not in (1, 2) or provider not in media_providers.ORDER or job.get("kind") not in ("image", "video") \
+            or (version == 1 and (provider != "xai" or job.get("kind") != "video")):
+        raise MediaError("Only known API jobs can be resumed")
+    adapter = media_providers.adapter(provider)
+    if not adapter.is_async(job["kind"], job.get("requestedModel")):
+        raise MediaError(f"{adapter.label} answers {job['kind']} requests at once; there is no job to resume")
+    default = adapter.api_base
+    base = default if version == 1 else checked_base_url(job.get("apiBase") or default)
+    if base != default and not args.allow_custom_base_url:
         raise MediaError(f"This job uses a custom API base URL ({parse.urlsplit(base).hostname}); "
-                         "pass --allow-custom-base-url to send XAI_API_KEY there", code="invalid_input", sent=False)
+                         f"pass --allow-custom-base-url to send {adapter.key_env} there", code="invalid_input", sent=False)
     status = job.get("status")
     if status == "done":
         artifact = job.get("artifact", {})
         name = artifact.get("path", "")
-        target = path.parent / "generated.mp4"
-        if name != "generated.mp4" or not target.is_file() or digest(target.read_bytes()) != artifact.get("sha256"):
+        target = path.parent / name if isinstance(name, str) and ARTIFACT_NAME.fullmatch(name) else None
+        if target is None or not target.is_file() or digest(target.read_bytes()) != artifact.get("sha256"):
             raise MediaError("Completed artifact is missing or changed; no regeneration attempted")
         return job
     if status in ("failed", "expired"):
@@ -924,16 +1100,16 @@ def resume(args, transport=None):
         raise MediaError("This job was never sent; run the original command again with a new --out-dir", sent=False)
     if not _valid_id(job.get("requestId")):
         raise MediaError("No valid request ID; automatic resubmission is deliberately disabled", sent=False)
-    key = media_config.api_key("xai") or ""
+    key = media_config.api_key(provider) or ""
     if not key:
-        raise MediaError("Missing XAI_API_KEY (environment or the user config file)", code="no_key", sent=False)
+        raise MediaError(f"Missing {adapter.key_env} (environment or the user config file)", code="no_key", sent=False)
     transport = transport or Transport()
     if version == 1:
-        return poll_video(path, job, key, transport, args.timeout, args.poll_interval)
+        return poll_job(path, job, key, transport, args.timeout, args.poll_interval, adapter=adapter)
     project = args.project_dir or (job.get("ledger") or {}).get("projectDir")
     run = _Run(path, job, (key,), media_ledger.Ledger(project) if project else None)
     try:
-        poll_video(path, job, key, transport, args.timeout, args.poll_interval, api_base=base)
+        poll_job(path, job, key, transport, args.timeout, args.poll_interval, adapter=adapter, api_base=base)
         run.finish()
         return job
     except BaseException as exc:
@@ -984,7 +1160,11 @@ def job_argv(spec, base, args):
                 if item:
                     argv.append(flag)
             elif isinstance(item, (str, int, float)):
-                argv += [flag, str(base / str(item)) if key in JOB_PATH_KEYS else str(item)]
+                if key == "keyframe":  # PATH@SECONDS: only the path is relative to the jobs file
+                    path, seconds = parse_keyframe(item)
+                    argv += [flag, f"{base / path}@{seconds:g}"]
+                else:
+                    argv += [flag, str(base / str(item)) if key in JOB_PATH_KEYS else str(item)]
             elif item is not None:
                 raise MediaError(f"{raw} must be a string, number, boolean or list")
     if "purpose" not in spec:
@@ -1190,8 +1370,10 @@ def parser(parser_class=argparse.ArgumentParser):
     modes = p.add_subparsers(dest="command", required=True)
     for name in ("image", "video"):
         c = modes.add_parser(name, help=f"Plan (default) or send one {name} request")
-        c.add_argument("--provider", choices=("openai", "xai") if name == "image" else ("xai",), required=True)
-        c.add_argument("--model", required=True)
+        c.add_argument("--provider", choices=media_providers.providers_for(name), required=True,
+                       help="API provider: " + ", ".join(media_providers.providers_for(name)))
+        c.add_argument("--model", required=True, help="the provider's model id (fal.ai: the endpoint id); "
+                                                      "references/capabilities.json lists the verified ones")
         c.add_argument("--prompt-file", required=True)
         c.add_argument("--reference", action="append", default=[])
         c.add_argument("--out-dir", required=True)
@@ -1199,19 +1381,25 @@ def parser(parser_class=argparse.ArgumentParser):
         c.add_argument("--timeout", type=float, default=600, help="Polling budget in seconds (1-3600); also caps the submit timeout")
         c.add_argument("--submit-timeout", type=float, default=300, help="Seconds to wait for the paid POST response (1-600, default 300)")
         c.add_argument("--poll-interval", type=float, default=5)
+        c.add_argument("--provider-option", action="append", default=[], metavar="KEY=VALUE",
+                       help="extra request field passed to the provider as is (repeatable; dotted keys nest; VALUE is "
+                            "JSON when it parses, else text); fields ASF sets itself are refused")
         _add_job_options(c)
         if name == "image":
-            c.add_argument("--size")
-            c.add_argument("--resolution", choices=("1k", "2k"))
+            c.add_argument("--size", help="WIDTHxHEIGHT or auto (OpenAI, Gemini, BytePlus, fal.ai)")
+            c.add_argument("--resolution", choices=("512", "1k", "1.5k", "2k", "4k"),
+                           help="xAI resolution (1k, 1.5k, 2k) or Gemini image size (512, 1k, 2k, 4k)")
             c.add_argument("--aspect-ratio", choices=("1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3"))
-            c.add_argument("--quality", choices=("auto", "low", "medium", "high"))
-            c.add_argument("--transparent", action="store_true")
+            c.add_argument("--quality", choices=("auto", "low", "medium", "high", "xhigh", "max"))
+            c.add_argument("--transparent", action="store_true", help="native transparent background (OpenAI GPT Image)")
         else:
             c.add_argument("--duration", type=int, default=4)
             c.add_argument("--resolution", choices=("480p", "720p", "1080p"), default="720p")
-            c.add_argument("--last-frame")
-            c.add_argument("--upload-url", help="xAI zero-data-retention upload URL, sent as upload_url (field name unverified); stored only as host + sha256")
-    r = modes.add_parser("resume", help="Poll a saved video job; never submits generation")
+            c.add_argument("--last-frame", help="pin the end frame (same canvas size as --reference)")
+            c.add_argument("--keyframe", action="append", default=[], metavar="PATH@SECONDS",
+                           help="xAI grok-imagine-video-1.5: an intermediate frame at a time, up to 4 (repeatable)")
+            c.add_argument("--upload-url", help="xAI zero-data-retention upload URL, sent as output.upload_url; stored only as host + sha256")
+    r = modes.add_parser("resume", help="Poll a saved asynchronous job (video, fal.ai); never submits generation")
     r.add_argument("--job", required=True)
     r.add_argument("--timeout", type=float, default=600)
     r.add_argument("--poll-interval", type=float, default=5)

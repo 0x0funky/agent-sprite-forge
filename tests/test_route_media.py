@@ -74,7 +74,7 @@ class Refuse:
 @pytest.fixture
 def env(tmp_path, monkeypatch):
     """A project as cwd, an empty user config folder, no keys, no caps, no real CLI."""
-    for name in ("OPENAI_API_KEY", "XAI_API_KEY", "CODEX_API_KEY", media_ledger.MAX_PAID_ENV, route_media.FAKE_ENV,
+    for name in (*media_config.KEY_VARIABLES, "CODEX_API_KEY", media_ledger.MAX_PAID_ENV, route_media.FAKE_ENV,
                  "FAKE_CLI_MODE", "FAKE_THREAD_ID", "FAKE_SESSION_ID", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION",
                  *media_ledger.SESSION_ENV.values()):
         monkeypatch.delenv(name, raising=False)
@@ -154,11 +154,12 @@ def test_config_path_is_user_level(tmp_path, monkeypatch):
 
 
 def test_keys_environment_first_then_config_and_models(env, monkeypatch):
-    assert media_config.configured() == {"openai": False, "xai": False}
+    none = dict.fromkeys(media_config.PROVIDER_KEYS, False)
+    assert media_config.configured() == none
     path = configure(OPENAI_API_KEY=f"  {OPENAI_KEY}  ", XAI_API_KEY="", models={"xai-video": "grok-imagine-video-1.5-lite",
                                                                               "openai-image": "bad model id!"})
     assert media_config.api_key("openai") == OPENAI_KEY and media_config.key_source("openai") == "config"
-    assert media_config.api_key("xai") is None and media_config.configured() == {"openai": True, "xai": False}
+    assert media_config.api_key("xai") is None and media_config.configured() == {**none, "openai": True}
     assert media_config.model_for("xai-video") == "grok-imagine-video-1.5-lite"
     assert media_config.model_for("openai-image") == "gpt-image-2.5-sunburst"  # an implausible id is ignored
     monkeypatch.setenv("OPENAI_API_KEY", "sk-from-the-environment-0123456789")
@@ -175,11 +176,12 @@ def test_keys_environment_first_then_config_and_models(env, monkeypatch):
 def test_resolve_follows_the_owner_order(env, capsys, monkeypatch):
     code, result, _ = run(capsys, "resolve", "--kind", "image")
     assert code == route_media.NO_ROUTE_EXIT == 3
-    assert result["status"] == "no-route" and result["fallback"] == "codeart2d" and len(result["skipped"]) == 4
+    assert result["status"] == "no-route" and result["fallback"] == "codeart2d" and len(result["skipped"]) == 7
     env.installed.update(codex=True, grok=True)
     code, result, _ = run(capsys, "resolve", "--kind", "image")
     assert code == 0 and result["route"] == "local:codex-cli" and result["label"] == "Codex (local CLI)"
-    assert result["order"] == ["api:openai", "api:xai", "local:codex-cli", "local:grok-cli"]
+    assert result["order"] == ["api:openai", "api:gemini", "api:xai", "api:byteplus", "api:fal", "local:codex-cli",
+                               "local:grok-cli"]
     configure(XAI_API_KEY=XAI_KEY)
     code, result, _ = run(capsys, "resolve", "--kind", "image")
     assert (result["route"], result["model"]) == ("api:xai", "grok-imagine-image-2.0")
@@ -187,9 +189,12 @@ def test_resolve_follows_the_owner_order(env, capsys, monkeypatch):
     monkeypatch.setenv("OPENAI_API_KEY", OPENAI_KEY)
     code, result, _ = run(capsys, "resolve", "--kind", "image")
     assert (result["route"], result["model"]) == ("api:openai", "gpt-image-2.5-sunburst")
-    # Two references: xAI and Grok (local CLI) take one, so they drop out.
+    # Two references: Grok (local CLI) takes one, so it drops out; xAI grok-imagine-image-2.0 takes up to 5.
     code, result, _ = run(capsys, "resolve", "--kind", "image", "--references", "2")
+    assert result["available"] == ["api:openai", "api:xai", "local:codex-cli"]
+    code, result, _ = run(capsys, "resolve", "--kind", "image", "--references", "6")
     assert result["available"] == ["api:openai", "local:codex-cli"]
+    assert "api:xai: grok-imagine-image-2.0 takes at most 5 reference images" in result["skipped"]
     code, result, _ = run(capsys, "resolve", "--kind", "video")
     assert result["route"] == "api:xai" and result["pinsLastFrame"] is True
     code, result, _ = run(capsys, "resolve", "--kind", "video", "--route", "local", "--resolution", "1080p")
@@ -373,6 +378,8 @@ def test_local_fallthrough_and_no_route_for_video(env, capsys, monkeypatch, tmp_
     code, result, _ = run(capsys, "video", "--prompt-file", "prompt.txt", "--reference", "first.png", "--out-dir", "out/v")
     assert code == 3 and result == {"status": "no-route", "fallback": "codeart2d", "kind": "video", "requested": "auto",
                                     "skipped": ["api:xai: no XAI_API_KEY in the environment or the user config file",
+                                                "api:byteplus: no ARK_API_KEY in the environment or the user config file",
+                                                "api:fal: no FAL_KEY in the environment or the user config file",
                                                 "local:grok-acp: Grok Build CLI is not installed (not found on "
                                                 "PATH)"]}
 
@@ -461,4 +468,16 @@ def test_invalid_requests_fail_before_any_route(env, capsys, monkeypatch, extra,
     code, out, err = run(capsys, extra[0], "--prompt-file", "prompt.txt", *extra[1:], "--out-dir", "out/x",
                          transport=Refuse())
     assert code == 1 and out is None and message in err
+    assert not (env.project / "out").exists() and not (env.project / ".forge").exists()
+
+
+def test_new_options_fail_cleanly_before_any_route(env, capsys, monkeypatch):
+    """--keyframe, --provider-option and --model problems are one error line (exit 1), checked before the test fake
+    and before any route; nothing is sent or written."""
+    monkeypatch.setenv("XAI_API_KEY", XAI_KEY)
+    for extra, message in ((["--keyframe", "first.png"], "PATH@SECONDS"), (["--keyframe", "gone.png@2"], "keyframe gone.png"),
+                           (["--provider-option", "=1"], "KEY=VALUE"), (["--model", "bad model!"], "--model must be")):
+        code, out, err = run(capsys, "video", "--prompt-file", "prompt.txt", "--reference", "first.png", *extra,
+                             "--out-dir", "out/x", transport=Refuse())
+        assert code == 1 and out is None and message in err and "internal error" not in err, err
     assert not (env.project / "out").exists() and not (env.project / ".forge").exists()

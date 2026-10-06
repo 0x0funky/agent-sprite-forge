@@ -6,42 +6,50 @@
                        [--resolution 720p] --out-dir D [--route ROUTE]
   route_media.py resolve --kind image|video [--route ROUTE] [--references N] [--resolution R]
 
-Route order (--route auto):
-  1. api: when a key is configured (OPENAI_API_KEY / XAI_API_KEY in the environment or
-     in the user config file, see media_config.py). The configured key is the owner's
-     consent, so the request is sent at once through generate_media.py. Images: OpenAI
-     (gpt-image), then xAI (grok-imagine-image). Video: xAI (grok-imagine-video;
-     --last-frame pins the end frame where the model allows it).
-  2. local: the user's own signed-in CLI through cli_media.py (subscription quota,
-     never an API key). Images: Codex (codex exec image_gen, references attached), then
-     Grok one-shot (image_gen, or image_edit of one reference). Video: Grok in ACP mode
-     (image_to_video; it cannot pin a last frame). The first successful run of a CLI
-     version records its VERIFIED proof.
-  3. none: prints {"status":"no-route","fallback":"codeart2d"} and exits 3. Use
-     codeart2d only then, or when the user asks for code-drawn art.
+Route order (--route auto), after the user's preference ("providers": {"order": [...]} in the
+user config file, see media_config.py):
+  1. api: every provider whose key is configured, in this order. The configured key is the
+     owner's consent, so the request is sent at once through generate_media.py.
+       images  OpenAI (gpt-image), Google Gemini, xAI (grok-imagine-image), BytePlus ModelArk
+               (Seedream), fal.ai (reference edits)
+       video   xAI (grok-imagine-video), BytePlus ModelArk (Seedance), fal.ai (Kling, Veo, Luma,
+               MiniMax, Wan, Vidu, LTX)
+  2. local: the user's own signed-in CLI through cli_media.py (subscription quota, never an API
+     key). Images: Codex (codex exec image_gen, references attached), then Grok one-shot
+     (image_gen, or image_edit of one reference). Video: Grok in ACP mode (image_to_video; it
+     cannot pin a last frame). The first successful run of a CLI version records its proof.
+  3. none: prints {"status":"no-route","fallback":"codeart2d"} and exits 3. Use codeart2d only
+     then, or when the user asks for code-drawn art.
 
---route api or local keeps one group; openai, xai, codex-cli, grok-cli or grok-acp names
-one route. Within a group, a route whose account cannot serve the request (no key, no
-credit, no model access, rate limited, unreachable, not signed in, tool missing) passes
-it to the next route; any other failure stops. A refused API attempt's folder is kept
-beside the output as <out-dir>.failed-<route>.
+--route api or local keeps one group; openai, gemini, xai, byteplus, fal, codex-cli, grok-cli or
+grok-acp names one route; fal:<endpoint-id> names one fal.ai model. --model picks a model (auto then
+keeps the providers that list it), --tier draft|standard|hero picks each provider's model tier,
+--provider-option KEY=VALUE passes a request field (PROVIDER:KEY=VALUE for one provider only).
+
+Every API route is gated by its model's capability record (references/capabilities.json): a route
+that cannot take the request is skipped before anything runs (too many references, a resolution it
+does not render, a first frame it refuses). A duration is snapped to the model's nearest allowed
+value; a last frame, keyframes or a transparent background the model cannot take are dropped with a
+note (the result says lastFrameUsed). Within a group, a route whose account cannot serve the request
+(no key, no credit, no model access, rate limited, unreachable, not signed in, tool missing) passes
+it to the next route; any other failure stops. A refused API attempt's folder is kept beside the
+output as <out-dir>.failed-<route>.
 
 Success prints one ASCII JSON line and exits 0:
   {"status":"ok","route":"api:openai","artifact":"<out-dir>/generated.png",
    "sha256":"...","estimateUsd":null,...}
-A failure prints one "error: ..." line and exits 1; usage errors exit 2. Every call is a
-line in <project-dir>/.forge/ledger.jsonl with its estimate; there is no cap unless
---budget-usd, --max-calls or the FORGE_* cap variables set one. --dry-run prints the
-plan of the route that would run: no key is used, nothing is sent or written.
+A failure prints one "error: ..." line and exits 1; usage errors exit 2. Every call is a line in
+<project-dir>/.forge/ledger.jsonl with its estimate; there is no cap unless --budget-usd,
+--max-calls or the FORGE_* cap variables set one. --dry-run prints the plan of the route that would
+run: no key is used, nothing is sent or written.
 
-Test seam: when FORGE_ROUTE_MEDIA_FAKE names a script, a command is checked as usual
-and then handed to it (python <script> <the same arguments>); its output and exit code
-are returned unchanged.
+Test seam: when FORGE_ROUTE_MEDIA_FAKE names a script, a command is checked as usual and then
+handed to it (python <script> <the same arguments>); its output and exit code are returned unchanged.
 """
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 import math
 import os
@@ -59,21 +67,24 @@ import forge_doctor  # noqa: E402
 import generate_media  # noqa: E402
 import media_config  # noqa: E402
 import media_ledger  # noqa: E402
+import media_providers  # noqa: E402
 
 FAKE_ENV = "FORGE_ROUTE_MEDIA_FAKE"
 NO_ROUTE_EXIT = 3
 FALLBACK = "codeart2d"
-ORDER = {"image": ("api:openai", "api:xai", "local:codex-cli", "local:grok-cli"),
-         "video": ("api:xai", "local:grok-acp")}
-ROUTE_CHOICES = {"image": ("auto", "api", "local", "openai", "xai", "codex-cli", "grok-cli"),
-                 "video": ("auto", "api", "local", "xai", "grok-acp")}
-MAX_REFERENCES = {"api:openai": 16, "api:xai": 1, "local:codex-cli": cli_media.MAX_IMAGE_REFERENCES,
-                  "local:grok-cli": 1}
+API_ORDER = {kind: tuple(f"api:{name}" for name in media_providers.providers_for(kind)) for kind in media_providers.KINDS}
+ORDER = {"image": (*API_ORDER["image"], "local:codex-cli", "local:grok-cli"),
+         "video": (*API_ORDER["video"], "local:grok-acp")}
+ROUTE_CHOICES = {kind: ("auto", "api", "local", *(name.split(":", 1)[1] for name in ORDER[kind]))
+                 for kind in media_providers.KINDS}
+LOCAL_REFERENCES = {"local:codex-cli": cli_media.MAX_IMAGE_REFERENCES, "local:grok-cli": 1}
+MAX_IMAGE_REFERENCES = max(16, *LOCAL_REFERENCES.values())
 LOCAL_CLI = {"codex-cli": "codex", "grok-cli": "grok", "grok-acp": "grok"}
 VIDEO_RESOLUTIONS = ("480p", "720p", "1080p")
+TIERS = media_providers.TIERS
 XAI_RATIOS = {"1:1": 1.0, "16:9": 16 / 9, "9:16": 9 / 16, "4:3": 4 / 3, "3:4": 3 / 4, "3:2": 3 / 2, "2:3": 2 / 3}
-PINNING_MODELS = ("grok-imagine-video-1.5",)
 SIZE = re.compile(r"auto|[1-9]\d{1,4}x[1-9]\d{1,4}")
+FAL_ROUTE = re.compile(r"fal:(?P<model>.+)")
 # Failures about the route or the account, never about the request: the next route may serve it. An API
 # attempt passes it on only when its job.json shows a clean refusal (failed or not_sent): a video job the
 # provider accepted before polling failed may still finish and be charged, so it stops for resume instead.
@@ -81,6 +92,7 @@ API_NEXT = frozenset({"no_key", "auth", "quota", "rate_limit", "entitlement", "n
 CLEAN_REFUSALS = frozenset({"failed", "not_sent"})
 LOCAL_NEXT = frozenset({"NOT_INSTALLED", "SPAWN_FAILED", "AUTH_REQUIRED", "RATE_LIMIT", "TOOL_UNAVAILABLE",
                         "GENERATION_FAILED"})
+DUMMY_IMAGE = ({"size": [1024, 1024], "mime": "image/png", "sha256": "0" * 64, "bytes": 0}, b"")
 
 
 class RouteError(Exception):
@@ -89,12 +101,16 @@ class RouteError(Exception):
 
 @dataclass
 class Candidate:
-    """One route that can take the request: its id, the API model and the last-frame decision."""
+    """One route that can take the request, with what it will actually send."""
 
     route: str
     model: str | None = None
+    quality: str | None = None
     pin: bool = False
-    note: str | None = None
+    keyframes: bool = False
+    transparent: bool = False
+    duration: int | None = None
+    notes: list = field(default_factory=list)
 
     @property
     def family(self) -> str:
@@ -105,9 +121,13 @@ class Candidate:
         return self.route.split(":", 1)[1]
 
     @property
+    def note(self) -> str | None:
+        return self.notes[0] if self.notes else None
+
+    @property
     def label(self) -> str:
         if self.family == "api":
-            return f"{forge_doctor.API_LABEL[self.target]} ({self.model})"
+            return f"{media_providers.adapter(self.target).label} ({self.model})"
         return forge_doctor.ROUTE_LABEL[self.target]
 
 
@@ -118,6 +138,22 @@ class Resolution:
     order: list
     candidates: list
     skipped: list
+
+
+@dataclass
+class Wanted:
+    """What the request asks for, as resolve() checks it against each route."""
+
+    references: list = field(default_factory=list)  # [(meta, bytes)]
+    last_frame: tuple | None = None
+    keyframes: list = field(default_factory=list)  # [((meta, bytes), seconds)]
+    size: str | None = "1024x1024"
+    resolution: str = "720p"
+    duration: int = 6
+    transparent: bool = False
+    model: str | None = None
+    tier: str = "standard"
+    options: dict = field(default_factory=dict)  # {provider or "*": {key: value}}
 
 
 # --------------------------------------------------------------------------- output
@@ -143,14 +179,56 @@ def error(message: object) -> None:
     print("error: " + redact(message), file=sys.stderr)
 
 
+# --------------------------------------------------------------------------- arguments
+
+def route_value(text: str) -> str:
+    """argparse type of --route: a fixed name or fal:<endpoint-id>."""
+    text = str(text).strip()
+    if text in set(ROUTE_CHOICES["image"]) | set(ROUTE_CHOICES["video"]):
+        return text
+    match = FAL_ROUTE.fullmatch(text)
+    if match and media_providers.FAL_ID.fullmatch(match.group("model")) and ".." not in text:
+        return text
+    raise argparse.ArgumentTypeError(f"invalid route {text!r} (choose auto, api, local, a provider, a local CLI route "
+                                     "or fal:<endpoint-id>)")
+
+
+def provider_options(items) -> dict:
+    """--provider-option [PROVIDER:]KEY=VALUE -> {provider or "*": {key: value}}."""
+    found = {}
+    for item in items or ():
+        scope, sep, rest = str(item).partition(":")
+        if sep and scope in media_providers.ORDER and "=" in rest and "=" not in scope:
+            target, item = scope, rest
+        else:
+            target = "*"
+        try:
+            found.setdefault(target, {}).update(generate_media.parse_provider_options([item]))
+        except generate_media.MediaError as exc:
+            raise RouteError(str(exc)) from None
+    return found
+
+
+def options_for(wanted: Wanted, provider: str) -> dict:
+    return {**wanted.options.get("*", {}), **wanted.options.get(provider, {})}
+
+
 # --------------------------------------------------------------------------- resolution
 
-def requested_routes(kind: str, route: str) -> list:
-    order = ORDER[kind]
+def apply_preference(order: list, preferred: list) -> list:
+    """The routes the user named first (in their order), then the rest in the owner's order."""
+    first = [name for want in preferred for name in order if name.split(":", 1)[1] == want]
+    return first + [name for name in order if name not in first]
+
+
+def requested_routes(kind: str, route: str, preferred: list | None = None) -> list:
+    order = apply_preference(list(ORDER[kind]), preferred or [])
     if route == "auto":
-        return list(order)
+        return order
     if route in ("api", "local"):
         return [name for name in order if name.startswith(route + ":")]
+    if FAL_ROUTE.fullmatch(route):
+        return ["api:fal"] if "api:fal" in ORDER[kind] else []
     return [name for name in order if name.split(":", 1)[1] == route]
 
 
@@ -167,26 +245,118 @@ def xai_image_options(size: str | None, references: int) -> list:
     return options
 
 
+def _api_request(kind, provider, candidate, wanted) -> media_providers.MediaRequest:
+    """The request generate_media.py will build for this candidate, for its adapter's check()."""
+    size = resolution = aspect = None
+    if kind == "image":
+        if provider == "xai":
+            flags = xai_image_options(wanted.size, len(wanted.references))
+            resolution = flags[1] if flags else None
+            aspect = flags[3] if len(flags) > 2 else None
+        else:
+            size = wanted.size
+    else:
+        resolution = wanted.resolution
+    return media_providers.MediaRequest(
+        kind=kind, model=candidate.model, prompt="resolve", references=list(wanted.references) or [],
+        last_frame=wanted.last_frame if candidate.pin else None,
+        keyframes=list(wanted.keyframes) if candidate.keyframes else [], size=size, quality=candidate.quality,
+        transparent=candidate.transparent, resolution=resolution, aspect_ratio=aspect,
+        duration=candidate.duration if kind == "video" else None, options=options_for(wanted, provider))
+
+
+def fit_api(kind: str, candidate: Candidate, wanted: Wanted, explicit: bool) -> str | None:
+    """Adapt the candidate to what its model can do (snap the duration; drop a last frame, keyframes or a
+    transparent background with a note), then gate it with the adapter's own check. Returns why the
+    route cannot take the request, or None."""
+    provider = candidate.target
+    item = media_providers.adapter(provider)
+    record = item.model_record(candidate.model)
+    if record is None and not (explicit and item.record.get("unknownModels") == kind):
+        return f"{candidate.model} is not a verified {item.label} {kind} model (references/capabilities.json)"
+    if kind == "image":
+        candidate.transparent = wanted.transparent
+        if wanted.transparent and record is not None and record["image"].get("transparent_bg") != "native":
+            candidate.transparent = False
+            candidate.notes.append(f"{candidate.model} has no native transparent background: key the backdrop")
+    else:
+        video = record["video"]
+        candidate.duration = media_providers.snap_duration(wanted.duration, video)
+        if candidate.duration != wanted.duration:
+            candidate.notes.append(f"{candidate.model} renders {candidate.duration} s, the nearest allowed length to "
+                                   f"{wanted.duration} s")
+        pins = record.get("pin_resolutions")
+        if wanted.last_frame is not None:
+            candidate.pin = bool(video.get("last_frame")) and (not pins or wanted.resolution in pins)
+            if not candidate.pin:
+                candidate.notes.append(f"the last frame is not pinned: {candidate.model} at {wanted.resolution} "
+                                       "cannot take one")
+        elif (record.get("fal") or {}).get("last_required"):
+            return f"{candidate.model} needs a last frame (--last-frame; the still itself pins a loop)"
+        if wanted.keyframes:
+            candidate.keyframes = bool(record.get("keyframes_max")) and (not pins or wanted.resolution in pins)
+            if not candidate.keyframes:
+                candidate.notes.append(f"the keyframes are not sent: {candidate.model} at {wanted.resolution} "
+                                       "takes none")
+    try:
+        candidate.notes += item.check(_api_request(kind, provider, candidate, wanted))
+    except media_providers.MediaError as exc:
+        return str(exc)
+    return None
+
+
+def unsupported_local(kind: str, candidate: Candidate, wanted: Wanted) -> str | None:
+    if kind == "image":
+        limit = LOCAL_REFERENCES[candidate.route]
+        if len(wanted.references) > limit:
+            return f"takes at most {limit} reference image{'s' if limit > 1 else ''}"
+        return None
+    if candidate.route == "local:grok-acp" and wanted.resolution not in cli_media.VIDEO_RESOLUTIONS:
+        return "Grok (local CLI) image_to_video renders 480p or 720p"
+    return None
+
+
 def resolve(kind: str, route: str = "auto", *, references: int | None = None, resolution: str = "720p",
-            last_frame: bool = False, settings: dict | None = None) -> Resolution:
+            last_frame: bool = False, settings: dict | None = None, wanted: Wanted | None = None) -> Resolution:
     """The candidates for one request, in order, and why the others were skipped. Spawns nothing:
-    a local route counts when its CLI's native executable is installed."""
+    a local route counts when its CLI's native executable is installed. ``wanted`` carries the real
+    request; without it, ``references`` dummy references, ``resolution`` and ``last_frame`` describe one."""
     problem = None
     if settings is None:
         settings, problem = media_config.load_config()
-    references = (0 if kind == "image" else 1) if references is None else references
-    order = requested_routes(kind, route)
+    if wanted is None:
+        count = (0 if kind == "image" else 1) if references is None else references
+        wanted = Wanted(references=[DUMMY_IMAGE] * count, resolution=resolution,
+                        last_frame=DUMMY_IMAGE if last_frame else None)
+    preferred, problems = media_config.provider_order(kind, settings)
+    order = requested_routes(kind, route, preferred)
     candidates, skipped, clis = [], [], {}
     if problem and any(name.startswith("api:") for name in order):
         skipped.append(f"user config file ignored: {problem}")
+    skipped += problems
+    fal_model = FAL_ROUTE.fullmatch(route)
     for name in order:
         family, target = name.split(":", 1)
         if family == "api":
             if not media_config.api_key(target, settings):
                 skipped.append(f"{name}: no {media_config.PROVIDERS[target]} in the environment or the user config file")
                 continue
-            candidate = Candidate(name, model=media_config.model_for(f"{target}-{kind}", settings))
+            explicit = route == target or bool(fal_model)
+            if fal_model:
+                model, quality = fal_model.group("model"), None
+            elif wanted.model:
+                model, quality = wanted.model, None
+                if not explicit and wanted.model not in media_providers.adapter(target).models():
+                    skipped.append(f"{name}: does not list the model {wanted.model}")
+                    continue
+            else:
+                model, quality = media_providers.default_model(target, kind, wanted.tier, settings)
+            candidate = Candidate(name, model=model, quality=quality)
+            reason = fit_api(kind, candidate, wanted, explicit or bool(wanted.model))
         else:
+            if wanted.model or fal_model:
+                skipped.append(f"{name}: a local CLI chooses its own model (--model applies to the API routes)")
+                continue
             cli = LOCAL_CLI[target]
             if cli not in clis:
                 clis[cli] = cli_media.resolve_route_cli(cli)
@@ -194,33 +364,18 @@ def resolve(kind: str, route: str = "auto", *, references: int | None = None, re
             if info.path is None or not clis[cli].prefix:
                 skipped.append(f"{name}: {cli_media.CLI_NAME[cli]} is not installed ({info.problem or 'not found'})")
                 continue
-            candidate = Candidate(name)
-        problem = unsupported(kind, candidate, references, resolution)
-        if problem:
-            skipped.append(f"{name}: {problem}")
+            candidate = Candidate(name, duration=wanted.duration)
+            reason = unsupported_local(kind, candidate, wanted)
+            if not reason and kind == "video" and wanted.last_frame is not None:
+                candidate.notes.append("the last frame is not pinned: Grok (local CLI) image_to_video takes the first "
+                                       "frame only")
+            if not reason and kind == "video" and wanted.keyframes:
+                candidate.notes.append("the keyframes are not sent: Grok (local CLI) takes the first frame only")
+        if reason:
+            skipped.append(f"{name}: {reason}")
             continue
-        if kind == "video" and last_frame:
-            candidate.pin = candidate.route == "api:xai" and candidate.model in PINNING_MODELS \
-                and resolution in ("480p", "720p")
-            if not candidate.pin:
-                candidate.note = ("the last frame is not pinned: " + (
-                    f"{candidate.model} at {resolution} cannot take one" if candidate.family == "api"
-                    else "Grok (local CLI) image_to_video takes the first frame only"))
         candidates.append(candidate)
     return Resolution(kind, route, list(order), candidates, skipped)
-
-
-def unsupported(kind: str, candidate: Candidate, references: int, resolution: str) -> str | None:
-    if kind == "image":
-        limit = MAX_REFERENCES[candidate.route]
-        if references > limit:
-            return f"takes at most {limit} reference image{'s' if limit > 1 else ''}"
-        return None
-    if candidate.route == "api:xai" and candidate.model == "grok-imagine-video" and resolution == "1080p":
-        return "grok-imagine-video renders 480p or 720p"
-    if candidate.route == "local:grok-acp" and resolution not in cli_media.VIDEO_RESOLUTIONS:
-        return "Grok (local CLI) image_to_video renders 480p or 720p"
-    return None
 
 
 def no_route(resolution: Resolution) -> dict:
@@ -233,24 +388,32 @@ def no_route(resolution: Resolution) -> dict:
 def check_inputs(args: argparse.Namespace) -> list:
     """The checks every command passes before any route (or the test fake) sees it. Returns warnings."""
     warnings = []
+    try:
+        keyframes = [generate_media.parse_keyframe(item)[0] for item in getattr(args, "keyframe", None) or []] \
+            if args.command == "video" else []
+    except generate_media.MediaError as exc:
+        raise RouteError(str(exc)) from None
     for label, value in (("prompt file", args.prompt_file), *(("reference image", r) for r in references_of(args)),
-                         ("last frame", getattr(args, "last_frame", None))):
+                         ("last frame", getattr(args, "last_frame", None)), *(("keyframe", k) for k in keyframes)):
         if value is not None and not Path(value).is_file():
             raise RouteError(f"the {label} {Path(value).name} does not exist")
     if os.path.lexists(args.out_dir):
         if not args.dry_run:
             raise RouteError(f"{Path(args.out_dir).name} already exists; choose a new --out-dir")
         warnings.append("the output folder already exists; a real run will refuse it")
+    if args.model and not (media_providers.MODEL_ID.fullmatch(args.model) or media_providers.FAL_ID.fullmatch(args.model)):
+        raise RouteError("--model must be a provider model id (fal.ai: its endpoint id)")
+    args.options = provider_options(args.provider_option)
     if args.command == "image":
         if args.size is not None and not SIZE.fullmatch(args.size):
             raise RouteError("--size must be auto or WIDTHxHEIGHT, for example 1024x1024")
-        if len(args.reference) > max(MAX_REFERENCES.values()):
-            raise RouteError(f"at most {max(MAX_REFERENCES.values())} reference images")
+        if len(args.reference) > MAX_IMAGE_REFERENCES:
+            raise RouteError(f"at most {MAX_IMAGE_REFERENCES} reference images")
     else:
         if not 1 <= args.duration <= 15:
             raise RouteError("--duration must be 1..15 seconds")
-        if args.last_frame and args.resolution == "1080p":
-            warnings.append("no route pins a last frame at 1080p")
+        if len(keyframes) > 4:
+            raise RouteError("at most 4 keyframes")
     return warnings
 
 
@@ -258,6 +421,24 @@ def references_of(args: argparse.Namespace) -> list:
     if args.command == "image":
         return list(args.reference)
     return [args.reference] if getattr(args, "reference", None) else []
+
+
+def wanted_of(args: argparse.Namespace) -> Wanted:
+    """The request with its images read (sizes, hashes, bytes), for the capability checks."""
+    try:
+        refs = [generate_media.inspect_image(path) for path in references_of(args)]
+        last = generate_media.inspect_image(args.last_frame) if getattr(args, "last_frame", None) else None
+        keyframes = []
+        for item in getattr(args, "keyframe", None) or []:
+            path, seconds = generate_media.parse_keyframe(item)
+            keyframes.append((generate_media.inspect_image(path), seconds))
+    except generate_media.MediaError as exc:
+        raise RouteError(str(exc)) from None
+    video = args.command == "video"
+    return Wanted(references=refs, last_frame=last, keyframes=keyframes,
+                  size=None if video else args.size, resolution=args.resolution if video else "720p",
+                  duration=args.duration if video else 6, transparent=bool(getattr(args, "transparent", False)),
+                  model=args.model, tier=args.tier, options=args.options)
 
 
 # --------------------------------------------------------------------------- the routes
@@ -273,21 +454,32 @@ def _common(args: argparse.Namespace) -> list:
 
 def api_argv(candidate: Candidate, args: argparse.Namespace) -> list:
     """generate_media.py arguments; --execute because the configured key is the owner's consent."""
-    argv = [args.command, "--provider", candidate.target, "--model", candidate.model, "--prompt-file",
+    provider = candidate.target
+    argv = [args.command, "--provider", provider, "--model", candidate.model, "--prompt-file",
             str(args.prompt_file), "--out-dir", str(args.out_dir), *_common(args), "--allow-duplicate"]
     if args.budget_usd is not None:
         argv += ["--budget-usd", str(args.budget_usd)]
     if args.command == "image":
         for reference in args.reference:
             argv += ["--reference", str(reference)]
-        if candidate.target == "openai":
-            argv += ["--size", args.size] if args.size else []
-        else:
+        if provider == "xai":
             argv += xai_image_options(args.size, len(args.reference))
+        elif args.size:
+            argv += ["--size", args.size]
+        if candidate.quality:
+            argv += ["--quality", candidate.quality]
+        if candidate.transparent:
+            argv.append("--transparent")
     else:
-        argv += ["--reference", str(args.reference), "--duration", str(args.duration), "--resolution", args.resolution]
+        argv += ["--reference", str(args.reference), "--duration", str(candidate.duration or args.duration),
+                 "--resolution", args.resolution]
         if candidate.pin:
             argv += ["--last-frame", str(args.last_frame)]
+        if candidate.keyframes:
+            for item in args.keyframe:
+                argv += ["--keyframe", item]
+    for key, value in options_for(args.wanted, provider).items():  # JSON keeps "5" a string and 5 a number
+        argv += ["--provider-option", f"{key}={json.dumps(value)}"]
     if not args.dry_run:
         argv.append("--execute")
     return argv
@@ -315,12 +507,18 @@ def local_argv(candidate: Candidate, args: argparse.Namespace) -> list:
 def run_api(candidate: Candidate, args: argparse.Namespace, transport) -> dict:
     job_args = generate_media.parser(generate_media._JobArgsParser).parse_args(api_argv(candidate, args))
     job = generate_media.execute(job_args, transport)
+    extra = {k: job[k] for k in ("crop",) if k in job}
     if args.dry_run:
         return {"estimateUsd": job["estimate"]["usd"], "estimate": job["estimate"]["basis"],
-                "warnings": job.get("warnings", [])}
+                "warnings": job.get("warnings", []), **extra}
     artifact = job["artifact"]
+    notes = list(job.get("notes", []))
+    audio = job.get("audio")
+    if isinstance(audio, dict) and audio.get("reason"):
+        notes.append("the clip's audio could not be removed: " + audio["reason"])
     return {"artifact": str(Path(args.out_dir) / artifact["path"]), "sha256": artifact["sha256"],
-            "estimateUsd": job["estimate"]["usd"], "job": str(Path(args.out_dir) / "job.json")}
+            "estimateUsd": job["estimate"]["usd"], "job": str(Path(args.out_dir) / "job.json"), "notes": notes,
+            **extra}
 
 
 def run_local(candidate: Candidate, args: argparse.Namespace) -> dict:
@@ -395,11 +593,14 @@ def generate(args: argparse.Namespace, resolution: Resolution, transport=None) -
             result.update({k: outcome[k] for k in ("artifact", "sha256") if k in outcome})
             result["estimateUsd"] = outcome["estimateUsd"]
             result.update(kind=args.command, label=candidate.label, model=model_of(candidate, args))
-            result.update({k: outcome[k] for k in ("job", "verifiedBefore", "estimate", "command") if k in outcome})
+            result.update({k: outcome[k] for k in ("job", "verifiedBefore", "estimate", "command", "crop")
+                           if k in outcome})
             if args.command == "video":
                 result["lastFrameUsed"] = candidate.pin
-            notes = [candidate.note] if candidate.note else []
-            warnings = [*args.input_warnings, *outcome.get("warnings", [])]
+                if candidate.duration and candidate.duration != args.duration:
+                    result["duration"] = candidate.duration
+            notes = [*candidate.notes, *(n for n in outcome.get("notes", []) if n not in candidate.notes)]
+            warnings = [*args.input_warnings, *(w for w in outcome.get("warnings", []) if w not in notes)]
             if notes:
                 result["notes"] = notes
             if warnings and args.dry_run:
@@ -425,6 +626,12 @@ def generate(args: argparse.Namespace, resolution: Resolution, transport=None) -
 
 # --------------------------------------------------------------------------- CLI
 
+def _route_help(kind):
+    return ("auto (default): " + " > ".join(ORDER[kind]) + " (after providers.order in the user config file); "
+            "api or local: one group; " + ", ".join(ROUTE_CHOICES[kind][3:]) + ": one route; fal:<endpoint-id>: "
+            "one fal.ai model")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -435,19 +642,33 @@ def build_parser() -> argparse.ArgumentParser:
         if kind == "image":
             command.add_argument("--reference", action="append", default=[],
                                  help="reference image (PNG, JPEG or WebP), repeatable, in the order the prompt names "
-                                      "them; xAI and Grok (local CLI) take one, Codex up to 8, OpenAI up to 16")
+                                      "them; OpenAI takes up to 16, Gemini and fal.ai Nano Banana 14, BytePlus 10, "
+                                      "Codex 8, xAI 5, Grok (local CLI) 1")
             command.add_argument("--size", default="1024x1024",
                                  help="WIDTHxHEIGHT or auto (default 1024x1024); the local CLIs take the size from the "
                                       "prompt, so state it there too")
+            command.add_argument("--transparent", action="store_true",
+                                 help="ask for a native transparent background where the model has one (OpenAI GPT "
+                                      "Image); elsewhere a note says to key the backdrop")
         else:
             command.add_argument("--reference", required=True, help="the first frame: the approved still")
             command.add_argument("--last-frame", help="pin the end frame (same canvas as --reference) where the route "
                                                       "allows it; the result says lastFrameUsed")
-            command.add_argument("--duration", type=int, default=6, help="seconds, 1..15 (default 6)")
+            command.add_argument("--keyframe", action="append", default=[], metavar="PATH@SECONDS",
+                                 help="an intermediate frame at a time, up to 4 (xAI grok-imagine-video-1.5 at 480p "
+                                      "or 720p; other routes drop them with a note)")
+            command.add_argument("--duration", type=int, default=6, help="seconds, 1..15 (default 6); snapped to the "
+                                                                         "nearest length the model renders")
             command.add_argument("--resolution", choices=VIDEO_RESOLUTIONS, default="720p")
         command.add_argument("--out-dir", required=True, help="new folder for generated.<ext>, job.json and prompt.txt")
-        command.add_argument("--route", choices=ROUTE_CHOICES[kind], default="auto",
-                             help="auto (default): " + " > ".join(ORDER[kind]) + "; api or local: one group; or one route")
+        command.add_argument("--route", type=route_value, default="auto", metavar="ROUTE", help=_route_help(kind))
+        command.add_argument("--model", help="the API model to use (fal.ai: its endpoint id); with auto, only the "
+                                             "providers that list it are tried")
+        command.add_argument("--tier", choices=TIERS, default="standard",
+                             help="each provider's draft, standard (default) or hero model (capabilities.json tiers; "
+                                  "the user config file can override each slot)")
+        command.add_argument("--provider-option", action="append", default=[], metavar="[PROVIDER:]KEY=VALUE",
+                             help="extra request field passed as is (repeatable); PROVIDER: limits it to one provider")
         command.add_argument("--project-dir", default=".", help="project root holding .forge/ (ledger, proofs)")
         command.add_argument("--purpose", help="free text for the receipt (at most 200 characters)")
         command.add_argument("--timeout", type=float, help="seconds a route may take (default: the route's own)")
@@ -458,11 +679,14 @@ def build_parser() -> argparse.ArgumentParser:
                                                                     "nothing is sent or written")
     resolve_cmd = commands.add_parser("resolve", help="print the route a request would use",
                                       description="Print the route a request would use (nothing runs).")
-    resolve_cmd.add_argument("--kind", required=True, choices=("image", "video"))
-    resolve_cmd.add_argument("--route", default="auto", choices=sorted(set(ROUTE_CHOICES["image"] + ROUTE_CHOICES["video"])))
+    resolve_cmd.add_argument("--kind", required=True, choices=media_providers.KINDS)
+    resolve_cmd.add_argument("--route", type=route_value, default="auto", metavar="ROUTE",
+                             help="as for image and video (auto, api, local, a route or fal:<endpoint-id>)")
     resolve_cmd.add_argument("--references", type=int, help="reference images of the request (default: 0 for an "
                                                             "image, 1 for a video)")
     resolve_cmd.add_argument("--resolution", choices=VIDEO_RESOLUTIONS, default="720p", help="video resolution")
+    resolve_cmd.add_argument("--model", help="the API model to use")
+    resolve_cmd.add_argument("--tier", choices=TIERS, default="standard", help="draft, standard (default) or hero")
     return parser
 
 
@@ -482,6 +706,35 @@ def delegate(fake: str, argv: list) -> int:
     return done.returncode
 
 
+def _known_model(kind: str, args: argparse.Namespace) -> None:
+    """An explicitly named model must be one the route can send: a model is a usage error, never a reason
+    to answer no-route (which sends the caller to code-drawn art)."""
+    match = FAL_ROUTE.fullmatch(args.route)
+    model = match.group("model") if match else args.model
+    if not model:
+        return
+    if match:
+        if args.model and args.model != model:
+            raise RouteError(f"--route {args.route} already names the model; drop --model {args.model}")
+        provider = "fal"
+    elif args.route in ("auto", "api", "local"):
+        if not any(record.get("kind") == kind for _, record in media_providers.find_model(model)):
+            raise RouteError(f"--model {model} is not a verified {kind} model (references/capabilities.json); name "
+                             "its provider with --route to send an unverified image model")
+        return
+    elif args.route in media_providers.ORDER:
+        provider = args.route
+    else:
+        raise RouteError(f"--model applies to the API routes; {args.route} is a local CLI that chooses its own model")
+    item = media_providers.adapter(provider)
+    record = item.model_record(model)
+    if record is not None and record.get("kind") != kind:
+        raise RouteError(f"{model} makes {record.get('kind')}s, not {kind}s")
+    if record is None and item.record.get("unknownModels") != kind:
+        raise RouteError(f"{model} is not a verified {item.label} {kind} model (references/capabilities.json lists "
+                         f"{', '.join(item.models(kind)) or 'none'})")
+
+
 def main(argv: list | None = None, transport=None) -> int:
     """Exit 0 on success (and for resolve and --dry-run), 1 on failure (one ``error:`` line), 2 on a
     usage error, 3 when no route exists, 130 on Ctrl+C. ``transport`` replaces the API's HTTPS
@@ -490,30 +743,35 @@ def main(argv: list | None = None, transport=None) -> int:
     raw = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
     args = parser.parse_args(raw)
-    if args.command == "resolve" and args.route not in ROUTE_CHOICES[args.kind]:
-        parser.error(f"--route {args.route} is not a {args.kind} route (choose from {', '.join(ROUTE_CHOICES[args.kind])})")
+    kind = args.kind if args.command == "resolve" else args.command
+    if args.route not in ROUTE_CHOICES[kind] and not (FAL_ROUTE.fullmatch(args.route) and "api:fal" in ORDER[kind]):
+        parser.error(f"--route {args.route} is not a {kind} route (choose from {', '.join(ROUTE_CHOICES[kind])} "
+                     "or fal:<endpoint-id>)")
     try:
         args.input_warnings = check_inputs(args) if args.command != "resolve" else []
         fake = os.environ.get(FAKE_ENV, "").strip()
         if fake:
             return delegate(fake, raw)
+        _known_model(kind, args)
         if args.command == "resolve":
-            found = resolve(args.kind, args.route, references=args.references, resolution=args.resolution)
+            count = (0 if kind == "image" else 1) if args.references is None else args.references
+            base = dict(references=[DUMMY_IMAGE] * count, resolution=args.resolution, model=args.model, tier=args.tier)
+            found = resolve(kind, args.route, wanted=Wanted(**base))
             if not found.candidates:
                 emit(no_route(found))
                 return NO_ROUTE_EXIT
             chosen = found.candidates[0]
-            result = {"status": "ok", "kind": args.kind, "route": chosen.route, "label": chosen.label,
+            result = {"status": "ok", "kind": kind, "route": chosen.route, "label": chosen.label,
                       "order": found.order, "available": [c.route for c in found.candidates], "skipped": found.skipped}
             if chosen.model:
                 result["model"] = chosen.model
-            if args.kind == "video":
-                result["pinsLastFrame"] = resolve(args.kind, args.route, references=args.references,
-                                                  resolution=args.resolution, last_frame=True).candidates[0].pin
+            if kind == "video":
+                pinned = resolve(kind, args.route, wanted=Wanted(**base, last_frame=DUMMY_IMAGE))
+                result["pinsLastFrame"] = bool(pinned.candidates) and pinned.candidates[0].pin
             emit(result)
             return 0
-        found = resolve(args.command, args.route, references=len(references_of(args)),
-                        resolution=getattr(args, "resolution", "720p"), last_frame=bool(getattr(args, "last_frame", None)))
+        args.wanted = wanted_of(args)
+        found = resolve(args.command, args.route, wanted=args.wanted)
         if not found.candidates:
             emit(no_route(found))
             return NO_ROUTE_EXIT

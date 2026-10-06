@@ -50,8 +50,10 @@ FINGERPRINT_KEYS = ("provider", "kind", "route", "endpoint", "requestedModel", "
 QUALIFIERS = ("resolution", "quality", "size")
 ENTRY_TEXT = ("jobDir", "fingerprint", "provider", "model", "kind", "route")
 ENTRY_KEYS = (*ENTRY_TEXT, "reservedUsd", "quotaCall")
-# ledger_line_v1 (plan Appendix B) plus reservationId, in file order.
-LINE_KEYS = ("ts", "reservationId", "status", *ENTRY_TEXT, "reservedUsd", "actualUsd", "quotaCall")
+# ledger_line_v1 (plan Appendix B) plus reservationId, in file order; jobId (the provider's job or request
+# id, once known) and sha256 (the published artifact) are optional and carried by later lines.
+LINE_KEYS = ("ts", "reservationId", "status", *ENTRY_TEXT, "reservedUsd", "actualUsd", "quotaCall", "jobId", "sha256")
+JOB_ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -201,7 +203,9 @@ def estimate(plan: dict, prices=None) -> dict:
     """Estimate a plan's list-price cost: {usd, currency, basis, pricesVersion, items}.
 
     usd is None when a needed row is missing; basis then names the missing rows.
-    Subscription (quota) routes cost 0 USD here and are limited by call caps.
+    Subscription (quota) routes cost 0 USD here and are limited by call caps. A plan may carry
+    ``pricing`` (written by the provider adapter): {"unit", "quantity", "qualifiers", "inputs",
+    "note"}; inputs None leaves input images out of the estimate (note says why).
     """
     prices = load_prices() if prices is None else prices
     version = prices_version(prices)
@@ -211,13 +215,22 @@ def estimate(plan: dict, prices=None) -> dict:
     provider = plan.get("provider")
     model = plan.get("requestedModel") or plan.get("model")
     options = plan.get("options") or {}
-    inputs = len(plan.get("references") or []) + (plan.get("lastFrame") is not None)
     calls = int(plan.get("paidRequests", 1))
-    if plan.get("kind") == "video":
-        wanted = [("output_second", options.get("duration"), {"resolution": options.get("resolution")})]
+    pricing = plan.get("pricing")
+    note = None
+    if isinstance(pricing, dict):
+        qualifiers = {q: (pricing.get("qualifiers") or {}).get(q) for q in QUALIFIERS}
+        wanted = [(pricing["unit"], pricing.get("quantity", 1), qualifiers)]
+        inputs = pricing.get("inputs")
+        note = pricing.get("note")
     else:
-        wanted = [("output_image", options.get("n", 1), {q: options.get(q) for q in QUALIFIERS})]
-    wanted.append(("input_image", inputs, {}))
+        inputs = len(plan.get("references") or []) + (plan.get("lastFrame") is not None)
+        if plan.get("kind") == "video":
+            wanted = [("output_second", options.get("duration"), {"resolution": options.get("resolution")})]
+        else:
+            wanted = [("output_image", options.get("n", 1), {q: options.get(q) for q in QUALIFIERS})]
+    if inputs is not None:
+        wanted.append(("input_image", inputs, {}))
     items, missing = [], []
     for unit, quantity, qualifiers in wanted:
         if not quantity:
@@ -240,6 +253,8 @@ def estimate(plan: dict, prices=None) -> dict:
     dates = ", ".join(sorted({i["verifiedAt"] for i in items}))
     times = f" x {calls} calls" if calls != 1 else ""
     basis = f"{terms}{times} = {usd} USD list price (verified {dates}); excludes tax and rejected attempts"
+    if note:
+        basis += f"; {note}"
     return {"usd": usd, "currency": "USD", "basis": basis, "pricesVersion": version, "items": items}
 
 
@@ -250,6 +265,20 @@ def fingerprint(plan: dict, ref_hashes) -> str:
     identity["references"] = list(ref_hashes)
     canonical = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
     return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def _ids(job_id, sha256):
+    """The optional jobId / sha256 fields of a ledger line, validated (never free text)."""
+    fields = {}
+    if job_id is not None:
+        if not isinstance(job_id, str) or not JOB_ID.fullmatch(job_id):
+            raise ValueError("job_id must be 1-200 letters, digits, dots, colons, dashes or underscores")
+        fields["jobId"] = job_id
+    if sha256 is not None:
+        if not isinstance(sha256, str) or not SHA256.fullmatch(sha256):
+            raise ValueError("sha256 must be a sha256 hex digest")
+        fields["sha256"] = sha256
+    return fields
 
 
 def max_paid_requests():
@@ -479,8 +508,9 @@ class Ledger:
             self._append(line)
         return rid
 
-    def commit(self, reservation_id, *, actual_usd=None, status) -> dict:
-        """Append the outcome of a reservation (done, failed, unknown or not_sent)."""
+    def commit(self, reservation_id, *, actual_usd=None, status, job_id=None, sha256=None) -> dict:
+        """Append the outcome of a reservation (done, failed, unknown or not_sent), with the provider's
+        job id and the artifact's sha256 when known."""
         if status not in FINAL_STATUSES:
             raise ValueError("status must be one of " + ", ".join(FINAL_STATUSES))
         actual = _usd(actual_usd, "actual_usd")
@@ -490,7 +520,7 @@ class Ledger:
                 raise LedgerError(f"Unknown reservation {reservation_id} in {self.path.as_posix()}")
             # An earlier commit's actualUsd is not carried over: each outcome states its own.
             line = {k: state[k] for k in LINE_KEYS if k in state and k != "actualUsd"}
-            line.update(ts=utc_timestamp(), status=status)
+            line.update(ts=utc_timestamp(), status=status, **_ids(job_id, sha256))
             if actual is not None:
                 line["actualUsd"] = actual
             self._append(line)
@@ -500,7 +530,8 @@ class Ledger:
         """Totals, the reservations that still hold budget (reserved or unknown) and the local CLI
         routes' session usage against the opt-in session cap (caps are None when unset)."""
         states = self.entries()
-        unsettled = [{k: s.get(k) for k in ("reservationId", "status", "reservedAt", "jobDir", "provider", "model", "reservedUsd")}
+        unsettled = [{k: s.get(k) for k in ("reservationId", "status", "reservedAt", "jobDir", "provider", "model",
+                                            "reservedUsd", "jobId")}
                      for s in states.values() if s["status"] in ("reserved", "unknown")]
         try:
             limits = session_limits()
