@@ -44,7 +44,7 @@ One integrated release of the five skills (plugin version `0.4.0`). Not yet tagg
 **generate2dmedia**
 - `forge_doctor.py`: capability check with the Codex/Grok CLI readiness ladder (PRESENT, AUTH_MODE, TOOL_EXPOSED, VERIFIED) and a ROUTES block; reads no credentials.
 - `cli_media.py`: local routes `codex-cli` (image), `grok-cli` (image, edit), `grok-acp` (image-to-video), `--route auto`, dry run by default, provenance checks, `resume --adopt`, `adopt --codex-thread` (supersedes draft PR #5; thanks to its author), `batch`.
-- Spend ledger `.forge/ledger.jsonl` and `media_ledger.py`; caps `--budget-usd`, `--max-calls`, `FORGE_MAX_PAID_REQUESTS`; local session cap (8 images, 2 videos per 12 hours); consent block with estimates from `references/prices.json`; job.json receipts; `batch` for paid jobs; `--base-url` with `--allow-custom-base-url`; `--upload-url` for xAI zero data retention (field name unverified).
+- Spend ledger `.forge/ledger.jsonl` and `media_ledger.py`; opt-in caps `--budget-usd`, `--max-calls`, `FORGE_MAX_PAID_REQUESTS` (no default caps); consent block with estimates from `references/prices.json`; job.json receipts; `batch` for paid jobs; `--base-url` with `--allow-custom-base-url`; `--upload-url` for xAI zero data retention (field name unverified).
 
 - `prepare_i2v_input prepare --master-key` keys an opaque master on a flat magenta, green or blue backdrop (recorded as `masterKeying`); `video2dsprite.py clean` also accepts `raw_*.png`.
 - `render_pixelspec` warns when a walk/run clip's half-cycle frames are near-duplicates (`half_cycle_duplicates`, silhouette IoU >= 0.95; override `--allow-duplicate-half-cycle`); the summary lists `warned_checks`.
@@ -52,7 +52,7 @@ One integrated release of the five skills (plugin version `0.4.0`). Not yet tagg
 ### Changed
 
 - `render_pixelspec --strict-qc` refuses only a `fail` status; a `warn` still publishes and is reported verbatim.
-- Five SKILL.md files rewritten with art-source rules (code art first inside its envelope, then local agent first), host notes for Codex, Claude Code and Grok, and a capability check. `codeart2d` and `generate2dmedia` are explicit-only in Codex.
+- Five SKILL.md files rewritten with art-source rules (image generation first: a configured API key, then the local daemon; codeart2d only as the last resort), host notes for Codex, Claude Code and Grok, and a capability check. `codeart2d` and `generate2dmedia` are explicit-only in Codex.
 - Requirements: Python 3.10+, Pillow >= 10.1, numpy >= 1.26, scipy >= 1.11 (with a numpy fallback); `requirements-codeart.txt`; `requirements-dev.txt` adds jsonschema.
 - Every CLI writes a new output folder through staged, no-replace publication, prints one ASCII JSON line, exits 1 on failure with one `error:` line and 2 on usage errors, and runs under cp1252/cp950 consoles. QA envelopes record `tool.version` 0.4.0. Manifests store relative paths; JSON inputs may carry a UTF-8 BOM.
 - Speed: the legacy keyers are vectorised with identical bytes (2048^2 sheet: 22.0 s to 0.23 s); component labelling 2.5 s to 0.03-0.05 s per sheet; video keying 0.34 s per 960x960 frame on four threads.

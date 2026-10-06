@@ -3,9 +3,9 @@
 PixelSpec is a JSON file that holds small pixel art as editable text: a palette of single
 characters, rows of those characters, layers, poses, frames, palette variants and clips.
 `scripts/render_pixelspec.py` turns it into checked 8-bit RGBA PNG frames with numpy and
-Pillow only (no SVG rasterizer, no image model). Use it for pixel characters, props and FX
-up to about 48 px of visible height (49 to 64 px when the user agrees; see
-[style-envelope.md](style-envelope.md)).
+Pillow only (no SVG rasterizer, no image model). codeart2d is the last resort: use it only when
+the user asks for code-drawn art or no image route exists. It suits small pixel characters, props
+and FX up to about 48 px of visible height; see [style-envelope.md](style-envelope.md).
 
 The contract is `codeart2d.pixelspec.v1` in
 [schemas/codeart.schema.json](schemas/codeart.schema.json) (`$defs/pixelspec_v1`). The

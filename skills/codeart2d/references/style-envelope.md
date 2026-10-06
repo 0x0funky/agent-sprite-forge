@@ -11,10 +11,10 @@ Size is the visible height of the character (outline included), not the canvas.
 
 | Request | Code art | Prefer instead |
 |---|---|---|
-| Pixel characters, props and palette variants up to 48 px visible height | default route: exact grid and palette, free variants, identical root in every action | an image model for rich costume, anatomy, dynamic perspective or a likeness |
-| Pixel characters 49 to 64 px | only when the user agrees: shading stays flat and authoring gets long | same as above |
-| Characters above 64 px | not offered as final art | the image route (host tool, or generate2dmedia with the user's consent) |
-| Flat vector characters, props, UI, HUD icons, 9-slices | default route: native SVG at any resolution | painterly icons |
+| Pixel characters, props and palette variants up to 48 px visible height | best fit when code art is requested or no image route exists: exact grid and palette, free variants, identical root in every action | an image model for rich costume, anatomy, dynamic perspective or a likeness |
+| Pixel characters 49 to 64 px | possible, but shading stays flat and authoring gets long | same as above |
+| Characters above 64 px | not offered as final art | the image route (generate2dmedia `route_media.py`: API key, then local daemon) |
+| Flat vector characters, props, UI, HUD icons, 9-slices | when requested: native SVG at any resolution | painterly icons |
 | FX: slashes, sparks, impact rings, projectiles, hit flashes, dust | strongest area: timing, alpha, palette and resolution are exact | realistic fire, smoke or water (video route) |
 | Tile topology (Wang, blob, platform strips), layouts, collision, spawns | yes; these are data | hand-painted materials (procedural texture repeats) |
 | Stylized parallax (gradients, ridges, silhouettes, clouds) | yes | painterly backgrounds |

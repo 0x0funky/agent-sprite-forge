@@ -1,6 +1,6 @@
 # Rig animation: skeletal code-art characters
 
-Use `scripts/rig_animate.py` when a small character (visible height up to 48 px by default, 49-64 px with the user's consent) should move through several clips with a fixed root, exact palette and feet that do not slide. Claude writes two text files, a rig (portable SVG) and an animation (`codeart2d.rig_anim.v1` JSON); the script poses, renders, checks and packages the frames. Everything is code-drawn, with no image model: say so whenever you deliver the frames.
+Use `scripts/rig_animate.py` only when the user asks for code-drawn animation or no image route exists, and a small character (visible height up to about 48 px) should move through several clips with a fixed root, exact palette and feet that do not slide. Claude writes two text files, a rig (portable SVG) and an animation (`codeart2d.rig_anim.v1` JSON); the script poses, renders, checks and packages the frames. Everything is code-drawn, with no image model: say so whenever you deliver the frames.
 
 Painterly, identity-rich or large characters belong to the image route. Rig animation still looks like a cut-out puppet; it is precise, editable and repeatable, not hand-drawn.
 

@@ -148,4 +148,4 @@ A skin map is a JSON object `{"#from": "#to"}` or `{"index": "#to"}`, or a palet
 - Palettes and grids are deterministic on one machine. Another OS's floating point can flip a pixel that sits exactly between two colours. Exact palette colours never move.
 - The hysteresis numbers come from synthetic noise and one study clip. Check the QA flips on your clip.
 - `frozen` is a fixed tint. Review it in game, as with every variant.
-- Logical-resolution choices for code art (up to 48 px visible height by default) belong to codeart2d. `pixel_reduce.py` is for images that already have a grid.
+- Generated art gets its pixel look from the finish (`video2dsprite/scripts/finish_frames.py pixel`), not from prompting a logical grid. Logical-resolution choices for code-drawn art belong to codeart2d (last resort). `pixel_reduce.py` is for images that already have a grid.

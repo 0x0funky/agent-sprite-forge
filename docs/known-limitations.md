@@ -47,7 +47,7 @@ What the 0.4.0 tests and measurements do not prove. Consolidated from the module
 
 ## Code art (codeart2d)
 
-- The envelope is a design limit: pixel sprites up to 48 px visible height (49-64 px with consent). Pixel finishing shading is programmer-art level.
+- codeart2d is the last resort (used only on request or when no image route exists). Its envelope is a design limit: pixel sprites up to about 48 px visible height, with programmer-art shading.
 - Bit-exact SVG renders are pinned for resvg-py 0.5.0 on Windows; other backends and OSes use a tolerance. Chrome/Edge discovery on macOS and Linux is untested.
 - Rig gates (L-corners, seam band, IK margins) were measured on one 64 px biped; IK is two bones on a horizontal ground line. FX loop seams are a warning; the fx.v1 runtime draws anti-aliased paths, not pixel-exact frames.
 - Autotile repetition at or below 0.35 is claimed only for sets that report it; shared texture-noise bands (0.70) and image textures alone (0.92) do not meet it. Tilesets were not opened in Tiled, Godot or LDtk.
@@ -58,5 +58,5 @@ What the 0.4.0 tests and measurements do not prove. Consolidated from the module
 - No live provider call or live CLI run was made by the automated tests; the CLI recipes copy the owner's verified runs, and a route becomes usable only after its own verification on the installed version. Live results are recorded in the [validation](./validation-2026-10-06.md) document.
 - Grok has no read-only sign-in status command, so its AUTH_MODE step stays UNKNOWN until a verified run.
 - `prices.json` rows were transcribed, not re-fetched; OpenAI image models have no verified price row, so `--budget-usd` refuses them. The xAI `upload_url` field name is unverified.
-- Paid caps are cumulative over the project ledger; the local session cap is a rolling window per project, not per conversation.
+- There are no default quota caps. `--budget-usd`, `--max-calls` and `FORGE_MAX_PAID_REQUESTS` are opt-in and cumulative over the project ledger.
 - `install_skills.py` copies every non-dot file of a skill folder, untracked files included; install from a clean checkout.
