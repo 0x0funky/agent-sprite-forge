@@ -1,6 +1,6 @@
 ---
 name: generate2dmedia
-description: The art-route layer of the Forge skills. route_media.py is the one command that generates an image or an image-to-video clip - through the paid OpenAI or xAI API when a key is configured (the configured key is the owner's consent), else through the user's own signed-in Codex or Grok CLI - and prints one JSON line with the route, artifact, sha256 and cost estimate; with no route it answers no-route (codeart2d is then the last resort). Also the capability check (forge_doctor), API key configuration, the spend ledger, resume and Codex image adoption. Use when a Forge skill sends a generation here, for the capability check, or when the user asks about keys, routes or spend. Not for planning, processing or QA of sprites, video frames or maps (generate2dsprite, video2dsprite, generate2dmap) or for code-drawn art (codeart2d).
+description: The art-route layer of the Forge skills. route_media.py is the one command that generates an image or an image-to-video clip - through the paid API of any provider whose key is configured (OpenAI, Google Gemini, xAI, BytePlus ModelArk, fal.ai; the configured key is the owner's consent), else through the user's own signed-in Codex or Grok CLI - and prints one JSON line with the route, artifact, sha256 and cost estimate; with no route it answers no-route (codeart2d is then the last resort). Also the capability check (forge_doctor), API key configuration, the spend ledger, resume and Codex image adoption. Use when a Forge skill sends a generation here, for the capability check, or when the user asks about keys, routes or spend. Not for planning, processing or QA of sprites, video frames or maps (generate2dsprite, video2dsprite, generate2dmap) or for code-drawn art (codeart2d).
 ---
 
 # Generate 2D Media
@@ -20,11 +20,11 @@ The route layer. It makes raw media; the owning skill plans the asset before and
 
 ## Route order (owner decision 2026-10-06)
 
-1. **API**, when a key is configured: images OpenAI (`gpt-image-2.5-sunburst`), then xAI (`grok-imagine-image-2.0`); video xAI (`grok-imagine-video-1.5`). A configured key is the owner's consent: no per-call question.
+1. **API**, every provider whose key is configured, in this order (the user's `providers.order` goes first). Images: OpenAI (`gpt-image-2.5-sunburst`), Google Gemini (`gemini-3.1-flash-image`; `--tier hero` takes `gemini-3-pro-image` for hero masters), xAI (`grok-imagine-image-2.0`), BytePlus ModelArk (Seedream 5.0), fal.ai (reference edits). Video: xAI (`grok-imagine-video-1.5`; `--tier draft` takes 1.5 Lite), BytePlus ModelArk (Seedance 2.0), fal.ai (Kling v3, Veo 3.1, Luma, MiniMax, Wan, Vidu, LTX). A configured key is the owner's consent: no per-call question.
 2. **Local**: your own image tool if you have one (Codex `image_gen`, Grok's native tools), otherwise the user's signed-in CLI: Codex (local CLI) `image_gen` with references attached, then Grok (local CLI) one-shot image or edit; video Grok (local CLI) in ACP mode. An installed CLI is used as is; its first successful run records the VERIFIED proof.
 3. **codeart2d**, only when the user explicitly asks for code-drawn art or `route_media.py` prints `no-route` (exit 3).
 
-Always name the route that ran ("OpenAI API", "xAI API", "Codex (local CLI)", "Grok (local CLI)"). Details: [route-media.md](references/route-media.md).
+Always name the route that ran ("OpenAI API", "Google Gemini API", "xAI API", "BytePlus ModelArk API", "fal.ai API", "Codex (local CLI)", "Grok (local CLI)"). Details: [route-media.md](references/route-media.md).
 
 ## Capability check (once per session)
 
@@ -37,14 +37,14 @@ Run `python "<skill-dir>/scripts/forge_doctor.py" --host-tools <tools> --save <o
 | Which route would run | `python "<skill-dir>/scripts/route_media.py" resolve --kind image` (or `video`; `--references N`) |
 | One image, still or edit | `python "<skill-dir>/scripts/route_media.py" image --prompt-file <txt> --reference <png> --size 1024x1024 --out-dir <new>` (`--reference` repeatable, in the order the prompt names them) |
 | Animate an approved still | `python "<skill-dir>/scripts/route_media.py" video --prompt-file <txt> --reference <still.png> --last-frame <still.png> --duration 6 --resolution 720p --out-dir <new>` |
-| A route of the user's choice | add `--route api`, `local`, `openai`, `xai`, `codex-cli`, `grok-cli` or `grok-acp` |
+| A route or model of the user's choice | add `--route api`, `local`, `openai`, `gemini`, `xai`, `byteplus`, `fal`, `fal:<endpoint-id>`, `codex-cli`, `grok-cli` or `grok-acp`; `--model <id>`, `--tier draft` or `hero`, `--provider-option [PROVIDER:]KEY=VALUE` |
 | The plan and estimate first | add `--dry-run` (no key is used, nothing is sent or written) |
 
-Success prints one ASCII JSON line and exits 0: `{"status":"ok","route":"api:openai","artifact":"<out-dir>/generated.png","sha256":...,"estimateUsd":...}` plus `model`, `job` and, for video, `lastFrameUsed`. No route prints `{"status":"no-route","fallback":"codeart2d"}` and exits 3. A failure prints one `error: <route>: <code>: <message>` line and exits 1. A route whose account cannot serve the request (no credit, no access, not signed in) passes it to the next route; a refusal such as moderation stops. Write prompts yourself into UTF-8 files; local routes take the size and every instruction from the prompt.
+Success prints one ASCII JSON line and exits 0: `{"status":"ok","route":"api:openai","artifact":"<out-dir>/generated.png","sha256":...,"estimateUsd":...}` plus `model`, `job` and, for video, `lastFrameUsed` (and `crop` when the frames were padded to 16:9 for a model without 1:1). Every clip is published without audio. No route prints `{"status":"no-route","fallback":"codeart2d"}` and exits 3. A failure prints one `error: <route>: <code>: <message>` line and exits 1. A route whose account cannot serve the request (no credit, no access, not signed in) passes it to the next route; a refusal such as moderation stops. Write prompts yourself into UTF-8 files; local routes take the size and every instruction from the prompt.
 
 ## Keys
 
-Keys come from `OPENAI_API_KEY` / `XAI_API_KEY` in the environment, or from the user config file, never from a project: `%APPDATA%\agent-sprite-forge\config.json` on Windows, `~/.config/agent-sprite-forge/config.json` elsewhere (`$XDG_CONFIG_HOME` when set), as `{"OPENAI_API_KEY": "...", "XAI_API_KEY": "..."}` with optional `"models"`. Never print, log, commit or paste a key, and never put one in a prompt. A Codex or Grok sign-in is never an API key.
+Each provider reads only its own key: `OPENAI_API_KEY`, `GOOGLE_API_KEY` or `GEMINI_API_KEY` (`GOOGLE_API_KEY` wins), `XAI_API_KEY`, `ARK_API_KEY` (BytePlus ModelArk) and `FAL_KEY` (fal.ai), from the environment or from the user config file, never from a project: `%APPDATA%\agent-sprite-forge\config.json` on Windows, `~/.config/agent-sprite-forge/config.json` elsewhere (`$XDG_CONFIG_HOME` when set), as `{"OPENAI_API_KEY": "...", "FAL_KEY": "..."}` with optional `"models"` and `"providers": {"order": [...]}`. Never print, log, commit or paste a key, and never put one in a prompt. A Codex or Grok sign-in is never an API key.
 
 ## Spend and the ledger
 
@@ -55,7 +55,7 @@ Every call, paid or local, is a line in `<project>/.forge/ledger.jsonl` with its
 | Need | Command |
 |---|---|
 | One API request by hand (dry run until `--execute`) | `generate_media.py image` or `video` with `--provider`, `--model`, `--prompt-file`, `--out-dir` ([api-usage.md](references/api-usage.md)) |
-| Poll or download an xAI video job without paying again | `generate_media.py resume --job <out>/job.json` |
+| Poll or download a video or fal.ai job without paying again | `generate_media.py resume --job <out>/job.json` |
 | One local CLI run by hand | `cli_media.py image --route codex-cli --prompt-file <txt> --output-dir <new> --execute` ([cli-routes.md](references/cli-routes.md)) |
 | A local run timed out or was interrupted | `cli_media.py resume --run <id>`, then `--adopt` (never reruns the CLI) |
 | Codex made an image that is not in the project | `cli_media.py adopt --codex-thread <thread-id> --output-dir <new>` |
@@ -70,4 +70,4 @@ Every call, paid or local, is a line in `<project>/.forge/ledger.jsonl` with its
 
 ## Commands and outputs
 
-Run each tool as one line from the user's project root: `python "<skill-dir>/scripts/<tool>.py" ...`. Outputs go to a new `--out-dir` inside the project. Results are raw media: hand them to the owning skill for identity, size, alpha, motion and seam checks. Keep prompts, input hashes, job ids and result hashes; report the model requested and the model returned separately. Providers: [provider-survey.md](references/provider-survey.md); prices: `references/prices.json`; data contracts: `references/schemas/media.schema.json`.
+Run each tool as one line from the user's project root: `python "<skill-dir>/scripts/<tool>.py" ...`. Outputs go to a new `--out-dir` inside the project. Results are raw media: hand them to the owning skill for identity, size, alpha, motion and seam checks. Keep prompts, input hashes, job ids and result hashes; report the model requested and the model returned separately. Providers: [provider-survey.md](references/provider-survey.md) (last verified 2026-10-06, with the shutdown dates); capabilities: `references/capabilities.json` (`python "<skill-dir>/scripts/media_providers.py" list`); prices: `references/prices.json`; data contracts: `references/schemas/media.schema.json`.
