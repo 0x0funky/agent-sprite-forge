@@ -6,53 +6,70 @@
   <img src="./src/banner.png" alt="Agent Sprite Forge banner" width="900" />
 </p>
 
+<!-- PROMO -->
+
+> このページは英語版と同期した要約です。詳しい説明は [English README](./README.md) が正です（繁體中文は全訳）。
+
+## 一枚の原画 → ゲームで使えるスプライト一式
+
+**Claude Code**（プラグイン）、**Codex**、**Grok** 向けのエージェント skills です。エージェントが手元で最良の画像生成経路で原画（master still）を一枚作り、その原画からアクションごとに一本の image-to-video 動画を生成します。決定的な Python ツールが各アクションを検査、キー抜き、位置合わせ、ループ選択、リタイム、仕上げ（finish）、パッケージ化し、Godot、Aseprite、Web ゲームに渡します。
+
 <p align="center">
-  <strong>エージェント向け 2D ゲームアセット skills：ゲームで使えるスプライト、コードで描くピクセルアート、AI 動画アニメーション、遊べるマップ。</strong>
+  <img src="./src/v040/aria-set.gif" alt="Aria の 6 アクションを実時間で再生：idle、歩き、走りのループと、攻撃、ジャンプ、被ダメージのワンショット" width="600" />
+  <br />
+  <img src="./src/v040/aria-in-scene.gif" alt="生成した草原の背景を Aria が走り、剣を突き出してまた走り出す" width="760" />
+  <br />
+  <em>原画一枚（ローカル Codex CLI で生成）→ アクションごとに Grok の image-to-video → 6 アクション。すべてのフレームは 2026-10-06 の実機実行の出力です。</em>
 </p>
 
-> このページは英語版と同期した要約です。ショーケース、ツール表、詳しい説明は [English README](./README.md) が正です（繁體中文は全訳）。
+## 0.4 の新機能：大型アップグレード
 
-Codex、Claude Code、Grok で使えます。エージェントがアセットを計画してアートの入手経路（コード描画、ホストの画像生成ツール、ローカルの Codex／Grok CLI、同意を得た有料 API）を選び、決定的な Python ツールがキー抜き、分割、位置合わせ、検査を行い、Godot、Tiled、LDtk、Aseprite、Web ゲーム向けに書き出します。
+| 実機での計測 | 以前 | 0.4 |
+|---|---:|---:|
+| ピクセルの狐（48x64、8 フレーム）：フレームあたりの色数 | 594–709 | **16–19** |
+| ピクセルの狐：アルファ段階 / フレームあたりの孤立ピクセル（平均） | 199 / 732 | **2 / 75** |
+| キー抜き：紫フリンジ（外周の色漏れ、平均） | 0.704 | **0** |
+| キー抜き：145 フレームで漏れたキー画素 / 処理時間 | 7,780 / 271 秒 | **0 / 44 秒** |
+| 攻撃：ワンショットの長さ | 4.1 秒 | **0.7 秒** |
+| カラーロック：隣接フレーム間の色相反転（走りループ） | 352 | **170** |
+| QC：誤って却下された良いテイク | 24 本中 18 本 | **24 本中 0 本** |
 
-## 0.4.0 の新機能
+- **画像生成が最優先：** すべての画像と動画は `route_media.py` を通ります。設定済みの API キー（OpenAI、Google Gemini、xAI、BytePlus、fal.ai）→ サインイン済みのローカル Codex / Grok CLI → 最後の手段としてコードアート（codeart2d）。
+- **原画一枚：** `master_still.py` が候補を生成し、編集で直し、`master.json` として承認します。
+- **アクション一式：** `sprite_set.py` がアクションごとに動画を生成し、自動 QC とリテイク、ソフトマット（紫フリンジなし）、位置合わせ、ループの自動選択、ワンショットの自動リタイム、HD カラーロック、既定の HD 仕上げ（依頼があればくっきりしたピクセル仕上げ）、エンジン書き出しまで行います。
+- **エンジン書き出し：** animation.json 3.0、PNG アトラス、WebM alpha、packed MP4、Godot SpriteFrames / Sprite3D、Aseprite JSON。マップは Tiled、Godot、LDtk。
 
-- **5 つの sibling skills：** `generate2dsprite`、`generate2dmap`、`video2dsprite`、`generate2dmedia`、新しい **`codeart2d`**（画像モデルを使わずコードでゲームアートを描く）。
-- **Claude Code プラグイン**。Codex と Grok はバックアップとドリフト検査付きのフォルダインストール。
-- **ローカルエージェント優先：** ホストの画像ツール（Codex `image_gen`）→ ローカル Codex CLI → Grok CLI（ワンショット画像モード）。動画は ACP モードの Grok CLI。ローカル経路は `forge_doctor` が VERIFIED と判定した後のみ使用し、すべての呼び出しはプロジェクトの ledger に記録され、セッション上限があります（既定：12 時間ごとに画像 8 枚、動画 2 本）。有料 API はリクエストごとの同意がある場合のみ実行。
-- **ソフトマット（紫フリンジなし）**、**計測による歩行ループ選択とリタイム**、**構築による位置合わせ**。
-- **Engine export 3.0 と runtime**（animation.json 3.0、WebM alpha、iPhone 向け packed MP4、Aseprite／Godot 書き出し）。
-- **map_bundle v2、map_nav**、Tiled／Godot／LDtk 書き出し、**HD-2D** の stage とシーンモーション。
-- **コードアート パイプライン：** PixelSpec、リグ、FX、オートタイル、レイアウト。そして能力チェックの **`forge_doctor`**。
+ビフォー・アフターの画像と詳細：[What's new](./README.md#whats-new-in-04--the-big-upgrade)、[CHANGELOG](./CHANGELOG.md)、[実機記録](./docs/validation-2026-10-06.md)。
 
-詳細：[What's new](./README.md#whats-new-in-040)、[CHANGELOG](./CHANGELOG.md)。
+## クイックスタート
 
-## インストール
+1. **インストール。** Claude Code：
 
-Claude Code：
+   ```bash
+   claude plugin marketplace add 0x0funky/agent-sprite-forge --sparse .claude-plugin skills
+   claude plugin install agent-sprite-forge@agent-sprite-forge
+   python -m pip install "numpy>=1.26" "Pillow>=10.1" "scipy>=1.11"
+   ```
 
-```bash
-claude plugin marketplace add 0x0funky/agent-sprite-forge --sparse .claude-plugin skills
-claude plugin install agent-sprite-forge@agent-sprite-forge
-python -m pip install "numpy>=1.26" "Pillow>=10.1" "scipy>=1.11"
-```
+   Codex / Grok：`git clone https://github.com/0x0funky/agent-sprite-forge.git`、`python -m pip install -r requirements.txt`、続けて `python tools/install_skills.py --apply --host codex`（Grok は `--host grok`）。動画には ffmpeg 5.1+ が必要です。
+2. **原画：** `Use $generate2dsprite to make a master still of <あなたのキャラクター>, side view, facing right, HD.`
+3. **アクション一式：** `Use $video2dsprite to animate the approved master: idle, walk, run, attack, jump and hurt.`
 
-Codex（Grok は `--host grok`。コピーによる代替インストールは `--host claude` でも可）：
+## 生成経路と API キー
 
-```bash
-git clone https://github.com/0x0funky/agent-sprite-forge.git
-cd agent-sprite-forge
-python -m pip install -r requirements.txt
-python tools/install_skills.py --apply --host codex
-```
+| 順序 | 経路 | 使う場面 |
+|---|---|---|
+| 1 | API：設定済みのキー（OpenAI、Gemini、xAI、BytePlus、fal.ai：Kling v3、Veo 3.1、Luma、MiniMax、Wan、Vidu、LTX） | キーの設定が同意とみなされ、毎回の確認はありません |
+| 2 | ローカル CLI：サインイン済みの Codex（`image_gen`）または Grok（画像、ACP モードの動画） | キーがない、またはアカウント理由で API が拒否したとき。サブスクリプションの枠を使用 |
+| 3 | コードアート（codeart2d） | 最後の手段：経路がまったくないとき、または明示的に依頼されたとき |
 
-Python 3.10+ が必要です。動画機能には ffmpeg 5.1+ が必要です。詳しくは [Install](./README.md#install) と [Requirements](./README.md#requirements)。
+キーは環境変数（`OPENAI_API_KEY`、`GEMINI_API_KEY`、`XAI_API_KEY`、`ARK_API_KEY`、`FAL_KEY`）またはユーザー設定ファイル（Windows：`%APPDATA%\agent-sprite-forge\config.json`、macOS／Linux：`~/.config/agent-sprite-forge/config.json`）に置きます。詳細は [Routes and providers](./README.md#routes-and-providers)。
 
 ## リンク
 
-- [Showcase](./README.md#showcase)、[Skills](./README.md#included-skills)、[Tools](./README.md#tools)、[アート経路と支出の安全性](./README.md#art-routes-and-spend-safety)
-- エンジン／エディタへのインポートは未検証：[English README](./README.md#godot-editable-tilemap) を参照
-- [既知の制限](./docs/known-limitations.md)、[検証記録](./docs/validation-2026-10-06.md)
-- 生成アセットのライセンス：[Generated Assets And Licensing](./README.md#generated-assets-and-licensing)
+- [パイプラインとエンジン書き出し](./README.md#pipeline-master--set--finish--export)、[マップ](./README.md#maps)、[Showcase](./README.md#showcase-games-made-with-agent-sprite-forge)、[ツール](./README.md#tools)、[必要環境](./README.md#requirements)
+- エンジン／エディタへのインポートは未検証：[Engine exports](./README.md#engine-exports) を参照
+- [既知の制限](./docs/known-limitations.md)、[生成アセットのライセンス](./README.md#generated-assets-and-licensing)
 
 ## ライセンス
 
