@@ -1,114 +1,74 @@
 # Generation prompts
 
-Compose a brief for the chosen tool's actual image and reference contract. Host image tools and an explicitly selected API adapter are both valid; the provider decides which sizes, alpha and reference options exist. Save the settings you requested and inspect the returned pixels separately: a prompt is a request, not a guarantee.
+A prompt is a request, not a guarantee: save what you asked for and inspect the pixels that came back. Every kind of art uses the same route order. The API comes first when a key is configured, then the local daemon (the host's own image tool, Codex or Grok CLI), and codeart2d only when no route exists or the user asks for code-drawn art. The rules below are the recipe that shipped game-opus55's sprites. `master_still.py` writes the master prompts for you ([master-still.md](master-still.md)). Ready-made phase lists and grids for sheets are in [action-recipes.md](action-recipes.md).
 
-Ready-made phase lists, grid shapes and project presets are in [action-recipes.md](action-recipes.md).
+## Characters: one master still, then one clip per action
 
-## Prompt structure
+A character is not drawn as a pose sheet. Generate and approve **one master still**. Then make each action as one image-to-video clip from that still ([video-handoff.md](video-handoff.md)). Sheets are for FX, icons and props ([below](#sheets-fx-icons-and-props)).
 
-Write these parts in order. Numbers beat adjectives: give the canvas, the palette and the scale as values.
+Write the master prompt in this order:
 
-1. **Asset and camera.** Side elevation, top-down, three-quarter or 2:1 isometric; facing; what the asset is for.
-2. **Identity.** Name each attached reference and its role ("Reference 1 fixes identity, palette and anatomy; Reference 2 is layout only"). List the invariants: silhouette, head shape, costume colour groups, held equipment, light direction.
-3. **Canvas and scale.** The logical canvas in game pixels and the body height, for example "a 48x64 logical-pixel canvas, body about 44 logical px tall, drawn at 8x so every logical pixel is an 8x8 block". State the grid ("8 poses in 2 rows x 4 columns, read left to right, top row first").
-4. **Palette.** An explicit list with a colour cap, for example "use only these 12 colours: #1a1c2c, #5d275d, ...; no gradients outside them". Keep the list in a palette file (below) and paste it into every call.
-5. **Style rules.** Outline, anti-aliasing and light (next section).
-6. **Motion.** One line per phase, with NEAR/FAR limbs for side views and the allowed motion per phase.
-7. **Registration and containment.** One canvas, one anatomical scale, one root; the whole motion envelope fits each cell's safe box.
-8. **Background.** Real transparency if the tool supports it; otherwise one flat chroma colour absent from the subject. No text, labels, numbers, grid lines or painted checkerboard.
+1. **One square image.** `Create exactly ONE square image (1024x1024).` Host tools return about 1254x1254 at 1:1. The pad normalises size and framing afterwards, so ask for the square, never for a pixel grid.
+2. **The style line is the finish.** HD is the default: `premium HD 2D game art: a clean, high-resolution hand-painted sprite illustration with crisp sharp edges, a clean dark outline, rich but controlled colours, cel shading with soft highlights and clear light and shadow shapes, fine readable detail, no blur, no photo-realism, no 3D render look`. When the genre helps, name it after the style words ("... game art for a side-scrolling action game: ...").
+3. **The pixel finish, only when the user asks for pixel art.** Use the line that worked: `premium 16-bit pixel art (SNES era), crisp visible chunky pixels, limited palette, strong dark outline, 3-tone cel shading, no smooth gradients, no blur`.
+4. **Text bans.** `No text, no letters, no numbers, no logo, no watermark, no signature, no UI, no border, no frame, no grid.` When one mark belongs to the design, such as a crest symbol, allow that mark alone: "The ONLY written character allowed anywhere is the gold crest symbol on the helmet; nothing else carries any character, letter or symbol." Ask for abstract strokes on scrolls and banners ("faint abstract wavy brush strokes, no real characters").
+5. **Reference roles, by position.** The FIRST attached image is the identity: "the FIRST attached image is the dialogue portrait of this exact character; copy his face, helmet, armour colours and his scroll exactly". The SECOND is an approved in-game peer sprite: "match its style, outline weight, shading, figure size and position on the canvas; do NOT copy his outfit". Attach the images through the tool's real image input, in that order; a path written in prose is not a reference.
+6. **Subject, with the facing stated three ways.** Give the FACING label, the parts that point to the edge, and forward and back: "clearly FACING LEFT: her face, gaze and chest turn toward the LEFT edge of the image; forward is LEFT and her back is toward the RIGHT edge." Then write the long, precise identity: face, hair, body, costume colours and patterns, held items and where they point. Name what to leave out ("no pipe, no animals").
+7. **Framing as canvas-edge percentages.** "the top of the figure about 14 percent below the top edge of the canvas and its lowest point about 14 percent above the bottom edge, centred, generous empty magenta margin on every side, nothing touching or crossing the edges." Each class has one framing ([master-still.md](master-still.md#class-framing)). Generators draw larger than asked (a crest tip asked at 14% arrived at 7%), so keep the margin and let the pad fix the rest.
+8. **Opaque pixels on a flat key.** "The whole figure (crest, scroll, light wisps, motes) is drawn with solid, fully opaque pixels: no transparency, no semi-transparent glow, no soft aura, nothing blended with the background." End with `Background: solid flat pure magenta #FF00FF everywhere outside the character, no shadow, no ground, no glow on the background.` Purple and pink designs take a green or blue key instead.
 
-## Aspect, not pixels
+The route's wrapper adds the tool instructions and saves the file, so the prompt carries art direction only. Generate two or three takes and choose one; do not tune one take forever.
 
-A host image tool without a size parameter keeps the requested aspect and returns about 1,572,864 px (report v2, 3 of 3 calls, plus one 2:1 sheet): 3:2 gives 1536x1024, 16:9 gives 1672x941, 1:1 gives 1254x1254, 2:1 gives 1774x887. Pixel sizes written in the prompt were not obeyed. So:
+## Fix by edit, never by re-roll
 
-- Ask for an aspect ("Request aspect 3:2"), never for pixel dimensions. Describe the grid and the logical canvas instead.
-- Plan the grid for the predicted size: `plan_guide.py` lists layouts and their per-pose room for every standard aspect.
-- Process the size that actually came back (process, `--pad-to-grid` or rounded slicing); never assume the requested one.
-- An API route with a real size parameter may request exact sizes; still verify the returned image.
+A good still with one flaw is edited, not regenerated. The approved still is the FIRST image, and any extra reference (for example a portrait for the face) comes after it with its role:
 
-## Pixel art: logical pixels, palette, outline, anti-aliasing, light
+> Reproduce the FIRST image exactly: the same single figure at exactly the same size and the same position on the canvas (the top of the figure about 13 percent below the top edge, ...), the same pose, three-quarter view facing RIGHT, the same <identity recap>. Same <style> as the FIRST image.
+>
+> THE ONLY CHANGE: repaint his face so it matches the SECOND image ... Everything else (costume, helmet, armour, silhouette) stays exactly as in the FIRST image.
 
-For strict pixel art, describe the art at game size and let the model draw it enlarged:
+Make one change per edit. Restate the framing with numbers, then approve the result like any take: `python "<skill-dir>/scripts/master_still.py" edit --master art/master/hero --change "..." --output-dir art/master/hero-edit1`.
 
-- **Logical pixels.** "Every logical pixel is one solid square block at 8x; same block size everywhere; no half blocks." Image models only approximate this (the trial fox had 5.6-6.5 px blocks instead of 8), so reduce with integer nearest (`scale_frames.py --scale-from 1/8 --resampler nearest`) or a palette reducer, and inspect at game size.
-- **Palette and cap.** Give the hex list and the cap ("at most 16 colours, including outline and highlights"). Save it as a `generate2dsprite.palette.v1` file (`colors[{hex, name?, reserved?}]`, `transparent_index`, `locked`, `source`; contract in [sprite.schema.json](schemas/sprite.schema.json) `palette_v1`) and reuse it for every action of the character.
-- **Outline.** Say which: "1 logical px dark outline around the silhouette" or "selective outline: darker shade of the local colour, no black". Keep the outline colour in the palette.
-- **Anti-aliasing.** "No anti-aliasing against the background; hard silhouette edges." Interior AA, if wanted, uses palette colours only.
-- **Light.** One light direction for every frame ("light from the upper front-left; three tones per material: light, base, shadow"). Changing light between frames reads as flicker.
-- **Readable at game size.** Ask for "readable at 48 px tall": big shapes, a clear face, 2-3 identity details; drop micro-texture that turns into noise.
-- **No era labels by default.** Do not write 16-bit, retro or console-era style words unless the user asks for that look; they add dithering and noise. A general sprite brief says "clean pixel art" or matches the project.
+## Motion prompts: one action per clip
 
-## Identity: master first, turnaround first, character lock
+Build every clip prompt from the approved master (`master.json`):
 
-- **Master first.** Generate and accept one master (neutral pose, final camera, intended scale) before any action sheet, then attach it to every later call as the identity reference. Identity drift is cheaper to prevent than to repair.
-- **Turnaround first.** For a character that needs several directions, accept a turnaround (front, side, back; or the 8-direction set) at one scale before generating directional walks from it. For 2:1 isometric units use the two or four diagonal views the game needs.
-- **Character lock.** Repeat the invariants in every call: "same head shape, ear size, eye, muzzle, costume colours, belt and boots, tail and outline weight in every cell; only limbs, tail sway and body height change".
-- **Single-shot identity check.** When only one generation call is possible (no master), the sheet's frames are each a redraw. Check them before use: `sheet_qc.py frames` reports each frame's head ratio against the median frame (and a match residual for face or costume drift); give `--master` when a master exists. Regenerate or repair frames outside the tolerance instead of shipping a face that pops.
+- "The same `<identity_recap>`", verbatim, then ONE action: "keeps both feet planted, pulls the spear back a little, then shoves it straight forward to the LEFT at waist height ...; only one thrust".
+- "facing LEFT the entire time and never turning around".
+- "the clip starts AND ends in exactly the same pose as the still".
+- "camera locked, no zoom, no pan; solid flat pure magenta background only for the whole shot; keep the exact `<finish>` look, palette and costume; single continuous action".
+- The negatives collected from failed takes of that character. Typical failures: turning around; design drift (horns, hair colour, longer legs); a weapon that changes shape or doubles; a push-in of 12-40%; dust, orbs or arrows appearing; effects covering the face; garbled text; cross flares.
 
-## NEAR and FAR limbs, never left and right
+Registration, the take checks and keying are in [video-handoff.md](video-handoff.md).
 
-In a side view the model cannot see which leg is the character's left. Name limbs by depth:
+## What not to prompt
 
-- **NEAR** limbs are on the viewer's side: normal brightness, drawn in front of the body.
-- **FAR** limbs are on the away side: one shade darker, partly hidden behind the body and the NEAR limbs.
+- **No logical pixel grid.** Image models ignore "every logical pixel is an 8x8 block" (the trial fox had 5.6-6.5 px blocks). Pixel art is made after generation: registration, an area downscale of about 1/8 to 1/12 and one shared OKLab palette ([palette-and-pixels.md](palette-and-pixels.md)). Never reduce with nearest-neighbour.
+- **No hex palette lists or colour caps.** Name colours in words in the identity; the palette is built from the approved frames.
+- **No ban on era words for pixel art.** The 16-bit style line is used only when the pixel finish is requested; it is the line that produced the pixel art.
+- **No transparency requests.** Ask for the flat key colour; keying is a separate, measured step.
+- **No guides on a master.** Boxes, ground lines and stick figures belong to sheet guides only.
 
-Write the phase list with NEAR/FAR: "0 contact: NEAR leg reaches forward, heel on the ground; FAR leg trails. 4 contact: FAR leg forward, NEAR leg trails." Then say "frames 4-7 must not repeat frames 0-3: the leg drawn in front swaps". The trial fox had the NEAR leg forward in 8 of 8 frames, which plays as a limp. `sheet_qc.py frames --cycle run` checks the alternation from the NEAR/FAR shades (declare them with `--near-colors` and `--far-colors`). Front and back views can still say left and right foot, because both feet are visible.
+## Sheets: FX, icons and props
 
-## Body only, no trails
+Sheets suit effects, icons, props and the rare character sheet a user explicitly wants.
 
-For playable characters, generate the body and held equipment only: no slash arc, weapon trail, muzzle flash, projectile, impact burst, aura, dust or ground plate. The body bbox then stays near the idle and run size and the feet stay on the shared root. Generate the effect as its own `fx`, `projectile` or `impact` sheet (or with codeart2d) and layer it at runtime. Reject a body action whose body is more than 10-15% smaller than idle because a wide effect forced it to shrink.
+- **Aspect, not pixels.** A host tool keeps the requested aspect and returns about 1,572,864 px: 3:2 gives 1536x1024, 16:9 gives 1672x941, 2:1 gives 1774x887. Ask for the aspect, describe the grid ("4 poses in 2 rows x 2 columns, read left to right, top row first"), and process the size that came back. `plan_guide.py` predicts the size and picks the grid with the most room per pose.
+- **Body only, no trails.** A character's body sheet holds the body and held equipment only. Slashes, trails, muzzle flashes, impacts and dust are their own FX sheet, layered at runtime.
+- **Cell containment.** Prompt for the full motion envelope inside each cell with a 15% safe margin, one scale and one root: nothing may touch or cross a cell edge, and no gutters or separators are drawn. Check the raw sheet before slicing, and slice by component ownership when a part crosses a line; never hide a crossing with a largest-component filter.
+- **2:1 isometric.** Give the projection in numbers: "2:1 dimetric isometric: ground lines rise 1 px for every 2 px across; a floor tile is a diamond twice as wide as tall; vertical edges stay vertical; no perspective". Register units on the footprint centre.
 
-## Cell containment and recovery
+### NEAR and FAR limbs, never left and right
 
-Prompt for the **full motion envelope** inside each cell, not a large body that fills 80% of every pose. Leave a 15% safe margin on every side, keep one anatomical scale, and count the longest tail, widest stride, ears and held equipment. Say that no part may touch or cross a cell edge and that gutters and separators must not be drawn. These margins are a request, not evidence.
+In a side view the model cannot tell the character's left leg from its right. Name limbs by depth. **NEAR** limbs are on the viewer's side, at normal brightness, drawn in front of the body. **FAR** limbs are on the away side, one shade darker, partly hidden. Write the phases with them ("0 contact: NEAR leg reaches forward, heel down; FAR leg trails. 4 contact: FAR leg forward, NEAR leg trails") and add "frames 4-7 must not repeat frames 0-3: the leg drawn in front swaps". `sheet_qc.py frames --cycle run` checks the alternation from the NEAR and FAR shades. Front and back views can still say left and right foot.
 
-Check the raw sheet before slicing, then slice by ownership so nothing is cut:
+### Checks after generating a sheet
 
-    python "<skill-dir>/scripts/sheet_qc.py" spill --input raw/run-sheet.png --rows 2 --cols 4 --output-dir qc/run-spill
+Run these from the project root:
 
-The report names each part that crosses a cell line, its owner cell, the pixels over the line and the overhang (the trial fox: 58 px of frame 3's tail over the line, 6 px overhang). A crossing part is cut or lands in the neighbour when a grid slicer runs. If the parts are complete in the raw sheet, slice by component ownership (`--sheet` in `sheet_qc.py frames` and `scale_frames.py`, or the assemble step with ownership slicing): every frame keeps its cell origin plus one shared padding, so registration is unchanged. If a part is missing or merged with a neighbour, regenerate that sheet with a smaller motion envelope. Do not enable a largest-component filter to hide a crossing: it deletes intended pieces such as sparks.
+    python "<skill-dir>/scripts/sheet_qc.py" spill --input raw/burst-sheet.png --rows 2 --cols 2 --output-dir qc/burst-spill
+    python "<skill-dir>/scripts/sheet_qc.py" frames --sheet raw/burst-sheet.png --rows 2 --cols 2 --output-dir qc/burst-frames
+    python "<skill-dir>/scripts/scale_frames.py" --sheet raw/burst-sheet.png --rows 2 --cols 2 --scale-from neutral --target-body-px 48 --resampler box --emit-clips --clip-name burst --ticks 4 --output-dir out/burst-game
+    python "<skill-dir>/scripts/build_animation_clips.py" --manifest out/burst-game/clips.json --output-dir out/burst-clips
 
-## 2:1 isometric
-
-For isometric tactics units, props and tiles, say the projection with numbers: "2:1 dimetric isometric: ground lines rise 1 px for every 2 px across (26.57 degrees); a floor tile is a diamond twice as wide as tall; vertical edges stay vertical; no perspective". Give the footprint ("the unit stands on one 32x16 diamond; its root is the diamond centre") and the facing ("faces south-east toward the viewer"). Keep the light from one fixed screen direction for every facing. Register isometric units on the footprint centre, not the bbox bottom.
-
-## Motion decisions that prevent recurring defects
-
-- **Grounded idle:** restrained torso compression and secondary hair or clothing motion. For a massive boss, fixed feet and pelvis with chest and core pulses; no whole-body side-to-side slide.
-- **Run and walk:** distinct contact, down, passing and flight (run) or up (walk) phases, then the same phases with NEAR and FAR swapped. Keep planned vertical body motion and flight; pinning every lowest pixel to one line makes skating or dead motion.
-- **Attack, cast, shoot:** one body action per raw sheet; effects separate (body only, above).
-- **Long quadruped or serpent:** keep the torso and root registered and every pose inside one shared silhouette envelope (central 70-72% of the cell); express bites and pounces through local articulation.
-- **Jump, knockback, flying:** shared source root and motion-relative phases; not a fixed feet line.
-- **Ground-contact fire:** one fixed ignition baseline at a fixed share of the cell height; moving flame tips; no baked floor plate or shadow.
-- **Projectile and impact:** keep travel direction and origin; leave room for expansion and fade; do not normalise every phase to one silhouette size.
-
-## Sheet, full frames, or video
-
-Choose the useful phases and the detail per frame before the sheet size. A 2x2 suits a restrained four-pose loop; 2x3 or 3x3 adds phases; more cells mean fewer source pixels per pose. A 4x4 directional walk is one locomotion family; a hero's unrelated idle, run, attack and death are generated separately and packed later.
-
-Individual full frames keep more detail but cost more calls and need stronger identity and registration checks: keep the same master and camera for every phase and never resize individual canvases. For fluid secondary motion, an accepted master followed by a short image-to-video sample is often better than more sheets; see [video-handoff.md](video-handoff.md). Video does not guarantee stable pixels, transparency, a loop seam or foot contact.
-
-## Optional guides
-
-- `make_layout_guide.py` draws cell geometry only.
-- `make_anchor_layout.py` repeats an accepted master at the requested scale and root.
-- `plan_guide.py` (opt-in) predicts the host size for each aspect, picks the grid with the most room per pose inside a 15% safe frame, and writes a guide with gutters, safe boxes, a ground line, root ticks and, for run and walk cycles, a NEAR (orange) / FAR (blue) leg skeleton whose leading leg alternates; it also writes an aspect-only prompt block. Its self-check runs the same leading-leg test as `sheet_qc.py`. It has not been A/B tested with an image model, so use it when sheets keep crossing cells or repeating the leading leg, not by default:
-
-      python "<skill-dir>/scripts/plan_guide.py" --frames 8 --cycle run --facing right --output-dir guides/hero-run
-
-Attach a guide as a real reference image and state: "Use this only for slots, scale, root and pose; do not reproduce its boxes, lines, colours, labels or stick figures." A grounded anchor template constrains a reference root, not every pose's visible feet; for flight, recoil, jumps or changing silhouettes use a motion envelope instead. A processing profile cannot fix inconsistent anatomy.
-
-For map props, square packs suit compact rocks, crates and shrubs. Bridges, platforms, walls, doors, houses and large trees need explicit native dimensions, joins and collision geometry: route them to the map skill.
-
-## After generation
-
-Run the checks in this order, from the project root:
-
-    python "<skill-dir>/scripts/sheet_qc.py" spill --input raw/run-sheet.png --rows 2 --cols 4 --output-dir qc/run-spill
-    python "<skill-dir>/scripts/sheet_qc.py" frames --sheet raw/run-sheet.png --rows 2 --cols 4 --cycle run --game-pixel 8 --output-dir qc/run-frames
-    python "<skill-dir>/scripts/scale_frames.py" --sheet raw/run-sheet.png --rows 2 --cols 4 --scale-from 1/8 --resampler nearest --root-lock torso-x --row-baseline --emit-clips --clip-name run --ticks 5 --output-dir out/run-game
-    python "<skill-dir>/scripts/build_animation_clips.py" --manifest out/run-game/clips.json --output-dir out/run-clips
-
-`sheet_qc.py` publishes its report either way and exits 1 when a check fails, so a script stops there; read `sheet-qc.json` before deciding. `scale_frames.py --emit-clips` writes a v2 clips manifest timed in 60 Hz ticks (`--ticks 5` is 83 ms per frame), so the strict build stays free of uneven-tick warnings.
-
-If the leading-leg test reports a duplicated half-cycle, regenerate only the second half (frames 4-7 of an 8-frame run), attaching the master, frames 0-3 and the guide. If one frame's head ratio is off, regenerate or repair that frame from the master. Torso drift and row-baseline steps are fixed by `scale_frames.py` (`--root-lock torso-x`, `--row-baseline`), never by moving pixels by hand. In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
+`sheet_qc.py` publishes its report either way and exits 1 when a check fails; read `sheet-qc.json` before deciding. Regenerate a sheet whose part is cut or merged with a neighbour, and give it a smaller motion envelope. In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
