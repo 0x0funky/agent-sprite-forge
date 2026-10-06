@@ -868,7 +868,7 @@ class PublicationTests(unittest.TestCase):
                                   "--write-scale-profile", str(profile))
             original = MODULE.forge_core.publish_file_no_replace
             def interrupted_publish(source, destination):
-                if destination == profile:
+                if Path(destination).resolve() == profile.resolve():
                     profile.write_bytes(b"concurrent file")
                     raise FileExistsError("concurrent creation")
                 original(source, destination)

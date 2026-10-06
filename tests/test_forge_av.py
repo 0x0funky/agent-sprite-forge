@@ -539,3 +539,29 @@ def test_vendored_copies_match_canonical():
     digest = hashlib.sha256(CANONICAL.read_bytes()).hexdigest()
     for vendored in VENDORED:
         assert hashlib.sha256(vendored.read_bytes()).hexdigest() == digest, vendored
+
+
+def test_unlink_settled_retries_while_windows_still_holds_the_file(tmp_path, monkeypatch):
+    # GitHub's Windows runners lock fresh files briefly (antivirus, a killed ffmpeg), so
+    # cleanup must retry instead of failing with WinError 32 and leaving a partial file behind.
+    target = tmp_path / ".clip.webm.0123456789ab.partial"
+    target.write_bytes(b"partial")
+    held = {"left": 2}
+    real_unlink = Path.unlink
+
+    def held_unlink(self, missing_ok=False):
+        if self == target and held["left"]:
+            held["left"] -= 1
+            raise PermissionError(32, "The process cannot access the file because it is being used by another process")
+        return real_unlink(self, missing_ok=missing_ok)
+
+    monkeypatch.setattr(Path, "unlink", held_unlink)
+    monkeypatch.setattr(AV.os, "name", "nt")
+    monkeypatch.setattr(AV.time, "sleep", lambda seconds: None)
+    AV._unlink_settled(target)
+    assert not target.exists() and held["left"] == 0
+
+    target.write_bytes(b"partial")
+    held["left"] = 5
+    with pytest.raises(PermissionError):
+        AV._unlink_settled(target, attempts=3)

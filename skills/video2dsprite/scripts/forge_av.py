@@ -44,6 +44,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from fractions import Fraction
 from pathlib import Path
@@ -167,6 +168,22 @@ def _feed(argv: list[str], chunks: Iterable[bytes], timeout: float) -> None:
         except OSError:
             pass
         child.finish()
+
+
+def _unlink_settled(path: Path, *, attempts: int = 60, delay: float = 0.05) -> None:
+    """Remove ``path`` if present. On Windows, retry for up to 3 s while another process holds it.
+
+    A killed ffmpeg can release its output a moment after exiting, and real-time antivirus
+    scans briefly lock fresh files. Without the retry, cleanup would leave a partial file behind.
+    """
+    for attempt in range(attempts):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if os.name != "nt" or attempt == attempts - 1:
+                raise
+            time.sleep(delay)
 
 
 def _stream_frames(argv: list[str], shape: tuple[int, int, int], timeout: float) -> Iterator[np.ndarray]:
@@ -440,7 +457,7 @@ def extract_frames(path, out_dir, *, fps=0, start=0, duration=None, alpha="auto"
             raise ForgeAVError(f"no frames decoded from {source.name}; check start/duration")
     except BaseException:
         for leftover in target.glob("frame_*.png"):
-            leftover.unlink(missing_ok=True)
+            _unlink_settled(leftover)
         raise
     return frames
 
@@ -712,7 +729,7 @@ def _encode_file(out, muxer: str, argv: list[str], chunks: Iterable[bytes], fram
         except FileExistsError:
             raise FileExistsError(f"{target} appeared during encoding; refusing to replace it") from None
     finally:
-        partial.unlink(missing_ok=True)
+        _unlink_settled(partial)
     return target, keyframes
 
 
