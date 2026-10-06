@@ -14,8 +14,10 @@ import base64
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import sys
+import tempfile
 import time
 from types import SimpleNamespace
 
@@ -43,7 +45,8 @@ def assert_media(document: dict, name: str) -> None:
 def env(tmp_path, monkeypatch):
     """Hermetic CLI homes, the fake CLIs in place of the native ones, a project folder as cwd."""
     for name in (*CANARIES, "FORGE_MAX_PAID_REQUESTS", "FAKE_CLI_MODE", "FAKE_THREAD_ID", "FAKE_SESSION_ID",
-                 "FAKE_CODEX_LOGIN", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION", *media_ledger.SESSION_ENV.values()):
+                 "FAKE_CODEX_LOGIN", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION", "FAKE_GROK_DURATIONS",
+                 "FAKE_TOOL_ERROR", *media_ledger.SESSION_ENV.values()):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
@@ -152,6 +155,8 @@ def test_dry_run_spawns_nothing(env, capsys, monkeypatch):
         assert plan["estimate"]["usd"] == 0.0 and plan["cli"]["recipe"]
         assert any("no proof" in w for w in plan["warnings"])
     codex, grok, acp = (plan["command"] for plan in plans)
+    assert (plans[2]["durationRequested"], plans[2]["durationUsed"], plans[2]["lastFrameUsed"]) == (6, 6, False)
+    assert "notes" not in plans[2] and "durationUsed" not in plans[0]
     assert {"--ignore-user-config", "--ephemeral", "read-only", "--disable", "shell_tool"} <= set(codex)
     assert {"--no-subagents", "--disable-web-search", "--deny", "Bash", "streaming-json", "image_edit"} <= set(grok)
     assert acp[1:3] == ["agent", "--no-leader"] and acp[-1] == "stdio"
@@ -214,12 +219,16 @@ def test_grok_image_edit_and_acp_video_succeed(env, capsys):
         assert job["adoption"]["source"].startswith("GROK_HOME/sessions/*/" + job["cliRun"]["sessionId"])
         assert "%3A" not in json.dumps(job) and "Users" not in job["adoption"]["source"]  # no absolute paths
     video = json.loads((env.project / "out" / "clip" / "job.json").read_text(encoding="utf-8"))
+    # Grok renders 6 or 10 s (live run 2026-10-06): the 4 s asked for is sent as 6 s, and every record says so.
     assert video["artifact"]["path"] == "generated.mp4" and video["options"] == {
-        "tool": "image_to_video", "duration": 4, "resolution": "480p"}
+        "tool": "image_to_video", "duration": 6, "resolution": "480p"}
+    facts = {"durationRequested": 4, "durationUsed": 6, "lastFrameUsed": False,
+             "notes": [cli_media.duration_note(4, 6)]}
+    assert {key: video[key] for key in facts} == facts == {key: results["video"][1][key] for key in facts}
     assert video["references"][0]["sha256"] == reference
     log = entries(env.log)
     assert {"outcome": "selected", "optionId": "allow-once"} in [e.get("permission") for e in log]
-    assert next(e for e in log if e.get("args"))["args"]["duration"] == 4
+    assert next(e for e in log if e.get("args"))["args"]["duration"] == 6
     starts = [e for e in log if e.get("cli") == "grok" and "argv" in e]
     assert all(e["isolation"] == {"GROK_DISABLE_AUTOUPDATER": "true", "GROK_MEMORY": "false", "GROK_SUBAGENTS": "0"}
                for e in starts)
@@ -744,3 +753,186 @@ def test_codex_image_attaches_reference_images(env, capsys, monkeypatch):
                     encoding="utf-8")
     code, batch, err = run(capsys, "batch", "jobs.json", "--allow-duplicate")
     assert code == 0 and batch["consent"][0]["action"] == "send", err
+
+
+# --------------------------------------------------------------------------- the run folder (live run 2026-10-06)
+
+def _windows_dacl(path: Path) -> str:
+    """The DACL of ``path`` as SDDL text, read with the Win32 API (Windows only)."""
+    import ctypes
+    from ctypes import wintypes
+
+    advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    get_info = advapi32.GetNamedSecurityInfoW
+    get_info.argtypes = [wintypes.LPCWSTR, ctypes.c_int, wintypes.DWORD, ctypes.c_void_p, ctypes.c_void_p,
+                         ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+    get_info.restype = wintypes.DWORD
+    to_text = advapi32.ConvertSecurityDescriptorToStringSecurityDescriptorW
+    to_text.argtypes = [ctypes.c_void_p, wintypes.DWORD, wintypes.DWORD, ctypes.POINTER(ctypes.c_void_p),
+                        ctypes.c_void_p]
+    to_text.restype = wintypes.BOOL
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    kernel32.LocalFree.restype = ctypes.c_void_p
+    file_object, dacl_only, sddl_revision = 1, 4, 1
+    descriptor, text = ctypes.c_void_p(), ctypes.c_void_p()
+    assert get_info(str(path), file_object, dacl_only, None, None, None, None, ctypes.byref(descriptor)) == 0
+    try:
+        assert to_text(descriptor, sddl_revision, dacl_only, ctypes.byref(text), None), ctypes.get_last_error()
+        try:
+            return ctypes.wstring_at(text.value)
+        finally:
+            kernel32.LocalFree(text)
+    finally:
+        kernel32.LocalFree(descriptor)
+
+
+def test_codex_run_folder_lets_the_cli_sandbox_read_the_references(env, capsys, monkeypatch):
+    """Live run 2026-10-06 (Windows, Python 3.13): the run folder came from tempfile.mkdtemp, which since Python
+    3.12.4 gets an owner-only ACL that inherits nothing, so Codex's sandbox (other local users, group
+    CodexSandboxUsers) could not read the attached references and every master-still edit failed with
+    ARTIFACT_MISSING. The run folder is now a plain new folder in the temporary folder: on Windows it and the
+    reference copies inherit the temporary folder's ACL, which the Codex sandbox setup extends to its group (a
+    grant to BUILTIN\\Users stands in for it here). Elsewhere the CLIs run as the user: the folder stays 0o700."""
+    base = env.tmp / "system-temp"
+    base.mkdir()
+    if os.name == "nt":
+        granted = subprocess.run(["icacls", str(base), "/grant", "*S-1-5-32-545:(OI)(CI)(RX)"], capture_output=True,
+                                 stdin=subprocess.DEVNULL, timeout=60, creationflags=forge_doctor.NO_WINDOW)
+        assert granted.returncode == 0, granted.stdout + granted.stderr
+    monkeypatch.setattr(tempfile, "tempdir", str(base))  # tempfile.gettempdir(): the system temporary folder
+    seen = {}
+    drive = cli_media.DRIVERS["codex-cli"]
+
+    def spy(cli, req, run_dir, state, persist, deadline):
+        """What the CLI finds when it starts: the run folder and the reference copies in it."""
+        found = [run_dir, *sorted(run_dir.iterdir())]
+        seen.update(run_dir=run_dir, names=[p.name for p in found[1:]],
+                    access={p.name: _windows_dacl(p) if os.name == "nt" else stat.S_IMODE(p.stat().st_mode)
+                            for p in found})
+        return drive(cli, req, run_dir, state, persist, deadline)
+
+    monkeypatch.setitem(cli_media.DRIVERS, "codex-cli", spy)
+    code, summary, err = run(capsys, *image_args("out/master"), "--reference", "ref.png", "--execute")
+    assert code == 0, err
+    run_dir = seen["run_dir"]
+    assert run_dir.parent == base and run_dir.name.startswith("forge-cli-") and seen["names"] == ["reference-1.png"]
+    assert not run_dir.exists()  # removed after the run
+    record, = run_records(env.project)
+    assert record["cliRun"]["cwd"] == f"<tmp>/{run_dir.name}"
+    if os.name == "nt":
+        for name, dacl in seen["access"].items():
+            assert not dacl.startswith("D:P"), (name, dacl)  # a protected DACL would inherit nothing
+            assert ";BU)" in dacl, (name, dacl)  # the group granted on the temporary folder can read it
+    else:
+        assert seen["access"][run_dir.name] == 0o700
+
+
+def test_codex_without_an_image_says_what_codex_answered(env, capsys, monkeypatch):
+    """The live symptom: Codex ended its turn without an image and the error said only ARTIFACT_MISSING. Its own
+    answer now comes with the error, scrubbed (the home folder is masked)."""
+    monkeypatch.setenv("FAKE_CLI_MODE", "access_denied")
+    code, _, err = run(capsys, *image_args("out/master"), "--reference", "ref.png", "--execute")
+    assert code == 1 and "ARTIFACT_MISSING: the Codex thread folder holds no image; Codex answered:" in err
+    assert "reference-1.png: access denied (os error 5)" in err and str(Path.home()) not in err
+    record, = run_records(env.project)
+    assert record["error"]["code"] == "ARTIFACT_MISSING" and "os error 5" in record["error"]["message"]
+    assert str(Path.home()) not in record["error"]["message"] and len(record["error"]["message"]) <= 300
+    assert ledger_states(env.project) == ["failed"] and not (env.project / "out" / "master").exists()
+    assert_media(record, "job_v2")
+
+
+def test_a_run_folder_that_cannot_be_made_sends_nothing(env, capsys, monkeypatch):
+    def refuse(run_id, base=None):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(cli_media, "make_run_dir", refuse)
+    code, _, err = run(capsys, *image_args(), "--execute")
+    assert code == 1 and "SPAWN_FAILED" in err and "nothing was sent" in err
+    assert not generations(env.log) and ledger_states(env.project) == ["not_sent"]
+
+
+def test_run_folders_are_new_unique_and_private_where_the_cli_runs_as_the_user(tmp_path):
+    first, second = (cli_media.make_run_dir("ab" * 16, tmp_path) for _ in range(2))
+    assert first != second and first.parent == second.parent == tmp_path
+    for folder in (first, second):
+        assert folder.is_dir() and not any(folder.iterdir()) and folder.name.startswith("forge-cli-abababababab-")
+    if os.name != "nt":
+        assert stat.S_IMODE(first.stat().st_mode) == 0o700
+
+
+# --------------------------------------------------------------------------- Grok renders 6 or 10 s (2026-10-06)
+
+@pytest.mark.parametrize("asked, used", [(1, 6), (4, 6), (6, 6), (7, 6), (8, 10), (9, 10), (10, 10), (15, 10)])
+def test_video_duration_snaps_to_what_grok_renders(asked, used):
+    assert cli_media.video_duration(asked) == used  # a tie (8 s) takes the longer length, as the API routes do
+
+
+def test_acp_video_duration_is_snapped_in_the_plan_and_the_batch(env, capsys):
+    """Grok's image_to_video takes 6 or 10 s only; a 4 s request failed as a bare GENERATION_FAILED. The plan says
+    what is asked for and what is sent; lengths that snap alike are the same request."""
+    video = ["video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt"]
+    code, plan, err = run(capsys, *video, "--duration", "9", "--output-dir", "out/a")
+    assert code == 0, err
+    assert (plan["durationRequested"], plan["durationUsed"], plan["lastFrameUsed"]) == (9, 10, False)
+    assert plan["notes"] == [cli_media.duration_note(9, 10)]
+    assert "renders 10 s, the nearest length it takes (6 or 10 s) to the 9 s asked for" in plan["notes"][0]
+    fingerprints = {run(capsys, *video, "--duration", str(asked), "--output-dir", "out/a")[1]["fingerprint"]
+                    for asked in (4, 5, 6)}
+    assert len(fingerprints) == 1  # all three send image_to_video duration 6
+    (env.project / "jobs.json").write_text(json.dumps({"jobs": [
+        {"id": "walk", "command": "video", "route": "grok-acp", "prompt_file": "prompt.txt", "reference": "ref.png",
+         "duration": 3, "output_dir": "out/walk"}]}), encoding="utf-8")
+    code, batch, err = run(capsys, "batch", "jobs.json")
+    assert code == 0 and batch["consent"][0]["notes"] == [cli_media.duration_note(3, 6)], err
+    assert not env.log.exists()
+
+
+def test_video_arguments_are_checked_before_anything_is_sent(env, capsys):
+    """A Request built by other code is validated too, before the ledger, the CLI or its --version are touched."""
+    args = cli_media.build_parser().parse_args(["video", "--route", "grok-acp", "--reference", "ref.png",
+                                               "--prompt-file", "prompt.txt", "--output-dir", "out/v", "--execute"])
+    req = cli_media.build_request(args)
+    assert (req.duration, req.duration_requested) == (6, 6)
+    for field, value, message in (("duration", 4, "6 or 10 s, not 4 s"), ("resolution", "1080p", "480p or 720p")):
+        broken = cli_media.Request(**{**vars(req), field: value})
+        with pytest.raises(cli_media.CliMediaError) as refused:
+            cli_media.execute(broken, env.fake("grok"), args)
+        assert refused.value.code == "INVALID_REQUEST" and message in str(refused.value)
+    assert not env.log.exists() and not (env.project / ".forge").exists()
+
+
+def test_acp_tool_failure_names_the_provider_reason(env, capsys, monkeypatch):
+    """Grok ends its turn normally (end_turn) after a refused image_to_video call; the reason was only in its session
+    log. The error now carries the failed call's own message. This fake Grok takes 5 or 8 s, as a later Grok might."""
+    monkeypatch.setenv("FAKE_GROK_DURATIONS", "5,8")
+    code, _, err = run(capsys, "video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt",
+                       "--duration", "4", "--output-dir", "out/clip", "--execute")
+    reason = ("image_to_video reported a failure: `duration` must be either 5 or 8 seconds. Got 6. "
+              "(stop reason end_turn)")
+    assert code == 1 and f"GENERATION_FAILED: {reason} (run " in err
+    record, = run_records(env.project)
+    assert record["error"] == {"code": "GENERATION_FAILED", "message": reason}
+    assert (record["durationRequested"], record["durationUsed"], record["options"]["duration"]) == (4, 6, 6)
+    assert ledger_states(env.project) == ["failed"] and not (env.project / "out" / "clip").exists()
+    assert_media(record, "job_v2")
+
+
+def test_acp_tool_failure_reason_is_classified_and_scrubbed(env, capsys, monkeypatch):
+    """The provider's text is classified (moderation here) and never leaks a key, a URL, the home folder or the
+    account's e-mail address."""
+    for name, value in CANARIES.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("FAKE_TOOL_ERROR", f"blocked by content moderation for player.one@example.com; appeal at "
+                                          f"https://grok.example/a?sig=abc for {Path.home() / 'art' / 'ref.png'} "
+                                          f"(key {CANARIES['XAI_API_KEY']})")
+    (env.project / "prompt.txt").write_text("A slime idles. [[fake:tool_error]]", encoding="utf-8")
+    code, _, err = run(capsys, "video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt",
+                       "--output-dir", "out/clip", "--execute")
+    assert code == 1 and "MODERATION: image_to_video reported a failure: blocked by content moderation" in err
+    record, = run_records(env.project)
+    for text in (err, record["error"]["message"]):
+        assert "[url]" in text and "[redacted]" in text and "[email]" in text and "ref.png" in text
+        assert "grok.example" not in text and "player.one" not in text and str(Path.home()) not in text
+        assert not any(secret in text for secret in CANARIES.values())
+    assert record["error"]["code"] == "MODERATION" and ledger_states(env.project) == ["failed"]

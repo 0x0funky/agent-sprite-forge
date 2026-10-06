@@ -10,6 +10,11 @@ Speaks the subset of `grok` that cli_media.py and forge_doctor.py use:
 The behaviour comes from a marker in the prompt, [[fake:MODE]], or else from FAKE_CLI_MODE
 (default success). Outputs go to $GROK_HOME/sessions/<url-encoded cwd>/<session>/{images,videos}/
 as Grok does. Every invocation and every JSON-RPC method received is appended to FAKE_CLI_LOG.
+
+Like Grok Build 1.0.40, image_to_video renders 6 or 10 s only (FAKE_GROK_DURATIONS, a comma list,
+changes that): another duration is allowed, then fails as a tool call ("Tool `image_to_video`
+failed: ...") and the turn ends normally. Mode tool_error fails the allowed call with the text of
+FAKE_TOOL_ERROR.
 """
 import json
 import os
@@ -156,6 +161,20 @@ class Acp:
         log(cli="grok-acp", permission=outcome)
         if outcome.get("optionId") != "allow-once":
             emit({"jsonrpc": "2.0", "id": message["id"], "result": {"stopReason": "cancelled"}})
+            return
+        allowed = [int(v) for v in os.environ.get("FAKE_GROK_DURATIONS", "6,10").split(",")]
+        problem = os.environ.get("FAKE_TOOL_ERROR", "the tool failed") if mode == "tool_error" else None
+        if args["duration"] not in allowed:
+            problem = (f"`duration` must be either {' or '.join(map(str, allowed))} seconds. "
+                       f"Got {args['duration']}.")
+        if problem is not None:  # as Grok 1.0.40 reports a refused call (its session log, updates.jsonl)
+            self.notify({"sessionUpdate": "tool_call_update", "toolCallId": "call-1", "status": "failed",
+                         "content": [{"type": "content", "content": {
+                             "type": "text", "text": f"Tool `image_to_video` failed: {problem}"}}],
+                         "rawOutput": {"error": "tool_execution_failed", "message": problem}})
+            self.notify({"sessionUpdate": "agent_message_chunk", "content": {
+                "type": "text", "text": f"`image_to_video` rejected the call: {problem} Stopped without retrying."}})
+            emit({"jsonrpc": "2.0", "id": message["id"], "result": {"stopReason": "end_turn"}})
             return
         target = session_folder(self.cwd, self.session, "videos") / "1.mp4"
         target.write_bytes(MP4)

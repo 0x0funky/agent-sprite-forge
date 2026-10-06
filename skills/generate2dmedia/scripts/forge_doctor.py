@@ -1207,9 +1207,9 @@ def verification_argv(route: str, project: Path, work: Path) -> list[str]:
     prompt = work / "verify-prompt.txt"
     common = ["--output-dir", str(output), "--project-dir", str(project), "--purpose", "route verification",
               "--verification", "--allow-duplicate"]
-    if route == "grok-acp":
+    if route == "grok-acp":  # 6 s: Grok's image_to_video renders 6 or 10 s only
         return ["video", "--route", route, "--prompt-file", str(prompt), "--reference", str(work / "verify-reference.png"),
-                "--duration", "2", "--resolution", "480p", *common]
+                "--duration", "6", "--resolution", "480p", *common]
     return ["image", "--route", route, "--prompt-file", str(prompt), *common]
 
 

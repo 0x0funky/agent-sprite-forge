@@ -10,6 +10,7 @@ subscription quota, never an API key) and records it as a quota call in
   image --route grok-cli    Grok (local CLI), one-shot mode: native image_gen
   edit  --route grok-cli    Grok (local CLI), one-shot mode: native image_edit of one reference image
   video --route grok-acp    Grok (local CLI), ACP mode (grok agent stdio): native image_to_video of one reference
+                            (6 or 10 s: --duration is snapped to the nearer; no last frame)
   --route auto              the first of these, in that order, that forge_doctor would call VERIFIED for the
                             installed CLI version
 
@@ -21,8 +22,10 @@ the ledger.
 
 Without --execute nothing is spawned or written: the plan (consent, caps, the
 exact CLI arguments) is printed. With --execute the CLI runs in a fresh
-temporary folder with web, shell, plugins, MCP and sub-agents disabled and API
-keys removed from its environment. Any other tool call, a second media call,
+temporary folder (a plain new folder that inherits the temporary folder's
+permissions, so Codex's Windows sandbox can read the attached references) with
+web, shell, plugins, MCP and sub-agents disabled and API keys removed from its
+environment. Any other tool call, a second media call,
 mismatched tool arguments, too much output or the timeout kills it. The run id
 is saved in <project>/.forge/cli-runs/<run>.json before and while the CLI runs.
 The artifact is taken only from the CLI's own output folder for that run (no
@@ -91,6 +94,10 @@ STDERR_TAIL = 16 * 1024
 TEXT_LIMIT = 20000
 FRESH_SLACK_S = 5.0
 VIDEO_RESOLUTIONS = ("480p", "720p")
+# Grok's image_to_video renders 6 or 10 s only (its tool schema; Grok Build 1.0.40 answers any other length
+# with a failed tool call). A request may ask for 1..15 s: it is snapped to the nearer length before sending.
+VIDEO_DURATIONS = (6, 10)
+DURATION_RANGE = (1, 15)
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 RUN_ID = re.compile(r"[0-9a-f]{32}")
 CLI_ID = re.compile(r"[0-9A-Za-z][0-9A-Za-z_-]{7,79}")
@@ -152,6 +159,8 @@ MODERATION_RE = re.compile(r"(?i)moderation|content.?policy|safety system|flagge
 _SCRUB = ((re.compile(r"(?i)\b(?:https?|wss?)://\S+"), "[url]"),
           (re.compile(r"(?i)\b(?:sk|xai|rk)-[A-Za-z0-9*._-]{4,}|\bbearer\s+\S+"), "[redacted]"),
           (re.compile(r"[A-Za-z0-9+=_-]{40,}"), "[blob]"))
+# A provider's or agent's own words (_said) may also name the signed-in account.
+EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 
 
 class CliMediaError(Exception):
@@ -177,7 +186,7 @@ class Request:
     capability: forge_doctor.Capability
     prompt: str
     references: list            # [(meta, bytes)]: the video input, the edit reference or the attached images
-    duration: int | None
+    duration: int | None        # video: the length sent to image_to_video (VIDEO_DURATIONS)
     resolution: str | None
     output_dir: Path
     project: Path
@@ -187,6 +196,7 @@ class Request:
     session: dict | None = None       # media_ledger.session_limits(): the local routes' session cap (D22)
     verification: bool = False        # forge_doctor --verify-route: the CLI version joins the fingerprint (D23)
     route_choice: dict | None = None  # how --route auto chose the route
+    duration_requested: int | None = None  # video: the length asked for, before snapping (None: as sent)
 
     @property
     def kind(self) -> str:
@@ -210,6 +220,7 @@ class RunState:
     final_text: str = ""
     exposed: bool = False
     tool_failed: bool = False
+    tool_error: str | None = None  # the reason a failed tool call gave, scrubbed
     cli_ms: int | None = None
 
 
@@ -258,6 +269,28 @@ def _failure_message(code: str, cli: str, text: str = "") -> str:
         return known[code]
     tail = " ".join(line.strip() for line in text.strip().splitlines()[-3:])
     return f"the {CLI_NAME[cli]} exited with an error" + (f" ({scrub(tail, 160)})" if tail else "")
+
+
+def _said(text: str, limit: int = 200) -> str:
+    """The end of what a CLI or its agent said, as one scrubbed line without e-mail addresses. It is scrubbed
+    before it is cut, so a secret, a URL or the home folder is never split past recognition."""
+    cleaned = EMAIL.sub("[email]", scrub(text, TEXT_LIMIT))
+    return cleaned if len(cleaned) <= limit else "..." + cleaned[-(limit - 3):]
+
+
+def _tool_failure(update: dict) -> str | None:
+    """The reason a failed ACP tool call gives, scrubbed: Grok sends rawOutput {"error": "tool_execution_failed",
+    "message": ...} and the same text as content; None when it gives none."""
+    output = update.get("rawOutput")
+    texts = [output.get("message")] if isinstance(output, dict) else []
+    content = update.get("content") if isinstance(update.get("content"), list) else []
+    for item in content:
+        block = item.get("content") if isinstance(item, dict) else None
+        if isinstance(block, dict) and block.get("type") == "text":
+            texts.append(block.get("text"))
+    texts.append(output.get("error") if isinstance(output, dict) else output)
+    text = next((t for t in texts if isinstance(t, str) and t.strip()), None)
+    return _said(text) if text else None
 
 
 def _json_object(text: str) -> dict | None:
@@ -466,6 +499,30 @@ def _write_json_atomic(path: Path, data: dict) -> None:
 
 
 # --------------------------------------------------------------------------- CLI child process
+
+def make_run_dir(run_id: str, base: Path | None = None) -> Path:
+    """A new, uniquely named folder for one CLI run, ``<base>/forge-cli-<run>-<random>`` (default base: the
+    system temporary folder, TMPDIR / TEMP / TMP); execute() removes it after the run.
+
+    It is a plain mkdir, never tempfile.mkdtemp. Since Python 3.12.4, mkdtemp on Windows gives the folder
+    an owner-only ACL that inherits nothing from its parent (CVE-2024-4030), and Codex's sandbox runs as
+    other local users (group CodexSandboxUsers): it could not read the reference images attached to
+    codex exec, so every master-still edit failed with ARTIFACT_MISSING. A plain folder inherits its
+    parent's ACL, and the Codex sandbox setup grants its group read access to the temporary folder. On
+    macOS and Linux the CLIs and their sandboxes run as the user, so the folder stays private (0o700)."""
+    base = Path(os.path.abspath(tempfile.gettempdir() if base is None else base))
+    for _ in range(100):
+        path = base / f"forge-cli-{run_id[:12]}-{uuid.uuid4().hex[:8]}"
+        try:
+            if os.name == "nt":
+                os.mkdir(path)  # no mode: a mode of 0o700 would apply the owner-only ACL again
+            else:
+                os.mkdir(path, 0o700)
+        except FileExistsError:
+            continue
+        return path
+    raise FileExistsError(errno.EEXIST, "no free run folder name", str(base))
+
 
 class _Child:
     """A CLI child in its own process group: line-parsed, bounded stdout; a stderr tail;
@@ -914,6 +971,7 @@ def drive_grok_video(cli: RouteCli, req: Request, run_dir: Path, state: RunState
             persist(sourceRel=_grok_relative(output["path"]))
         elif item.get("status") == "failed":
             state.tool_failed = True
+            state.tool_error = _tool_failure(item) or state.tool_error
 
     def permission(message: dict) -> None:
         params = message.get("params") if isinstance(message.get("params"), dict) else {}
@@ -999,11 +1057,15 @@ def drive_grok_video(cli: RouteCli, req: Request, run_dir: Path, state: RunState
         child.raise_failure()
     state.cli_ms = child.elapsed_ms
     if state.source is None:
-        failure = classify_failure(state.final_text, "GENERATION_FAILED")
-        reason = result.get("stopReason")
+        # The provider's own reason (the failed tool call's message, else the agent's last words) is the
+        # only clue: Grok ends the turn normally (end_turn) after a refused call.
+        failure = classify_failure("\n".join(t for t in (state.tool_error, state.final_text) if t), "GENERATION_FAILED")
+        said = state.tool_error or (_said(state.final_text) if state.final_text.strip() else None)
+        stop = result.get("stopReason")
         raise CliMediaError(failure, ("image_to_video reported a failure" if state.tool_failed
                                       else "image_to_video did not complete with a video")
-                            + (f" (stop reason {scrub(reason, 40)})" if isinstance(reason, str) else ""))
+                            + (f": {said}" if said else "")
+                            + (f" (stop reason {scrub(stop, 40)})" if isinstance(stop, str) else ""))
 
 
 DRIVERS = {"codex-cli": drive_codex, "grok-cli": drive_grok_image, "grok-acp": drive_grok_video}
@@ -1154,6 +1216,30 @@ def load_prompt(path: Path) -> str:
     return prompt
 
 
+def video_duration(seconds: int) -> int:
+    """The image_to_video length nearest to ``seconds`` (a tie takes the longer one, as the API routes'
+    media_providers.snap_duration does)."""
+    return min(VIDEO_DURATIONS, key=lambda value: (abs(value - seconds), -value))
+
+
+def duration_note(requested: int, used: int) -> str:
+    return (f"Grok (local CLI) image_to_video renders {used} s, the nearest length it takes "
+            f"({' or '.join(map(str, VIDEO_DURATIONS))} s) to the {requested} s asked for")
+
+
+def check_video(req: Request) -> None:
+    """Validate what image_to_video will be sent, before anything is reserved or started: Grok answers a
+    length or resolution it does not take with a failed tool call, after the quota call has begun."""
+    if req.verb != "video":
+        return
+    if req.duration not in VIDEO_DURATIONS:
+        raise CliMediaError("INVALID_REQUEST", f"Grok (local CLI) image_to_video renders "
+                            f"{' or '.join(map(str, VIDEO_DURATIONS))} s, not {req.duration} s")
+    if req.resolution not in VIDEO_RESOLUTIONS:
+        raise CliMediaError("INVALID_REQUEST", f"Grok (local CLI) image_to_video renders "
+                            f"{' or '.join(VIDEO_RESOLUTIONS)}, not {scrub(req.resolution, 20)}")
+
+
 def session_limits(args: argparse.Namespace) -> dict:
     """The local routes' session cap from --session-* or FORGE_SESSION_* (media_ledger.session_limits)."""
     try:
@@ -1178,11 +1264,12 @@ def build_request(args: argparse.Namespace, chooser: RouteChooser | None = None)
                                 "use edit --route grok-cli for one, or --route codex-cli")
         if len(paths) > MAX_IMAGE_REFERENCES:
             raise CliMediaError("INVALID_REQUEST", f"at most {MAX_IMAGE_REFERENCES} reference images")
-    duration = resolution = None
+    duration = resolution = requested = None
     if args.command == "video":
-        duration, resolution = args.duration, args.resolution
-        if not 1 <= duration <= 15:
+        requested, resolution = args.duration, args.resolution
+        if not DURATION_RANGE[0] <= requested <= DURATION_RANGE[1]:
             raise CliMediaError("INVALID_REQUEST", "--duration must be 1..15 seconds")
+        duration = video_duration(requested)
     timeout = DEFAULT_TIMEOUT[args.command] if args.timeout is None else float(args.timeout)
     if not TIMEOUT_RANGE[0] <= timeout <= TIMEOUT_RANGE[1]:
         raise CliMediaError("INVALID_REQUEST", "--timeout must be within 1..1800 seconds")
@@ -1203,9 +1290,11 @@ def build_request(args: argparse.Namespace, chooser: RouteChooser | None = None)
         chooser = chooser or RouteChooser(project, probe=bool(getattr(args, "execute", False)))
         choice = chooser.choose(args.command, len(references))
         route = choice["route"]
-    return Request(args.command, route, capability_for(route, args.command), prompt, references, duration,
-                   resolution, output, project, timeout, args.purpose, args.max_calls, session,
-                   bool(getattr(args, "verification", False)), choice)
+    req = Request(args.command, route, capability_for(route, args.command), prompt, references, duration,
+                  resolution, output, project, timeout, args.purpose, args.max_calls, session,
+                  bool(getattr(args, "verification", False)), choice, requested)
+    check_video(req)
+    return req
 
 
 def base_job(req: Request, version: str | None = None) -> dict:
@@ -1237,9 +1326,21 @@ def base_job(req: Request, version: str | None = None) -> dict:
         del job["references"]
     if req.kind == "image":
         job["artSource"] = "host_image"
+    else:
+        job.update(video_facts(req))
     if req.route_choice is not None:
         job["routeChoice"] = req.route_choice
     return job
+
+
+def video_facts(req: Request) -> dict:
+    """What a video request asked for and what image_to_video gets (options.duration, the fingerprint's, is
+    the length used). Grok's image_to_video takes the first frame only: a last frame is never used."""
+    requested = req.duration if req.duration_requested is None else req.duration_requested
+    facts = {"durationRequested": requested, "durationUsed": req.duration, "lastFrameUsed": False}
+    if requested != req.duration:
+        facts["notes"] = [duration_note(requested, req.duration)]
+    return facts
 
 
 def _proof_state(req: Request, version: str | None) -> dict:
@@ -1299,6 +1400,8 @@ def dry_run(req: Request, cli: RouteCli) -> dict:
             "ledger": {"path": ledger.path.as_posix(), "calls": totals["calls"], "quotaCalls": totals["quotaCalls"],
                        "session": _session_view(usage, limits)},
             "warnings": warnings}
+    if req.kind == "video":
+        plan.update(video_facts(req))
     if req.route_choice is not None:
         plan["routeChoice"] = req.route_choice
     return plan
@@ -1409,6 +1512,7 @@ def publish(output: Path, prompt: str | None, data: bytes, meta: dict, job: dict
 
 def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
     """Reserve, run the CLI, adopt and publish; every outcome is committed and recorded."""
+    check_video(req)  # also for a Request built without build_request: nothing is reserved or sent
     if cli.info.path is None or not cli.prefix:
         raise CliMediaError("NOT_INSTALLED", f"the {CLI_NAME[req.capability.cli]} {cli.info.problem or 'is not installed'}")
     if req.route == "grok-acp" and not PROFILE.is_file():
@@ -1441,7 +1545,13 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
         raise CliMediaError("LEDGER", f"the ledger could not be used ({scrub(exc, 120)}); nothing was run") from None
     run_id = uuid.uuid4().hex
     started = datetime.now(timezone.utc)
-    run_dir = Path(tempfile.mkdtemp(prefix=f"forge-cli-{run_id[:12]}-"))
+    try:
+        run_dir = make_run_dir(run_id)
+    except OSError as exc:
+        with contextlib.suppress(media_ledger.LedgerError, OSError):
+            ledger.commit(reservation, status="not_sent")
+        raise CliMediaError("SPAWN_FAILED", f"the CLI's run folder could not be created ({type(exc).__name__}); "
+                            "nothing was sent") from None
     job.update(execution="execute", status="submitting", outputDir=_portable(req.output_dir, req.project / RUNS_DIR),
                receipt={"startedAt": utc_timestamp(started), "submittedAt": None, "completedAt": None, "wallMs": None,
                         "providerMs": None, "attempt": attempt, "purpose": req.purpose, "toolVersion": TOOL,
@@ -1473,7 +1583,14 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
         names_file = None
         if req.route == "codex-cli":
             state.exposed = state.exposed or bool(codex_candidates(state.cli_id)[1])  # an image appeared
-            data, meta = locate_codex(state.cli_id, wall_start)
+            try:
+                data, meta = locate_codex(state.cli_id, wall_start)
+            except CliMediaError as exc:
+                if exc.code != "ARTIFACT_MISSING" or not state.final_text.strip():
+                    raise
+                # No image: Codex's own answer is the only clue (for example a sandbox that could not read
+                # an attached reference).
+                raise CliMediaError(exc.code, f"{exc}; Codex answered: {_said(state.final_text)}") from None
             names_file = _final_text_check(state.final_text, meta)
         else:
             data, meta = locate_grok(state.source, state.cli_id, "videos" if req.kind == "video" else "images",
@@ -1523,6 +1640,8 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
               "output": str(req.output_dir), "artifact": str(req.output_dir / ("generated" + meta["ext"])),
               "metadata": str(req.output_dir / "job.json"), "sha256": meta["sha256"],
               "runRecord": record.path.as_posix(), "version": version, "verifiedBefore": bool(proof["verified"])}
+    if req.kind == "video":
+        result.update(video_facts(req))
     if req.route_choice is not None:
         result["routeChoice"] = req.route_choice
     return result
@@ -1817,7 +1936,8 @@ def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
                 plan = dry_run(req, clis[req.capability.cli])
                 sends[media_ledger.session_kind(req.kind)] += 1
                 rows.append({"id": job_id, "action": "send", "route": req.route, "tool": req.capability.tool,
-                             "calls": 1, "consent": "quota", "verified": plan["cli"]["verified"], "warnings": plan["warnings"]})
+                             "calls": 1, "consent": "quota", "verified": plan["cli"]["verified"],
+                             "warnings": plan["warnings"], **({"notes": plan["notes"]} if plan.get("notes") else {})})
         limits = session_limits(args)
         usage = media_ledger.Ledger(Path(args.project_dir)).session_usage(limits["hours"])
         warnings = [f"the session cap stops the batch after {max(0, limits[kind] - usage[kind])} more local CLI "
@@ -1899,7 +2019,9 @@ def _add_request_options(command: argparse.ArgumentParser, verb: str) -> None:
                                   f"{MAX_IMAGE_REFERENCES}, in the order the prompt names them)")
     command.add_argument("--output-dir", required=True, help="new folder for generated.<ext>, job.json and prompt.txt")
     if verb == "video":
-        command.add_argument("--duration", type=int, default=6, help="seconds, 1..15 (default 6)")
+        command.add_argument("--duration", type=int, default=6,
+                             help="seconds, 1..15 (default 6); Grok renders 6 or 10 s, so it is snapped to the nearer "
+                                  "one (the result and job.json say durationRequested and durationUsed)")
         command.add_argument("--resolution", choices=VIDEO_RESOLUTIONS, default="720p")
     command.add_argument("--execute", action="store_true", help="run the CLI once (one quota call); default is a dry run")
     command.add_argument("--timeout", type=float, help=f"seconds before the CLI is stopped (default {DEFAULT_TIMEOUT[verb]:g}, "

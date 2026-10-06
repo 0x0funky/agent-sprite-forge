@@ -108,6 +108,7 @@ def test_seedance_hero_follows_the_input_and_short_takes_are_snapped(project, ht
     body = http.calls("POST")[0].json()
     assert (body["model"], body["ratio"], body["duration"]) == ("dreamina-seedance-2-5-260628", "adaptive", 4)
     assert result["duration"] == 4 and any("renders 4 s" in note for note in result["notes"])
+    assert (result["durationRequested"], result["durationUsed"]) == (2, 4)  # Seedance's own 4..15 s, not Grok's 6 or 10
     assert [item["role"] for item in body["content"][1:]] == ["first_frame"]
 
 

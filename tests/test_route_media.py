@@ -76,7 +76,7 @@ def env(tmp_path, monkeypatch):
     """A project as cwd, an empty user config folder, no keys, no caps, no real CLI."""
     for name in (*media_config.KEY_VARIABLES, "CODEX_API_KEY", media_ledger.MAX_PAID_ENV, route_media.FAKE_ENV,
                  "FAKE_CLI_MODE", "FAKE_THREAD_ID", "FAKE_SESSION_ID", "FAKE_CODEX_VERSION", "FAKE_GROK_VERSION",
-                 *media_ledger.SESSION_ENV.values()):
+                 "FAKE_GROK_DURATIONS", "FAKE_TOOL_ERROR", *media_ledger.SESSION_ENV.values()):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
@@ -327,6 +327,8 @@ def test_dry_run_sends_and_writes_nothing(env, capsys, monkeypatch):
     assert code == 0, err
     assert plan["status"] == "dry-run" and plan["route"] == "api:xai" and plan["estimateUsd"] == pytest.approx(0.57)
     assert "output_second" in plan["estimate"]
+    # The API keeps its own lengths (capabilities.json: xAI 1..15 s); only Grok (local CLI) is held to 6 or 10 s.
+    assert (plan["durationRequested"], plan["durationUsed"]) == (4, 4) and "duration" not in plan
     assert sorted(p.name for p in env.project.iterdir()) == ["first.png", "peer.png", "prompt.txt"]
 
 
@@ -385,14 +387,39 @@ def test_local_fallthrough_and_no_route_for_video(env, capsys, monkeypatch, tmp_
 
 
 def test_local_video_through_grok_acp(env, capsys):
+    """Grok (local CLI) takes the first frame only and renders 6 or 10 s (live run 2026-10-06: a 4 s request failed
+    as GENERATION_FAILED): the result says lastFrameUsed false, durationRequested and durationUsed, with notes."""
     env.installed["grok"] = True
     code, result, err = run(capsys, "video", "--prompt-file", "prompt.txt", "--reference", "first.png", "--last-frame",
                             "first.png", "--duration", "4", "--resolution", "480p", "--out-dir", "out/run")
     assert code == 0, err
     assert result["route"] == "local:grok-acp" and result["lastFrameUsed"] is False
-    assert "first frame only" in result["notes"][0] and Path(result["artifact"]).name == "generated.mp4"
+    assert (result["durationRequested"], result["durationUsed"], result["duration"]) == (4, 6, 6)
+    assert result["notes"] == [cli_media.duration_note(4, 6), "the last frame is not pinned: Grok (local CLI) "
+                               "image_to_video takes the first frame only"]
+    assert Path(result["artifact"]).name == "generated.mp4"
     args = next(e for e in fake_log(env.log) if e.get("args"))["args"]
-    assert args["duration"] == 4 and args["resolution_name"] == "480p"
+    assert args["duration"] == 6 and args["resolution_name"] == "480p"
+    job = json.loads(Path(result["job"]).read_text(encoding="utf-8"))
+    assert_valid_contract(job, "media", "job_v2", skill="generate2dmedia")
+    assert (job["options"]["duration"], job["durationRequested"], job["durationUsed"], job["lastFrameUsed"]) == (
+        6, 4, 6, False)
+    code, plan, err = run(capsys, "video", "--prompt-file", "prompt.txt", "--reference", "first.png", "--duration", "8",
+                          "--out-dir", "out/plan", "--dry-run")
+    assert code == 0 and plan["status"] == "dry-run" and plan["lastFrameUsed"] is False, err
+    assert (plan["durationRequested"], plan["durationUsed"], plan["notes"]) == (8, 10, [cli_media.duration_note(8, 10)])
+
+
+def test_local_video_failure_names_the_provider_reason(env, capsys, monkeypatch):
+    """A refused image_to_video call surfaces Grok's own reason in the error line, not a bare GENERATION_FAILED."""
+    env.installed["grok"] = True
+    monkeypatch.setenv("FAKE_GROK_DURATIONS", "5,8")  # a Grok that changed the lengths it renders
+    code, result, err = run(capsys, "video", "--prompt-file", "prompt.txt", "--reference", "first.png", "--out-dir",
+                            "out/run")
+    assert code == 1 and result is None
+    assert err.startswith("error: local:grok-acp: GENERATION_FAILED: image_to_video reported a failure: "
+                          "`duration` must be either 5 or 8 seconds. Got 6. (stop reason end_turn)"), err
+    assert [s["status"] for s in ledger(env.project)] == ["failed"] and not (env.project / "out" / "run").exists()
 
 
 def test_route_media_doc_matches_the_tool():

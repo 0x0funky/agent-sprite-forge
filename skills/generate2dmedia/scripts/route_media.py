@@ -17,7 +17,8 @@ user config file, see media_config.py):
   2. local: the user's own signed-in CLI through cli_media.py (subscription quota, never an API
      key). Images: Codex (codex exec image_gen, references attached), then Grok one-shot
      (image_gen, or image_edit of one reference). Video: Grok in ACP mode (image_to_video; it
-     cannot pin a last frame). The first successful run of a CLI version records its proof.
+     renders 6 or 10 s and cannot pin a last frame). The first successful run of a CLI version
+     records its proof.
   3. none: prints {"status":"no-route","fallback":"codeart2d"} and exits 3. Use codeart2d only
      then, or when the user asks for code-drawn art.
 
@@ -29,8 +30,9 @@ keeps the providers that list it), --tier draft|standard|hero picks each provide
 Every API route is gated by its model's capability record (references/capabilities.json): a route
 that cannot take the request is skipped before anything runs (too many references, a resolution it
 does not render, a first frame it refuses). A duration is snapped to the model's nearest allowed
-value; a last frame, keyframes or a transparent background the model cannot take are dropped with a
-note (the result says lastFrameUsed). Within a group, a route whose account cannot serve the request
+value (Grok (local CLI): 6 or 10 s; the result says durationRequested and durationUsed); a last
+frame, keyframes or a transparent background the model cannot take are dropped with a note (the
+result says lastFrameUsed). Within a group, a route whose account cannot serve the request
 (no key, no credit, no model access, rate limited, unreachable, not signed in, tool missing) passes
 it to the next route; any other failure stops. A refused API attempt's folder is kept beside the
 output as <out-dir>.failed-<route>.
@@ -366,6 +368,10 @@ def resolve(kind: str, route: str = "auto", *, references: int | None = None, re
                 continue
             candidate = Candidate(name, duration=wanted.duration)
             reason = unsupported_local(kind, candidate, wanted)
+            if not reason and candidate.route == "local:grok-acp":  # 6 or 10 s; cli_media.py snaps the same way
+                candidate.duration = cli_media.video_duration(wanted.duration)
+                if candidate.duration != wanted.duration:
+                    candidate.notes.append(cli_media.duration_note(wanted.duration, candidate.duration))
             if not reason and kind == "video" and wanted.last_frame is not None:
                 candidate.notes.append("the last frame is not pinned: Grok (local CLI) image_to_video takes the first "
                                        "frame only")
@@ -528,10 +534,10 @@ def run_local(candidate: Candidate, args: argparse.Namespace) -> dict:
     if args.dry_run:
         plan = cli_media.dry_run(request, cli)
         return {"estimateUsd": 0.0, "estimate": plan["estimate"]["basis"], "warnings": plan["warnings"],
-                "command": plan["command"]}
+                "command": plan["command"], "notes": plan.get("notes", [])}
     result = cli_media.execute(request, cli, job_args)
     return {"artifact": result["artifact"], "sha256": result["sha256"], "estimateUsd": 0.0, "job": result["metadata"],
-            "verifiedBefore": result["verifiedBefore"]}
+            "verifiedBefore": result["verifiedBefore"], "notes": result.get("notes", [])}
 
 
 def model_of(candidate: Candidate, args: argparse.Namespace) -> str:
@@ -596,9 +602,11 @@ def generate(args: argparse.Namespace, resolution: Resolution, transport=None) -
             result.update({k: outcome[k] for k in ("job", "verifiedBefore", "estimate", "command", "crop")
                            if k in outcome})
             if args.command == "video":
-                result["lastFrameUsed"] = candidate.pin
-                if candidate.duration and candidate.duration != args.duration:
-                    result["duration"] = candidate.duration
+                result["lastFrameUsed"] = candidate.pin  # false for Grok (local CLI): it takes the first frame only
+                used = candidate.duration or args.duration
+                result.update(durationRequested=args.duration, durationUsed=used)
+                if used != args.duration:
+                    result["duration"] = used
             notes = [*candidate.notes, *(n for n in outcome.get("notes", []) if n not in candidate.notes)]
             warnings = [*args.input_warnings, *(w for w in outcome.get("warnings", []) if w not in notes)]
             if notes:
