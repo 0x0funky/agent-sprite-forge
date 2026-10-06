@@ -1,4 +1,4 @@
 interface:
   display_name: "Video → 2D Animation"
-  short_description: "Package AI video as fixed-anchor alpha animation assets."
-  default_prompt: "Use $video2dsprite to animate approved game art: plan the key and the image-to-video input, generate through the verified Grok (local CLI) route, a consented API call or supplied footage, then key, register, loop or retime and export fixed-canvas frames, alpha video, poster and PNG fallback with engine metadata. Small pixel loops and FX stay code art (codeart2d)."
+  short_description: "One approved still in, a whole animated sprite set out."
+  default_prompt: "Use $video2dsprite to animate an approved master still: one image-to-video clip per action through route_media (the xAI API when a key is configured, else the Grok CLI) or supplied footage, then gate, key, register, loop or retime, finish HD by default and export fixed-canvas frames, alpha video, poster and PNG fallback with engine metadata."

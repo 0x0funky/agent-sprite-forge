@@ -11,8 +11,6 @@ No API credits were spent; no global skills, game deployment or wiki were modifi
 - Skill metadata and relative reference links are checked in the test suite.
 - Python compilation and the packed-alpha JavaScript module syntax check passed.
 - `git diff --check` passed.
-- Added GitHub Actions definition for Ubuntu/Python 3.11 with ffmpeg and the offline
-  suite. This workflow has not been pushed/run on GitHub in this update.
 
 Run locally:
 

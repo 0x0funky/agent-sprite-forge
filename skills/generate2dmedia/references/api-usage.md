@@ -3,19 +3,31 @@
 Requires Python 3.10+ and Pillow. HTTP uses the standard library, with no provider
 SDK dependency. Run commands from the user's project root; `<skill-dir>` is this
 skill's folder (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs and the spend ledger
-stay in the project, never in the skill folder. Every command is a dry run until
-`--execute` is added: a dry run needs no key, makes no network call and writes
-nothing. Secrets come from environment variables; this tool doesn't search the
-filesystem for credentials or automatically load `.env` files.
+stay in the project, never in the skill folder.
+
+Skills reach this adapter through [`route_media.py`](route-media.md): when a key is
+configured, the API is the first route and the configured key is the owner's
+consent, so `route_media.py` sends the request at once (it passes `--execute`).
+Run directly, `generate_media.py` keeps its dry run: every command is a dry run
+until `--execute` is added; a dry run needs no key, makes no network call and
+writes nothing.
+
+Keys come from `OPENAI_API_KEY` / `XAI_API_KEY` in the environment, else from the
+user config file (`%APPDATA%\agent-sprite-forge\config.json` on Windows,
+`~/.config/agent-sprite-forge/config.json` elsewhere; see
+[route-media.md](route-media.md)). They are read in-process and never printed,
+logged or written; this tool doesn't search the filesystem for other credentials
+or load `.env` files.
 
 Console output is one line of ASCII JSON (non-ASCII text is `\u` escaped), and errors
 are a single `error: ...` line on stderr with exit code 1, so legacy Windows code
 pages (cp1252, cp950) never turn a finished paid job into a failure.
 
-## Consent before any paid call
+## The plan of a paid call
 
-Run the command without `--execute` first. The printed plan carries everything the
-user must approve:
+Through `route_media.py` a configured key is consent and the estimate is printed with
+the result (`estimateUsd`; `--dry-run` shows the plan first). Run directly, the
+command without `--execute` prints the plan:
 
 - `consent`: `provider`, `model`, `calls` (always 1 per job) and `estimateUsd`, plus
   `apiHost`, the host that will receive the API key.
@@ -25,9 +37,9 @@ user must approve:
 - `ledger`: calls and USD already recorded in this project; `warnings`: an existing
   output folder, an identical earlier request, or a cap that `--execute` would hit.
 
-Show the user the provider, model, number of calls and the estimate (or "unpriced"),
-and add `--execute` only after they approve those items. A subscription to a host
-app is not evidence of API access or API credit.
+Report the provider, model, number of calls and the estimate (or "unpriced") with
+every result. A subscription to a host app is not evidence of API access or API
+credit.
 
 ## Images
 
@@ -94,13 +106,15 @@ names the outcome: `ok`, `not_sent`, `submit_unknown`, `auth`, `quota`,
 `rate_limit`, `moderation`, `entitlement`, `invalid_request`, `provider_error`,
 `bad_response`, `partial_artifact`, `pending_timeout`, `failed`, `expired` and others.
 
-## Spend ledger, caps and the duplicate guard
+## Spend ledger, opt-in caps and the duplicate guard
 
 Every `--execute` first appends a `reserved` line to `<project>/.forge/ledger.jsonl`
 (`--project-dir`, default: the current folder) and later commits the outcome:
 `done`, `failed`, `unknown` or `not_sent`. The file is append-only; the last line per
 `reservationId` wins. A `reserved` or `unknown` reservation keeps holding its
 estimate, so a timeout can never free budget that may have been spent.
+
+There is no cap unless the user sets one (owner decision 2026-10-06):
 
 - `--budget-usd X` refuses to send when recorded + held + this estimate exceeds X.
   An unpriced request cannot be checked against a USD budget and is refused; use
@@ -111,10 +125,11 @@ estimate, so a timeout can never free budget that may have been spent.
   command, even when a flag is forgotten. `0` blocks all paid calls.
 - Caps are cumulative over the project's ledger. To allow more, raise the cap
   consciously; never edit or delete ledger lines.
-- An identical request (same provider, endpoint, model, options, prompt hash and
-  reference hashes) that already succeeded, is still open or has an unknown outcome
-  is refused. Reuse the earlier job, or pass `--allow-duplicate` to pay again;
-  `receipt.attempt` then counts the attempts.
+- Run directly, an identical request (same provider, endpoint, model, options,
+  prompt hash and reference hashes) that already succeeded, is still open or has an
+  unknown outcome is refused. Reuse the earlier job, or pass `--allow-duplicate` to
+  pay again; `receipt.attempt` then counts the attempts. `route_media.py` passes
+  `--allow-duplicate`: its new `--out-dir` is a deliberate new take.
 
 Settle an `unknown` reservation once the provider's usage history shows the truth:
 

@@ -47,6 +47,8 @@ def env(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))  # no real user config file is ever read
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     log = tmp_path / "fake.log"
     monkeypatch.setenv("FAKE_CLI_LOG", str(log))
     project = tmp_path / "project"
@@ -535,10 +537,11 @@ def test_route_auto_skips_a_cli_that_is_not_installed(env, capsys, monkeypatch):
     assert summary["routeChoice"]["skipped"] == ["codex-cli: not found on PATH"]
 
 
-def test_session_cap_is_enforced_through_the_ledger(env, capsys, monkeypatch):
-    """D22: by default 8 images and 2 videos per 12 hours through the local routes, counted in the project's
-    ledger before anything is spawned; settable per command or by environment."""
-    assert media_ledger.SESSION_DEFAULTS == {"image": 8, "video": 2, "hours": 12.0}
+def test_session_cap_is_opt_in_and_enforced_through_the_ledger(env, capsys, monkeypatch):
+    """Owner decision 2026-10-06: no session cap by default. An opt-in cap (a flag or FORGE_SESSION_*) is counted
+    in the project's ledger before anything is spawned."""
+    assert media_ledger.SESSION_DEFAULTS == {"image": None, "video": None, "hours": 12.0}
+    assert media_ledger.session_limits() == {"image": None, "video": None, "hours": 12.0}
     for index in range(2):
         (env.project / f"p{index}.txt").write_text(f"A red apple, variant {index}.", encoding="utf-8")
         code, _, err = run(capsys, "image", "--route", "codex-cli", "--prompt-file", f"p{index}.txt", "--output-dir",
@@ -554,6 +557,13 @@ def test_session_cap_is_enforced_through_the_ledger(env, capsys, monkeypatch):
     assert len(generations(env.log)) == 2 and not (env.project / "out" / "2").exists()
     monkeypatch.setenv("FORGE_SESSION_IMAGES", "3")  # the environment raises it; the flag still wins
     assert run(capsys, *third, "--execute")[0] == 0
+    monkeypatch.delenv("FORGE_SESSION_IMAGES")  # no cap at all: a fourth image runs
+    (env.project / "p3.txt").write_text("A red apple, variant 3.", encoding="utf-8")
+    code, plan, _ = run(capsys, "image", "--route", "codex-cli", "--prompt-file", "p3.txt", "--output-dir", "out/3")
+    assert code == 0 and plan["ledger"]["session"]["images"] == {"used": 3, "cap": None}
+    assert not any("session cap" in warning for warning in plan["warnings"])
+    assert run(capsys, "image", "--route", "codex-cli", "--prompt-file", "p3.txt", "--output-dir", "out/3",
+               "--execute")[0] == 0
     # Videos have their own cap; a video does not use the image cap.
     monkeypatch.setenv("FORGE_SESSION_VIDEOS", "0")
     code, _, err = run(capsys, "video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt",
@@ -563,7 +573,7 @@ def test_session_cap_is_enforced_through_the_ledger(env, capsys, monkeypatch):
     code, _, err = run(capsys, "video", "--route", "grok-acp", "--reference", "ref.png", "--prompt-file", "prompt.txt",
                        "--output-dir", "out/clip")
     assert code == 1 and "INVALID_REQUEST" in err and "FORGE_SESSION_VIDEOS" in err
-    assert len(generations(env.log)) == 3
+    assert len(generations(env.log)) == 4
 
 
 def test_session_window_counts_only_recent_quota_calls(tmp_path, monkeypatch):
@@ -653,7 +663,8 @@ def test_scrub_keeps_long_relative_paths_readable():
 
 
 def test_cli_routes_doc_matches_the_tools():
-    """cli-routes.md: single-line commands whose options exist, the D22 order and the user-facing route names."""
+    """cli-routes.md: single-line commands whose options exist, the owner's order (2026-10-06) and the user-facing
+    route names."""
     import re
 
     references = SKILLS_DIR / "generate2dmedia" / "references"
@@ -668,11 +679,15 @@ def test_cli_routes_doc_matches_the_tools():
             verb = command.split('cli_media.py" ', 1)[1].split()[0]
             options = set(re.findall(r"\s(--[a-z-]+)", command))
             assert options <= set(verbs[verb]._option_string_actions), command
-    for phrase in ("Codex (local CLI)", "Grok (local CLI)", "--route auto", "8 images", "2 videos", "12 hours"):
+    for phrase in ("Codex (local CLI)", "Grok (local CLI)", "--route auto", "route_media.py",
+                   "no session cap by default", "12 hours"):
         assert phrase in text, phrase
+    for stale in ("8 images", "2 videos", "envelope", "consent for every request"):
+        assert stale not in text, stale
     section = text[text.index("## Route order"):]
-    order = [section.index(name) for name in ("the host's own image tool", "**Codex (local CLI)**",
-                                              "**Grok (local CLI)** in one-shot mode", "the paid REST API")]
+    order = [section.index(name) for name in ("**the paid API**", "**local**", "the host's own image tool",
+                                              "**Codex (local CLI)**", "**Grok (local CLI)** in one-shot mode",
+                                              "**codeart2d**")]
     assert order == sorted(order)
     readme = (references / "agent-profiles" / "README.md").read_text(encoding="utf-8")
     profiles = sorted(p.name for p in (references / "agent-profiles").glob("*.md") if p.name != "README.md")
@@ -680,7 +695,8 @@ def test_cli_routes_doc_matches_the_tools():
 
 
 def test_batch_dry_run_warns_about_the_session_cap(env, capsys):
-    """A batch plan says where the session cap would stop it (D22), before anything runs."""
+    """A batch plan says where an opt-in session cap would stop it, before anything runs; without a cap there is
+    no such warning."""
     for index in range(3):
         (env.project / f"p{index}.txt").write_text(f"A green plum, variant {index}.", encoding="utf-8")
     (env.project / "jobs.json").write_text(json.dumps({"jobs": [
@@ -690,4 +706,41 @@ def test_batch_dry_run_warns_about_the_session_cap(env, capsys):
     assert code == 0 and plan["calls"] == 3, err
     assert plan["warnings"] == ["the session cap stops the batch after 2 more local CLI image call(s) "
                                 "(0 of 2 used in the last 12 h)"]
+    code, plan, err = run(capsys, "batch", "jobs.json")
+    assert code == 0 and plan["calls"] == 3 and plan["warnings"] == [], err
     assert not env.log.exists()
+
+
+def test_codex_image_attaches_reference_images(env, capsys, monkeypatch):
+    """codex exec takes reference images with --image (copies in the run folder, in order); Grok's one-shot image
+    route takes none (its edit verb takes one), and --route auto skips it when references are given."""
+    (env.project / "peer.png").write_bytes(forge_doctor._tiny_png(96))
+    refs = ["--reference", "ref.png", "--reference", "peer.png"]
+    code, plan, err = run(capsys, *image_args("out/master"), *refs)
+    assert code == 0, err
+    flagged = [plan["command"][i + 1] for i, a in enumerate(plan["command"]) if a == "--image"]
+    assert [Path(p).name for p in flagged] == ["reference-1.png", "reference-2.png"]
+    assert plan["command"].index("--image") < plan["command"].index("--ignore-user-config")
+    code, summary, err = run(capsys, *image_args("out/master"), *refs, "--execute")
+    assert code == 0, err
+    run_entry, = generations(env.log)
+    attached = [run_entry["argv"][i + 1] for i, a in enumerate(run_entry["argv"]) if a == "--image"]
+    assert [Path(p).name for p in attached] == ["reference-1.png", "reference-2.png"]
+    assert run_entry["argv"][-1] == "-"  # the prompt still comes on stdin, after every option
+    job = json.loads(Path(summary["metadata"]).read_text(encoding="utf-8"))
+    assert_media(job, "job_v2")
+    assert [r["sha256"] for r in job["references"]] == [forge_doctor.file_sha256(env.project / n)
+                                                        for n in ("ref.png", "peer.png")]
+    code, _, err = run(capsys, *image_args("out/grok", "grok-cli"), "--reference", "ref.png")
+    assert code == 1 and "INVALID_REQUEST" in err and "edit --route grok-cli" in err
+    code, _, err = run(capsys, *image_args("out/many"), *(["--reference", "ref.png"] * 9))
+    assert code == 1 and "at most 8 reference images" in err
+    write_proofs(env.project, ("codex-cli", "image_gen", "0.150.0"), ("grok-cli", "image_gen", "1.0.40"))
+    code, _, err = run(capsys, *image_args("out/auto", "auto"), "--reference", "ref.png", "--execute")
+    assert code == 1 and "NOT_VERIFIED" in err and "grok-cli: takes no reference image" in err
+    jobs = env.project / "jobs.json"
+    jobs.write_text(json.dumps({"jobs": [{"id": "m", "command": "image", "route": "codex-cli", "prompt_file": "prompt.txt",
+                                          "reference": ["ref.png", "peer.png"], "output_dir": "out/batch"}]}),
+                    encoding="utf-8")
+    code, batch, err = run(capsys, "batch", "jobs.json", "--allow-duplicate")
+    assert code == 0 and batch["consent"][0]["action"] == "send", err

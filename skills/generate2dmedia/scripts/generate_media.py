@@ -3,8 +3,10 @@
 
 Provider contracts checked 2026-10-05. Generation is separate from asset QA.
 Each executed request is first reserved in <project>/.forge/ledger.jsonl
-(spend caps, duplicate guard), then committed with its outcome.
-Uses stdlib HTTP and Pillow (already a Forge dependency).
+(opt-in spend caps, duplicate guard), then committed with its outcome.
+Keys come from OPENAI_API_KEY / XAI_API_KEY or the user config file
+(media_config.py); route_media.py is the entry point that sends at once
+when a key is configured. Uses stdlib HTTP and Pillow.
 """
 from __future__ import annotations
 
@@ -32,7 +34,8 @@ from PIL import Image
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
-import media_ledger  # noqa: E402  (sibling module in this skill's scripts/)
+import media_config  # noqa: E402  (sibling modules in this skill's scripts/)
+import media_ledger  # noqa: E402
 
 TOOL_VERSION = media_ledger.FORGE_PACKAGE_VERSION  # receipts name the package release (D29)
 TOOL = "generate_media/" + TOOL_VERSION
@@ -139,7 +142,8 @@ def redact(text, secrets=()):
 
 
 def _env_secrets():
-    return tuple(v.strip() for v in (os.environ.get(name, "") for name in KEY.values()) if v.strip())
+    """Every configured key (environment and the user config file), for redaction only."""
+    return media_config.known_secrets()
 
 
 _SCRUB = ((re.compile(r"(?i)\b(?:https?|wss?)://\S+"), "[url]"),
@@ -802,9 +806,10 @@ def execute(args, transport=None):
     ledger = media_ledger.Ledger(args.project_dir)
     if not args.execute:
         return dry_run_report(plan, args, ledger)
-    key = os.environ.get(KEY[args.provider], "").strip()
+    key = media_config.api_key(args.provider) or ""
     if not key:
-        raise MediaError(f"Missing {KEY[args.provider]}; no request sent", code="no_key", sent=False)
+        raise MediaError(f"Missing {KEY[args.provider]} (environment or the user config file); no request sent",
+                         code="no_key", sent=False)
     if _secret_in(prompt, (key,)):
         raise MediaError("The prompt file contains the API key; nothing was sent or written", code="invalid_input", sent=False)
     out = Path(args.out_dir)
@@ -919,9 +924,9 @@ def resume(args, transport=None):
         raise MediaError("This job was never sent; run the original command again with a new --out-dir", sent=False)
     if not _valid_id(job.get("requestId")):
         raise MediaError("No valid request ID; automatic resubmission is deliberately disabled", sent=False)
-    key = os.environ.get("XAI_API_KEY", "").strip()
+    key = media_config.api_key("xai") or ""
     if not key:
-        raise MediaError("Missing XAI_API_KEY", code="no_key", sent=False)
+        raise MediaError("Missing XAI_API_KEY (environment or the user config file)", code="no_key", sent=False)
     transport = transport or Transport()
     if version == 1:
         return poll_video(path, job, key, transport, args.timeout, args.poll_interval)

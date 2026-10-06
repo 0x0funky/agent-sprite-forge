@@ -13,6 +13,7 @@ Account access and future model availability require live verification.
 | xAI Imagine Image | Generation and reference editing | `image --provider xai`; one reference per edit here |
 | xAI Imagine Video | Image-to-video, asynchronous jobs | `video --provider xai` and GET-only `resume` |
 | Any route above, in bulk | Many approved jobs with one consent list | `batch jobs.json`: dry-run first, at most 2 workers, no retries |
+| Route choice | API first when a key is configured, then the local CLIs | `route_media.py image` / `video` / `resolve` ([route-media.md](route-media.md)) |
 | Grok Build | Host's native video tool when exposed | Existing host route; no bundled daemon or login automation |
 
 OpenAI's current documentation lists `gpt-image-2.5-sunburst` and

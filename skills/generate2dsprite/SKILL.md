@@ -1,6 +1,6 @@
 ---
 name: generate2dsprite
-description: Make game-ready 2D characters, creatures, props and FX as still sprites, sprite sheets or animation clips. Plan size, motion and art source; get or draw the art; then key, slice, register, scale, palette, QA and export the frames for a game engine (Aseprite JSON, Godot SpriteFrames or Sprite3D). Use for sprites, pose or action sheets, frame-by-frame animation, and packaging frames from any source. Small pixel sprites (48 px visible height or less) and game FX are drawn with codeart2d first. Not for maps, tiles or backgrounds (generate2dmap), image-to-video motion or video clips (video2dsprite), or calling an image or video API by itself (generate2dmedia).
+description: Make game-ready 2D characters, creatures, props, icons and FX as master stills, sprite sheets or animation clips. Plan size, motion and finish; generate the art (image generation is the default, through generate2dmedia route_media.py - the API when a key is configured, else the local Codex or Grok CLI); approve one master still per character; then key, slice, register, scale, palette, QA and export frames for a game engine (Aseprite JSON, Godot SpriteFrames or Sprite3D). HD finish by default, pixel finish on request. Character animation is one image-to-video clip per action from the master (video2dsprite); sheets are for FX, icons and props. Use for sprites, masters, sheets, frame-by-frame animation and packaging frames from any source. Not for maps, tiles or backgrounds (generate2dmap), video clips (video2dsprite), code-drawn art (codeart2d, only on request) or calling an image or video API by itself (generate2dmedia).
 ---
 
 # Generate 2D Sprite
@@ -10,59 +10,60 @@ Game logic (collision, damage, timing) stays independent of the art.
 
 ## Use when
 
-- A character, creature, prop, item, icon or FX is needed as a still, a sheet or clips.
+- A character, creature, prop, item, icon or FX is needed as a master still, a sheet or clips.
 - Frames already exist (generated, painted, code-drawn) and need clips, palettes or an engine export.
 
 ## Do not use when
 
 - Maps, tiles, terrain, parallax or scene plates: [generate2dmap](../generate2dmap/SKILL.md).
-- Fluid organic motion (breathing, hair, cloth, creature attacks) or a video clip: accept one master here, then [video2dsprite](../video2dsprite/SKILL.md) ([video-handoff.md](references/video-handoff.md)).
-- Only drawing code art: [codeart2d](../codeart2d/SKILL.md). Only an API or CLI call: [generate2dmedia](../generate2dmedia/SKILL.md).
+- Animating a character: approve one master here, then [video2dsprite](../video2dsprite/SKILL.md) makes one clip per action ([video-handoff.md](references/video-handoff.md)).
+- Code-drawn art the user asked for: [codeart2d](../codeart2d/SKILL.md). Only an API or CLI call: [generate2dmedia](../generate2dmedia/SKILL.md).
 
 ## Capability check (once per session)
 
-Run `python "<skill-dir>/../generate2dmedia/scripts/forge_doctor.py" --host-tools <tools> --save <output>/doctor.json`, where `<tools>` lists the media tools in your own tool list (`image_gen`, `image_edit`, `image_to_video`) or `none`. Use only the routes its `ROUTES` block names, in its order. `ready` means usable now: your own tool, or Codex / Grok (local CLI) VERIFIED for the installed version. `consent` (the paid API) needs the user's consent for each request. An installed CLI is not a connected tool until a verified run ([cli-routes.md](../generate2dmedia/references/cli-routes.md)). If `encoding.stdout` fails, set `PYTHONUTF8=1`.
+Run `python "<skill-dir>/../generate2dmedia/scripts/forge_doctor.py" --host-tools <tools> --save <output>/doctor.json`, where `<tools>` lists the media tools in your own tool list (`image_gen`, `image_edit`, `image_to_video`) or `none`. Its `ROUTES` block shows which API keys are configured (yes or no), the local readiness and the resolved order. If `encoding.stdout` fails, set `PYTHONUTF8=1`.
 
 ## Art source
 
-Choose per asset, record it as `art_source` (`code`, `host_image`, `api` or `existing`) and name the route in your reply. A route the user names explicitly wins.
+Image generation is the default art source for characters, creatures, props, icons and FX. Record it as `art_source` (`api`, `host_image`, `existing`, or `code` only on request) and name the route in your reply. A route the user names explicitly wins.
 
-- **Code-art envelope first, on every host** ([codeart2d](../codeart2d/SKILL.md), [style-envelope.md](../codeart2d/references/style-envelope.md)): pixel characters, props and palette variants up to 48 px visible height (49-64 px only with the user's consent), FX (slashes, sparks, rings, flashes, dust, projectiles), flat vector props, UI and icons. Above 64 px code art is not final art.
-- **Other images, local agent first:**
-  1. the host's own image tool (Codex `image_gen`, an image MCP);
-  2. a local agent the doctor reports VERIFIED: Codex (local CLI) `image_gen`, then Grok (local CLI) one-shot image or edit, via `python "<skill-dir>/../generate2dmedia/scripts/cli_media.py" image --route auto --prompt-file <txt> --output-dir <new> --execute`. No per-call question within the session cap; always say which route ran;
-  3. the paid REST API (generate2dmedia `generate_media.py`) only with the user's explicit consent for that request;
-  4. existing art the user supplies;
-  5. otherwise explain the gap and offer the paid API, the user's own art or a stylized code-art alternative.
-- **Video:** Grok (local CLI) in ACP mode when VERIFIED, then REST with consent, then an existing clip (video2dsprite).
+1. **API**, when a key is configured (`OPENAI_API_KEY` or `XAI_API_KEY`, in the environment or the user config file): the configured key is the owner's consent, so there is no per-call question.
+2. **Local**: your own image tool (Codex `image_gen`, Grok's native tool) when you have one, otherwise the user's signed-in Codex CLI, then Grok CLI.
+3. **codeart2d** only when the user explicitly asks for code-drawn art, or when `route_media.py` prints `no-route` (exit 3). Then say "code-drawn, no image model".
 
-Never substitute silently. Code art is a declared route, not a placeholder: say "code-drawn, no image model" (`codeart-meta.json` records it) and never present it as image-model output. Never claim a generation that did not happen; keep the prompt and contract and report the missing capability.
+Every image goes through one command: `python "<skill-dir>/../generate2dmedia/scripts/route_media.py" image --prompt-file <txt> --reference <png> --size 1024x1024 --out-dir <new>`. It picks the route in that order and prints one JSON line with `route`, `artifact`, `sha256` and `estimateUsd`; `resolve --kind image` says which route would run. Existing art the user supplies is always welcome. Never claim a generation that did not happen; keep the prompt and contract and report a missing capability.
+
+- **Finish:** HD is the default: full colour, clean alpha, one registration and a premultiplied area downscale to the game height. The pixel finish (one shared palette, binary alpha, no dither) is an option when the user asks for pixel art. Never prompt an image model for a logical pixel grid; the pixel look comes from the finish.
+- **Characters:** approve one master still per character, then animate it with video2dsprite: one image-to-video clip per action, all from that master (`sprite_set.py`). Keep every action's body height from the master's rest pose.
+- **Sheets** are for FX, icons and props (and frames the user supplies), not for character animation.
+
+<!-- BLOCK:master -->
 
 ## Host notes
 
-- **Codex:** `image_gen` is the host image tool; look at results with `view_image`. An image this session made that is not in the project: `python "<skill-dir>/../generate2dmedia/scripts/cli_media.py" adopt --codex-thread <thread-id> --output-dir <new>`, then process `generated.png`. codeart2d and generate2dmedia are explicit-only: open their SKILL.md when this one routes there.
-- **Claude Code:** no built-in image generator. Look at every PNG you make with Read; run tools with Bash; `<skill-dir>` is `${CLAUDE_SKILL_DIR}`. Without an image tool or a VERIFIED local agent, use codeart2d inside its envelope and say so; otherwise explain the gap.
-- **Grok:** its native image and video tools are the host tools; use their real schema.
+- **Codex:** `image_gen` is your own image tool; with no configured key use it and look at results with `view_image`. An image this session made that is not in the project: `python "<skill-dir>/../generate2dmedia/scripts/cli_media.py" adopt --codex-thread <thread-id> --output-dir <new>`, then process `generated.png`. codeart2d and generate2dmedia are explicit-only: open their SKILL.md when this one routes there.
+- **Claude Code:** no built-in image generator: `route_media.py` takes the API or the local CLIs. Look at every PNG you make with Read; run tools with Bash; `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
+- **Grok:** its native image and video tools are your own tools; use their real schema.
 
 ## Commands
 
-Run each tool as one line from the user's project root: `python "<skill-dir>/scripts/<tool>.py" ...`. `<skill-dir>` is this skill's folder; sibling skills sit beside it (`<skill-dir>/../codeart2d`). Keep inputs and outputs inside the project. Every tool writes a new `--output-dir`: it refuses an existing one, stages beside it and publishes only after its checks (`--strict-qc` / `--strict` publish nothing on failure). Success prints one JSON line; errors print `error: ...` and exit 1; usage errors exit 2. Needs Python 3.10+, numpy and Pillow (scipy recommended). `--help` lists every flag.
+Run each tool as one line from the user's project root: `python "<skill-dir>/scripts/<tool>.py" ...`. `<skill-dir>` is this skill's folder; sibling skills sit beside it (`<skill-dir>/../video2dsprite`). Keep inputs and outputs inside the project. Every tool writes a new `--output-dir`: it refuses an existing one, stages beside it and publishes only after its checks (`--strict-qc` / `--strict` publish nothing on failure). Success prints one JSON line; errors print `error: ...` and exit 1; usage errors exit 2. Needs Python 3.10+, numpy and Pillow (scipy recommended). `--help` lists every flag.
 
 ## Plan the asset
 
-Record identity and reference, camera and facing, style, game display size (visible height decides the art source), action phases, loop or one-shot, motion envelope, shared root and output format. Keep one accepted master and one source-to-display scale per character. A grid is not smoothness: pose spacing, timing, the loop seam and ground contact matter more. Poses, NEAR/FAR legs and timing: [animation-planning.md](references/animation-planning.md).
+Record identity and reference, camera and facing, style, game display size, finish (HD by default, pixel on request), action list and phases, loop or one-shot, motion envelope, shared root and output format. Keep one accepted master and one source-to-display scale per character; mobs are no taller than the hero unless planned. A grid is not smoothness: pose spacing, timing, the loop seam and ground contact matter more. Poses, NEAR/FAR legs and timing: [animation-planning.md](references/animation-planning.md).
 
 - Alpha: `native_alpha` keeps real transparency (a painted checkerboard is not alpha); `chroma_key` uses flat magenta only when the subject has none; `opaque` keeps whole images (`assemble_frames.py`).
-- Sampling: `nearest` for a verified pixel grid, `lanczos` for smooth art. A high-resolution pixel-like painting is not clean 32 px art.
+- Sampling: `lanczos` or a premultiplied area resize for generated art; `nearest` only for a verified pixel grid. A high-resolution pixel-like painting is not clean 32 px art.
 - A shared root is not a per-frame alpha-bbox bottom: keep intentional flight, jumps, bob and recoil.
 
 ## Generate (image routes)
 
-Write the prompt yourself ([prompt-rules.md](references/prompt-rules.md); grids, phases and presets in [action-recipes.md](references/action-recipes.md)). Attach references through the tool's real image input; a path in prose is not a reference. Keep the accepted master in every generation and describe absolute phases, not chained edits. Generate one action family at a time and keep wide slashes, trails and projectiles out of the body sheet. Verify the actual tool, model and returned size; never claim them from the prompt.
+Write the prompt yourself ([prompt-rules.md](references/prompt-rules.md); grids, phases and presets in [action-recipes.md](references/action-recipes.md)). Attach references through `--reference` (or your tool's real image input); a path in prose is not a reference. Keep the accepted master in every generation and describe absolute phases, not chained edits; a fix is an edit of the approved still that names the only change. Generate one action family at a time and keep wide slashes, trails and projectiles out of the body sheet. Verify the actual route, model and returned size; never claim them from the prompt.
 
 ## Pipeline
 
-Image sheets: `sheet_qc.py spill` on the raw sheet, then `generate2dsprite.py process`, then `sheet_qc.py frames`, then `scale_frames.py`, then `build_animation_clips.py`, then `export_engine.py`. Code-art frames skip process, sheet_qc and scale_frames: codeart2d `--build-clips`, then `export_engine.py`.
+Sheets (FX, icons, props): `sheet_qc.py spill` on the raw sheet, then `generate2dsprite.py process`, then `sheet_qc.py frames`, then `scale_frames.py`, then `build_animation_clips.py`, then `export_engine.py`. Character actions come back from video2dsprite as packaged clips.
 
 | Need | Route |
 |---|---|
@@ -77,19 +78,17 @@ Image sheets: `sheet_qc.py spill` on the raw sheet, then `generate2dsprite.py pr
 | Game size on one canvas and root, never clamped | `scale_frames.py --frames <pngs> --root-lock torso-x --row-baseline --emit-clips --ticks N --output-dir <new>`; later actions add `--profile <first>/scale-frames.json --action-padding L,T,R,B` |
 | Clips with timing, events, transitions | `build_animation_clips.py --manifest clips.json --output-dir <new>`; read the lints and `review/` ([frames-and-clips.md](references/frames-and-clips.md)) |
 | Whole frames or a scene loop (no keying) | `assemble_frames.py` (`--key chroma`, `--slice ownership`; `--loop-overlap K --ambient` for ambient loops only) |
-| Shared palette, locks, variants, flicker | `palette_tool.py build`, `apply`, `lock`, `quantize-seq`, `variants`, `luts`; strict logical grid: `pixel_reduce.py` ([palette-and-pixels.md](references/palette-and-pixels.md)) |
+| Shared palette, locks, variants, flicker (pixel finish) | `palette_tool.py build`, `apply`, `lock`, `quantize-seq`, `variants`, `luts`; strict logical grid: `pixel_reduce.py` ([palette-and-pixels.md](references/palette-and-pixels.md)) |
 | Engine export | `export_engine.py --clips <animation-clips.json> --target all --output-dir <new>`; Sprite3D: `--target godot-sprite3d --world-height <units>` ([engine-export.md](references/engine-export.md)) |
 | Play clips in a game (gait, hit-stop, transitions) | [runtime-integration.md](references/runtime-integration.md) |
-| Small pixel character, prop or palette variants | codeart2d `render_pixelspec.py --build-clips`; never `process` |
-| Skeletal code-art character with planted feet | codeart2d `rig_animate.py --build-clips` (code-drawn; disclose it) |
-| Game FX | codeart2d `fx_build.py --build-clips --export-runtime`; realistic fire, smoke or water: the video route |
+| Code-drawn sprites, rigs or FX, only on request | codeart2d `render_pixelspec.py`, `rig_animate.py` or `fx_build.py` with `--build-clips` (never `process`), then `export_engine.py`; disclose them as code-drawn |
 
 ## Acceptance
 
 - Review at game size: silhouette and identity, contact and flight, loop seam or one-shot recovery, alpha over light and dark, extremities, scale across actions, root and collider.
 - Quote numbers for quality claims: `pipeline-meta.json` `matte.qa` (a `key_ring_spill` warning: add `--despill-radius 1` or `--key-quality soft`), `sheet-qc.json`, the clip builder's lints. Numeric QC finds symptoms; it never approves anatomy or motion.
 - Report every WARN or FAIL check verbatim (id, value, threshold, files) from each published QA envelope; never say "all checks passed" when any published envelope has a warn.
-- Deliver accepted source art, runtime frames or clips, preview, prompt and provenance, QA and remaining limits. Keep the last accepted bundle when revising.
+- Deliver accepted source art, runtime frames or clips, preview, prompt and provenance (route, model, `estimateUsd`), QA and remaining limits. Keep the last accepted bundle when revising.
 
 ## References
 

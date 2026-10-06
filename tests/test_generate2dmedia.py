@@ -43,9 +43,11 @@ def b64_image():
 
 @pytest.fixture(autouse=True)
 def hermetic(tmp_path, monkeypatch):
-    """Never see real credentials or caps; never write a ledger into the repo."""
+    """Never see real credentials, a real user config file or caps; never write a ledger into the repo."""
     for name in ("OPENAI_API_KEY", "XAI_API_KEY", ledger_mod.MAX_PAID_ENV):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     work = tmp_path / "cwd"
     work.mkdir()
     monkeypatch.chdir(work)
@@ -163,6 +165,39 @@ def test_invalid_video_plan_fails_before_request(inputs, extra):
     with pytest.raises(media.MediaError):
         media.execute(a, transport)
     assert not transport.calls and not inputs[2].exists()
+
+
+def user_config(**fields):
+    """Write the user config file (media_config.config_path(), inside this test's temporary folders)."""
+    path = media.media_config.config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(fields), encoding="utf-8")
+    return path
+
+
+class KeyRecorder(Fake):
+    def api(self, method, url, key, body=None, content_type=None, timeout=90, meta=None):
+        self.keys = [*getattr(self, "keys", []), key]
+        return super().api(method, url, key, body, content_type, timeout, meta)
+
+
+def test_key_from_the_user_config_file(inputs, monkeypatch, capsys):
+    """Owner decision 2026-10-06: a key may live in the user-level config file; the environment wins."""
+    with pytest.raises(media.MediaError, match="environment or the user config file") as missing:
+        media.execute(args(inputs, extra=["--execute"]), Refuse())
+    assert missing.value.code == "no_key" and not inputs[2].exists()
+    user_config(OPENAI_API_KEY=OPENAI_KEY)
+    transport = KeyRecorder([{"data": [{"b64_json": base64.b64encode(png()).decode(), "revised_prompt": OPENAI_KEY}],
+                              "model": OPENAI_KEY}])
+    assert media.main(argv(inputs, extra=["--execute"]), transport=transport) == 0
+    captured = capsys.readouterr()
+    assert transport.keys == [OPENAI_KEY]
+    for text in (captured.out, captured.err, (inputs[2] / "job.json").read_text(encoding="utf-8")):
+        assert OPENAI_KEY not in text
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-environment-wins-0123456789")
+    transport = KeyRecorder([b64_image()])
+    media.execute(args(inputs, extra=["--execute", "--allow-duplicate"], out=inputs[2].parent / "env"), transport)
+    assert transport.keys == ["sk-environment-wins-0123456789"]
 
 
 def test_existing_directory_blocks_paid_submission(inputs, monkeypatch):

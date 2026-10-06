@@ -1,4 +1,4 @@
 interface:
   display_name: "Generate 2D Sprite"
-  short_description: "Game-ready sprites, animation clips, code art and engine exports."
-  default_prompt: "Use $generate2dsprite to plan game-size art and motion, pick the art source (code art via codeart2d for small pixel sprites and FX, otherwise the image tool or a verified local route), then deliver reviewed frames, clips and engine exports, handing fluid motion to video2dsprite."
+  short_description: "Game-ready sprites from generated art: masters, sheets, clips, exports."
+  default_prompt: "Use $generate2dsprite to plan game-size art, generate it through route_media (the API when a key is configured, else the local Codex or Grok CLI), approve one master still per character and hand its animation to video2dsprite (one clip per action); use sheets only for FX, icons and props, finish HD by default and deliver reviewed frames, clips and engine exports."
