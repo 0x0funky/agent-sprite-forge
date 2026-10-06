@@ -8,11 +8,23 @@
                  forge_core.resample_rgba on a grid pinned to the anchor (the stance midpoint
                  on the feet line), then forge_core.alpha_hygiene. Never nearest, never an
                  upscale. --display-sizes 1x,2x re-derives every size from the source frames.
-  pixel          game-opus55 pixelate.py: the same registration and box downscale to the
-                 target height (about 1/8 to 1/12 of the source), one shared OKLab palette
-                 (--palette, or built from the clip), no dither, temporal hysteresis
-                 (forge_palette.quantize_sequence), lone-pixel and speck cleanup, binary
-                 alpha at 0.5. --indexed-sheet adds an indexed PNG sheet.
+  pixel          Bold pixel art from the same registration: a crisp downscale (each output
+                 pixel takes the dominant of two OKLab colour clusters of its 4x4 sub-pixels,
+                 so edges do not blur into in-between colours and thin dark lines and eyes
+                 survive), a light contrast and saturation lift, one OKLab palette of at
+                 most --colors (default 32) colours (--palette, or built from the clip), no
+                 dither, temporal hysteresis (forge_palette.quantize_sequence), lone-pixel
+                 cleanup that keeps eyes and highlights, speck cleanup, binary alpha at 0.5
+                 and a 1 px outline (--outline selective|dark|none). --downscale box
+                 --contrast 1 --saturation 1 --outline none is the plain v1 finish.
+                 --indexed-sheet adds an indexed PNG sheet.
+  --canvas WxH   (hd and pixel) every frame on a fixed cell, the anchor at one point
+                 (--canvas-anchor X,Y, or centred over the feet); a clip too big for the
+                 cell is finished smaller so it fits (warned).
+  --colour-lock  (hd and pixel) MASTER.png or rest: keeps every design colour on the
+                 master's colours in OKLab (colour_lock.py): region hue shifts are undone,
+                 near colours are pulled softly toward their master colour (lightness kept,
+                 no posterising) and still pixels are smoothed over time.
   palette build  One OKLab k-means++ palette across every action of a character or cast,
                  with reserved fixed colours; deterministic for a --seed.
   lineup         A cast line-up at x1 and x3 that checks the size rules (body height from
@@ -50,6 +62,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 import forge_core  # noqa: E402  (this skill's vendored copies)
 import forge_palette as fp  # noqa: E402
+import colour_lock as colour_lock_module  # noqa: E402  (sibling: the colour lock)
 
 TOOL_NAME = "finish_frames"
 TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION  # QA envelopes record the package version (D29)
@@ -71,9 +84,25 @@ STANCE_BAND = 0.02          # ground-contact band: 2% of the rest height (12 row
 HYGIENE_FLOOR = 4           # alpha <= 4 is invisible resampling halo (D18); also the canvas crop threshold
 SCALE_REF_CLAMP = 0.03      # the scale-ref area correction is clamped to +-3% (pixelate.py)
 SCALE_REF_WARN = 0.01       # a correction beyond 1% warns: is the rest frame really the base still?
-DEFAULT_COLORS = 255        # 255 colours + transparent index 255 (game-opus55: 47 fixed + 208 learned)
+DEFAULT_COLORS = 255        # palette build: 255 colours + transparent index 255 (game-opus55: 47 fixed + 208 learned)
+PIXEL_COLORS = 32           # pixel finish without --palette: a 45-90 px sprite reads as pixel art with 16-32 colours
 PIXEL_ALPHA = 0.5           # binary alpha threshold of the pixel finish
-PIXEL_ORPHANS = 1           # lone-pixel cleanup passes (forge_palette.cleanup_orphans)
+PIXEL_ORPHANS = 1           # lone-pixel cleanup passes of the plain (v1) pixel finish (forge_palette.cleanup_orphans)
+DOWNSCALES = ("crisp", "box")
+OUTLINES = ("selective", "dark", "none")
+SUPERSAMPLE = 4             # crisp downscale: 4x4 sub-pixels per output pixel (box-reduced from the source)
+CRISP_ITERATIONS = 4        # Lloyd iterations of the two-cluster split per output pixel
+DETAIL_GAP = 0.15           # OKLab L gap that makes the darker cluster a detail (a line, an eye, a seam) ...
+DETAIL_SHARE = 0.35         # ... which then wins from 35% of the pixel's coverage instead of 50%
+HOLD_SHARE = 0.30           # crisp hysteresis: the previous frame's cluster stays while it holds 30% of the pixel
+HOLD_DELTA_E = 0.06         # ... and is within OKLab dE 0.06 of the previous choice
+LIFT_CONTRAST = 1.10        # pixel lift: OKLab lightness spread around the rest pose's mean lightness
+LIFT_SATURATION = 1.15      # pixel lift: OKLab chroma scale
+FEATURE_DELTA_L = 0.22      # a lone pixel this much lighter or darker than every 4-neighbour is a feature (kept)
+PIXEL_CLEAN_PASSES = 2      # lone-pixel passes of the bold finish
+OUTLINE_MAX_L = 0.34        # an outline colour is at most this light (OKLab L) ...
+OUTLINE_DROP = 0.22         # ... and at least this much darker than the colour it outlines
+OUTLINE_PX = 1
 PIXEL_MIN_REDUCTION = 4.0   # a pixel finish reducing less than 4x warns (pixel art wants 1/8 to 1/12)
 STILL_ALPHA = 13            # source alpha change below 13/255 (5%) counts as still in the flicker QA
 REST_HEIGHT_TOLERANCE = 1.5  # output px between the measured and the nominal rest height before a warning
@@ -102,6 +131,16 @@ PIXEL_METHOD = ("finish_frames pixel v1 (port of game-opus55 pixelate.py): the h
                 "forge_palette.quantize_sequence with temporal hysteresis (index kept within the margin, opacity "
                 "kept inside alpha 0.4-0.6), cleanup_orphans (1 pass) and cleanup_alpha per frame, binary alpha at "
                 "0.5, no dither; flicker counted per frame pair against per-frame nearest quantizing")
+BOLD_METHOD = ("finish_frames pixel v2 (bold): the hd registration; alpha from the box downscale (the hd silhouette); "
+               "colour from a 4x4 supersampled box downscale split per output pixel into two OKLab clusters (4 Lloyd "
+               "steps), the heavier cluster winning, a cluster 0.15 L darker from 35% (lines and eyes survive), the "
+               "previous frame's cluster kept from 30% (no 50/50 flicker); OKLab lift (lightness spread around the "
+               "rest pose's mean, chroma scale); one palette (given, or k-means++ on the lifted frames); "
+               "forge_palette.quantize_sequence hysteresis and cleanup_alpha; lone pixels merged into their "
+               "neighbours' majority unless 0.22 L lighter or darker than every neighbour (features kept), 2 passes; "
+               "a 1 px outline outside the 4-connected silhouette in the palette's dark shade of the darkest "
+               "neighbour (selective) or its darkest colour (dark); the target height includes the outline and the "
+               "feet anchor moves to the outline's bottom edge; no dither, binary alpha at 0.5")
 
 
 class FinishError(ValueError):
@@ -458,10 +497,10 @@ def _resolve_palette(palette: Any) -> tuple[fp.Palette, Path | None]:
         raise FinishError(str(error)) from None
 
 
-def _quantize(frames: list[np.ndarray], pal: fp.Palette, loop_policy: str, margin: float
-              ) -> tuple[list[np.ndarray], list[dict[str, int]], list[np.ndarray]]:
+def _quantize(frames: list[np.ndarray], pal: fp.Palette, loop_policy: str, margin: float,
+              orphans: int = PIXEL_ORPHANS) -> tuple[list[np.ndarray], list[dict[str, int]], list[np.ndarray]]:
     """Hysteresis index maps with their per-frame stats, and the per-frame nearest baseline maps."""
-    common = {"margin": margin, "alpha_threshold": PIXEL_ALPHA, "orphans": PIXEL_ORPHANS, "despeckle": True}
+    common = {"margin": margin, "alpha_threshold": PIXEL_ALPHA, "orphans": orphans, "despeckle": True}
     maps, stats = fp.quantize_sequence(frames, pal, loop=loop_policy == "cycle", pingpong=loop_policy == "pingpong",
                                        return_stats=True, **common)
     baseline = [fp.quantize_sequence([frame], pal, loop=False, **common)[0] for frame in frames]
@@ -479,20 +518,392 @@ def _indexed_sheet(maps: Sequence[np.ndarray], slot: int) -> tuple[np.ndarray, i
     return sheet, columns, rows
 
 
+# --------------------------------------------------------------------------- bold pixel art
+
+def supersampled(grid: Grid, factor: int = SUPERSAMPLE) -> Grid:
+    """``grid`` with factor x factor sub-pixels per output pixel, pinned to the same anchor: output pixel
+    (x, y) covers exactly the sub-pixels [x*f, (x+1)*f) x [y*f, (y+1)*f)."""
+    return Grid(grid.factor, grid.scale * factor, (grid.size[0] * factor, grid.size[1] * factor),
+                (grid.anchor[0] * factor, grid.anchor[1] * factor))
+
+
+@dataclass
+class Clusters:
+    """Two OKLab colour clusters per output pixel (crisp downscale): centres and the dark one's share."""
+
+    dark: np.ndarray        # (H, W, 3) OKLab
+    light: np.ndarray       # (H, W, 3) OKLab
+    share: np.ndarray       # (H, W) share of the pixel's coverage held by the dark cluster
+
+
+def crisp_clusters(sub: np.ndarray, factor: int = SUPERSAMPLE) -> Clusters:
+    """Split the factor x factor sub-pixels of every output pixel into two OKLab clusters (alpha-weighted
+    Lloyd steps from the darkest and the lightest solid sub-pixel). Only the visible window is computed."""
+    height, width = sub.shape[0] // factor, sub.shape[1] // factor
+    dark = np.zeros((height, width, 3), np.float32)
+    light = np.zeros((height, width, 3), np.float32)
+    share = np.zeros((height, width), np.float32)
+    box = _bbox(sub[..., 3] > 0)
+    if box is None:
+        return Clusters(dark, light, share)
+    x0, y0 = box[0] // factor, box[1] // factor
+    x1, y1 = min(width, -(-box[2] // factor)), min(height, -(-box[3] // factor))
+    window = sub[y0 * factor:y1 * factor, x0 * factor:x1 * factor]
+    rows, columns = y1 - y0, x1 - x0
+    blocks = window.reshape(rows, factor, columns, factor, 4).transpose(0, 2, 1, 3, 4).reshape(
+        rows, columns, factor * factor, 4)
+    weight = blocks[..., 3].astype(np.float64) / 255.0
+    lab = fp.to_oklab(blocks[..., :3]).astype(np.float64)
+    lightness = lab[..., 0]
+    solid = weight >= 0.5
+    any_solid = solid.any(-1, keepdims=True)
+    usable = np.where(any_solid, solid, weight > 0)
+    low = np.argmin(np.where(usable, lightness, np.inf), axis=-1)
+    high = np.argmax(np.where(usable, lightness, -np.inf), axis=-1)
+
+    def centre(index: np.ndarray) -> np.ndarray:
+        return np.take_along_axis(lab, index[..., None, None].repeat(3, -1), axis=-2)[..., 0, :]
+
+    first, second = centre(low), centre(high)
+    first_weight = second_weight = None
+    for _ in range(CRISP_ITERATIONS):
+        to_first = ((lab - first[..., None, :]) ** 2).sum(-1)
+        to_second = ((lab - second[..., None, :]) ** 2).sum(-1)
+        second_weight = weight * (to_second < to_first)
+        first_weight = weight - second_weight
+        sums = first_weight.sum(-1), second_weight.sum(-1)
+        first = np.where(sums[0][..., None] > 0, (lab * first_weight[..., None]).sum(-2)
+                         / np.maximum(sums[0], 1e-12)[..., None], first)
+        second = np.where(sums[1][..., None] > 0, (lab * second_weight[..., None]).sum(-2)
+                          / np.maximum(sums[1], 1e-12)[..., None], second)
+    s_first, s_second = first_weight.sum(-1), second_weight.sum(-1)
+    swap = second[..., 0] < first[..., 0]
+    dark[y0:y1, x0:x1] = np.where(swap[..., None], second, first)
+    light[y0:y1, x0:x1] = np.where(swap[..., None], first, second)
+    total = np.maximum(s_first + s_second, 1e-12)
+    share[y0:y1, x0:x1] = np.where(swap, s_second, s_first) / total
+    return Clusters(dark, light, share)
+
+
+def crisp_choice(clusters: Clusters, previous: np.ndarray | None) -> np.ndarray:
+    """The OKLab colour of every output pixel: the heavier cluster; a darker cluster (DETAIL_GAP) from
+    DETAIL_SHARE, so lines and eyes survive; and the previous frame's cluster while it holds HOLD_SHARE."""
+    dark, light, share = clusters.dark, clusters.light, clusters.share
+    gap = light[..., 0] - dark[..., 0]
+    pick_dark = share >= np.where(gap > DETAIL_GAP, DETAIL_SHARE, 0.5)
+    if previous is not None:
+        to_dark = ((dark - previous) ** 2).sum(-1)
+        to_light = ((light - previous) ** 2).sum(-1)
+        limit = HOLD_DELTA_E ** 2
+        hold_dark = (to_dark < limit) & (to_dark < to_light) & (share >= HOLD_SHARE)
+        hold_light = (to_light < limit) & (to_light < to_dark) & (1.0 - share >= HOLD_SHARE)
+        pick_dark = np.where(hold_dark, True, np.where(hold_light, False, pick_dark))
+    return np.where(pick_dark[..., None], dark, light).astype(np.float32)
+
+
+def lift_frame(frame: np.ndarray, contrast: float, saturation: float, pivot: float) -> np.ndarray:
+    """OKLab lift of a straight-alpha RGBA frame: lightness spread around ``pivot`` by ``contrast``, chroma
+    scaled by ``saturation`` (1, 1 is the identity); alpha and invisible pixels are untouched."""
+    if contrast == 1.0 and saturation == 1.0:
+        return frame
+    out = frame.copy()
+    visible = frame[..., 3] > 0
+    if not visible.any():
+        return out
+    lab = fp.to_oklab(frame[..., :3][visible]).astype(np.float64)
+    lab[:, 0] = np.clip(pivot + (lab[:, 0] - pivot) * contrast, 0.0, 1.0)
+    lab[:, 1:] *= saturation
+    out[..., :3][visible] = fp.from_oklab(lab)
+    return out
+
+
+def clean_lone_pixels(idx: np.ndarray, pal: fp.Palette, passes: int = PIXEL_CLEAN_PASSES) -> tuple[np.ndarray, int]:
+    """Lone pixels (no 4-neighbour of their own index) take the neighbours' majority index, as
+    forge_palette.cleanup_orphans, except features: a pixel FEATURE_DELTA_L lighter or darker than every
+    4-neighbour (an eye, a highlight) stays. Transparent pixels never change and never spread."""
+    slot = pal.transparent_index
+    lightness = np.full(256, np.nan)
+    lightness[:len(pal)] = pal.lab[:, 0]
+    data = np.array(idx, copy=True)
+    height, width = data.shape
+    fixed = 0
+    for _ in range(int(passes)):
+        padded = np.pad(data, 1, mode="edge")
+        up, down = padded[0:height, 1:width + 1], padded[2:height + 2, 1:width + 1]
+        left, right = padded[1:height + 1, 0:width], padded[1:height + 1, 2:width + 2]
+        lonely = (up != data) & (down != data) & (left != data) & (right != data)
+        majority = np.where((up == down) | (up == left) | (up == right), up,
+                            np.where((down == left) | (down == right), down, np.where(left == right, left, data)))
+        own = lightness[data]
+        gaps = np.abs(np.stack([lightness[up], lightness[down], lightness[left], lightness[right]]) - own[None])
+        gaps = np.where(np.isnan(gaps), np.inf, gaps)   # a transparent neighbour never vetoes a feature
+        feature = gaps.min(axis=0) >= FEATURE_DELTA_L
+        fix = lonely & (majority != data) & (majority != slot) & (data != slot) & ~feature
+        fixed += int(fix.sum())
+        data = np.where(fix, majority, data)
+    return data, fixed
+
+
+def outline_shades(pal: fp.Palette) -> np.ndarray:
+    """Per palette index, the index that outlines it: the palette's dark shade of the same hue (OKLab L at
+    most min(L - OUTLINE_DROP, OUTLINE_MAX_L), nearest to 45% of its lightness and 80% of its chroma, hue
+    weighted 3x), else the darkest colour. The transparent index maps to itself."""
+    lab = pal.lab.astype(np.float64)
+    darkest = int(np.argmin(lab[:, 0]))
+    table = np.full(256, darkest, np.int64)
+    for index, (lightness, a, b) in enumerate(lab):
+        limit = min(lightness - OUTLINE_DROP, OUTLINE_MAX_L)
+        candidates = np.flatnonzero(lab[:, 0] <= limit)
+        if candidates.size:
+            target = np.array([min(0.45 * lightness, limit), 0.8 * a, 0.8 * b])
+            distance = (((lab[candidates] - target) ** 2) * np.array([1.0, 3.0, 3.0])).sum(-1)
+            table[index] = int(candidates[np.argmin(distance)])
+    if pal.transparent_index is not None:
+        table[pal.transparent_index] = pal.transparent_index
+    return table
+
+
+def add_outline(idx: np.ndarray, pal: fp.Palette, mode: str, shades: np.ndarray | None = None
+                ) -> tuple[np.ndarray, int]:
+    """A 1 px outline on the transparent pixels 4-adjacent to the sprite: ``selective`` paints each one in
+    the dark shade (outline_shades) of the darkest of its 8 neighbours, ``dark`` in the palette's darkest
+    colour. Needs a transparent border of 1 px; returns the map and the number of outline pixels."""
+    slot = pal.transparent_index
+    if mode == "none":
+        return idx, 0
+    height, width = idx.shape
+    lightness = np.full(256, np.inf)
+    lightness[:len(pal)] = pal.lab[:, 0]
+    padded = np.pad(idx, 1, constant_values=slot)
+    ring = np.zeros(idx.shape, bool)
+    best = np.full(idx.shape, slot, idx.dtype)
+    best_l = np.full(idx.shape, np.inf)
+    for dy in (-1, 0, 1):
+        for dx in (-1, 0, 1):
+            if dy == 0 and dx == 0:
+                continue
+            neighbour = padded[1 + dy:1 + dy + height, 1 + dx:1 + dx + width]
+            if abs(dy) + abs(dx) == 1:
+                ring |= neighbour != slot
+            darker = lightness[neighbour] < best_l
+            best = np.where(darker, neighbour, best)
+            best_l = np.where(darker, lightness[neighbour], best_l)
+    ring &= idx == slot
+    out = idx.copy()
+    if mode == "dark":
+        out[ring] = int(np.argmin(pal.lab[:, 0]))
+    else:
+        table = outline_shades(pal) if shades is None else shades
+        out[ring] = table[best[ring]].astype(idx.dtype)
+    return out, int(ring.sum())
+
+
+def parse_canvas(value: Any) -> tuple[int, int] | None:
+    """``"48x64"`` (or a pair) -> (48, 64); None stays None."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        match = re.fullmatch(r"\s*(\d+)\s*[xX,]\s*(\d+)\s*", value)
+        if not match:
+            raise FinishError(f"canvas {value!r} must be WIDTHxHEIGHT, such as 48x64")
+        width, height = int(match.group(1)), int(match.group(2))
+    else:
+        try:
+            width, height = (int(item) for item in value)
+        except (TypeError, ValueError):
+            raise FinishError(f"canvas {value!r} must be a width and a height") from None
+    if width < 4 or height < 4:
+        raise FinishError(f"canvas {width}x{height} is too small (at least 4x4)")
+    return width, height
+
+
+def parse_point(value: Any, name: str = "canvas anchor") -> tuple[int, int] | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        match = re.fullmatch(r"\s*(-?\d+)\s*,\s*(-?\d+)\s*", value)
+        if not match:
+            raise FinishError(f"{name} {value!r} must be X,Y in whole output px")
+        return int(match.group(1)), int(match.group(2))
+    try:
+        x, y = (int(item) for item in value)
+    except (TypeError, ValueError):
+        raise FinishError(f"{name} {value!r} must be X,Y in whole output px") from None
+    return x, y
+
+
+def canvas_window(content: tuple[int, int, int, int], anchor: tuple[int, int], canvas: tuple[int, int],
+                  canvas_anchor: tuple[int, int] | None) -> tuple[tuple[int, int, int, int] | None, tuple[int, int],
+                                                                   float]:
+    """Where a ``canvas`` cell sits on a full grid: ((x0, y0, x1, y1) on the grid or None when the content
+    does not fit, the anchor inside the cell, the scale factor that would make it fit).
+
+    ``content`` is the union box of everything drawn (outline included) on the grid and ``anchor`` the grid
+    anchor. Without ``canvas_anchor`` the anchor goes to the cell's centre column and one px above its bottom
+    edge, then moves the least that keeps the content inside the cell."""
+    width, height = canvas
+    left, right = anchor[0] - content[0], content[2] - anchor[0]
+    top, bottom = anchor[1] - content[1], content[3] - anchor[1]
+    if canvas_anchor is None:
+        fits = left + right <= width and top + bottom <= height
+        x = min(max(width // 2, left), width - right)
+        y = min(max(height - 1, top), height - bottom)
+    else:
+        x, y = canvas_anchor
+        fits = left <= x and right <= width - x and top <= y and bottom <= height - y
+    if not fits:
+        if canvas_anchor is None:
+            factors = [width / max(1, left + right), height / max(1, top + bottom)]
+        else:
+            factors = [x / left if left > 0 else math.inf, (width - x) / right if right > 0 else math.inf,
+                       y / top if top > 0 else math.inf, (height - y) / bottom if bottom > 0 else math.inf]
+        return None, (x, y), max(0.0, min(factors))
+    return (anchor[0] - x, anchor[1] - y, anchor[0] - x + width, anchor[1] - y + height), (x, y), 1.0
+
+
+def cut_window(frame: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
+    """``frame[y0:y1, x0:x1]`` with transparent padding where the box leaves the frame."""
+    x0, y0, x1, y1 = box
+    out = np.zeros((y1 - y0, x1 - x0) + frame.shape[2:], frame.dtype)
+    sx0, sy0 = max(0, x0), max(0, y0)
+    sx1, sy1 = min(frame.shape[1], x1), min(frame.shape[0], y1)
+    if sx0 < sx1 and sy0 < sy1:
+        out[sy0 - y0:sy1 - y0, sx0 - x0:sx1 - x0] = frame[sy0:sy1, sx0:sx1]
+    return out
+
+
+@dataclass
+class _Pass:
+    """One pass over the source frames: per display size the box frames, the cleaned frames and, for the
+    crisp pixel downscale, the crisp frames (cleaned alpha, cluster colour)."""
+
+    small: dict[float, list[np.ndarray]]
+    cleaned: dict[float, list[np.ndarray]]
+    crisp: dict[float, list[np.ndarray]] | None
+    hygiene: dict[float, dict[str, int]]
+    sources: list[dict[str, Any]]
+
+
+def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray, dict[str, Any]],
+                 source_size: tuple[int, int], anchor_src: Sequence[float], grids: Sequence[Grid], crisp: bool,
+                 seed_frame: int | None) -> _Pass:
+    """Every display size is derived from the source frame, never from another size. ``seed_frame`` (cycles:
+    the last frame, pingpong: frame 1) seeds the crisp hysteresis of frame 0."""
+    small: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
+    cleaned: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
+    crisp_frames: dict[float, list[np.ndarray]] | None = {grid.factor: [] for grid in grids} if crisp else None
+    hygiene = {grid.factor: {"floor_px": 0, "detached_px": 0, "detached_components": 0} for grid in grids}
+    previous: dict[float, np.ndarray | None] = {grid.factor: None for grid in grids}
+    subgrids = {grid.factor: supersampled(grid) for grid in grids}
+
+    def load(index: int) -> tuple[np.ndarray, dict[str, Any]]:
+        pixels, info = rest if index == rest_frame else _load(files[index])
+        if (int(pixels.shape[1]), int(pixels.shape[0])) != source_size:
+            raise FinishError(f"{files[index].name} is {pixels.shape[1]}x{pixels.shape[0]}, not {source_size[0]}x"
+                              f"{source_size[1]}: registered frames share one canvas")
+        return pixels, info
+
+    if crisp and seed_frame is not None and len(files) > 1:
+        pixels, _info = load(seed_frame)
+        visible = _bbox(pixels[..., 3] > 0)
+        for grid in grids:
+            sub = reduce_frame(pixels, visible, anchor_src, subgrids[grid.factor])
+            previous[grid.factor] = crisp_choice(crisp_clusters(sub), None)
+        del pixels
+    sources: list[dict[str, Any]] = []
+    for index, path in enumerate(files):
+        pixels, info = load(index)
+        sources.append({"sourceFile": path.name, "sourceSha256": info["sha256"]})
+        visible = _bbox(pixels[..., 3] > 0)
+        for grid in grids:
+            reduced = reduce_frame(pixels, visible, anchor_src, grid)
+            clean_image, report = forge_core.alpha_hygiene(reduced, mode="both", floor=HYGIENE_FLOOR)
+            clean = np.asarray(clean_image, np.uint8)
+            small[grid.factor].append(reduced)
+            cleaned[grid.factor].append(clean)
+            for key in hygiene[grid.factor]:
+                hygiene[grid.factor][key] += int(report[key])
+            if crisp_frames is not None:
+                sub = reduce_frame(pixels, visible, anchor_src, subgrids[grid.factor])
+                choice = crisp_choice(crisp_clusters(sub), previous[grid.factor])
+                previous[grid.factor] = choice
+                frame = np.zeros_like(clean)
+                frame[..., :3] = fp.from_oklab(choice)
+                frame[..., 3] = clean[..., 3]
+                frame[frame[..., 3] == 0] = 0
+                crisp_frames[grid.factor].append(frame)
+        del pixels
+    return _Pass(small, cleaned, crisp_frames, hygiene, sources)
+
+
+def _source_extents(files: Sequence[Path], anchor_src: Sequence[float]) -> tuple[float, float, float, float]:
+    """(left, right, top, bottom) source px of the union of every frame's visible pixels (alpha above the hygiene
+    floor) around the anchor."""
+    box = None
+    for path in files:
+        with Image.open(path) as image:
+            frame_box = image.convert("RGBA").getchannel("A").point(lambda v: 255 if v > HYGIENE_FLOOR else 0).getbbox()
+        if frame_box:
+            box = frame_box if box is None else (min(box[0], frame_box[0]), min(box[1], frame_box[1]),
+                                                 max(box[2], frame_box[2]), max(box[3], frame_box[3]))
+    if box is None:
+        raise FinishError("every source frame is empty")
+    fx, fy = anchor_src
+    return max(0.0, fx - box[0]), max(0.0, box[2] - fx), max(0.0, fy - box[1]), max(0.0, box[3] - fy)
+
+
+def fit_scale(extents: tuple[float, float, float, float], scale: float, canvas: tuple[int, int],
+              canvas_anchor: tuple[int, int] | None, fixed: int) -> float:
+    """The largest scale (at most ``scale``) at which content of source ``extents`` (left, right, top,
+    bottom around the anchor) plus ``fixed`` output px on every side fits the canvas (the anchor free, or
+    at ``canvas_anchor``)."""
+    left, right, top, bottom = extents
+    width, height = canvas
+    if canvas_anchor is None:
+        limits = [(width - 2 * fixed) / max(left + right, 1e-9), (height - 2 * fixed) / max(top + bottom, 1e-9)]
+    else:
+        x, y = canvas_anchor
+        limits = [(x - fixed) / left if left > 0 else math.inf, (width - x - fixed) / right if right > 0 else math.inf,
+                  (y - fixed) / top if top > 0 else math.inf, (height - y - fixed) / bottom if bottom > 0 else math.inf]
+    return max(0.0, min([scale] + limits))
+
+
+def _master_for_lock(colour_lock: Any, rest_pixels: np.ndarray) -> tuple[Any, dict[str, Any] | None]:
+    """colour_lock.master_colours of ``rest`` (the rest frame), an RGBA image path or an RGBA array."""
+    try:
+        if isinstance(colour_lock, str) and colour_lock.strip().lower() == "rest":
+            return colour_lock_module.master_colours(rest_pixels), {"source": "rest"}
+        if isinstance(colour_lock, (str, os.PathLike)):
+            path = Path(colour_lock)
+            if not path.is_file():
+                raise FinishError(f"--colour-lock master not found: {path}")
+            return colour_lock_module.master_colours(path), {"path": path}
+        return colour_lock_module.master_colours(np.asarray(colour_lock)), {"source": "array"}
+    except colour_lock_module.ColourLockError as error:
+        raise FinishError(str(error)) from None
+
+
 def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mode: str = "hd",
                 target_height: float | None, scale_ref: Any = None, palette: Any = None, rest_frame: int = 0,
                 anchor: str = "feet", display_sizes: Any = (1.0,), colors: int | None = None,
                 reserve: Sequence[str] = (), seed: int = 0, loop_policy: str = "cycle",
                 margin: float = fp.HYSTERESIS_MARGIN, area_norm: bool = True, indexed_sheet: bool = False,
                 pattern: str = "*.png", clip: str | None = None, character: str | None = None,
-                role: str | None = None, strict: bool = False) -> dict[str, Any]:
+                role: str | None = None, strict: bool = False, downscale: str | None = None,
+                contrast: float | None = None, saturation: float | None = None, outline: str | None = None,
+                canvas: Any = None, canvas_anchor: Any = None, colour_lock: Any = None,
+                lock_strength: float = 1.0) -> dict[str, Any]:
     """Finish one registered clip into ``out_dir`` (new; staged, published only after QA).
 
     ``mode`` is ``hd`` (default) or ``pixel``. Exactly one of ``target_height`` (output px of the
-    rest-pose body at 1x) and ``scale_ref`` (a sibling clip's finish.json, its folder or the loaded
-    document) sets the scale. ``palette`` (pixel only) is a palette file, a forge_palette.Palette or a
-    palette mapping; without it ``colors`` (default 255) colours are learned from the finished frames,
-    ``reserve`` colours first. Returns the summary the CLI prints (paths, scale, palette colours, QA).
+    rest-pose body at 1x; with a pixel outline the outline is included) and ``scale_ref`` (a sibling
+    clip's finish.json, its folder or the loaded document) sets the scale. ``palette`` (pixel only) is a
+    palette file, a forge_palette.Palette or a palette mapping; without it ``colors`` (default 32) colours
+    are learned from the finished frames, ``reserve`` colours first. Pixel only: ``downscale`` (crisp or
+    box), ``contrast`` and ``saturation`` (the lift; 1 is off), ``outline`` (selective, dark or none); the
+    defaults are the bold finish. ``canvas`` (WxH) and ``canvas_anchor`` (X,Y) put every frame on a fixed
+    cell. ``colour_lock`` (a keyed master image or "rest") locks the design colours (colour_lock.py).
+    Returns the summary the CLI prints (paths, scale, palette colours, QA).
     """
     if mode not in MODES:
         raise FinishError(f"mode must be one of {', '.join(MODES)}, got {mode!r}")
@@ -500,14 +911,40 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         raise FinishError(f"anchor must be one of {', '.join(ANCHORS)}, got {anchor!r}")
     if loop_policy not in LOOP_POLICIES:
         raise FinishError(f"loop policy must be one of {', '.join(LOOP_POLICIES)}, got {loop_policy!r}")
-    if mode == "hd" and (palette is not None or colors is not None or reserve or indexed_sheet):
-        raise FinishError("palette, colors, reserve and indexed sheets belong to the pixel finish")
+    pixel_only = (palette, colors, downscale, contrast, saturation, outline)
+    if mode == "hd" and (any(value is not None for value in pixel_only) or reserve or indexed_sheet):
+        raise FinishError("palette, colors, reserve, indexed sheets, downscale, contrast, saturation and outline belong "
+                          "to the pixel finish")
     if palette is not None and (colors is not None or reserve):
         raise FinishError("colors and reserve build a palette; drop them when a palette is given")
     if colors is not None and (isinstance(colors, bool) or not 2 <= int(colors) <= 255):
         raise FinishError("colors must be 2..255 (the transparent index needs a free slot)")
     if not (math.isfinite(float(margin)) and float(margin) >= 0):
         raise FinishError("the hysteresis margin must be >= 0")
+    if mode == "pixel":
+        downscale = "crisp" if downscale is None else str(downscale)
+        outline = "selective" if outline is None else str(outline)
+        contrast = LIFT_CONTRAST if contrast is None else float(contrast)
+        saturation = LIFT_SATURATION if saturation is None else float(saturation)
+        if downscale not in DOWNSCALES:
+            raise FinishError(f"downscale must be one of {', '.join(DOWNSCALES)}, got {downscale!r}")
+        if outline not in OUTLINES:
+            raise FinishError(f"outline must be one of {', '.join(OUTLINES)}, got {outline!r}")
+        for name, value in (("contrast", contrast), ("saturation", saturation)):
+            if not (math.isfinite(value) and 0.5 <= value <= 2.0):
+                raise FinishError(f"{name} must be 0.5..2 (1 is no change), got {value!r}")
+    if not 0.0 <= float(lock_strength) <= 1.0:
+        raise FinishError("the colour-lock strength must be 0..1")
+    cell = parse_canvas(canvas)
+    cell_anchor = parse_point(canvas_anchor)
+    if cell_anchor is not None and cell is None:
+        raise FinishError("a canvas anchor needs a canvas (--canvas WxH)")
+    if cell is not None and cell_anchor is not None and not (0 <= cell_anchor[0] <= cell[0]
+                                                              and 0 <= cell_anchor[1] <= cell[1]):
+        raise FinishError(f"canvas anchor {cell_anchor} lies outside the {cell[0]}x{cell[1]} canvas")
+    outline_px = OUTLINE_PX if mode == "pixel" and outline != "none" else 0
+    crisp = mode == "pixel" and downscale == "crisp"
+    bold = mode == "pixel" and (crisp or outline_px or contrast != 1.0 or saturation != 1.0)
     factors = parse_display_sizes(display_sizes)
     folder, files, registration = resolve_frames(frames_dir, pattern)
     if isinstance(rest_frame, bool) or not 0 <= int(rest_frame) < len(files):
@@ -528,8 +965,26 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     if body is None:
         raise FinishError(f"rest frame {rest_frame} ({files[rest_frame].name}) has no body above 50% alpha")
     anchor_src = (body.stance_x, float(body.ground)) if anchor == "feet" else body.centroid
-    plan = plan_scale(body, target_height, scale_ref, area_norm=area_norm, character=character)
+    body_target = None
+    if target_height is not None:
+        body_target = float(target_height) - 2 * outline_px
+        if not body_target > 0:
+            raise FinishError(f"target height {target_height} leaves no body inside a {outline_px} px outline")
+    plan = plan_scale(body, body_target, scale_ref, area_norm=area_norm, character=character)
+    checks: list[dict[str, Any]] = list(plan.checks)
+    lock_master, lock_source = (None, None) if colour_lock is None else _master_for_lock(colour_lock, rest_pixels)
     source_size = (int(rest_pixels.shape[1]), int(rest_pixels.shape[0]))
+    extents = _source_extents(files, anchor_src) if cell is not None else None
+    if cell is not None:
+        fitted = fit_scale(extents, plan.scale, cell, cell_anchor, outline_px + 1)
+        if fitted < plan.scale * (1.0 - 1e-9):
+            fitted *= 0.995
+            checks.append(_check("canvas-fit", {"targetHeight": round(plan.target_height + 2 * outline_px, 3),
+                                                "fittedHeight": round(body.height * fitted + 2 * outline_px, 3)},
+                                 list(cell), False, warn=True,
+                                 note="the clip did not fit the canvas at the target; it was finished smaller"))
+            plan = ScalePlan(fitted, plan.source, body.height * fitted, plan.reference, plan.reference_path,
+                             plan.checks)
     for factor in factors:
         scale = plan.scale * factor
         if scale > 1.0 + 1e-9:
@@ -537,54 +992,96 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             raise FinishError(f"{what} would upscale: scale {scale:.4f} > 1 ({plan.target_height * factor:.1f} px "
                               f"from a {body.height} px rest pose); finishing never upscales, so lower the target "
                               "or regenerate the source larger")
-    grids = [full_grid(source_size, anchor_src, plan.scale * factor, factor) for factor in factors]
-
-    # One pass over the source: every display size is derived from the source frame, never from another size.
-    small: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
-    cleaned: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
-    hygiene = {grid.factor: {"floor_px": 0, "detached_px": 0, "detached_components": 0} for grid in grids}
-    sources: list[dict[str, Any]] = []
-    for index, path in enumerate(files):
-        pixels, info = (rest_pixels, rest_info) if index == rest_frame else _load(path)
-        if (int(pixels.shape[1]), int(pixels.shape[0])) != source_size:
-            raise FinishError(f"{path.name} is {pixels.shape[1]}x{pixels.shape[0]}, not {source_size[0]}x"
-                              f"{source_size[1]}: registered frames share one canvas")
-        sources.append({"sourceFile": path.name, "sourceSha256": info["sha256"]})
-        visible = _bbox(pixels[..., 3] > 0)
-        for grid in grids:
-            reduced = reduce_frame(pixels, visible, anchor_src, grid)
-            clean_image, report = forge_core.alpha_hygiene(reduced, mode="both", floor=HYGIENE_FLOOR)
-            small[grid.factor].append(reduced)
-            cleaned[grid.factor].append(np.asarray(clean_image, np.uint8))
-            for key in hygiene[grid.factor]:
-                hygiene[grid.factor][key] += int(report[key])
-        del pixels
-
-    # Crop each size to the union of its visible pixels plus 1 px; the anchor moves with the crop.
+    seed_frame = {"cycle": len(files) - 1, "pingpong": 1}.get(loop_policy) if len(files) > 1 else None
+    rest = (rest_pixels, rest_info)
     sizes: list[dict[str, Any]] = []
-    for grid in grids:
-        box = _union(cleaned[grid.factor], HYGIENE_FLOOR)
-        if box is None:
-            raise FinishError("every frame is empty at the finished size; check the input frames and the target")
-        x0, y0 = max(0, box[0] - 1), max(0, box[1] - 1)
-        x1, y1 = min(grid.size[0], box[2] + 1), min(grid.size[1], box[3] + 1)
-        small[grid.factor] = [frame[y0:y1, x0:x1] for frame in small[grid.factor]]
-        cleaned[grid.factor] = [np.ascontiguousarray(frame[y0:y1, x0:x1]) for frame in cleaned[grid.factor]]
-        sizes.append({"factor": grid.factor, "label": _factor_label(grid.factor), "dir": _size_dir(grid.factor),
-                      "scale": grid.scale, "size": [x1 - x0, y1 - y0],
-                      "anchor": [grid.anchor[0] - x0, grid.anchor[1] - y0],
-                      "targetHeight": plan.target_height * grid.factor})
+    for attempt in range(3):
+        grids = [full_grid(source_size, anchor_src, plan.scale * factor, factor) for factor in factors]
+        passed = _source_pass(files, rest_frame, rest, source_size, anchor_src, grids, crisp, seed_frame)
+        # Crop each size to the union of its visible pixels (plus the outline) plus 1 px, or place it on the
+        # canvas; the anchor moves with the crop (and to the outline's bottom edge for the feet anchor).
+        sizes, retry = [], None
+        for grid in grids:
+            box = _union(passed.cleaned[grid.factor], HYGIENE_FLOOR)
+            if box is None:
+                raise FinishError("every frame is empty at the finished size; check the input frames and the target")
+            content = (box[0] - outline_px, box[1] - outline_px, box[2] + outline_px, box[3] + outline_px)
+            pin = (grid.anchor[0], grid.anchor[1] + (outline_px if anchor == "feet" else 0))
+            if cell is None:
+                window = (content[0] - 1, content[1] - 1, content[2] + 1, content[3] + 1)
+                if not outline_px:   # the v1 rule: the crop never leaves the full grid
+                    window = (max(0, window[0]), max(0, window[1]), min(grid.size[0], window[2]),
+                              min(grid.size[1], window[3]))
+            else:
+                size_cell = (max(4, int(round(cell[0] * grid.factor))), max(4, int(round(cell[1] * grid.factor))))
+                size_anchor = None if cell_anchor is None else (int(round(cell_anchor[0] * grid.factor)),
+                                                                int(round(cell_anchor[1] * grid.factor)))
+                window, _, factor_needed = canvas_window(content, pin, size_cell, size_anchor)
+                if window is None:
+                    retry = factor_needed
+                    break
+            for store in (passed.small, passed.cleaned) + ((passed.crisp,) if passed.crisp is not None else ()):
+                store[grid.factor] = [cut_window(frame, window) for frame in store[grid.factor]]
+            sizes.append({"factor": grid.factor, "label": _factor_label(grid.factor), "dir": _size_dir(grid.factor),
+                          "scale": grid.scale, "size": [window[2] - window[0], window[3] - window[1]],
+                          "anchor": [pin[0] - window[0], pin[1] - window[1]],
+                          "targetHeight": plan.target_height * grid.factor + 2 * outline_px})
+        if retry is None:
+            break
+        shrink = max(0.5, min(0.98, retry * 0.98))
+        if not any(item["id"] == "canvas-fit" for item in checks):
+            checks.append(_check("canvas-fit", {"targetHeight": round(plan.target_height + 2 * outline_px, 3)},
+                                 list(cell), False, warn=True,
+                                 note="the clip did not fit the canvas at the target; it was finished smaller"))
+        plan = ScalePlan(plan.scale * shrink, plan.source, plan.target_height * shrink, plan.reference,
+                         plan.reference_path, plan.checks)
+    else:
+        raise FinishError(f"the clip does not fit the {cell[0]}x{cell[1]} canvas; give a bigger canvas")
+    for item in checks:
+        if item["id"] == "canvas-fit":
+            item["value"]["fittedHeight"] = round(plan.target_height + 2 * outline_px, 3)
+    small, cleaned, hygiene, sources = passed.small, passed.cleaned, passed.hygiene, passed.sources
+
+    # The colour lock (hd: the cleaned frames; pixel: the colours that get quantized).
+    lock_doc = None
+    if lock_master is not None:
+        lock_doc = {"strength": float(lock_strength), "method": colour_lock_module.METHOD, "sizes": {}}
+        for entry in sizes:
+            factor = entry["factor"]
+            store = cleaned if passed.crisp is None else passed.crisp
+            before = colour_lock_module.measure(store[factor], lock_master, loop=loop_policy == "cycle") \
+                if factor == 1.0 else None
+            store[factor], stats = colour_lock_module.lock_frames(store[factor], lock_master,
+                                                                  strength=float(lock_strength),
+                                                                  loop=loop_policy == "cycle")
+            item = {"stats": stats}
+            if before is not None:
+                after = colour_lock_module.measure(store[factor], lock_master, loop=loop_policy == "cycle")
+                item.update(before={key: before[key] for key in ("hueFlipsPerPair", "regionSpreadMean",
+                                                                 "regionSpreadMax", "foreignShare")},
+                            after={key: after[key] for key in ("hueFlipsPerPair", "regionSpreadMean",
+                                                               "regionSpreadMax", "foreignShare")})
+            lock_doc["sizes"][entry["label"]] = item
 
     pal: fp.Palette | None = None
     palette_path: Path | None = None
     built = False
+    quantized: dict[float, list[np.ndarray]] = {}
+    pivot = None
     if mode == "pixel":
+        colour_source = passed.crisp if passed.crisp is not None else cleaned
+        rest_colours = colour_source[1.0][rest_frame]
+        solid = rest_colours[..., 3] > CONTOUR
+        pivot = float(fp.to_oklab(rest_colours[..., :3][solid])[:, 0].mean()) if solid.any() else 0.5
+        for entry in sizes:
+            quantized[entry["factor"]] = [lift_frame(frame, contrast, saturation, pivot)
+                                          for frame in colour_source[entry["factor"]]]
         if palette is not None:
             pal, palette_path = _resolve_palette(palette)
         else:
-            count = DEFAULT_COLORS if colors is None else int(colors)
+            count = PIXEL_COLORS if colors is None else int(colors)
             try:
-                pal = fp.build_palette(cleaned[1.0], count, reserved=list(reserve) or None, seed=int(seed),
+                pal = fp.build_palette(quantized[1.0], count, reserved=list(reserve) or None, seed=int(seed),
                                        alpha_threshold=128)
             except fp.PaletteError as error:
                 raise FinishError(str(error)) from None
@@ -595,9 +1092,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             raise FinishError("the pixel finish needs a palette with a transparent index (at most 255 colours)")
 
     count = len(files)
-    checks: list[dict[str, Any]] = list(plan.checks)
     outputs: dict[float, list[np.ndarray]] = {}
     size_qa: dict[float, dict[str, Any]] = {}
+    shades = outline_shades(pal) if pal is not None and outline_px and outline == "selective" else None
     for entry in sizes:
         factor = entry["factor"]
         if mode == "hd":
@@ -608,18 +1105,34 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 "specksRemoved": hygiene[factor]["detached_px"],
                 "hygiene": dict(hygiene[factor], mode="both", floor=HYGIENE_FLOOR)}
         else:
-            maps, stats, baseline = _quantize(cleaned[factor], pal, loop_policy, float(margin))
+            frames_in = quantized[factor]
+            maps, stats, baseline = _quantize(frames_in, pal, loop_policy, float(margin),
+                                              orphans=0 if bold else PIXEL_ORPHANS)
+            lone = sum(item["orphans_fixed_px"] for item in stats)
+            outlined_px = 0
+            if bold:   # the flicker is counted before the outline, which only follows the silhouette
+                maps = [clean_lone_pixels(frame, pal) for frame in maps]
+                lone += sum(fixed for _, fixed in maps)
+                maps = [frame for frame, _ in maps]
+                baseline = [clean_lone_pixels(frame, pal)[0] for frame in baseline]
+            held = flicker(maps, frames_in, transparent=pal.transparent_index, loop=loop_policy == "cycle")
+            plain = flicker(baseline, frames_in, transparent=pal.transparent_index, loop=loop_policy == "cycle")
+            if outline_px:
+                outlined = [add_outline(frame, pal, outline, shades) for frame in maps]
+                outlined_px = sum(ring for _, ring in outlined)
+                maps = [frame for frame, _ in outlined]
             outputs[factor] = [fp.render_indices(frame, pal) for frame in maps]
-            held = flicker(maps, cleaned[factor], transparent=pal.transparent_index, loop=loop_policy == "cycle")
-            plain = flicker(baseline, cleaned[factor], transparent=pal.transparent_index, loop=loop_policy == "cycle")
             reduction = None
             if held is not None and plain is not None and plain["noiseFlipsPerPair"]:
                 reduction = round(1.0 - held["noiseFlipsPerPair"] / plain["noiseFlipsPerPair"], 4)
+            per_frame_colours = [int(np.unique(_pack(frame[..., :3][frame[..., 3] > 0])).size)
+                                 for frame in outputs[factor]]
             size_qa[factor] = {"flicker": held, "perFrameNearest": plain, "noiseFlipReduction": reduction,
                                "specksRemoved": int(sum(item["despeckled_px"] for item in stats)),
-                               "lonePixelsFixed": int(sum(item["orphans_fixed_px"] for item in stats)),
+                               "lonePixelsFixed": int(lone),
                                "heldIndexPx": int(sum(item["held_index_px"] for item in stats)),
                                "heldAlphaPx": int(sum(item["held_alpha_px"] for item in stats)),
+                               "outlinePx": int(outlined_px), "coloursPerFrameMax": max(per_frame_colours),
                                "maps": maps}
         alpha_values = np.unique(np.concatenate([np.unique(frame[..., 3]) for frame in outputs[factor]]))
         size_qa[factor]["alphaBinary"] = bool(np.isin(alpha_values, (0, 255)).all())
@@ -627,18 +1140,22 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                                           if not (frame[..., 3] > CONTOUR).any()]
 
     base = outputs[1.0]
+    nominal = plan.target_height + 2 * outline_px
     measured = measure_body(base[rest_frame][..., 3], OUTPUT_MIN_RUN)
-    rest_output = {"heightPx": round(plan.target_height, 4), "areaPx": round(body.area * plan.scale ** 2, 3),
+    rest_output = {"heightPx": round(nominal, 4), "areaPx": round(body.area * plan.scale ** 2, 3),
+                   "bodyHeightPx": round(plan.target_height, 4), "outlinePx": outline_px,
                    "measuredHeightPx": None if measured is None else measured.height,
                    "measuredAreaPx": None if measured is None else measured.area}
-    error = None if measured is None else abs(measured.height - plan.target_height)
+    error = None if measured is None else abs(measured.height - nominal)
     checks.append(_check("no-upscale", round(max(entry["scale"] for entry in sizes), 6), 1.0, True))
     checks.append(_check("rest-height", None if error is None else round(error, 3), REST_HEIGHT_TOLERANCE,
                          error is not None and error <= REST_HEIGHT_TOLERANCE, warn=True,
-                         note="|measured - nominal| rest-pose body height at 1x, output px"))
+                         note="|measured - nominal| rest-pose body height at 1x (outline included), output px"))
     qa1 = size_qa[1.0]
     checks.append(_check("empty-frames", qa1["emptyFrames"], 0, not qa1["emptyFrames"], warn=True))
     checks.append(_check("flicker", qa1["flicker"], None, None))
+    if lock_doc is not None:
+        checks.append(_check("colour-lock", lock_doc["sizes"].get("1x"), None, None))
     if mode == "hd":
         checks.append(_check("alpha-hygiene", qa1["hygiene"], None, None))
     else:
@@ -651,7 +1168,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         used = np.unique(np.concatenate([_pack(frame[..., :3][frame[..., 3] > 0]) for frame in base]))
         off = int((~np.isin(used, _pack(pal.rgb))).sum())
         checks.append(_check("palette-fit", {"colorsUsed": int(used.size), "paletteColors": len(pal),
-                                             "offPaletteColors": off}, 0, off == 0 and used.size <= len(pal)))
+                                             "offPaletteColors": off,
+                                             "coloursPerFrameMax": qa1["coloursPerFrameMax"]}, 0,
+                             off == 0 and used.size <= len(pal) and qa1["coloursPerFrameMax"] <= len(pal)))
         if qa1["perFrameNearest"] is not None:
             held, plain = qa1["flicker"]["noiseFlipsPerPair"], qa1["perFrameNearest"]["noiseFlipsPerPair"]
             checks.append(_check("hysteresis", {"noiseFlipsPerPair": held, "perFrameNearest": plain,
@@ -667,6 +1186,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                        "the palette's fit to other clips of the cast (build one shared palette with palette build)"]
     else:
         not_proven += ["engine blending: draw with premultiplied alpha (RGB under alpha 0 is zeroed)"]
+    if lock_doc is not None:
+        not_proven.append("that every locked colour belongs to the master's design part it matched (look at the "
+                          "frames: the lock only moves chroma toward colours found at the same body height)")
 
     with forge_core.staged_output(final) as stage:
         written: list[Path] = []
@@ -710,6 +1232,12 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             inputs.append(forge_core.file_ref(plan.reference_path, stage))
         if palette_path is not None:
             inputs.append(forge_core.file_ref(palette_path, stage))
+        if lock_source is not None and lock_source.get("path") is not None:
+            lock_ref = forge_core.file_ref(lock_source["path"], stage)
+            inputs.append(lock_ref)
+            lock_doc["master"] = lock_ref
+        elif lock_doc is not None:
+            lock_doc["master"] = {"source": lock_source.get("source")}
         output_refs = [forge_core.file_ref(path, stage) for path in written]
         failed = [item["id"] for item in checks if item["status"] == "fail"]
         warned = [item["id"] for item in checks if item["status"] == "warn"]
@@ -717,7 +1245,10 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             raise FinishError(f"finish QA failed ({', '.join(failed)}); nothing was published")
         if strict and warned:
             raise FinishError(f"finish QA warned under --strict ({', '.join(warned)}); nothing was published")
-        qa = _envelope(checks, HD_METHOD if mode == "hd" else PIXEL_METHOD, not_proven, inputs, output_refs)
+        method = HD_METHOD if mode == "hd" else (BOLD_METHOD if bold else PIXEL_METHOD)
+        if lock_doc is not None:
+            method += "; then " + colour_lock_module.METHOD
+        qa = _envelope(checks, method, not_proven, inputs, output_refs)
         display = []
         for entry in sizes:
             item = {key: entry[key] for key in ("label", "dir", "scale", "size", "anchor", "targetHeight")}
@@ -741,12 +1272,14 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             "anchorSource": list(anchor_src),
             "scale": plan.scale,
             "scaleSource": plan.source,
-            "targetHeight": plan.target_height,
+            "targetHeight": nominal,
             "scaleRef": None if plan.reference is None else {
                 **({} if plan.reference_path is None else forge_core.file_ref(plan.reference_path, stage)),
                 **plan.reference},
             "size": list(sizes[0]["size"]),
             "anchor": list(sizes[0]["anchor"]),
+            "canvas": None if cell is None else {"size": list(cell), "anchor": list(sizes[0]["anchor"]),
+                                                 "requestedAnchor": None if cell_anchor is None else list(cell_anchor)},
             "engine": {"sourceSize": list(sizes[0]["size"]), "sourceAnchor": list(sizes[0]["anchor"]),
                        "sampling": "nearest" if mode == "pixel" else "linear", "pixelArt": mode == "pixel",
                        "note": "engine_export.py package --clean-dir <out>/frames --source-size W,H --source-anchor "
@@ -757,10 +1290,16 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             "palette": palette_doc,
             "pixel": None if mode != "pixel" else {
                 "alphaThreshold": PIXEL_ALPHA, "dither": False, "loopPolicy": loop_policy, "margin": float(margin),
-                "alphaBand": list(fp.ALPHA_BAND), "orphans": PIXEL_ORPHANS, "despeckle": True,
+                "alphaBand": list(fp.ALPHA_BAND), "orphans": PIXEL_CLEAN_PASSES if bold else PIXEL_ORPHANS,
+                "despeckle": True, "downscale": downscale, "supersample": SUPERSAMPLE if crisp else 1,
+                "lift": {"contrast": contrast, "saturation": saturation, "pivotL": None if pivot is None
+                         else round(pivot, 5)},
+                "outline": outline, "outlinePx": qa1["outlinePx"], "featureDeltaL": FEATURE_DELTA_L if bold else None,
+                "coloursPerFrameMax": qa1["coloursPerFrameMax"],
                 "noiseFlipReduction": qa1["noiseFlipReduction"], "perFrameNearest": qa1["perFrameNearest"],
                 "heldIndexPx": qa1["heldIndexPx"], "heldAlphaPx": qa1["heldAlphaPx"],
                 "lonePixelsFixed": qa1["lonePixelsFixed"]},
+            "colourLock": lock_doc,
             "indexedSheet": sheet_doc,
             "loopPolicy": loop_policy,
             "frames": records,
@@ -786,9 +1325,13 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                   "alphaBinary": qa1["alphaBinary"], "warnings": warned}
     if mode == "pixel":
         summary_qa["lonePixelsFixed"] = qa1["lonePixelsFixed"]
+        summary_qa["coloursPerFrameMax"] = qa1["coloursPerFrameMax"]
+        summary_qa["outlinePx"] = qa1["outlinePx"]
+    if lock_doc is not None:
+        summary_qa["colourLock"] = lock_doc["sizes"].get("1x")
     return {
         "status": qa["status"], "output": str(final), "metadata": str(final / FINISH_FILE), "mode": mode,
-        "frames": count, "targetHeight": round(plan.target_height, 4), "scale": round(plan.scale, 8),
+        "frames": count, "targetHeight": round(nominal, 4), "scale": round(plan.scale, 8),
         "scaleSource": plan.source, "size": list(sizes[0]["size"]), "anchor": list(sizes[0]["anchor"]),
         "displaySizes": [{"label": entry["label"], "dir": str(final / entry["dir"]), "size": entry["size"],
                           "anchor": entry["anchor"]} for entry in sizes],
@@ -1223,6 +1766,14 @@ def _common_finish_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--character", help="character id; --scale-ref refuses another character's clip")
     parser.add_argument("--role", help="cast role for lineup, such as hero, mob, boss or spirit")
     parser.add_argument("--strict", action="store_true", help="treat QA warnings as failures (nothing published)")
+    parser.add_argument("--canvas", help="fixed cell WIDTHxHEIGHT (1x output px) for every frame, such as 48x64; a clip "
+                                         "too big for it is finished smaller (canvas-fit warning)")
+    parser.add_argument("--canvas-anchor", help="X,Y of the anchor inside the --canvas cell (default: the centre "
+                                                "column, 1 px above the bottom edge, moved the least to fit)")
+    parser.add_argument("--colour-lock", metavar="MASTER",
+                        help="keyed master still (RGBA PNG), or 'rest' for the rest frame: lock the design colours "
+                             "to it in OKLab (chroma only, lightness kept; colour_lock.py)")
+    parser.add_argument("--lock-strength", type=float, default=1.0, help="colour-lock strength 0..1 (default 1)")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1243,7 +1794,8 @@ def build_parser() -> argparse.ArgumentParser:
     _common_finish_args(pixel)
     pixel.add_argument("--palette", help="palette file (.json, .gpl, .hex, .pal); shared by every clip of the cast")
     pixel.add_argument("--colors", type=int,
-                       help="without --palette: learn this many colours from the clip (2..255, default 255)")
+                       help="without --palette: learn this many colours from the clip (2..255, default "
+                            f"{PIXEL_COLORS}); every frame then uses at most that many")
     pixel.add_argument("--reserve", nargs="+", action="extend", default=[], type=_colour, metavar="#RRGGBB",
                        help="without --palette: fixed colours kept first in the learned palette")
     pixel.add_argument("--seed", type=int, default=0, help="k-means++ seed of a learned palette (default 0)")
@@ -1251,6 +1803,18 @@ def build_parser() -> argparse.ArgumentParser:
                        help="hysteresis margin, squared OKLab distance (default 0.0004 = dE 0.02)")
     pixel.add_argument("--indexed-sheet", action="store_true",
                        help="also write sheet-indexed.png (index 255 transparent) of the 1x frames")
+    pixel.add_argument("--downscale", choices=DOWNSCALES, default="crisp",
+                       help="crisp (default): each output pixel takes the dominant colour cluster of its 4x4 "
+                            "sub-pixels (no blurred in-between colours; lines and eyes survive); box: the plain "
+                            "area average")
+    pixel.add_argument("--contrast", type=float, default=LIFT_CONTRAST,
+                       help=f"OKLab lightness spread before quantizing (default {LIFT_CONTRAST:g}; 1 = off)")
+    pixel.add_argument("--saturation", type=float, default=LIFT_SATURATION,
+                       help=f"OKLab chroma scale before quantizing (default {LIFT_SATURATION:g}; 1 = off)")
+    pixel.add_argument("--outline", choices=OUTLINES, default="selective",
+                       help="1 px outline outside the silhouette: selective (default; the palette's dark shade of "
+                            "the darkest neighbour), dark (the darkest palette colour) or none; the target height "
+                            "includes it")
     pixel.set_defaults(func=cmd_finish, mode="pixel")
 
     palette = sub.add_parser("palette", help="palettes for the pixel finish (palette build)",
@@ -1306,7 +1870,11 @@ def cmd_finish(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         reserve=getattr(args, "reserve", []) if pixel else (), seed=getattr(args, "seed", 0),
         loop_policy=args.loop_policy, margin=getattr(args, "margin", fp.HYSTERESIS_MARGIN),
         area_norm=not args.no_area_norm, indexed_sheet=getattr(args, "indexed_sheet", False), pattern=args.pattern,
-        clip=args.clip, character=args.character, role=args.role, strict=args.strict)
+        clip=args.clip, character=args.character, role=args.role, strict=args.strict,
+        downscale=args.downscale if pixel else None, contrast=args.contrast if pixel else None,
+        saturation=args.saturation if pixel else None, outline=args.outline if pixel else None,
+        canvas=args.canvas, canvas_anchor=args.canvas_anchor, colour_lock=args.colour_lock,
+        lock_strength=args.lock_strength)
     return summary, 0
 
 

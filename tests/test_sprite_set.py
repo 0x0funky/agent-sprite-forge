@@ -201,18 +201,26 @@ from pathlib import Path
 sys.path.insert(0, os.environ["FAKE_SCRIPTS"])
 import sprite_set
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(allow_abbrev=False)
 parser.add_argument("mode", choices=("hd", "pixel"))
 parser.add_argument("--frames", required=True)
-parser.add_argument("--out", required=True)
+parser.add_argument("--output-dir", dest="out", required=True)
 scale = parser.add_mutually_exclusive_group(required=True)   # as finish_frames.py: one or the other, never both
 scale.add_argument("--target-height", type=int)
 scale.add_argument("--scale-ref")
 parser.add_argument("--palette")
+parser.add_argument("--colors", type=int)
+parser.add_argument("--outline", choices=("selective", "dark", "none"))
+parser.add_argument("--canvas")
+parser.add_argument("--canvas-anchor")
+parser.add_argument("--colour-lock")
+parser.add_argument("--loop-policy", choices=("cycle", "pingpong", "oneshot"))
 args = parser.parse_args()
 with open(os.environ["FAKE_FINISH_LOG"], "a", encoding="utf-8") as stream:
     stream.write(json.dumps({"out": Path(args.out).parent.parent.parent.name, "scaleRef": bool(args.scale_ref),
-                             "targetHeight": args.target_height}) + "\n")
+                             "targetHeight": args.target_height, "colourLock": args.colour_lock is not None
+                             and Path(args.colour_lock).is_file(), "loopPolicy": args.loop_policy,
+                             "canvas": args.canvas}) + "\n")
 summary = sprite_set.standin_finish(args.mode, Path(args.frames), Path(args.out), args.target_height or 0,
                                     Path(args.scale_ref) if args.scale_ref else None,
                                     Path(args.palette) if args.palette else None)
@@ -368,7 +376,8 @@ def test_clean_take_passes_and_finds_the_hit(ss, fake, scripts_env):
     assert result["status"] == "pass", result["reasons"]
     assert {gate: item["status"] for gate, item in result["gates"].items()} == {
         "area": "pass", "feet": "pass", "identity": "pass", "zoom": "pass", "turn": "pass", "edge": "pass",
-        "background": "pass", "extra": "pass", "motion": "pass", "end-pose": "pass"}
+        "background": "pass", "extra": "pass", "motion": "pass", "end-pose": "pass",
+        "colour": "skipped", "timing": "pass"}   # no master colours given here; a quick attack
     motion = result["motion"]
     assert 16 <= motion["impact"] <= 22 and motion["cancel"] > motion["impact"]   # the strike, then the recovery
     assert result["usableWindow"] == [0, 36] and result["gates"]["identity"]["value"]["start"] > 0.95
@@ -402,6 +411,147 @@ def test_frozen_take_fails_motion_and_usable_window_skips_a_bad_tail(ss, fake, s
     assert tail["failures"] == ["extra"] and tail["usableWindow"] == [0, 28]
 
 
+# --------------------------------------------------------------------------- recalibrated gates (f-quality)
+
+def _colour_take(ss, fake, action, *, bleed=(), noise_head=(), count=36):
+    """Fake frames with colour kept for the colour gate; ``bleed`` frames get purple legs (key bleed),
+    ``noise_head`` frames get a scrambled head (design lost)."""
+    rendered = fake["module"].render(action, count, set(), 1.0, (0.0, 0.0), (192, 192))
+    rng = np.random.default_rng(3)
+    frames = []
+    for index, (rgba, rgb) in enumerate(rendered):
+        rgba = rgba.copy()
+        if index in bleed:
+            legs = (rgba[..., 3] > 127) & (np.arange(192)[:, None] > 130)
+            rgba[legs, :3] = (150, 60, 175)
+        if index in noise_head:
+            head = (rgba[..., 3] > 127) & (np.arange(192)[:, None] < 80)
+            rgba[head, :3] = rng.integers(0, 255, (int(head.sum()), 3))
+        frames.append(ss.qc_frame(rgba, rgb, 1, 2, colour=True))
+    model = np.asarray(fake["module"].hero(0, action))
+    reference = ss.qc_frame(model, None, 1, 2)
+    return frames, reference, ss.colour_lock.master_colours(model)
+
+
+def _judge_full(ss, frames, reference, action, master, timing_mode="auto"):
+    preset = ss.ACTION_PRESETS[action]
+    return ss.evaluate_take(frames, reference, key="magenta", gates=ss.default_gates(action, preset, "hero", "side"),
+                            fps=24.0, facing="left", kind=preset.kind, airborne=preset.airborne,
+                            returns_to_rest=preset.returns_to_rest, hit_tick=preset.hit_tick, master=master,
+                            timing_mode=timing_mode)
+
+
+def test_colour_gate_fails_key_bleed_and_passes_the_clean_take(ss, fake, scripts_env):
+    frames, reference, master = _colour_take(ss, fake, "walk")
+    clean = _judge_full(ss, frames, reference, "walk", master)
+    assert clean["gates"]["colour"]["status"] == "pass" and clean["status"] == "pass", clean["reasons"]
+    frames, reference, master = _colour_take(ss, fake, "walk", bleed=range(4, 20))
+    bled = _judge_full(ss, frames, reference, "walk", master)
+    assert "colour" in bled["failures"] and bled["gates"]["colour"]["value"]["bledFrames"] >= 12
+    reason = next(text for text in bled["reasons"] if text.startswith("colour:"))
+    assert "colours the master does not have" in reason and re.search(r"\d", reason)
+    assert ss.load_library().gatefix["colour"] == ["keep-colours"]
+
+
+def test_identity_warns_on_low_frames_and_fails_only_when_the_design_is_lost(ss, fake, scripts_env):
+    frames, reference, master = _colour_take(ss, fake, "walk", noise_head=range(10, 16))
+    few = _judge_full(ss, frames, reference, "walk", master)
+    assert few["gates"]["identity"]["status"] == "warn" and "identity" not in few["failures"]
+    assert any(text.startswith("identity:") for text in few["warnings"])
+    frames, reference, master = _colour_take(ss, fake, "walk", noise_head=range(4, 36))
+    lost = _judge_full(ss, frames, reference, "walk", master)
+    assert "identity" in lost["failures"]
+    assert any("the design is lost" in text for text in lost["reasons"])
+    # a plan written before the recalibration (no "severe") keeps its hard floor
+    gates = ss.default_gates("walk", ss.ACTION_PRESETS["walk"], "hero", "side")
+    gates["identity"] = {"start": 0.8, "min": 0.5, "badFrames": 2}
+    frames, reference, master = _colour_take(ss, fake, "walk", noise_head=range(10, 16))
+    old = ss.evaluate_take(frames, reference, key="magenta", gates=gates, fps=24.0, facing="left", kind="loop",
+                           airborne=False, returns_to_rest=True, hit_tick=False, master=master)
+    assert "identity" in old["failures"]
+
+
+def test_timing_gate_flags_a_slow_one_shot(ss, fake, scripts_env):
+    frames, reference, master = _colour_take(ss, fake, "attack", count=36)
+    quick = _judge_full(ss, frames, reference, "attack", master)
+    assert quick["gates"]["timing"]["status"] == "pass"
+    slow = frames[:20] + [frames[20]] * 30 + frames[20:]          # the strike frozen for 1.25 s
+    for mode, status in (("auto", "warn"), ("source", "fail")):
+        result = _judge_full(ss, slow, reference, "attack", master, timing_mode=mode)
+        assert result["gates"]["timing"]["status"] == status, result["gates"]["timing"]
+        assert result["gates"]["timing"]["value"]["holdSeconds"] >= 1.0
+    assert "timing" in _judge_full(ss, slow, reference, "attack", master, timing_mode="source")["failures"]
+    assert ss.load_library().gatefix["timing"] == ["fluid-motion"]
+
+
+def test_run_feet_gate_takes_the_rolling_median_so_flight_is_not_drift(ss, fake, scripts_env):
+    frames, reference, master = _colour_take(ss, fake, "run")
+    lifted = []
+    for index, frame in enumerate(frames):   # every 4th frame the whole body is 14% of its height off the ground
+        shift = 16 if index % 4 == 1 else 0
+        alpha = np.roll(frame.alpha, -shift, axis=0)
+        luma = np.roll(frame.luma, -shift, axis=0)
+        lifted.append(ss.QcFrame(alpha, luma, frame.raw, frame.edge, frame.colour))
+    gates = ss.default_gates("run", ss.ACTION_PRESETS["run"], "hero", "side")
+    assert gates["feet"]["mode"] == "median"
+    median = ss.evaluate_take(lifted, reference, key="magenta", gates=gates, fps=24.0, facing="left", kind="loop",
+                              airborne=False, returns_to_rest=True, hit_tick=False)
+    assert median["gates"]["feet"]["status"] == "pass"
+    gates["feet"]["mode"] = "all"
+    every = ss.evaluate_take(lifted, reference, key="magenta", gates=gates, fps=24.0, facing="left", kind="loop",
+                             airborne=False, returns_to_rest=True, hit_tick=False)
+    assert every["gates"]["feet"]["status"] == "fail"
+
+
+def test_feet_fix_never_plants_the_feet_of_a_walk_run_or_jump(ss, fake, tmp_path):
+    master = write_master(tmp_path / "art", fake, ss)
+    result, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "set")
+    assert result.returncode == 0, result.stderr
+    runner = ss.SetRunner(tmp_path / "set" / "set_plan.json")
+    for ident, wanted, unwanted in (("run", "feet-ground-line", "feet-planted"),
+                                    ("walk", "feet-ground-line", "feet-planted"),
+                                    ("jump", "feet-ground-line", "feet-planted"),
+                                    ("idle", "feet-planted", "feet-ground-line")):
+        record = {"take": 1, "failures": ["feet"]}
+        runner.add_fixes(ident, record)
+        assert wanted in record["fixNext"] and unwanted not in record["fixNext"], (ident, record["fixNext"])
+    planted = runner.plan["clauses"]["feet-planted"]
+    for ident in ("run", "walk", "jump"):
+        prompt = ss.build_prompt(runner.entries[ident], runner.plan, [planted])   # an older state's clause
+        assert "Both feet stay planted" not in prompt
+    assert "Both feet stay planted" in ss.build_prompt(runner.entries["attack"], runner.plan, [planted])
+    retake, summary = cli("retake", "--plan", tmp_path / "set", "--action", "run", "--fix", "feet-planted")
+    assert retake.returncode == 0 and summary["fixes"] == ["feet-ground-line"]
+
+
+def test_plan_timing_canvas_and_pixel_options(ss, fake, tmp_path):
+    master = write_master(tmp_path / "art", fake, ss)
+    result, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "px", "--finish", "pixel",
+                    "--target-height", 47, "--frame-ms", 80, "--canvas", "48x64", "--colors", 24,
+                    "--outline", "dark", "--oneshot-ms", "attack=600,jump=800", "--no-colour-lock")
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((tmp_path / "px" / "set_plan.json").read_text(encoding="utf-8"))
+    assert plan["package"]["fps"] == 12.5 and plan["package"]["frameMs"] == 80
+    assert ss._tick_grid(plan["package"]["fps"]) == (25, 2) and ss._tick_grid(12) == (60, 5)
+    assert ss._tick_grid("24/1") == (24, 1)
+    assert plan["finish"]["canvas"] == [48, 64] and plan["finish"]["colors"] == 24
+    assert plan["finish"]["outline"] == "dark" and plan["finish"]["colourLock"] is False
+    timing = {entry["id"]: entry.get("timing") for entry in plan["actions"]}
+    assert timing["attack"]["durationMs"] == 600 and timing["jump"]["durationMs"] == 800
+    assert timing["hurt"]["durationMs"] == 500 and timing["walk"] is None
+    source, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "src", "--oneshot-timing", "source",
+                    "--fps", "25/2")
+    assert source.returncode == 0, source.stderr
+    plan = json.loads((tmp_path / "src" / "set_plan.json").read_text(encoding="utf-8"))
+    assert plan["package"]["fps"] == 12.5
+    assert all(entry["timing"] == {"mode": "source"} for entry in plan["actions"] if entry["kind"] == "oneshot")
+    for args, message in ((["--colors", "24"], "pixel finish"), (["--fps", "12", "--frame-ms", "80"], "not both"),
+                          (["--oneshot-ms", "walk=500"], "one-shot"), (["--canvas", "48by64"], "WIDTHxHEIGHT")):
+        refused, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "bad", *args)
+        assert refused.returncode == 1 and message in refused.stderr, (args, refused.stderr)
+        assert not (tmp_path / "bad").exists()
+
+
 # --------------------------------------------------------------------------- plan
 
 def test_plan_presets_pins_and_refusals(ss, fake, tmp_path):
@@ -426,7 +576,13 @@ def test_plan_presets_pins_and_refusals(ss, fake, tmp_path):
     for entry in plan["actions"]:
         assert "facing LEFT the entire time and never turning around" in entry["prompt"]
         assert "blue tunic" in entry["prompt"] and entry["lint"] == []
-    assert plan["finish"] == {"mode": "hd", "targetHeight": 64, "scaleRefAction": "idle", "palette": None}
+    assert plan["finish"] == {"mode": "hd", "targetHeight": 64, "scaleRefAction": "idle", "palette": None,
+                              "colors": None, "outline": None, "canvas": None, "canvasAnchor": None,
+                              "colourLock": True}
+    timing = {entry["id"]: entry.get("timing") for entry in plan["actions"]}
+    assert timing["attack"]["mode"] == "auto" and timing["attack"]["durationMs"] == 700
+    assert timing["attack"]["keys"]["hit"]["at"] == 0.4 and timing["jump"]["durationMs"] == 900
+    assert timing["hurt"]["durationMs"] == 500 and timing["idle"] is None
     assert (tmp_path / "set" / "master" / "side" / "master.png").is_file()
     assert_no_absolute_paths(tmp_path / "set")
 
@@ -517,6 +673,8 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
     finishes = log_lines(tmp_path / "fake-finish.log")
     assert [(f["out"], f["scaleRef"]) for f in finishes] == [("idle", False), ("walk", True), ("attack", True)]
     assert [f["targetHeight"] for f in finishes] == [48, None, None]   # --scale-ref replaces --target-height
+    assert [f["colourLock"] for f in finishes] == [True, True, True]   # the colour lock is the set default
+    assert [f["loopPolicy"] for f in finishes] == [None, None, "oneshot"]
 
     takes = log_lines(tmp_path / "set" / "takes.jsonl")
     first = next(t for t in takes if t["action"] == "attack" and t["take"] == 1)
@@ -536,6 +694,9 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
     attack = json.loads((tmp_path / "set" / state["actions"]["attack"]["output"]["manifest"]).read_text("utf-8"))
     assert attack["loopPolicy"] == "oneshot" and attack["impactMs"] > 0
     assert {event["name"] for event in attack["events"]} >= {"in", "hit", "end"}
+    timing = state["actions"]["attack"]["takes"][1]["stages"]["motion"]
+    assert timing["tool"] == "retime --auto-oneshot" and abs(timing["durationMs"] - 700) <= 42
+    assert timing["timing"]["keys"] == ["hit"] and 0.3 * 700 <= attack["impactMs"] <= 0.5 * 700
     idle = json.loads((tmp_path / "set" / state["actions"]["idle"]["output"]["manifest"]).read_text("utf-8"))
     assert idle["loopPolicy"] == "cycle" and idle["bodyHeightPx"] == 48
     walk = state["actions"]["walk"]["takes"][0]["stages"]["motion"]
