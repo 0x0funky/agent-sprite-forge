@@ -205,14 +205,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("mode", choices=("hd", "pixel"))
 parser.add_argument("--frames", required=True)
 parser.add_argument("--out", required=True)
-parser.add_argument("--target-height", type=int, required=True)
-parser.add_argument("--scale-ref")
+scale = parser.add_mutually_exclusive_group(required=True)   # as finish_frames.py: one or the other, never both
+scale.add_argument("--target-height", type=int)
+scale.add_argument("--scale-ref")
 parser.add_argument("--palette")
 args = parser.parse_args()
 with open(os.environ["FAKE_FINISH_LOG"], "a", encoding="utf-8") as stream:
     stream.write(json.dumps({"out": Path(args.out).parent.parent.parent.name, "scaleRef": bool(args.scale_ref),
                              "targetHeight": args.target_height}) + "\n")
-summary = sprite_set.standin_finish(args.mode, Path(args.frames), Path(args.out), args.target_height,
+summary = sprite_set.standin_finish(args.mode, Path(args.frames), Path(args.out), args.target_height or 0,
                                     Path(args.scale_ref) if args.scale_ref else None,
                                     Path(args.palette) if args.palette else None)
 print(json.dumps(summary))
@@ -487,6 +488,7 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
         ("walk", "t01", False)]   # idle and attack are pinned to the master
     finishes = log_lines(tmp_path / "fake-finish.log")
     assert [(f["out"], f["scaleRef"]) for f in finishes] == [("idle", False), ("walk", True), ("attack", True)]
+    assert [f["targetHeight"] for f in finishes] == [48, None, None]   # --scale-ref replaces --target-height
 
     takes = log_lines(tmp_path / "set" / "takes.jsonl")
     first = next(t for t in takes if t["action"] == "attack" and t["take"] == 1)

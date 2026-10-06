@@ -2012,9 +2012,11 @@ class SetRunner:
         if script is None:
             summary = standin_finish(finish["mode"], frames, out, int(finish["targetHeight"]), scale_ref, palette)
         else:
-            args = [finish["mode"], "--frames", frames, "--out", out, "--target-height", finish["targetHeight"]]
-            if scale_ref is not None:
+            args = [finish["mode"], "--frames", frames, "--out", out]
+            if scale_ref is not None:   # finish_frames.py takes --scale-ref OR --target-height, never both
                 args += ["--scale-ref", scale_ref]
+            else:
+                args += ["--target-height", finish["targetHeight"]]
             if palette is not None:
                 args += ["--palette", palette]
             summary, _ = run_tool(script, args, label=name)
