@@ -139,7 +139,7 @@ def main():
     video.add_argument("--reference", required=True)
     if not os.environ.get("FAKE_NO_LAST_FRAME"):
         video.add_argument("--last-frame")
-    video.add_argument("--duration", type=float, default=6)
+    video.add_argument("--duration", type=int, default=6)   # route_media.py parses an int: "6.0" is a usage error
     video.add_argument("--resolution", default="720p")
     video.add_argument("--out-dir", required=True)
     args = parser.parse_args()
@@ -436,6 +436,15 @@ def test_plan_presets_pins_and_refusals(ss, fake, tmp_path):
     wrong = write_master(tmp_path / "wrong", fake, ss, schema="something.else.v1")
     bad, _ = cli("plan", "--master", wrong, "--output-dir", tmp_path / "bad")
     assert bad.returncode == 1 and "generate2dsprite.master.v1" in bad.stderr and not (tmp_path / "bad").exists()
+
+
+def test_media_duration_is_whole_seconds(ss, fake, tmp_path):
+    """route_media.py video parses --duration as an int. The plan stores 6.0, so the media CLI must get "6"
+    (live run 2026-10-06: every clip failed with "invalid int value: '6.0'"); a fractional plan is refused."""
+    assert ss._duration_arg(6.0) == "6" and ss._duration_arg(10) == "10" and ss._duration_arg("15.0") == "15"
+    master = write_master(tmp_path / "art", fake, ss)
+    result, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "set", "--duration", "6.5")
+    assert result.returncode == 1 and "whole seconds" in result.stderr and not (tmp_path / "set").exists()
 
 
 def test_front_view_uses_its_own_master(ss, fake, tmp_path):

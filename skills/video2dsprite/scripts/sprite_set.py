@@ -280,6 +280,12 @@ def _fps_value(text: Any) -> float:
     return float(rate)
 
 
+def _duration_arg(value: Any) -> str:
+    """Clip seconds as route_media.py parses them (an int): the plan stores 6.0, the media CLI gets "6"."""
+    seconds = float(value)
+    return str(int(seconds)) if seconds.is_integer() else f"{seconds:g}"
+
+
 # --------------------------------------------------------------------------- tools by path
 
 class ToolFailure(RuntimeError):
@@ -1172,6 +1178,8 @@ def cmd_plan(args: argparse.Namespace) -> dict:
     fps = args.fps if args.fps is not None else (12 if finish == "pixel" else None)
     if fps is not None and not (1 <= fps <= 60 and float(fps).is_integer()):
         raise ValueError("--fps must be a whole number 1-60 (or leave it out to keep the clip's own rate)")
+    if not float(args.duration).is_integer():
+        raise ValueError("--duration must be whole seconds (route_media.py video takes an integer --duration)")
     formats = _parse_list(args.formats, ("png", "webm", "packed"), "--formats")
     if "png" not in formats:
         formats.insert(0, "png")
@@ -1642,7 +1650,8 @@ class SetRunner:
         job = self.root / self.astate(ident)["job"]["dir"]
         generation = self.plan["generation"]
         base = ["video", "--prompt-file", folder / "prompt.txt", "--reference", job / "input.png",
-                "--duration", generation["duration"], "--resolution", generation["resolution"], "--out-dir", media]
+                "--duration", _duration_arg(generation["duration"]), "--resolution", generation["resolution"],
+                "--out-dir", media]
         pin = bool(self.entries[ident]["pinLastFrame"])
         result = self._call_media(base + (["--last-frame", job / "input.png"] if pin else []), timeout)
         pin_note = None
