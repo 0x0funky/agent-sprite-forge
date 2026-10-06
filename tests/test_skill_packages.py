@@ -90,6 +90,38 @@ def test_commands_are_single_line(skill):
     assert not continued, f"{skill}: multi-line commands (use one line): {continued[:5]}"
 
 
+ART_SKILLS = ["generate2dsprite", "generate2dmap", "video2dsprite"]
+# Routing statements of the code-art-first design that the owner rejected on 2026-10-06.
+STALE_ROUTING = ("48 px", "code-art envelope", "code art first", "codeart2d first", "inside the envelope",
+                 "envelope first", "within the session cap", "consent for that request", "consent for each request")
+
+
+@pytest.mark.parametrize("skill", SKILL_NAMES)
+def test_no_code_art_first_routing(skill):
+    _, text = _frontmatter(skill)
+    lowered = text.lower()
+    stale = [phrase for phrase in STALE_ROUTING if phrase in lowered]
+    assert not stale, f"{skill}: SKILL.md still routes by the old rules: {stale}"
+
+
+@pytest.mark.parametrize("skill", ART_SKILLS)
+def test_art_source_follows_the_owner_order(skill):
+    """API when a key is configured, then local, then codeart2d only on request or when no route exists; every
+    generation goes through generate2dmedia route_media.py."""
+    _, text = _frontmatter(skill)
+    section = text[text.index("## Art source"):]
+    section = section[:section.index("\n## ", 1)]
+    marks = [section.index(mark) for mark in ("**API**", "**Local**", "codeart2d")]
+    assert marks == sorted(marks), f"{skill}: Art source order {marks}"
+    assert "route_media.py" in section and "no-route" in section
+
+
+def test_codeart2d_is_an_explicit_last_resort():
+    metadata, _ = _frontmatter("codeart2d")
+    description = metadata["description"].lower()
+    assert "explicit-only" in description and "last resort" in description and "only when the user" in description
+
+
 def test_no_broken_local_links():
     broken = _load_check_links().check(ROOT)
     report = [f"{d.relative_to(ROOT).as_posix()} -> {t} ({why})" for d, t, why in broken]

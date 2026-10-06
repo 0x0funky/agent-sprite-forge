@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Report which Agent Sprite Forge routes are usable on this machine.
 
-Stdlib only and read-only: it reads no credential file, sends no request and
-generates nothing. It may run a local --version of ffmpeg and of the media
-CLIs it finds (skip with --no-exec). Run it once per session from the project
-root and pass the media tools YOU (the calling agent) can see in your own tool
-list; a script cannot see them:
+Stdlib only and read-only: it reads no CLI sign-in or other credential file,
+sends no request and generates nothing. It reads the Forge user config file
+(media_config.py) only to say whether an API key is configured: yes or no,
+never the key. It may run a local --version of ffmpeg and of the media CLIs it
+finds (skip with --no-exec). Run it once per session from the project root and
+pass the media tools YOU (the calling agent) can see in your own tool list; a
+script cannot see them:
 
   python "<skill-dir>/scripts/forge_doctor.py" --host-tools image_gen
   python "<skill-dir>/scripts/forge_doctor.py" --host-tools none --json --save outputs/doctor.json
@@ -13,23 +15,25 @@ list; a script cannot see them:
 Every check has one status: OK; WARN (works, with a known trap); FAIL (a Forge
 step will break); MISSING (a route is unavailable); AGENT (only the calling
 agent knows: declare your tools with --host-tools); UNKNOWN (cannot be proven
-without an authorised call). FAIL and MISSING always come with a remedy.
+without a real call). FAIL and MISSING always come with a remedy.
+
+ROUTES follows the owner's order (2026-10-06), the order route_media.py uses:
+  1. API, when a key is configured (OPENAI_API_KEY / XAI_API_KEY in the
+     environment or the user config file): images OpenAI, then xAI; video xAI.
+     A configured key is the owner's consent.
+  2. local: the calling agent's own media tool, then the user's signed-in
+     CLIs: Codex (local CLI) image_gen, then Grok (local CLI) one-shot image or
+     edit; video Grok (local CLI) in ACP mode.
+  3. codeart2d, only when the user asks for code-drawn art or no route exists.
 
 Local CLI routes climb a readiness ladder: PRESENT (native executable found,
 never an npm launcher) -> AUTH_MODE (sign-in mode known, --probe-auth) ->
 TOOL_EXPOSED (the native media tool answered a cli_media.py run) -> VERIFIED
 (a cli_media.py run of this exact CLI version and recipe published a verified
 artifact; proofs live in <project>/.forge/route-proofs.json). An installed CLI
-is not a connected tool: only VERIFIED CLI routes are offered in ROUTES.
---verify-route ROUTE --execute spends one quota call to record that proof; it
+is usable: its first successful run records the VERIFIED proof.
+--verify-route ROUTE --execute records it ahead of time with one quota call; it
 can be repeated after every CLI update (the version is part of its request).
-
-ROUTES puts the local agent first (owner decision 13, D22). Images: the host's
-own image tool, then Codex (local CLI), then Grok (local CLI, one-shot mode),
-then the paid REST API with consent. Video: Grok (local CLI, ACP mode), then the
-REST API with consent. A VERIFIED local route is "ready": it runs without a
-per-call question within the session cap that cli_media.py enforces through the
-ledger (8 images and 2 videos per 12 hours by default); name the route used.
 
 Exit status 1 when any check FAILs (the report is still printed).
 """
@@ -127,8 +131,19 @@ SKIP_SUFFIXES = frozenset({".pyc", ".pyo"})
 # video; the internal ids stay codex-cli, grok-cli and grok-acp.
 ROUTE_LABEL = {"codex-cli": "Codex (local CLI)", "grok-cli": "Grok (local CLI, one-shot image mode)",
                "grok-acp": "Grok (local CLI, ACP video mode)"}
-# The session cap cli_media.py enforces through the ledger (media_ledger.SESSION_DEFAULTS; FORGE_SESSION_*).
-SESSION_CAP_TEXT = "8 images and 2 videos per 12 hours unless FORGE_SESSION_IMAGES/VIDEOS/HOURS say otherwise"
+API_LABEL = {"openai": "OpenAI API", "xai": "xAI API"}
+# The owner's route order (2026-10-06), as route_media.py runs it: per need, the host tool, the API providers
+# in order, the local CLI capabilities in order (codex-cli attaches reference images, so it also edits) and the
+# model slot of each provider (media_config.MODEL_DEFAULTS).
+ROUTE_NEEDS = (
+    ("image", "image_gen", ("openai", "xai"), ("codex-cli:image_gen", "grok-cli:image_gen")),
+    ("image_edit", "image_edit", ("openai", "xai"), ("codex-cli:image_gen", "grok-cli:image_edit")),
+    ("video", "image_to_video", ("xai",), ("grok-acp:image_to_video",)),
+)
+MODEL_SLOT = {("image", "openai"): "openai-image", ("image", "xai"): "xai-image",
+              ("image_edit", "openai"): "openai-image", ("image_edit", "xai"): "xai-image",
+              ("video", "xai"): "xai-video"}
+LAST_RESORT = "codeart2d"
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 _ASCII_MAP = str.maketrans({"→": "->", "←": "<-", "—": "-", "–": "-", "×": "x",
                             "·": ".", "…": "...", "‘": "'", "’": "'", "“": '"', "”": '"'})
@@ -723,15 +738,51 @@ def ledger_check(project: Path) -> Check | None:
     if "caps" not in session:  # an unreadable FORGE_SESSION_* value
         return Check("media.ledger", "WARN", f"session cap: {session.get('error', 'unreadable')}",
                      "set FORGE_SESSION_IMAGES / FORGE_SESSION_VIDEOS to whole numbers and FORGE_SESSION_HOURS to hours")
-    used = ", ".join(f"{session[kind]} of {session['caps'][kind]} {kind}s" for kind in ("image", "video"))
-    detail = (f"{summary['calls']} recorded call(s), {summary['usd']} USD; local CLI session ({session['hours']:g} h): "
-              f"{used}")
-    full = [kind for kind in ("image", "video") if session[kind] >= session["caps"][kind]]
+    kinds, caps = ("image", "video"), session["caps"]
+    used = ", ".join(f"{session[kind]}" + (f" of {caps[kind]}" if caps[kind] is not None else "") + f" {kind}s"
+                     for kind in kinds)
+    capped = any(caps[kind] is not None for kind in kinds)
+    detail = (f"{summary['calls']} recorded call(s), {summary['usd']} USD; local CLI calls in the last "
+              f"{session['hours']:g} h: {used}" + ("" if capped else " (no session cap)"))
+    full = [kind for kind in kinds if caps[kind] is not None and session[kind] >= caps[kind]]
     if full:
-        return Check("media.ledger", "WARN", detail + f"; the session cap is reached for {' and '.join(full)}s",
-                     "local CLI calls of that kind stop until the window moves on; only the user may raise "
+        return Check("media.ledger", "WARN", detail + f"; the opt-in session cap is reached for {' and '.join(full)}s",
+                     "local CLI calls of that kind stop until the window moves on, or unset or raise "
                      "FORGE_SESSION_IMAGES / FORGE_SESSION_VIDEOS")
     return Check("media.ledger", "OK", detail)
+
+
+def api_key_state() -> tuple[dict, dict, Check]:
+    """({provider: "environment" | "config" | None}, {model slot: model}, the media.config check).
+    Keys stay in this process: only where a key is configured leaves it, never the key."""
+    try:
+        here = str(Path(__file__).resolve().parent)
+        if here not in sys.path:
+            sys.path.insert(0, here)
+        import media_config  # noqa: PLC0415  (sibling in this skill; a damaged install still gets a report)
+        path = media_config.config_path()
+        settings, problem = media_config.load_config(path)
+        sources = {provider: media_config.key_source(provider, settings) for provider in media_config.PROVIDERS}
+        models = {slot: media_config.model_for(slot, settings) for slot in media_config.MODEL_DEFAULTS}
+        loose = media_config.loose_permissions(path)
+    except Exception as exc:  # noqa: BLE001  (a diagnostic must not crash on a damaged sibling)
+        sources = {provider: ("environment" if os.environ.get(variable, "").strip() else None)
+                   for variable, provider in API_KEYS}
+        return sources, {}, Check("media.config", "UNKNOWN", f"media_config.py could not be loaded "
+                                  f"({type(exc).__name__}); only the environment was checked for API keys",
+                                  "reinstall all five skills from one checkout")
+    where = display_path(path)
+    if problem:
+        check = Check("media.config", "WARN", f"{where}: {problem}; keys in it are ignored",
+                      "fix the JSON (generate2dmedia references/route-media.md shows the format) or delete the file")
+    elif not path.is_file():
+        check = Check("media.config", "OK", f"no user config file at {where} (optional: API keys may also come "
+                      "from the environment)")
+    elif loose:
+        check = Check("media.config", "WARN", f"{where} can be read by other users", f"chmod 600 {where}")
+    else:
+        check = Check("media.config", "OK", f"user config file {where} (key values are never shown)")
+    return sources, models, check
 
 
 # --------------------------------------------------------------------------- the ladder and routes
@@ -790,12 +841,13 @@ def evaluate_ladder(capability: Capability, info: CliInfo, auth: str | None, pro
     else:
         steps.append({"step": "TOOL_EXPOSED", "status": "UNKNOWN", "detail": f"{capability.tool} not seen yet"})
     if capability.tool == "image_edit":  # --verify-route grok-cli runs image_gen, which proves nothing about edits
-        remedy = ("verify once with the user's consent (one quota call): a successful python "
+        remedy = ("nothing to do: the first successful route_media.py or python "
                   "\"<skill-dir>/scripts/cli_media.py\" edit --route grok-cli --reference <image> --prompt-file <file> "
-                  "--output-dir <new folder> --execute records the image_edit proof (--verify-route grok-cli "
+                  "--output-dir <new folder> --execute run records the image_edit proof (--verify-route grok-cli "
                   "verifies image_gen only)")
     else:
-        remedy = ("verify once with the user's consent (one quota call; repeat after a CLI update): python "
+        remedy = ("nothing to do: the route's first successful route_media.py run records the proof; to verify "
+                  "ahead of time (one quota call; repeat after a CLI update): python "
                   f"\"<skill-dir>/scripts/forge_doctor.py\" --verify-route {capability.route} --execute")
     if best is not None and best["level"] == "VERIFIED":
         steps.append({"step": "VERIFIED", "status": "OK",
@@ -823,59 +875,54 @@ def _option(route: str, status: str, detail: str, **extra) -> dict:
 
 
 def plan_routes(host: list[str], declared: bool, keys: dict, ladders: dict, ffmpeg: dict, deps: dict,
-                skills_root: Path) -> dict:
-    """Usable art routes, local agent first (owner decision 13, D22). ``route`` is the first option
-    that is ready (a host tool, or a local CLI route VERIFIED for the installed version, which runs
-    without a per-call question within the session cap) or needs consent (the paid REST API).
-    Unverified CLI routes are listed as options, never chosen."""
+                skills_root: Path, models: dict | None = None) -> tuple[dict, dict]:
+    """(routes, routeOrder) in the owner's order (2026-10-06), the order route_media.py uses: the API when a
+    key is configured (the key is the owner's consent), then local: the calling agent's own media tool, then
+    the user's signed-in Codex and Grok CLIs (installed natively; the first successful run records the
+    VERIFIED proof), then codeart2d, only when the user asks for code-drawn art or no route exists.
+    ``route`` is the first ready option; routeOrder lists every ready option per need, ending with codeart2d."""
+    models = models or {}
     undeclared = "" if declared else "; host tools undeclared (rerun with --host-tools)"
-
-    def cli_options(*keys_):
-        verified, unverified = [], []
-        for key in keys_:
+    fallback = {"image": "no image generation route: codeart2d is the last resort (disclose it as code-drawn), "
+                         "or report the missing capability",
+                "image_edit": "no reference-edit route: describe the edit and report the missing capability",
+                "video": "no video generation route: write a motion brief and report the missing capability "
+                         "(supplied clips can still be processed)"}
+    routes, order = {}, {}
+    for need, host_tool, providers, local_keys in ROUTE_NEEDS:
+        options = []
+        for provider in providers:
+            if keys.get(provider):
+                model = models.get(MODEL_SLOT[(need, provider)]) or "default model"
+                options.append(_option(f"api:{provider}", "ready", f"{API_LABEL[provider]} ({model}) through "
+                                       "route_media.py: the configured key is the owner's consent; paid per call, "
+                                       "every call and its estimate go to the ledger", consent="paid",
+                                       label=API_LABEL[provider], model=model))
+        if host_tool in host:
+            options.append(_option(f"host_{need}", "ready", "the calling agent's own media tool", consent="host"))
+        for key in local_keys:
             ladder = ladders.get(key)
-            if ladder is None or ladder["level"] is None or ladder["blocked"]:
+            if ladder is None or ladder["level"] is None:
                 continue
-            route = ladder["route"]
-            label = ROUTE_LABEL[route]
-            if ladder["level"] == "VERIFIED":
-                verified.append(_option(route, "ready", f"{label}, verified for {ladder['version']}: runs without a "
-                                        f"per-call question within the session cap ({SESSION_CAP_TEXT}); name the "
-                                        "route; spends the user's subscription quota, not API credit",
-                                        consent="quota", level="VERIFIED", label=label))
-            else:
-                unverified.append(_option(route, "unverified", f"{label} at {ladder['level']}: unused until verified "
-                                          "(the one verification call needs the user's consent)", consent="quota",
-                                          level=ladder["level"], label=label))
-        return verified, unverified
-
-    def api_option(providers):
-        named = [p for p in providers if keys.get(p)]
-        if not named:
-            return []
-        return [_option("api", "consent", f"generate2dmedia REST ({', '.join(named)} key set); paid per call, "
-                        "dry-run and consent first", consent="paid", providers=named)]
-
-    def choose(options, fallback):
-        chosen = next((o for o in options if o["status"] in ("ready", "consent")), None)
-        if chosen is None:
-            return {"route": "none", "status": "none", "detail": fallback + undeclared, "options": options}
-        return {"route": chosen["route"], "status": chosen["status"], "detail": chosen["detail"], "options": options}
-
-    routes = {}
-    for need, host_tool, providers, fallback in (
-            ("image", "image_gen", ("openai", "xai"),
-             "no image generation route: write the prompt and asset contract, report the missing capability, "
-             "or use codeart2d inside its size envelope"),
-            ("image_edit", "image_edit", ("openai", "xai"),
-             "no reference-edit route: describe the edit and report the missing capability"),
-            ("video", "image_to_video", ("xai",),
-             "no video generation route: write a motion brief (an installed CLI is not a connected tool); "
-             "supplied clips can still be processed")):
-        options = [_option(f"host_{need}", "ready", "the calling agent's own media tool")] if host_tool in host else []
-        verified, unverified = cli_options(*(c.key for c in CAPABILITIES if c.need == need))
-        options += verified + api_option(providers) + unverified
-        routes[need] = choose(options, fallback)
+            route, label = ladder["route"], ROUTE_LABEL[ladder["route"]]
+            if ladder["blocked"]:
+                options.append(_option(f"local:{route}", "blocked", f"{label}: its sign-in mode cannot run it "
+                                       "(run its login command and choose the subscription sign-in)",
+                                       consent="quota", level=ladder["level"], label=label, verified=False))
+                continue
+            verified = ladder["level"] == "VERIFIED"
+            state = (f"verified for {ladder['version']}" if verified else
+                     f"at {ladder['level']}: its first successful run records the VERIFIED proof")
+            options.append(_option(f"local:{route}", "ready", f"{label}, {state}; route_media.py runs it on the "
+                                   "user's own sign-in (subscription quota, not API credit)", consent="quota",
+                                   level=ladder["level"], label=label, verified=verified))
+        ready = [o for o in options if o["status"] == "ready"]
+        order[need] = [o["route"] for o in ready] + [LAST_RESORT]
+        if ready:
+            routes[need] = {"route": ready[0]["route"], "status": "ready", "detail": ready[0]["detail"],
+                            "options": options}
+        else:
+            routes[need] = {"route": "none", "status": "none", "detail": fallback[need] + undeclared, "options": options}
     numbers = _version_tuple((ffmpeg.get("version") or "").lstrip("n"))
     if not (ffmpeg.get("ffmpeg") and ffmpeg.get("ffprobe")):
         routes["clip"] = {"route": "png-frames", "status": "limited",
@@ -890,12 +937,14 @@ def plan_routes(host: list[str], declared: bool, keys: dict, ladders: dict, ffmp
                           "detail": f"ffmpeg {ffmpeg['version']} is not a 5.1+ release: process supplied PNG frames only"}
     codeart = (skills_root / "codeart2d" / "scripts").is_dir()
     if codeart and deps.get("numpy") and deps.get("Pillow"):
-        detail = "codeart2d PixelSpec" + (" and SVG (resvg-py)" if deps.get("resvg-py") else "; SVG needs resvg-py")
-        routes["code_art"] = {"route": "codeart2d", "status": "ready", "detail": detail}
+        detail = ("explicit-only last resort: only when the user asks for code-drawn art or no image or video route "
+                  "exists; codeart2d PixelSpec" + (" and SVG (resvg-py)" if deps.get("resvg-py") else
+                                                   "; SVG needs resvg-py"))
+        routes["code_art"] = {"route": "codeart2d", "status": "fallback", "detail": detail}
     else:
         routes["code_art"] = {"route": "none", "status": "none",
                               "detail": "codeart2d is not installed" if not codeart else "numpy and Pillow are required"}
-    return routes
+    return routes, order
 
 
 # --------------------------------------------------------------------------- the report
@@ -946,13 +995,19 @@ def diagnose(*, host_tools: str | None = None, project_dir: str | os.PathLike = 
     if unrecognised:
         checks.append(Check("media.host-tools.names", "WARN", "unrecognised tool names: " + ", ".join(unrecognised),
                             "use image_gen, image_edit, image_to_video or none"))
+    sources, models, config_check = api_key_state()
+    checks.append(config_check)
     keys = {}
     for variable, provider in API_KEYS:
-        keys[provider] = bool(os.environ.get(variable, "").strip())
-        checks.append(Check(f"media.api.{provider}", "UNKNOWN", f"{variable} is set (value not read); credit and model "
-                            "access are unproven until an approved paid call") if keys[provider] else
-                      Check(f"media.api.{provider}", "MISSING", f"{variable} is not set",
-                            f"only if the user wants the paid {provider} API route: set {variable} in the environment"))
+        source = sources.get(provider)
+        keys[provider] = source is not None
+        role = "the first image route" if provider == "openai" else "an image route and the first video route"
+        checks.append(Check(f"media.api.{provider}", "UNKNOWN", f"{variable} is configured ("
+                            f"{'environment' if source == 'environment' else 'user config file'}; the value is never "
+                            "shown); credit and model access are proven by the first call") if source else
+                      Check(f"media.api.{provider}", "MISSING", f"{variable} is not configured",
+                            f"optional: set {variable} in the environment or in the user config file to make the "
+                            f"{API_LABEL[provider]} {role}"))
     ledger = ledger_check(project)
     if ledger is not None:
         checks.append(ledger)
@@ -992,7 +1047,7 @@ def diagnose(*, host_tools: str | None = None, project_dir: str | os.PathLike = 
             checks.append(Check(f"route.{capability.key}", status, f"{ladder['level']}: {top['detail']}",
                                 top.get("remedy") if status != "OK" else None))
     dep_ok = {c.id.removeprefix("deps."): c.status in ("OK", "WARN") for c in checks if c.id.startswith("deps.")}
-    routes = plan_routes(host, declared, keys, ladders, ffmpeg, dep_ok, root)
+    routes, order = plan_routes(host, declared, keys, ladders, ffmpeg, dep_ok, root, models)
     proof_view = {}
     for key, ladder in ladders.items():
         capability = next(c for c in CAPABILITIES if c.key == key)
@@ -1005,8 +1060,8 @@ def diagnose(*, host_tools: str | None = None, project_dir: str | os.PathLike = 
     overall = "FAIL" if "FAIL" in statuses else "WARN" if "WARN" in statuses else "OK"
     return {"schema": DOCTOR_SCHEMA, "tool": {"name": TOOL_NAME, "version": TOOL_VERSION}, "createdAt": utc_timestamp(),
             "overall": overall, "host": {"declared": declared, "tools": host, "unrecognised": unrecognised},
-            "checks": [c.as_dict() for c in checks], "cli": ladders, "routes": routes, "proofs": proof_view,
-            "elapsedMs": round((time.perf_counter() - started) * 1000)}
+            "checks": [c.as_dict() for c in checks], "cli": ladders, "apiKeys": keys, "routes": routes,
+            "routeOrder": order, "proofs": proof_view, "elapsedMs": round((time.perf_counter() - started) * 1000)}
 
 
 def validate_report(report: dict) -> None:
@@ -1064,12 +1119,19 @@ def render_text(report: dict) -> str:
         for key, ladder in report["cli"].items():
             marks = " ".join(f"{s['step']}={s['status']}" for s in ladder["steps"])
             lines.append(f"  {key:<30} {ladder['level'] or 'NONE':<13} {marks}")
-    lines.append("ROUTES")
+    lines.append("ROUTES (API when a key is configured, then local, then codeart2d only when asked or nothing else exists)")
+    keys = report.get("apiKeys") or {}
+    if keys:
+        lines.append(f"  {'api keys':<11} " + "  ".join(f"{provider}={'yes' if on else 'no'}"
+                                                       for provider, on in keys.items())
+                     + "  (environment or user config file; values are never shown)")
     for need, route in report["routes"].items():
-        lines.append(f"  {need:<11} {route['route']:<11} {route['status']:<10} {route['detail']}")
+        lines.append(f"  {need:<11} {route['route']:<15} {route['status']:<9} {route['detail']}")
         for option in route.get("options", []):
             if option["route"] != route["route"]:
                 lines.append(f"  {'':11} option: {option['route']} ({option['status']}) {option['detail']}")
+    for need, chain in (report.get("routeOrder") or {}).items():
+        lines.append(f"  {'order':<11} {need}: {' > '.join(chain)}")
     counts = {status: sum(c["status"] == status for c in report["checks"]) for status in ("FAIL", "WARN", "MISSING")}
     lines.append(f"overall {report['overall']}: {counts['FAIL']} FAIL, {counts['WARN']} WARN, {counts['MISSING']} MISSING "
                  f"({report['elapsedMs']} ms)")
@@ -1119,7 +1181,8 @@ def verify_route(route: str, project: Path, execute: bool) -> int:
     if not execute:
         argv = verification_argv(route, project, Path("<temp>"))
         print(json.dumps({"verifyRoute": route, "execution": "dry-run", "calls": 1, "consent": "quota",
-                          "note": "add --execute after the user approves one call on their subscription quota",
+                          "note": "optional: add --execute to spend one call on the subscription quota now; "
+                                  "route_media.py records the same proof on the route's first successful run",
                           "command": ["python", "<skill-dir>/scripts/cli_media.py", *argv, "--execute"]},
                          ensure_ascii=True))
         return 0

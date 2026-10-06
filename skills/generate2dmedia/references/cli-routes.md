@@ -2,36 +2,33 @@
 
 `scripts/cli_media.py` drives the user's own installed Codex CLI or Grok CLI to make one image,
 one reference edit or one image-to-video clip with that CLI's native media tool. These are the
-**local agent** routes: they come before the paid REST API, and they spend the **subscription
-quota of the user's own sign-in**, never API credit. A host tool you can call yourself (your own
-`image_gen`) needs none of this; the paid API route is [`generate_media.py`](api-usage.md).
+**local** routes: they come after the API routes (when a key is configured) and spend the
+**subscription quota of the user's own sign-in**, never API credit. Skills normally reach them
+through [`route_media.py`](route-media.md), which picks the route; a host tool you can call
+yourself (your own `image_gen`) needs none of this; the paid API route is
+[`generate_media.py`](api-usage.md).
 
 Run every command from the user's project root. `<skill-dir>` is this skill's folder
 (`${CLAUDE_SKILL_DIR}` in Claude Code). Outputs, the ledger, run records and proofs stay in the
 project, never in the skill folder.
 
-## Route order: local agent first
+## Route order
 
-Images (and reference edits):
+The owner's order (2026-10-06), which `route_media.py` follows for every image and clip:
 
-1. the host's own image tool (Codex `image_gen`) when you have one;
-2. **Codex (local CLI)**: `codex exec` with its native `image_gen` (route id `codex-cli`);
-3. **Grok (local CLI)** in one-shot mode, `image_gen` or `image_edit` (route id `grok-cli`);
-4. the paid REST API (`generate_media.py`), only with the user's explicit consent for each request;
-5. otherwise, explain the gap.
+1. **the paid API**, when a key is configured (`OPENAI_API_KEY` / `XAI_API_KEY`, in the
+   environment or the user config file): the configured key is the owner's consent;
+2. **local**: the host's own image tool (Codex `image_gen`) when you have one, then
+   **Codex (local CLI)**: `codex exec` with its native `image_gen`, reference images attached
+   (route id `codex-cli`), then **Grok (local CLI)** in one-shot mode, `image_gen` or
+   `image_edit` (route id `grok-cli`); for video **Grok (local CLI)** in ACP mode,
+   `image_to_video` (route id `grok-acp`);
+3. **codeart2d**, only when the user asks for code-drawn art or no route exists.
 
-Routes 2 and 3 count only when `forge_doctor.py` reports them **VERIFIED** for the installed CLI
-version. Video:
-
-1. **Grok (local CLI)** in ACP mode, `image_to_video` (route id `grok-acp`), only when VERIFIED;
-2. the paid REST API with explicit consent;
-3. a video the user already has;
-4. otherwise, explain the gap.
-
-Tell the user about one "Grok (local CLI)" route: it is the same `grok` executable, run in one-shot
-mode for images and in ACP mode for video. The ids `grok-cli` and `grok-acp` are internal (ledger,
-proofs, job.json). Code art keeps its envelope on every host: small pixel sprites, FX, tiles and
-map data go to codeart2d first.
+An installed CLI is used as is: its first successful run records the **VERIFIED** proof for that
+CLI version, so there is no separate verification step. Tell the user about one "Grok (local
+CLI)" route: it is the same `grok` executable, run in one-shot mode for images and in ACP mode for
+video. The ids `grok-cli` and `grok-acp` are internal (ledger, proofs, job.json).
 
 ## Capability check first
 
@@ -42,12 +39,12 @@ python "<skill-dir>/scripts/forge_doctor.py" --host-tools image_gen
 ```
 
 Pass the media tools in **your own** tool list (`image_gen`, `image_edit`, `image_to_video`, or
-`none`); a script cannot see them. The doctor reads no credential file and runs nothing but
-local `--version` calls (`--no-exec` skips those too). Use only the routes its `ROUTES` block
+`none`); a script cannot see them. The doctor reads no CLI sign-in or credential file (of the
+user config file it reports only whether a key is configured) and runs nothing but local
+`--version` calls (`--no-exec` skips those too). Use only the routes its `ROUTES` block
 names, in the order above; save the report beside your outputs with `--save outputs/doctor.json`.
-A route with status `ready` can be used now (a host tool, or a VERIFIED local route within the
-session cap); `consent` means the paid API, which needs the user's consent first; `unverified`
-local routes are listed but never chosen.
+A route with status `ready` can be used now: a configured API key, your own tool, or an installed
+local CLI. `blocked` means the CLI's sign-in mode cannot run it; `routeOrder` is the resolved order.
 
 Each local route climbs a readiness ladder: **PRESENT** (the native executable exists; an npm
 launcher is resolved to its binary and never run) -> **AUTH_MODE** (sign-in mode known:
@@ -55,9 +52,9 @@ launcher is resolved to its binary and never run) -> **AUTH_MODE** (sign-in mode
 **TOOL_EXPOSED** (the native tool answered a `cli_media.py` run) -> **VERIFIED** (a run of this
 exact CLI version and recipe published a verified artifact). Proofs live in
 `.forge/route-proofs.json` and are keyed by CLI version and recipe, so a CLI update drops a route
-back until it is verified again. An installed CLI is not a connected tool.
+back to "not yet verified" until its next successful run records a new proof.
 
-To verify a route (one quota call, after the user agrees), and again after every CLI update:
+To verify a route ahead of time (one quota call; optional, and again after a CLI update):
 
 ```bash
 python "<skill-dir>/scripts/forge_doctor.py" --verify-route codex-cli
@@ -71,23 +68,21 @@ VERIFIED after one successful `cli_media.py edit --route grok-cli ... --execute`
 
 ## When to ask the user
 
-- A VERIFIED local route (`ready`): run it without a per-call question while the session cap
-  allows, and always name the route you used ("Codex (local CLI)" or "Grok (local CLI)"). The
-  `--execute` flag stays the guard: without it `cli_media.py` only prints the plan.
-- An unverified local route: ask before its one verification call.
-- The paid REST API: consent for every request (see [api-usage.md](api-usage.md)).
-- Never raise the session cap, pass `--allow-duplicate` or `--allow-unverified` unless the user
-  asks for it.
+- A local route: run it without a per-call question and always name the route you used
+  ("Codex (local CLI)" or "Grok (local CLI)"). With `cli_media.py` directly, `--execute` stays the
+  guard: without it the tool only prints the plan; `route_media.py` passes it for you.
+- The paid API: a configured key is the owner's consent ([route-media.md](route-media.md)).
+- Ask before an opt-in cap is raised, and before `--allow-unverified` in a batch.
 
 ## Routes
 
 | Route | Command | Native tool | How it runs |
 |---|---|---|---|
-| `codex-cli` | `image` | `image_gen` | `codex exec`: read-only sandbox, ephemeral session, user config ignored, web search, shell, plugins, apps, hooks, browser, MCP and sub-agents disabled; prompt on stdin |
+| `codex-cli` | `image` | `image_gen` | `codex exec`: read-only sandbox, ephemeral session, user config ignored, web search, shell, plugins, apps, hooks, browser, MCP and sub-agents disabled; prompt on stdin; `--reference` images (up to 8) are copied into the run folder and attached with `--image` |
 | `grok-cli` | `image` | `image_gen` | `grok` one-shot with `--output-format streaming-json`: only the one tool offered, web search and sub-agents off, Bash, WebFetch and MCP denied |
 | `grok-cli` | `edit` | `image_edit` | as above; the reference image is copied into the run folder |
 | `grok-acp` | `video` | `image_to_video` | `grok agent --no-leader --agent-profile references/agent-profiles/video-agent.md stdio` (ACP): one permission granted, only for the exact image, duration and resolution |
-| `auto` | `image`, `edit`, `video` | as chosen | the first route of the order above that is VERIFIED for the installed CLI version |
+| `auto` | `image`, `edit`, `video` | as chosen | `cli_media.py`'s own auto: the first local route (Codex, then Grok) that is VERIFIED for the installed CLI version; `route_media.py` also runs a route that is not verified yet |
 
 Every CLI runs in a fresh temporary folder with API keys, other credential-like variables and
 the calling agent's own session variables removed from its environment (Grok also gets memory,
@@ -100,6 +95,7 @@ limits the ACP agent to `image_to_video`.
 python "<skill-dir>/scripts/cli_media.py" image --route auto --prompt-file prompts/hero.txt --output-dir outputs/hero-local
 python "<skill-dir>/scripts/cli_media.py" image --route auto --prompt-file prompts/hero.txt --output-dir outputs/hero-local --execute
 python "<skill-dir>/scripts/cli_media.py" image --route codex-cli --prompt-file prompts/hero.txt --output-dir outputs/hero-codex
+python "<skill-dir>/scripts/cli_media.py" image --route codex-cli --reference art/identity.png --reference art/peer.png --prompt-file prompts/master.txt --output-dir outputs/hero-master --execute
 python "<skill-dir>/scripts/cli_media.py" image --route grok-cli --prompt-file prompts/forest.txt --output-dir outputs/forest-grok
 python "<skill-dir>/scripts/cli_media.py" edit --route grok-cli --reference hero.png --prompt-file prompts/hero-night.txt --output-dir outputs/hero-night
 python "<skill-dir>/scripts/cli_media.py" video --route auto --reference hero.png --prompt-file prompts/idle.txt --duration 6 --resolution 720p --output-dir outputs/hero-idle-grok
@@ -119,24 +115,25 @@ written. The plan shows the route and its label, the `consent` block (route, acc
 (`ledger.session`), and `warnings`: CLI not installed, route not yet verified for this version,
 output folder exists, an identical earlier request, or a cap that would block.
 
-## Session cap
+## Session cap (opt-in)
 
-The local routes share a session cap, counted in the project's ledger before anything is
-started: at most **8 images** (image and edit) and **2 videos** within the last **12 hours** by
-default. A call that would exceed it stops with `CAP` and runs nothing. The user can change it
+There is **no session cap by default** (owner decision 2026-10-06). A user who wants one sets it
 with `--session-images N`, `--session-videos N` and `--session-hours H`, or for a whole session
 with `FORGE_SESSION_IMAGES`, `FORGE_SESSION_VIDEOS` and `FORGE_SESSION_HOURS` (a flag wins over
-the environment; `0` blocks that kind). Calls that never left the machine (`not_sent`) do not
-count; paid REST calls have their own caps in `generate_media.py`.
+the environment; `0` blocks that kind; the window defaults to 12 hours). It is counted in the
+project's ledger before anything is started; a call that would exceed it stops with `CAP` and runs
+nothing. Calls that never left the machine (`not_sent`) do not count; paid API calls have their
+own opt-in caps in `generate_media.py`.
 
 ## Quota and the ledger
 
 Each executed run is reserved in `.forge/ledger.jsonl` before the CLI starts, as a quota call
 (`route` `codex-cli`, `grok-cli` or `grok-acp`, `quotaCall: true`, 0 USD), then committed
-`done`, `failed`, `unknown` or `not_sent`. Besides the session cap, `--max-calls N` counts paid and
-quota calls in the project's ledger and `FORGE_MAX_PAID_REQUESTS` counts paid API calls only. An
-identical request that succeeded, is still open or has an unknown outcome is refused unless
-`--allow-duplicate`. `python "<skill-dir>/scripts/media_ledger.py" summary` shows the totals and
+`done`, `failed`, `unknown` or `not_sent`. Besides the opt-in session cap, `--max-calls N` counts
+paid and quota calls in the project's ledger and `FORGE_MAX_PAID_REQUESTS` counts paid API calls
+only. Run directly, `cli_media.py` refuses an identical request that succeeded, is still open or
+has an unknown outcome unless `--allow-duplicate`; `route_media.py` passes it, since a new output
+folder is a new take. `python "<skill-dir>/scripts/media_ledger.py" summary` shows the totals and
 the session usage.
 
 ## A Grok sign-in is never an API key
@@ -191,14 +188,15 @@ python "<skill-dir>/scripts/cli_media.py" batch jobs.json --execute --max-calls 
 `--execute` runs one job at a time, refuses routes with no proof for the installed CLI version
 unless `--allow-unverified`, reuses finished outputs, never retries, stops at the first
 account-level or unexpected outcome and writes `<jobs stem>.progress.json`, whose `jobsFile` and
-`jobDir` paths are relative to the progress file's folder. The session cap applies to every job.
+`jobDir` paths are relative to the progress file's folder. An opt-in session cap applies to every
+job; an image job's `reference` may be a list (Codex attaches every image).
 
 ## Error codes
 
 | Code | Meaning | Ledger | Next step |
 |---|---|---|---|
 | `INVALID_REQUEST`, `OUTPUT_EXISTS` | bad input, or the output folder exists | nothing reserved | fix the command |
-| `DUPLICATE`, `CAP` | identical earlier request, or `--max-calls` / the session cap reached | nothing reserved | reuse it, or ask the user |
+| `DUPLICATE`, `CAP` | identical earlier request, or `--max-calls` / an opt-in session cap reached | nothing reserved | reuse it, or ask the user |
 | `NOT_INSTALLED`, `NOT_VERIFIED` | no native CLI; `--route auto` or a batch with no VERIFIED route | nothing reserved | install, or verify once with consent |
 | `SPAWN_FAILED` | the CLI could not start | `not_sent` | check the install |
 | `AUTH_REQUIRED`, `RATE_LIMIT`, `MODERATION` | sign-in, quota or content policy | `failed` | the user logs in, waits, or rewrites |

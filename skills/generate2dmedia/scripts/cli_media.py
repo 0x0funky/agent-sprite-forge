@@ -5,17 +5,19 @@ Each route makes one native media call on the user's own CLI sign-in (their
 subscription quota, never an API key) and records it as a quota call in
 <project>/.forge/ledger.jsonl:
 
-  image --route codex-cli   Codex (local CLI): codex exec, native image_gen
+  image --route codex-cli   Codex (local CLI): codex exec, native image_gen (reference images attached
+                            with --reference, up to 8)
   image --route grok-cli    Grok (local CLI), one-shot mode: native image_gen
   edit  --route grok-cli    Grok (local CLI), one-shot mode: native image_edit of one reference image
   video --route grok-acp    Grok (local CLI), ACP mode (grok agent stdio): native image_to_video of one reference
   --route auto              the first of these, in that order, that forge_doctor would call VERIFIED for the
-                            installed CLI version (local agent first, owner decision 13 / D22)
+                            installed CLI version
 
-A session cap limits the local routes to 8 images (image and edit) and 2 videos
-per project within the last 12 hours, counted in the ledger (--session-images,
---session-videos, --session-hours or FORGE_SESSION_IMAGES, FORGE_SESSION_VIDEOS,
-FORGE_SESSION_HOURS change it).
+route_media.py is the usual entry point: it runs these routes after the API routes and
+records each CLI version's VERIFIED proof on its first successful run. There is no
+session cap by default; --session-images, --session-videos (and --session-hours) or
+FORGE_SESSION_IMAGES, FORGE_SESSION_VIDEOS, FORGE_SESSION_HOURS set one, counted in
+the ledger.
 
 Without --execute nothing is spawned or written: the plan (consent, caps, the
 exact CLI arguments) is printed. With --execute the CLI runs in a fresh
@@ -80,6 +82,8 @@ TIMEOUT_RANGE = (1.0, 1800.0)
 RPC_TIMEOUT = 60.0
 PROMPT_LIMIT = 12000
 REFERENCE_LIMIT = 20 * 1024 * 1024
+MAX_IMAGE_REFERENCES = 8          # Codex attaches them to codex exec (--image); 64 MiB together at most
+REFERENCES_LIMIT = 64 * 1024 * 1024
 ARTIFACT_LIMITS = {"image": (128, 25 * 1024 * 1024), "video": (1024, 512 * 1024 * 1024)}
 STDOUT_LIMIT = 16 * 1024 * 1024
 LINE_LIMIT = 4 * 1024 * 1024
@@ -112,6 +116,8 @@ BATCH_PROGRESS_SCHEMA = "generate2dmedia.batch_progress.v1"
 JOB_ID = re.compile(r"[A-Za-z0-9_.-]{1,80}")
 JOB_KEYS = frozenset({"id", "command", "route", "prompt_file", "reference", "output_dir", "duration", "resolution",
                       "purpose", "timeout"})
+# Image routes that take reference images (attached to the prompt); grok-cli edits one with the edit verb.
+IMAGE_REFERENCE_ROUTES = frozenset({"codex-cli"})
 JOB_PATH_KEYS = frozenset({"prompt_file", "reference", "output_dir"})
 
 # --- Codex: one image through codex exec (recipe codex-exec-imagegen/1; verified by the owner on
@@ -170,8 +176,7 @@ class Request:
     route: str
     capability: forge_doctor.Capability
     prompt: str
-    reference_meta: dict | None
-    reference_data: bytes | None
+    references: list            # [(meta, bytes)]: the video input, the edit reference or the attached images
     duration: int | None
     resolution: str | None
     output_dir: Path
@@ -186,6 +191,14 @@ class Request:
     @property
     def kind(self) -> str:
         return "video" if self.verb == "video" else "image"
+
+    @property
+    def reference_meta(self) -> dict | None:
+        return self.references[0][0] if self.references else None
+
+    @property
+    def reference_data(self) -> bytes | None:
+        return self.references[0][1] if self.references else None
 
 
 @dataclass
@@ -651,11 +664,14 @@ class RouteChooser:
                 self._versions[name] = forge_doctor.package_version(cli.info)
         return self._versions[name]
 
-    def choose(self, verb: str) -> dict:
+    def choose(self, verb: str, references: int = 0) -> dict:
         proofs, _ = forge_doctor.load_proofs(self.project)
         order, skipped = list(VERB_ROUTES[verb]), []
         for route in order:
             capability = capability_for(route, verb)
+            if verb == "image" and references and route not in IMAGE_REFERENCE_ROUTES:
+                skipped.append(f"{route}: takes no reference image")
+                continue
             cli = self.cli(capability.cli)
             if cli.info.path is None or not cli.prefix:
                 skipped.append(f"{route}: {cli.info.problem or 'not installed'}")
@@ -674,13 +690,18 @@ class RouteChooser:
             skipped.append(f"{route}: no VERIFIED proof for "
                            + (version or ("this version" if self.probe else "the installed version")))
         raise CliMediaError("NOT_VERIFIED", f"--route auto found no verified local route for {verb} "
-                            f"({'; '.join(skipped)}); verify one with the user's consent "
-                            "(forge_doctor.py --verify-route <route> --execute, one quota call) or use the REST "
-                            "route generate_media.py, which needs the user's consent for each paid call")
+                            f"({'; '.join(skipped)}); name the route (--route codex-cli, grok-cli or grok-acp: its "
+                            "first successful run records the proof), or use route_media.py, which takes the API "
+                            "when a key is configured and then the installed CLIs")
 
 
-def codex_argv(prefix: list[str], run_dir: Path) -> list[str]:
-    argv = [*prefix, "exec", "--ignore-user-config", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only",
+def codex_argv(prefix: list[str], run_dir: Path, images: list[Path] | tuple = ()) -> list[str]:
+    """codex exec for one image_gen call; ``images`` (copies inside run_dir) are attached to the prompt
+    with --image, placed first so the option's values end at the next flag."""
+    argv = [*prefix, "exec"]
+    for image in images:
+        argv += ["--image", str(image)]
+    argv += ["--ignore-user-config", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only",
             "--json", "--cd", str(run_dir), "-c", 'web_search="disabled"', "-c", 'model_reasoning_effort="low"',
             "-c", "features.image_generation=true", "-c", "features.code_mode_host=true",
             "-c", "developer_instructions=" + json.dumps(CODEX_INSTRUCTIONS)]
@@ -689,11 +710,23 @@ def codex_argv(prefix: list[str], run_dir: Path) -> list[str]:
     return argv + ["-"]
 
 
-def codex_input(prompt: str) -> str:
+def codex_input(prompt: str, references: int = 0) -> str:
+    attached = (f" The {references} attached image(s) are the reference images, in the order the art direction "
+                "names them (the first attached image is the first reference); pass them to the image tool as "
+                "references." if references else "")
     return ("Generate a new image using tools.image_gen__imagegen exactly once, called via functions.exec. This one "
             "native tool invocation is authorized; no general-purpose scripts or other tools. Follow the art direction "
-            "below and use the image tool's normal output path.\n<art_direction>\n" + prompt
+            "below and use the image tool's normal output path." + attached + "\n<art_direction>\n" + prompt
             + "\n</art_direction>\nAfter success return only the actual generated image path.")
+
+
+def reference_names(req: Request) -> list[str]:
+    """File names of the request's reference copies inside the run folder."""
+    if req.verb == "video":
+        return [f"input{req.reference_meta['ext']}"] if req.references else []
+    if req.verb == "edit":
+        return [f"reference{req.reference_meta['ext']}"] if req.references else []
+    return [f"reference-{index}{meta['ext']}" for index, (meta, _) in enumerate(req.references, 1)]
 
 
 def grok_argv(prefix: list[str], run_dir: Path, tool: str) -> list[str]:
@@ -776,8 +809,9 @@ def drive_codex(cli: RouteCli, req: Request, run_dir: Path, state: RunState, per
             detail = event.get("error") if isinstance(event.get("error"), dict) else event
             errors.append(str(detail.get("message") or "")[:2000])
 
-    with _Child(codex_argv(cli.prefix, run_dir), cwd=run_dir, env=forge_doctor.isolated_env("codex")) as child:
-        child.start(on_line, codex_input(req.prompt).encode("utf-8"))
+    attached = [run_dir / name for name in reference_names(req)]
+    with _Child(codex_argv(cli.prefix, run_dir, attached), cwd=run_dir, env=forge_doctor.isolated_env("codex")) as child:
+        child.start(on_line, codex_input(req.prompt, len(attached)).encode("utf-8"))
         code = child.wait(deadline)
     state.cli_ms = child.elapsed_ms
     child.raise_failure()
@@ -1134,9 +1168,16 @@ def build_request(args: argparse.Namespace, chooser: RouteChooser | None = None)
     last, after every other check (a chooser of an executed run reads the CLIs' --version)."""
     if args.route != AUTO:
         capability_for(args.route, args.command)
-    reference = Path(args.reference) if getattr(args, "reference", None) else None
-    if args.command in ("edit", "video") and reference is None:
+    given = getattr(args, "reference", None)
+    paths = [Path(p) for p in (given if isinstance(given, list) else [given] if given else [])]
+    if args.command in ("edit", "video") and not paths:
         raise CliMediaError("INVALID_REQUEST", f"{args.command} needs --reference")
+    if args.command == "image" and paths:
+        if args.route not in (AUTO, *IMAGE_REFERENCE_ROUTES):
+            raise CliMediaError("INVALID_REQUEST", f"image --route {args.route} takes no reference image; "
+                                "use edit --route grok-cli for one, or --route codex-cli")
+        if len(paths) > MAX_IMAGE_REFERENCES:
+            raise CliMediaError("INVALID_REQUEST", f"at most {MAX_IMAGE_REFERENCES} reference images")
     duration = resolution = None
     if args.command == "video":
         duration, resolution = args.duration, args.resolution
@@ -1153,13 +1194,16 @@ def build_request(args: argparse.Namespace, chooser: RouteChooser | None = None)
     output = Path(args.output_dir)
     _portable(output, project)
     session = session_limits(args)
-    meta, data = inspect_reference(reference) if reference else (None, None)
+    references = [inspect_reference(path) for path in paths]
+    if sum(len(data) for _, data in references) > REFERENCES_LIMIT:
+        raise CliMediaError("INVALID_REQUEST", "the reference images exceed 64 MiB together")
     prompt = load_prompt(Path(args.prompt_file))
     route, choice = args.route, None
     if route == AUTO:
-        choice = (chooser or RouteChooser(project, probe=bool(getattr(args, "execute", False)))).choose(args.command)
+        chooser = chooser or RouteChooser(project, probe=bool(getattr(args, "execute", False)))
+        choice = chooser.choose(args.command, len(references))
         route = choice["route"]
-    return Request(args.command, route, capability_for(route, args.command), prompt, meta, data, duration,
+    return Request(args.command, route, capability_for(route, args.command), prompt, references, duration,
                    resolution, output, project, timeout, args.purpose, args.max_calls, session,
                    bool(getattr(args, "verification", False)), choice)
 
@@ -1177,14 +1221,14 @@ def base_job(req: Request, version: str | None = None) -> dict:
     model = f"{cli}-{req.capability.tool}"
     identity = {"provider": PROVIDER[cli], "kind": req.kind, "route": req.route, "requestedModel": model,
                 "options": options, "promptSha256": sha256_bytes(req.prompt.encode("utf-8"))}
-    references = [req.reference_meta["sha256"]] if req.reference_meta else []
+    references = [meta["sha256"] for meta, _ in req.references]
     try:
         estimate = media_ledger.estimate(identity)
     except media_ledger.LedgerError:
         estimate = {"usd": 0.0, "currency": "USD", "items": [], "pricesVersion": "unavailable",
                     "basis": "subscription quota call: no per-call USD price; counted by call caps"}
     job = {"schemaVersion": 2, **identity,
-           "references": [{"sha256": req.reference_meta["sha256"], "bytes": req.reference_meta["bytes"]}] if references else [],
+           "references": [{"sha256": meta["sha256"], "bytes": meta["bytes"]} for meta, _ in req.references],
            "fingerprint": media_ledger.fingerprint(identity, references), "estimate": estimate,
            "consent": {"provider": PROVIDER[cli], "model": model, "calls": 1, "estimateUsd": 0.0, "route": req.route,
                        "quota": True, "account": ACCOUNT[cli],
@@ -1218,7 +1262,7 @@ def dry_run(req: Request, cli: RouteCli) -> dict:
     job = base_job(req, version)
     run_dir = Path(tempfile.gettempdir()) / "forge-cli-<run>"
     if req.route == "codex-cli":
-        argv = codex_argv(["codex"], run_dir)
+        argv = codex_argv(["codex"], run_dir, [run_dir / name for name in reference_names(req)])
     elif req.route == "grok-cli":
         argv = grok_argv(["grok"], run_dir, req.capability.tool)
     else:
@@ -1413,9 +1457,8 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
     try:
         record.save()
         _write_exclusive(record.prompt_path, (req.prompt + "\n").encode("utf-8"))
-        if req.reference_data is not None:
-            name = ("input" if req.verb == "video" else "reference") + req.reference_meta["ext"]
-            _write_exclusive(run_dir / name, req.reference_data)
+        for name, (_, data) in zip(reference_names(req), req.references):
+            _write_exclusive(run_dir / name, data)
         if req.route == "grok-cli":
             reference = run_dir / ("reference" + req.reference_meta["ext"]) if req.reference_meta else None
             (run_dir / "prompt.txt").write_text(grok_prompt(req.prompt, req.capability.tool, reference), encoding="utf-8")
@@ -1701,9 +1744,12 @@ def job_args(job: dict, base: Path, args: argparse.Namespace) -> argparse.Namesp
     for key, value in job.items():
         if key in ("id", "command") or value is None:
             continue
-        if isinstance(value, bool) or not isinstance(value, (str, int, float)):
-            raise CliMediaError("INVALID_REQUEST", f"job {job['id']}: {key} must be a string or a number")
-        argv += ["--" + key.replace("_", "-"), str(base / str(value)) if key in JOB_PATH_KEYS else str(value)]
+        listed = key == "reference" and job["command"] == "image" and isinstance(value, list) and value
+        for item in (value if listed else [value]):
+            if isinstance(item, bool) or not isinstance(item, (str, int, float)):
+                raise CliMediaError("INVALID_REQUEST", f"job {job['id']}: {key} must be a string or a number"
+                                    + (" (or a list of reference paths)" if key == "reference" else ""))
+            argv += ["--" + key.replace("_", "-"), str(base / str(item)) if key in JOB_PATH_KEYS else str(item)]
     argv += ["--project-dir", str(args.project_dir)]
     for name in ("max_calls", "session_images", "session_videos", "session_hours"):
         if getattr(args, name, None) is not None:
@@ -1776,7 +1822,8 @@ def run_batch(args: argparse.Namespace) -> tuple[dict, str | None]:
         usage = media_ledger.Ledger(Path(args.project_dir)).session_usage(limits["hours"])
         warnings = [f"the session cap stops the batch after {max(0, limits[kind] - usage[kind])} more local CLI "
                     f"{kind} call(s) ({usage[kind]} of {limits[kind]} used in the last {limits['hours']:g} h)"
-                    for kind in media_ledger.SESSION_KINDS if usage[kind] + sends[kind] > limits[kind]]
+                    for kind in media_ledger.SESSION_KINDS
+                    if limits[kind] is not None and usage[kind] + sends[kind] > limits[kind]]
         return {"execution": "dry-run", "jobsFile": str(jobs_path), "jobs": len(entries),
                 "calls": sum(r["action"] == "send" for r in rows), "consent": rows, "warnings": warnings}, None
     versions = {}
@@ -1846,6 +1893,10 @@ def _add_request_options(command: argparse.ArgumentParser, verb: str) -> None:
     command.add_argument("--prompt-file", required=True, help="UTF-8 art direction written by the agent")
     if verb != "image":
         command.add_argument("--reference", required=True, help="PNG, JPEG or WebP image (at most 20 MiB)")
+    else:
+        command.add_argument("--reference", action="append", default=[],
+                             help=f"codex-cli only: a reference image attached to the prompt, repeatable (at most "
+                                  f"{MAX_IMAGE_REFERENCES}, in the order the prompt names them)")
     command.add_argument("--output-dir", required=True, help="new folder for generated.<ext>, job.json and prompt.txt")
     if verb == "video":
         command.add_argument("--duration", type=int, default=6, help="seconds, 1..15 (default 6)")
@@ -1867,14 +1918,14 @@ def _add_ledger_options(command: argparse.ArgumentParser) -> None:
                          "succeeded or is unsettled")
     defaults = media_ledger.SESSION_DEFAULTS
     command.add_argument("--session-images", type=int, metavar="N",
-                         help=f"session cap: local CLI images and edits per window (default {defaults['image']}, "
-                              f"or FORGE_SESSION_IMAGES; 0 blocks them)")
+                         help="opt-in session cap: local CLI images and edits per window (default: no cap, or "
+                              "FORGE_SESSION_IMAGES; 0 blocks them)")
     command.add_argument("--session-videos", type=int, metavar="N",
-                         help=f"session cap: local CLI videos per window (default {defaults['video']}, "
-                              f"or FORGE_SESSION_VIDEOS)")
+                         help="opt-in session cap: local CLI videos per window (default: no cap, or "
+                              "FORGE_SESSION_VIDEOS)")
     command.add_argument("--session-hours", type=float, metavar="H",
-                         help=f"session window in hours, counted in the project's ledger (default {defaults['hours']:g}, "
-                              f"or FORGE_SESSION_HOURS)")
+                         help=f"window of the session cap in hours, counted in the project's ledger (default "
+                              f"{defaults['hours']:g}, or FORGE_SESSION_HOURS)")
 
 
 def build_parser(parser_class=argparse.ArgumentParser) -> argparse.ArgumentParser:

@@ -7,10 +7,12 @@ append-only; readers fold it per reservation and the last line wins. An unknown
 outcome keeps its reservation counted against the caps until someone settles it
 with the settle command. Stdlib only; never reads credentials.
 
-Local CLI routes (quota calls) also have a session cap (owner decision 13, D22):
-at most 8 images and 2 videos in this project's ledger within the last 12 hours
-by default. FORGE_SESSION_IMAGES, FORGE_SESSION_VIDEOS and FORGE_SESSION_HOURS
-change it; reserve() enforces it under the ledger lock.
+Local CLI routes (quota calls) can also have a session cap, opt-in only (owner
+decision 2026-10-06: no quota caps by default): --session-images / --session-videos
+or FORGE_SESSION_IMAGES / FORGE_SESSION_VIDEOS set a cap on the calls of that kind
+in this project's ledger within the last FORGE_SESSION_HOURS (default 12) hours;
+reserve() enforces it under the ledger lock. Paid caps (budget, max calls,
+FORGE_MAX_PAID_REQUESTS) are opt-in too.
 """
 from __future__ import annotations
 
@@ -36,9 +38,10 @@ FINAL_STATUSES = STATUSES[1:]
 ROUTES = ("rest", "codex-cli", "grok-cli", "grok-acp")
 QUOTA_ROUTES = ROUTES[1:]
 MAX_PAID_ENV = "FORGE_MAX_PAID_REQUESTS"
-# Session cap of the local CLI routes (D22): quota calls per kind within a window of hours.
+# Opt-in session cap of the local CLI routes: quota calls per kind within a window of hours.
+# None means no cap (the default since 2026-10-06); the window only matters once a cap is set.
 SESSION_KINDS = ("image", "video")
-SESSION_DEFAULTS = {"image": 8, "video": 2, "hours": 12.0}
+SESSION_DEFAULTS = {"image": None, "video": None, "hours": 12.0}
 SESSION_ENV = {"image": "FORGE_SESSION_IMAGES", "video": "FORGE_SESSION_VIDEOS", "hours": "FORGE_SESSION_HOURS"}
 PRICES_PATH = Path(__file__).resolve().parent.parent / "references" / "prices.json"
 # Plan keys that identify a request; output paths, timestamps and secrets never do.
@@ -100,7 +103,7 @@ def session_kind(kind):
 
 def session_limits(images=None, videos=None, hours=None):
     """The session cap {image, video, hours}: an explicit value, else FORGE_SESSION_IMAGES /
-    FORGE_SESSION_VIDEOS / FORGE_SESSION_HOURS, else 8 images and 2 videos in 12 hours.
+    FORGE_SESSION_VIDEOS / FORGE_SESSION_HOURS, else no cap (None) and a 12-hour window.
     0 calls blocks that kind; hours must be positive."""
     limits = {}
     for key, given in (("image", images), ("video", videos), ("hours", hours)):
@@ -400,10 +403,10 @@ class Ledger:
 
     def check_session_cap(self, kind, limits, *, now=None, states=None) -> dict:
         """Raise SessionCapExceeded unless one more quota call of ``kind`` fits ``limits``
-        (session_limits()). Returns the usage."""
+        (session_limits(); a None cap never refuses). Returns the usage."""
         usage = self.session_usage(limits["hours"], now=now, states=states)
         bucket = session_kind(kind)
-        if usage[bucket] + 1 > limits[bucket]:
+        if limits[bucket] is not None and usage[bucket] + 1 > limits[bucket]:
             env = SESSION_ENV[bucket]
             raise SessionCapExceeded(
                 f"session cap reached: {usage[bucket]} local CLI {bucket} call(s) of at most {limits[bucket]} "
@@ -446,7 +449,7 @@ class Ledger:
         (None when unpriced) and optional quotaCall (default: route is a CLI
         route). Caps and FORGE_MAX_PAID_REQUESTS are checked under the lock, and
         so is ``session`` (session_limits()) for a quota call: the local CLI
-        routes' session cap (D22).
+        routes' opt-in session cap.
         """
         unknown = set(entry) - set(ENTRY_KEYS)
         if unknown:
@@ -495,7 +498,7 @@ class Ledger:
 
     def summary(self) -> dict:
         """Totals, the reservations that still hold budget (reserved or unknown) and the local CLI
-        routes' session usage against the session cap."""
+        routes' session usage against the opt-in session cap (caps are None when unset)."""
         states = self.entries()
         unsettled = [{k: s.get(k) for k in ("reservationId", "status", "reservedAt", "jobDir", "provider", "model", "reservedUsd")}
                      for s in states.values() if s["status"] in ("reserved", "unknown")]

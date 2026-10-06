@@ -4,7 +4,7 @@ What the 0.4.0 tests and measurements do not prove. Consolidated from the module
 
 ## Everywhere
 
-- **Platforms.** Development and every measurement ran on Windows 11 (Python 3.13, numpy 2.5, Pillow 12.3, scipy 1.18, ffmpeg 8.0.1, node 22). The release check also ran the suite at the Python 3.10 floor and without scipy ([validation](./validation-2026-10-06.md)). CI covers Ubuntu and Windows; macOS, and the Pillow 10.1 / numpy 1.26 floors, have not been run.
+- **Platforms.** Development and every measurement ran on Windows 11 (Python 3.13, numpy 2.5, Pillow 12.3, scipy 1.18, ffmpeg 8.0.1, node 22). The release check also ran the suite at the Python 3.10 floor and without scipy ([validation](./validation-2026-10-06.md)). The tests run locally only; Linux, macOS and the Pillow 10.1 / numpy 1.26 floors have not been run.
 - **Determinism is per build.** PNG, GIF, WebP and video bytes repeat for one Pillow/zlib/libwebp/ffmpeg build; across builds, compare decoded pixels. Float32 math (soft matte, palettes, autotile noise) can differ in the last bit on other CPUs.
 - **Numeric QA is not visual approval.** No check approves anatomy, identity, motion quality or appeal; every QA envelope lists these under `notProven`.
 - **Publication fallback.** On filesystems without an atomic no-replace rename (WSL drvfs, some network mounts) a new output folder appears through an exclusive mkdir plus moves and can be seen half-populated. An existing destination is never replaced.

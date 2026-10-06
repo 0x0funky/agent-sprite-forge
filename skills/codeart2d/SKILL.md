@@ -1,6 +1,6 @@
 ---
 name: codeart2d
-description: Draw game art from code, with no image model - pixel sprites from a PixelSpec, flat vector props, UI and icons from portable SVG, rigged characters with planted feet, FX (slashes, sparks, rings, flashes, dust, projectiles) with a JS runtime, seam-proven autotiles, playable top-down layouts with collision, stylized parallax and ambient plate motion - palette-exact, with QA and review sheets. Use when generate2dsprite or generate2dmap route a request inside the code-art envelope (pixel characters and props up to 48 px visible height, 49-64 px with the user's consent; FX; tiles; map data) or the user asks for code-drawn art. Not for painterly, detailed or likeness art, characters above 64 px, HD-2D plates or realistic fire, smoke or water. Always disclose the result as code-drawn.
+description: Explicit-only last resort. Draws game art from code, with no image model - pixel sprites from a PixelSpec, flat vector props, UI and icons from portable SVG, rigged characters with planted feet, FX with a JS runtime, seam-proven autotiles, playable top-down layouts with collision, stylized parallax and ambient plate motion - palette-exact, with QA and review sheets. Use only when the user explicitly asks for code-drawn art, or when generate2dmedia route_media.py finds no image or video route (no-route, exit 3). Never the default - image generation (generate2dsprite, generate2dmap, video2dsprite) comes first for characters, props, maps and FX. Not for painterly, detailed or likeness art, HD-2D plates or realistic fire, smoke or water. Always disclose the result as code-drawn.
 ---
 
 # Code Art 2D
@@ -11,29 +11,29 @@ source (`art_source: "code"`), not a placeholder.
 
 ## Use when
 
-- Pixel characters, props and palette variants up to 48 px visible height (49-64 px only when the user agrees).
-- Flat vector characters, props, UI, HUD icons and 9-slices; game FX; tile topology and autotiles; code-made maps, collision and spawns; stylized parallax; ambient motion on a plate.
-- Pose and layout guides for an image model.
+- The user explicitly asks for code-drawn art: a PixelSpec or SVG sprite, palette variants drawn in code, a code rig, code FX, a seam-proven autotile set, a code-made layout, stylized parallax or ambient loops.
+- `route_media.py` prints `no-route` (exit 3): no API key is configured and no local image or video route exists. Say so, and offer to add a key or a CLI as well.
+- Pose and layout guides that help an image model (support material, not final art).
 
 ## Do not use when
 
-- Painterly, organic or identity-rich art, likenesses, portraits, HD-2D plates, textured terrain or characters above 64 px: the image route in [generate2dsprite](../generate2dsprite/SKILL.md) or [generate2dmap](../generate2dmap/SKILL.md).
-- Realistic fire, smoke or water: [video2dsprite](../video2dsprite/SKILL.md).
+- Any art request while an image or video route exists and the user did not ask for code art: [generate2dsprite](../generate2dsprite/SKILL.md), [generate2dmap](../generate2dmap/SKILL.md) or [video2dsprite](../video2dsprite/SKILL.md) generate it.
+- Painterly, organic or identity-rich art, likenesses, portraits, HD-2D plates or textured terrain; realistic fire, smoke or water.
 - Never trace licensed characters into specs.
 
 ## Capability check (once per session)
 
-Run `python "<skill-dir>/../generate2dmedia/scripts/forge_doctor.py" --host-tools <tools> --save <output>/doctor.json`, where `<tools>` lists the media tools in your own tool list (`image_gen`, `image_edit`, `image_to_video`) or `none`. It tells the sprite and map skills which image routes exist when a request falls outside this envelope. If `encoding.stdout` fails, set `PYTHONUTF8=1`. For SVG work also run `svg_render.py doctor --report <new.json>` once per machine.
+Run `python "<skill-dir>/../generate2dmedia/scripts/route_media.py" resolve --kind image` (or `--kind video`): when it names a route, the image or video skill takes the request unless the user asked for code art. `forge_doctor.py` in the same folder shows the full picture. If `encoding.stdout` fails, set `PYTHONUTF8=1`. For SVG work also run `svg_render.py doctor --report <new.json>` once per machine.
 
 ## Art source
 
-Name the envelope row before you draw ([style-envelope.md](references/style-envelope.md)). Inside the envelope this skill is the first route on every host. Outside it, never substitute silently: explain the gap and offer the image route (host tool, a VERIFIED Codex / Grok local CLI, or the paid API with consent), the user's own art, or a stylized code-art alternative the user accepts. Disclose every result: "code-drawn, no image model" (`codeart-meta.json` records `"art_source": "code"`); never present it as image-model output.
+This skill is the explicit-only last resort of the route order: the API when a key is configured, then the local image tools, then code art, only when the user asks for it or no route exists. Never substitute it silently for generated art. Before you draw, check what code art can and cannot draw well in [style-envelope.md](references/style-envelope.md) (its table describes strengths, not the route order), and tell the user when a request needs an image model. Disclose every result: "code-drawn, no image model" (`codeart-meta.json` records `"art_source": "code"`); never present it as image-model output.
 
 ## Host notes
 
-- **Codex:** this skill is explicit-only (the sprite and map skills route here). Prefer it over `image_gen` for FX, tile topology, autotiles, map data and strict small pixel art; `image_gen` keeps painterly art and materials. Look at review sheets with `view_image`.
-- **Claude Code:** the default art route when no image tool exists. Look at every `preview-*.png` and `review/*.png` with Read before you report; run tools with Bash; `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
-- **Grok:** runs the same Python tools; native image tools stay for art outside the envelope.
+- **Codex:** this skill is explicit-only; `image_gen` and `route_media.py` make the art unless the user asks for code art. Look at review sheets with `view_image`.
+- **Claude Code:** use it only on request or after `no-route`. Look at every `preview-*.png` and `review/*.png` with Read before you report; run tools with Bash; `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
+- **Grok:** runs the same Python tools; its native image tools make the art unless the user asks for code art.
 
 ## Commands
 

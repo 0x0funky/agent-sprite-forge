@@ -1,6 +1,6 @@
 # Validation record — 2026-10-06 (0.4.0)
 
-Release check of branch `asf/integration` at `2824c1b` before the docs commit. Local only: nothing was pushed, tagged or published. CI (`.github/workflows/tests.yml`: Ubuntu and Windows, Python 3.10 and 3.13) runs the same commands on every push; its results supersede these counts once pushed.
+Release check of branch `asf/integration` at `2824c1b` before the docs commit. Local only: nothing was pushed, tagged or published; these local runs are the record.
 
 ## Automated results
 
