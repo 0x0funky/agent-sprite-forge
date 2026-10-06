@@ -6,7 +6,11 @@
   <img src="./src/banner.png" alt="Agent Sprite Forge banner" width="900" />
 </p>
 
-<!-- PROMO -->
+<p align="center">
+  <img src="./src/v040/asf-v040-teaser.gif" alt="Agent Sprite Forge 0.4 teaser" width="720" />
+  <br />
+  <em>0.4 宣傳預告：每一幀都是 ASF 的真實輸出。</em>
+</p>
 
 ## 一張原畫 → 整套可進遊戲的 sprite
 

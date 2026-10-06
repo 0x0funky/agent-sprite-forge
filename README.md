@@ -6,7 +6,11 @@ Languages: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体�
   <img src="./src/banner.png" alt="Agent Sprite Forge banner" width="900" />
 </p>
 
-<!-- PROMO -->
+<p align="center">
+  <img src="./src/v040/asf-v040-teaser.gif" alt="Agent Sprite Forge 0.4 teaser" width="720" />
+  <br />
+  <em>0.4 launch teaser: every frame is real ASF output.</em>
+</p>
 
 ## One still → a whole game-ready sprite set
 

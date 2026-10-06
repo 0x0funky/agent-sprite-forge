@@ -6,7 +6,11 @@
   <img src="./src/banner.png" alt="Agent Sprite Forge banner" width="900" />
 </p>
 
-<!-- PROMO -->
+<p align="center">
+  <img src="./src/v040/asf-v040-teaser.gif" alt="Agent Sprite Forge 0.4 teaser" width="720" />
+  <br />
+  <em>0.4 티저: 모든 프레임이 ASF의 실제 출력입니다.</em>
+</p>
 
 > 이 페이지는 영어판과 동기화된 요약입니다. 자세한 설명은 [English README](./README.md)를 기준으로 합니다(繁體中文은 전체 번역).
 
