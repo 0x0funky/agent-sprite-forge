@@ -279,3 +279,87 @@ def test_selection_with_a_bom_is_read(strike, tmp_path):
     (tmp_path / "bom.json").write_bytes(b"\xef\xbb\xbf" + raw)
     selection = R.gait_loop.read_selection(tmp_path / "bom.json")
     assert selection["indices"] == [0, 1, 2, 3, 4, 5]
+
+
+# --------------------------------------------------------------------------- automatic one-shot retiming
+
+def slow_attack_frame(t: int) -> Image.Image:
+    """A generator-style slow-motion attack: rest 0-9, wind-up 10-25 (the arm pulls back 16 px), a fast strike
+    26-31 (out 30 px), a frozen hold 32-71 (the 2026-10-06 thrust held 1.7 s), recovery 72-101, rest 102-119."""
+    if t < 10 or t > 101:
+        reach = 20.0
+    elif t < 26:
+        reach = 20.0 - (t - 9)
+    elif t < 32:
+        reach = 4.0 + 6.0 * (t - 25)
+    elif t <= 71:
+        reach = 40.0
+    else:
+        reach = 40.0 - 20.0 * (t - 71) / 30
+    image = Image.new("RGBA", (96, 48))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((20, 10, 30, 40), fill=(40, 120, 200, 255))
+    draw.rectangle((31, 18, 31 + round(reach), 25), fill=(220, 180, 140, 255))
+    draw.point((t % 3, 47), fill=(10, 10, 10, 255))  # every frame differs by one pixel (no motion)
+    return image
+
+
+@pytest.fixture(scope="module")
+def slow_attack(tmp_path_factory) -> Path:
+    out = tmp_path_factory.mktemp("slow-attack")
+    for t in range(120):
+        slow_attack_frame(t).save(out / f"src_{t:04d}.png")
+    return out
+
+
+def test_tick_grid_fits_80_ms_frames():
+    assert R.tick_grid(R.Fraction(12)) == (60, 5)
+    assert R.tick_grid(R.Fraction(24)) == (24, 1)
+    assert R.tick_grid(R.Fraction(25, 2)) == (25, 2)            # 12.5 fps: two 40 ms ticks = exactly 80 ms
+    durations, _ = R.tick_durations([2] * 8, 25)
+    assert durations == [80] * 8
+
+
+def test_auto_oneshot_compresses_slow_motion_and_keeps_the_hit(slow_attack, tmp_path):
+    out = tmp_path / "auto"
+    assert retime(slow_attack, out, "--kind", "attack", "--range", "0:120", "--auto-oneshot", "--duration", "700",
+                  "--key", "hit=31@0.4+80", "--event-source", "cancel=80") == 0
+    selection, report = outputs(out)
+    indices, durations = selection["sourceIndices"], selection["durations_ms"]
+    total = sum(durations)
+    assert abs(total - 700) <= 42                                   # the game length, within one 24 fps frame
+    assert all(b >= a for a, b in zip(indices, indices[1:]))         # never plays backwards
+    assert 8 <= indices[0] <= 10 and 96 <= indices[-1] <= 102       # rest before the onset ... back at rest
+    held = [i for i in indices if 33 <= i <= 71]
+    assert len(held) <= 2                                            # the 1.7 s frozen hold is cut to a beat
+    auto = report["auto"]
+    assert auto["cutFrames"] >= 30 and auto["onset"] in range(9, 12) and auto["holds"]
+    events = {event["name"]: event for event in selection["events"]}
+    assert abs(events["hit"]["atMs"] - 280) <= 42 and selection["impactMs"] == events["hit"]["atMs"]
+    starts = [sum(durations[:p]) for p in range(len(durations))]
+    shown = indices[max(p for p, start in enumerate(starts) if start <= events["hit"]["atMs"])]
+    assert shown == 31                                               # the strike lands on the hit tick
+    hit_frame = indices.index(31)
+    assert durations[hit_frame] >= 80                                # and is held (hit-stop)
+    assert events["hit"]["atMs"] < events["cancel"]["atMs"] < events["end"]["atMs"] == total
+    assert selection["loopPolicy"] == "oneshot"
+
+
+def test_auto_oneshot_on_an_80_ms_grid_and_its_refusals(slow_attack, tmp_path):
+    out = tmp_path / "grid"
+    assert retime(slow_attack, out, "--kind", "other", "--range", "0:120", "--auto-oneshot", "--duration", "640",
+                  "--output-fps", "25/2") == 0
+    selection, _ = outputs(out)
+    assert set(selection["durations_ms"]) <= {80, 160, 240} and sum(selection["durations_ms"]) == 640
+    for args, message in (
+            (["--range", "0:120", "--auto-oneshot"], "--duration"),
+            (["--range", "0:120", "--auto-oneshot", "--duration", "700", "--key", "hit=115@0.4"], "outside the motion"),
+            (["--range", "0:120", "--auto-oneshot", "--duration", "700", "--key", "hit=31@1.4"], "between 0 and 1"),
+            (["--range", "0:120", "--auto-oneshot", "--duration", "700", "--ticks", "12"], "drop --ticks")):
+        result = run_cli([script_path(SKILL, "retime"), "--frames-dir", slow_attack, "--fps", "24", "--output-dir",
+                          tmp_path / "refused", "--kind", "attack", *args], "cp1252")
+        assert result.returncode == 1 and message in result.stderr, (args, result.stderr)
+        assert not (tmp_path / "refused").exists()
+    loop = run_cli([script_path(SKILL, "retime"), "--frames-dir", slow_attack, "--fps", "24", "--output-dir",
+                    tmp_path / "loop", "--kind", "walk", "--range", "0:120", "--auto-oneshot", "--duration", "700"])
+    assert loop.returncode == 1 and "one-shots" in loop.stderr

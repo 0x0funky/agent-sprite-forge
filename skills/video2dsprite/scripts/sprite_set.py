@@ -48,6 +48,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 import forge_core  # noqa: E402  (this skill's vendored copy)
 import forge_matte  # noqa: E402
+import colour_lock  # noqa: E402  (sibling: master colours for the colour gate)
 import prepare_i2v_input as prep  # noqa: E402  (sibling: opaque-master keying, stance anchor, prompt lint)
 import register_clip  # noqa: E402  (sibling: job geometry, the master as placed in the video)
 
@@ -81,7 +82,7 @@ HOVER_CLASSES = ("spirit", "ghost", "hover", "flying")
 LUMA = np.array([0.299, 0.587, 0.114], np.float32)
 QC_SUBJECT_PX = 112                          # QC works on frames reduced to about this body height
 GATE_IDS = ("area", "feet", "identity", "zoom", "turn", "edge", "background", "extra", "motion", "end-pose",
-            "loop", "registration", "keying")
+            "colour", "timing", "loop", "registration", "keying")
 
 
 # --------------------------------------------------------------------------- action and canvas presets
@@ -121,6 +122,23 @@ ACTION_PRESETS: dict[str, ActionPreset] = {
                            "defeat"),
 }
 
+# Game lengths of one-shots (the generator plays them in slow motion: a 6 s clip for a 0.7 s attack). retime.py
+# --auto-oneshot cuts static holds, pins the keys (fraction of the length, hold ms) and compresses the rest.
+# set_plan.json keeps a copy per action ("timing"), so a set can be tuned; mode "source" keeps the clip's speed.
+ONESHOT_TIMING: dict[str, dict[str, Any]] = {
+    "attack": {"mode": "auto", "durationMs": 700, "keys": {"hit": {"at": 0.40, "holdMs": 80}}},
+    "jump": {"mode": "auto", "durationMs": 900, "keys": {"takeoff": {"at": 0.22}, "land": {"at": 0.72}}},
+    "hurt": {"mode": "auto", "durationMs": 500, "keys": {"peak": {"at": 0.30, "holdMs": 80}}},
+    "cast": {"mode": "auto", "durationMs": 900, "keys": {"peak": {"at": 0.45, "holdMs": 120}}},
+    "guard": {"mode": "auto", "durationMs": 700, "keys": {"peak": {"at": 0.35, "holdMs": 160}}},
+    "victory": {"mode": "source"},
+    "defeat": {"mode": "source"},
+}
+# Feet clauses that would freeze locomotion: a walk, run or jump never gets "feet stay planted"; its feet fix
+# keeps the ground line instead (motion-prompts.md clause feet-ground-line).
+PLANTED_CLAUSES = ("feet-planted",)
+MOVING_FEET_CLAUSE = "feet-ground-line"
+
 # sprite-gen per-state canvases: jump 3:4 with 34% headroom, attack 16:9; square keeps the master framing.
 CANVAS_PRESETS = {"square": {"aspect": None, "headroom": None, "lead": 0.0},
                   "tall": {"aspect": (3, 4), "headroom": 0.34, "lead": 0.0},
@@ -129,7 +147,20 @@ CANVAS_PRESETS = {"square": {"aspect": None, "headroom": None, "lead": 0.0},
 BASE_GATES: dict[str, dict[str, Any]] = {
     "area": {"min": 0.72, "max": 1.32, "maxBadShare": 0.1},
     "feet": {"max": 0.05, "badFrames": 3, "mode": "all"},
-    "identity": {"start": 0.8, "min": 0.5, "badFrames": 2},
+    # Identity: frame 0 must reproduce the master (start); afterwards the head is matched against the master and
+    # frame 0 at 3 scales and a turned or bobbing head only warns (min). Only a severe loss fails: more than half
+    # the frames under 0.30 (calibrated on the 2026-10-06 live run, where the old hard 0.5 floor rejected 18 of 24
+    # good takes and no real identity loss happened).
+    "identity": {"start": 0.8, "min": 0.5, "badFrames": 2, "severe": 0.30, "severeShare": 0.5,
+                 "scales": [0.9, 1.0, 1.1]},
+    # Colour: a frame is bled when more than 2% of the body shows a hue no master colour at that height has
+    # (chroma > 0.05 and 0.06 or more from every master colour of the band, in OKLab a/b); the take fails when 15%
+    # of its frames are (live run: 29-41% on the six bled runs, at most 7% on the 24 good takes). Region drift (a
+    # part shifted, which the finish's colour lock undoes) only warns: over 0.03 in 40% of the frames.
+    "colour": {"foreign": 0.02, "badShare": 0.15, "drift": 0.03, "driftShare": 0.4},
+    # Timing (one-shots): the motion from onset to settle and the longest static hold inside it. Too slow warns
+    # while the set retimes one-shots (retime --auto-oneshot) and fails when it keeps the clip's speed.
+    "timing": {"maxSeconds": 2.0, "maxHoldSeconds": 0.5},
     "zoom": {"max": 0.08},
     "turn": {"enabled": True, "margin": 0.08, "run": 3},
     "edge": {"px": 2},
@@ -274,10 +305,25 @@ def _next_numbered(folder: Path, stem: str, suffix: str) -> Path:
 
 
 def _fps_value(text: Any) -> float:
-    rate = Fraction(str(text).strip()) if not isinstance(text, (int, float)) else Fraction(text)
+    return float(_fps_fraction(text))
+
+
+def _fps_fraction(text: Any) -> Fraction:
+    """A frame rate as an exact fraction: 24, "24/1", 12.5, "25/2" (floats are read from their shortest text)."""
+    if isinstance(text, Fraction):
+        rate = text
+    elif isinstance(text, bool):
+        raise ValueError(f"frame rate must be a number, got {text!r}")
+    elif isinstance(text, int):
+        rate = Fraction(text)
+    else:
+        try:
+            rate = Fraction(str(text).strip())
+        except (ValueError, ZeroDivisionError):
+            raise ValueError(f"frame rate must be a number or N/D, got {text!r}") from None
     if rate <= 0:
         raise ValueError(f"frame rate must be positive, got {text!r}")
-    return float(rate)
+    return rate.limit_denominator(1000)
 
 
 def _duration_arg(value: Any) -> str:
@@ -406,12 +452,22 @@ def identity_phrase(recap: str) -> str:
     return text
 
 
+def moves_feet(entry: dict) -> bool:
+    """Walks, runs and jumps: their feet must move, so no fix may ask for planted feet."""
+    return (entry.get("action") in ("walk", "run", "jump") or bool(entry.get("airborne"))
+            or entry.get("loopKind") == "gait")
+
+
 def build_prompt(entry: dict, plan: dict, fixes: Sequence[str]) -> str:
     """The game-opus55 prompt shape: 'The same <identity>' + facing lock + ONE action + same start
     and end pose + negatives and fix clauses + locked camera, flat key background, exact style."""
     master = plan["masters"][entry["view"]]
     key = plan["key"]
     words = prompt_words(master["facing"], key, plan["style"], plan["pronoun"], entry["action"])
+    if moves_feet(entry):   # an older state may still carry the planted-feet clause: never send it
+        planted = {" ".join(str(plan.get("clauses", {}).get(clause, "")).split()).lower() for clause in PLANTED_CLAUSES}
+        planted.discard("")
+        fixes = [fix for fix in fixes if " ".join(str(fix).split()).lower() not in planted]
     parts = [f"The same {identity_phrase(master['identityRecap'])}, facing {words['facing']} the entire time and "
              f"never turning around, {fill(entry['motion'], words).strip()}"]
     if entry["returnsToRest"]:
@@ -638,16 +694,28 @@ def _block_mean(array: np.ndarray, factor: int) -> np.ndarray:
 
 @dataclass
 class QcFrame:
-    """One take frame reduced for the gates: alpha (0-255), luma over mid grey, raw RGB and the edge touch
-    measured at full resolution."""
+    """One take frame reduced for the gates: alpha (0-255), luma over mid grey, raw RGB, the edge touch
+    measured at full resolution and, for the colour gate, the frame's colours (straight RGBA) reduced half
+    as much as the rest."""
 
     alpha: np.ndarray
     luma: np.ndarray
     raw: np.ndarray | None
     edge: bool
+    colour: np.ndarray | None = None
 
 
-def qc_frame(rgba: np.ndarray, raw: np.ndarray | None, factor: int, edge_px: int) -> QcFrame:
+def _block_rgba(rgba: np.ndarray, factor: int) -> np.ndarray:
+    """Straight-alpha RGBA reduced by factor x factor blocks on premultiplied colour (uint8)."""
+    if factor <= 1:
+        return np.asarray(rgba, np.uint8)
+    alpha = _block_mean(rgba[..., 3], factor)
+    premultiplied = _block_mean(rgba[..., :3].astype(np.float32) * (rgba[..., 3:4].astype(np.float32) / 255.0), factor)
+    rgb = np.where(alpha[..., None] > 0.5, premultiplied / np.maximum(alpha[..., None] / 255.0, 1e-6), 0.0)
+    return np.dstack([np.clip(rgb + 0.5, 0, 255), np.clip(alpha + 0.5, 0, 255)]).astype(np.uint8)
+
+
+def qc_frame(rgba: np.ndarray, raw: np.ndarray | None, factor: int, edge_px: int, colour: bool = False) -> QcFrame:
     alpha = rgba[..., 3]
     band = max(1, int(edge_px))
     edge = bool((alpha[:band] > 16).any() or (alpha[-band:] > 16).any()
@@ -655,7 +723,8 @@ def qc_frame(rgba: np.ndarray, raw: np.ndarray | None, factor: int, edge_px: int
     weight = alpha.astype(np.float32) / 255.0
     luma = (rgba[..., :3].astype(np.float32) @ LUMA) * weight + 128.0 * (1.0 - weight)
     return QcFrame(_block_mean(alpha, factor), _block_mean(luma, factor),
-                   None if raw is None else _block_mean(raw[..., :3], factor), edge)
+                   None if raw is None else _block_mean(raw[..., :3], factor), edge,
+                   _block_rgba(rgba, max(1, factor // 2)) if colour else None)
 
 
 def _box_sum(values: np.ndarray, height: int, width: int) -> np.ndarray:
@@ -768,16 +837,55 @@ def _rolling_median(values: Sequence[float], window: int) -> np.ndarray:
     return np.array([np.median(data[max(0, i - half):i + half + 1]) for i in range(data.size)])
 
 
+def _scaled(template: np.ndarray, scale: float) -> tuple[np.ndarray, int, int]:
+    """``template`` resized by ``scale`` (bilinear) and the offset that keeps it centred on the original."""
+    if abs(scale - 1.0) < 1e-9:
+        return template, 0, 0
+    height, width = template.shape
+    size = (max(4, forge_core.round_half_up(width * scale)), max(4, forge_core.round_half_up(height * scale)))
+    resized = np.asarray(Image.fromarray(np.asarray(template, np.float32), "F").resize(size, Image.Resampling.BILINEAR),
+                         np.float64)
+    return resized, forge_core.round_half_up((width - size[0]) / 2), forge_core.round_half_up((height - size[1]) / 2)
+
+
+def _timing_phases(steps: Sequence[float], fps: float) -> dict:
+    """One-shot motion from the per-frame luma change (retime --auto-oneshot's rule): moving frames are at least
+    max(0.15, 20% of the 90th-percentile step) (3-frame mean); the action runs from the first to the last moving
+    frame and the longest still run inside it is the hold."""
+    values = np.asarray(steps, np.float64)
+    if values.size < 3:
+        return {"actionSeconds": 0.0, "holdSeconds": 0.0, "onset": None, "settle": None}
+    padded = np.concatenate([[values[min(1, values.size - 1)]], values, [values[-1]]])
+    smooth = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
+    smooth[0] = 0.0
+    active = max(0.15, 0.2 * float(np.percentile(smooth[1:], 90)))
+    moving = np.flatnonzero(smooth >= active)
+    if moving.size == 0:
+        return {"actionSeconds": 0.0, "holdSeconds": 0.0, "onset": None, "settle": None}
+    onset, settle = int(moving[0]), int(moving[-1])
+    longest = run = 0
+    for index in range(onset, settle + 1):
+        run = run + 1 if smooth[index] < active else 0
+        longest = max(longest, run)
+    return {"actionSeconds": (settle - onset + 1) / fps, "holdSeconds": longest / fps, "onset": onset,
+            "settle": settle, "activeStep": active}
+
+
 def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, gates: dict, fps: float,
-                  facing: str, kind: str, airborne: bool, returns_to_rest: bool, hit_tick: bool) -> dict:
+                  facing: str, kind: str, airborne: bool, returns_to_rest: bool, hit_tick: bool,
+                  master: Any = None, timing_mode: str | None = None) -> dict:
     """Score one keyed take against the master as the job placed it (both reduced alike).
 
-    Gates (game-opus55 take loop): opaque-area ratio to the master, feet drift, identity NCC of the head
-    region (frame 0 against the master, every frame against frame 0), camera push-in or zoom, turning
-    around (mirrored head NCC and mirrored silhouette), edge touch, flat background, detached extra
-    objects, visible motion and, for one-shots, the return to the start pose. Returns the QC document with
-    per-frame numbers, the failing gate ids, readable reasons with frame numbers and the longest usable
-    window of frames that pass every per-frame gate."""
+    Gates (game-opus55 take loop, recalibrated on the 2026-10-06 live run): opaque-area ratio to the master,
+    feet drift (runs: the half-second rolling median, so a flight phase is not drift), identity (frame 0
+    against the master; then the head against the master and frame 0 at three scales, a warning unless the
+    design is lost in most frames), camera push-in or zoom, turning around (mirrored head NCC and mirrored
+    silhouette), edge touch, flat background, detached extra objects, visible motion, colour (``master``:
+    colour_lock.master_colours of the placed master; hues the design does not have at that height), one-shot
+    timing (slow motion and long holds; warns while the set retimes one-shots, ``timing_mode`` "auto") and,
+    for one-shots, the return to the start pose. Returns the QC document with per-frame numbers, the failing
+    gate ids, readable reasons with frame numbers, the warnings and the longest usable window of frames that
+    pass every per-frame gate."""
     count = len(frames)
     if count < 2:
         raise ValueError("a take needs at least two frames")
@@ -804,13 +912,21 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
     start_ncc = None
     if master_t is not None:
         start_ncc = ncc_best(master_t, frames[0].luma, head[0], head[1], 3)
+    id_scales = [float(value) for value in gates["identity"].get("scales", [1.0]) if abs(float(value) - 1.0) > 1e-9]
+    scaled_templates = ([_scaled(template, scale) for template in (master_t, frame0_t) for scale in id_scales]
+                        if head else [])
 
     rows: list[dict[str, Any]] = []
+    previous_luma = None
     for frame, mask, st in zip(frames, masks, stats):
         row: dict[str, Any] = {"edge": frame.edge}
+        row["step"] = 0.0 if previous_luma is None else float(np.abs(frame.luma - previous_luma).mean())
+        previous_luma = frame.luma
+        if master is not None and frame.colour is not None:
+            row.update(colour_lock.foreign_drift(frame.colour, master))
         if st is None:
             row.update(empty=True, area=0.0, feet=None, lift=None, pose=1.0, iou0=0.0, extra=0.0, reach=0.0,
-                       direct=0.0, mirror=0.0, ncc=None, nccMaster=None, nccMirror=None)
+                       direct=0.0, mirror=0.0, ncc=None, nccMaster=None, nccMirror=None, nccScaled=None)
         else:
             row["area"] = st["area"] / ref_area
             row["feet"] = (st["ground"] - ref["ground"]) / ref_height
@@ -842,8 +958,15 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
                 row["ncc"] = best(frame0_t)
                 row["nccMaster"] = best(master_t)
                 row["nccMirror"] = best(master_t[:, ::-1])
+                scores = [value for value in (row["ncc"], row["nccMaster"]) if value is not None]
+                for template, dx, dy in scaled_templates:
+                    for x, y in centres:
+                        value = ncc_best(template, frame.luma, x + dx, y + dy, search)
+                        if value is not None:
+                            scores.append(value)
+                row["nccScaled"] = max(scores) if scores else None
             else:
-                row.update(ncc=None, nccMaster=None, nccMirror=None)
+                row.update(ncc=None, nccMaster=None, nccMirror=None, nccScaled=None)
         if frame.raw is not None:
             covered = forge_core.dilate_square(frame.alpha > 2.0, 2)
             background = ~covered
@@ -861,6 +984,7 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
     gate_results: dict[str, dict[str, Any]] = {}
     failures: list[str] = []
     reasons: list[str] = []
+    warnings: list[str] = []
     bad: dict[str, list[bool]] = {}
 
     def record(gate: str, status: str, value: Any, threshold: Any, frames_bad: Sequence[int] = (),
@@ -871,6 +995,8 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
             failures.append(gate)
             if reason:
                 reasons.append(f"{gate}: {reason}")
+        elif status == "warn" and reason:
+            warnings.append(f"{gate}: {reason}")
 
     # area ratio against the master
     area_gate = gates["area"]
@@ -885,38 +1011,58 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
            f"opaque area {median:.2f}x the master (band {area_gate['min']}-{area_gate['max']}); out of band in "
            f"frames {_ranges(frames_bad)}")
 
-    # feet drift (airborne actions: only the calm start and end spans)
+    # feet drift (airborne actions: only the calm start and end spans; "median": the half-second rolling median,
+    # so a run's flight phase is not drift while a run that wanders off the ground line still fails)
     feet_gate = gates["feet"]
     calm = max(2, forge_core.round_half_up(0.25 * fps))
     checked = [True] * count
     if feet_gate.get("mode") == "start-end" or airborne:
         checked = [i < calm or i >= count - calm for i in range(count)]
     drifts = [abs(row["feet"]) if row["feet"] is not None else 1.0 for row in rows]
+    if feet_gate.get("mode") == "median" and not airborne:
+        drifts = list(_rolling_median(drifts, max(3, forge_core.round_half_up(0.5 * fps)) | 1))
     bad["feet"] = [check and drift > feet_gate["max"] for check, drift in zip(checked, drifts)]
     frames_bad = [i for i, flag in enumerate(bad["feet"]) if flag]
     worst = max((drift for check, drift in zip(checked, drifts) if check), default=0.0)
     record("feet", "fail" if len(frames_bad) > feet_gate["badFrames"] else "pass", worst, feet_gate["max"],
-           frames_bad, f"feet drift up to {worst:.1%} of the body height (limit {feet_gate['max']:.0%}) in frames "
+           frames_bad, f"feet drift up to {worst:.1%} of the body height (limit {feet_gate['max']:.0%}"
+           + (", half-second median" if feet_gate.get("mode") == "median" else "") + f") in frames "
            f"{_ranges(frames_bad)}")
 
-    # identity NCC: frame 0 against the master, every frame against frame 0
+    # identity: frame 0 against the master (a hard gate); then the head against the master and frame 0 at the
+    # gate's scales, a warning for low frames and a failure only when the design is lost in most frames
     id_gate = gates["identity"]
-    nccs = [row.get("ncc") for row in rows]
-    if start_ncc is None or all(value is None for value in nccs):
+    scores = [row.get("nccScaled", row.get("ncc")) for row in rows]
+    if start_ncc is None or all(value is None for value in scores):
         record("identity", "skipped", None, id_gate["min"])
         bad["identity"] = [False] * count
     else:
-        bad["identity"] = [value is not None and value < id_gate["min"] for value in nccs]
-        frames_bad = [i for i, flag in enumerate(bad["identity"]) if flag]
-        low = min(value for value in nccs if value is not None)
+        severe = float(id_gate.get("severe", id_gate["min"]))
+        severe_share = float(id_gate.get("severeShare", 0.0))
+        low_frames = [i for i, value in enumerate(scores) if value is not None and value < id_gate["min"]]
+        lost = [i for i, value in enumerate(scores) if value is not None and value < severe]
+        low = min(value for value in scores if value is not None)
         start_ok = start_ncc >= id_gate["start"]
-        ok = start_ok and len(frames_bad) <= id_gate["badFrames"]
-        reason = (f"frame 0 does not reproduce the master (head NCC {start_ncc:.2f} < {id_gate['start']})"
-                  if not start_ok else
-                  f"head NCC against frame 0 drops to {low:.2f} (limit {id_gate['min']}) in frames "
-                  f"{_ranges(frames_bad)}: design drift or the face is covered")
-        record("identity", "pass" if ok else "fail", {"start": start_ncc, "min": low},
-               {"start": id_gate["start"], "min": id_gate["min"]}, frames_bad, reason)
+        if "severe" in id_gate:
+            failed = not start_ok or len(lost) > severe_share * count
+            flagged = set(lost)
+        else:   # a plan written before the recalibration keeps its hard per-frame floor
+            failed = not start_ok or len(low_frames) > id_gate["badFrames"]
+            flagged = set(low_frames)
+        bad["identity"] = [i in flagged for i in range(count)]
+        status = "fail" if failed else ("warn" if len(low_frames) > id_gate["badFrames"] else "pass")
+        if not start_ok:
+            reason = f"frame 0 does not reproduce the master (head NCC {start_ncc:.2f} < {id_gate['start']})"
+        elif failed:
+            reason = (f"the head matches the master under {severe} in {len(lost)} of {count} frames ("
+                      f"{_ranges(lost)}): the design is lost or the face is covered")
+        else:
+            reason = (f"the head matches the master only {low:.2f} (warning under {id_gate['min']}) in frames "
+                      f"{_ranges(low_frames)}: a turned or bobbing head, or design drift; look at the sheet")
+        record("identity", status, {"start": start_ncc, "min": low, "lowFrames": len(low_frames),
+                                    "lostFrames": len(lost)},
+               {"start": id_gate["start"], "warn": id_gate["min"], "severe": severe, "severeShare": severe_share},
+               lost if failed else low_frames, reason)
 
     # camera push-in or zoom
     zoom_gate = gates["zoom"]
@@ -1016,6 +1162,46 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
     else:
         record("end-pose", "skipped", None, end_gate["min"])
 
+    # colour: hues the design does not have at that height (bleed); region drift only warns (the lock undoes it)
+    colour_gate = gates.get("colour") or BASE_GATES["colour"]
+    if any("foreign" in row for row in rows):
+        foreign = [float(row.get("foreign", 0.0)) for row in rows]
+        drifts_c = [float(row.get("drift", 0.0)) for row in rows]
+        bad["colour"] = [value > colour_gate["foreign"] for value in foreign]
+        frames_bad = [i for i, flag in enumerate(bad["colour"]) if flag]
+        drifted = [i for i, value in enumerate(drifts_c) if value > colour_gate["drift"]]
+        bled = len(frames_bad) > colour_gate["badShare"] * count
+        warned = len(drifted) > colour_gate["driftShare"] * count
+        record("colour", "fail" if bled else ("warn" if warned else "pass"),
+               {"foreignMax": max(foreign), "bledFrames": len(frames_bad), "driftMax": max(drifts_c),
+                "driftedFrames": len(drifted)},
+               {"foreign": colour_gate["foreign"], "badShare": colour_gate["badShare"],
+                "drift": colour_gate["drift"], "driftShare": colour_gate["driftShare"]},
+               frames_bad if bled else drifted,
+               (f"colours the master does not have (bleed or tint) on more than {colour_gate['foreign']:.0%} of the "
+                f"body in {len(frames_bad)} of {count} frames ({_ranges(frames_bad)})") if bled else
+               (f"design colours drift (up to {max(drifts_c):.3f} OKLab) in {len(drifted)} of {count} frames "
+                f"({_ranges(drifted)}); the finish's colour lock pulls them back, look at the sheet"))
+        if not bled:
+            bad["colour"] = [False] * count
+    else:
+        record("colour", "skipped", None, colour_gate["foreign"])
+
+    # one-shot timing: the generator's slow motion and frozen holds
+    timing_gate = gates.get("timing") or BASE_GATES["timing"]
+    if kind == "oneshot":
+        phases = _timing_phases([row["step"] for row in rows], fps)
+        slow = (phases["actionSeconds"] > timing_gate["maxSeconds"]
+                or phases["holdSeconds"] > timing_gate["maxHoldSeconds"])
+        status = "pass" if not slow else ("warn" if timing_mode == "auto" else "fail")
+        record("timing", status, {"actionSeconds": phases["actionSeconds"], "holdSeconds": phases["holdSeconds"]},
+               {"maxSeconds": timing_gate["maxSeconds"], "maxHoldSeconds": timing_gate["maxHoldSeconds"]}, [],
+               f"slow one-shot: {phases['actionSeconds']:.1f} s of motion (limit {timing_gate['maxSeconds']} s), "
+               f"a {phases['holdSeconds']:.1f} s static hold (limit {timing_gate['maxHoldSeconds']} s)"
+               + ("; the set retimes it (retime --auto-oneshot)" if timing_mode == "auto" else ""))
+    else:
+        record("timing", "skipped", None, timing_gate["maxSeconds"])
+
     # motion landmarks (take frame numbers) for retime: onset, settle, impact, cancel, takeoff, land
     threshold = max(0.01, 0.5 * motion_gate["min"])
     moving = [i for i, value in enumerate(poses) if value > threshold]
@@ -1043,7 +1229,7 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
             window = [a, b]
     per_frame = {name: [_round(row.get(name), 4) for row in rows]
                  for name in ("area", "feet", "lift", "pose", "iou0", "extra", "reach", "direct", "mirror", "ncc",
-                              "nccMaster", "nccMirror", "bg")}
+                              "nccMaster", "nccMirror", "nccScaled", "bg", "foreign", "drift", "step")}
     per_frame["edge"] = [bool(row["edge"]) for row in rows]
     per_frame["usable"] = usable
     per_frame["bad"] = {name: [i for i, flag in enumerate(flags) if flag] for name, flags in bad.items()}
@@ -1052,6 +1238,7 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
         "status": "fail" if failures else "pass",
         "failures": failures,
         "reasons": reasons,
+        "warnings": warnings,
         "gates": gate_results,
         "frames": count,
         "fps": _round(fps),
@@ -1065,9 +1252,11 @@ def evaluate_take(frames: Sequence[QcFrame], reference: QcFrame, *, key: str, ga
 
 
 def qc_take(job_path: Path, clean_dir: Path, raw_dir: Path | None, *, key: str, gates: dict, fps: float,
-            facing: str, kind: str, airborne: bool, returns_to_rest: bool, hit_tick: bool) -> dict:
+            facing: str, kind: str, airborne: bool, returns_to_rest: bool, hit_tick: bool,
+            timing_mode: str | None = None) -> dict:
     """Load a keyed take (video2dsprite process frames-clean and frames-raw) and the master as the job placed it
-    in the video, reduce both alike and run evaluate_take."""
+    in the video, reduce both alike and run evaluate_take (the colour gate learns the master's colours from the
+    placed master)."""
     clean = _pngs(clean_dir)
     if len(clean) < 2:
         raise ValueError(f"{clean_dir.name} holds {len(clean)} keyed frames; a take needs at least two")
@@ -1086,15 +1275,20 @@ def qc_take(job_path: Path, clean_dir: Path, raw_dir: Path | None, *, key: str, 
     factor = max(1, forge_core.round_half_up((box[3] - box[1]) / QC_SUBJECT_PX))
     edge_px = int(gates["edge"]["px"])
     reference = qc_frame(placed, None, factor, edge_px)
+    try:
+        master = colour_lock.master_colours(placed)
+    except colour_lock.ColourLockError:
+        master = None
     frames = []
     for index, path in enumerate(clean):
         rgba = np.asarray(Image.open(path).convert("RGBA"))
         if (rgba.shape[1], rgba.shape[0]) != size:
             raise ValueError(f"{path.name} is {rgba.shape[1]}x{rgba.shape[0]}; the take is {size[0]}x{size[1]}")
         rgb = np.asarray(Image.open(raw[index]).convert("RGB")) if raw else None
-        frames.append(qc_frame(rgba, rgb, factor, edge_px))
+        frames.append(qc_frame(rgba, rgb, factor, edge_px, colour=master is not None))
     result = evaluate_take(frames, reference, key=key, gates=gates, fps=fps, facing=facing, kind=kind,
-                           airborne=airborne, returns_to_rest=returns_to_rest, hit_tick=hit_tick)
+                           airborne=airborne, returns_to_rest=returns_to_rest, hit_tick=hit_tick, master=master,
+                           timing_mode=timing_mode)
     result["reduction"] = factor
     result["videoSize"] = list(size)
     result["fitApplied"] = fit.applied
@@ -1104,12 +1298,16 @@ def qc_take(job_path: Path, clean_dir: Path, raw_dir: Path | None, *, key: str, 
 # --------------------------------------------------------------------------- plan
 
 def default_gates(action: str, preset: ActionPreset, klass: str, view: str) -> dict:
-    """BASE_GATES tuned per action: runs bob in flight, jumps leave the ground, hovering classes have no
-    feet, front and back views cannot show a mirrored head, loops and held endings skip the end pose."""
+    """BASE_GATES tuned per action: runs bob in flight (the feet gate takes the half-second rolling median),
+    jumps leave the ground, hovering classes have no feet, front and back views cannot show a mirrored head,
+    loops and held endings skip the end pose, one-shots get their own time limits."""
     gates = json.loads(json.dumps(BASE_GATES))
     gates["motion"]["min"] = preset.min_motion
     if action == "run":
         gates["feet"]["max"] = 0.10
+        gates["feet"]["mode"] = "median"
+    if action in ("jump", "victory", "defeat", "cast", "guard"):
+        gates["timing"] = {"maxSeconds": 2.5, "maxHoldSeconds": 1.2 if action in ("cast", "guard") else 0.5}
     if preset.airborne:
         gates["feet"]["mode"] = "start-end"
     if klass in HOVER_CLASSES:
@@ -1119,6 +1317,35 @@ def default_gates(action: str, preset: ActionPreset, klass: str, view: str) -> d
     if preset.kind == "loop" or not preset.returns_to_rest:
         gates["endPose"]["enabled"] = False
     return gates
+
+
+def oneshot_timing(entry: dict) -> dict:
+    """The one-shot timing of a plan entry: its own "timing", else the action's default (ONESHOT_TIMING), else
+    the clip's own speed. Loops have none."""
+    if entry.get("kind") != "oneshot":
+        return {"mode": "loop"}
+    timing = entry.get("timing")
+    if isinstance(timing, dict) and timing.get("mode") in ("auto", "source"):
+        return timing
+    return json.loads(json.dumps(ONESHOT_TIMING.get(entry.get("action"), {"mode": "source"})))
+
+
+def parse_oneshot_ms(text: str | None) -> dict[str, int]:
+    """--oneshot-ms attack=600,jump=800 -> {"attack": 600, "jump": 800}."""
+    result: dict[str, int] = {}
+    for item in str(text or "").split(","):
+        if not item.strip():
+            continue
+        name, sep, value = item.partition("=")
+        name = name.strip().lower()
+        try:
+            millis = int(value)
+        except ValueError:
+            millis = 0
+        if not sep or name not in ACTION_PRESETS or ACTION_PRESETS[name].kind != "oneshot" or not 100 <= millis <= 10000:
+            raise ValueError(f"--oneshot-ms takes ACTION=MS for one-shot actions (100-10000 ms); got {item.strip()!r}")
+        result[name] = millis
+    return result
 
 
 def _parse_list(text: str, allowed: Sequence[str], name: str) -> list[str]:
@@ -1175,9 +1402,39 @@ def cmd_plan(args: argparse.Namespace) -> dict:
     target = args.target_height or forge_core.round_half_up(TARGET_HEIGHT[finish] * CLASS_HEIGHT.get(master.klass, 1.0))
     if target < 8:
         raise ValueError("--target-height must be at least 8 px")
-    fps = args.fps if args.fps is not None else (12 if finish == "pixel" else None)
-    if fps is not None and not (1 <= fps <= 60 and float(fps).is_integer()):
-        raise ValueError("--fps must be a whole number 1-60 (or leave it out to keep the clip's own rate)")
+    if args.frame_ms is not None and args.fps is not None:
+        raise ValueError("give --fps or --frame-ms, not both")
+    if args.frame_ms is not None:
+        try:
+            fps = Fraction(1000) / Fraction(str(args.frame_ms))
+        except (ValueError, ZeroDivisionError):
+            raise ValueError(f"--frame-ms must be a positive number of ms, got {args.frame_ms!r}") from None
+    elif args.fps is not None:
+        fps = _fps_fraction(args.fps)
+    else:
+        fps = Fraction(12) if finish == "pixel" else None
+    if fps is not None and not 1 <= fps <= 60:
+        raise ValueError("--fps must be 1-60 frames per second (--frame-ms 17-1000), or leave it out to keep the "
+                         "clip's own rate")
+    if finish != "pixel" and (args.colors is not None or args.outline is not None):
+        raise ValueError("--colors and --outline belong to the pixel finish")
+    if args.colors is not None and args.palette:
+        raise ValueError("--colors learns a palette; drop it when --palette is given")
+    if args.colors is not None and not 2 <= args.colors <= 255:
+        raise ValueError("--colors must be 2..255")
+    canvas = None
+    if args.canvas:
+        match = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", args.canvas)
+        if not match or min(int(match.group(1)), int(match.group(2))) < 4:
+            raise ValueError(f"--canvas must be WIDTHxHEIGHT such as 48x64, got {args.canvas!r}")
+        canvas = [int(match.group(1)), int(match.group(2))]
+    canvas_anchor = None
+    if args.canvas_anchor:
+        match = re.fullmatch(r"\s*(\d+)\s*,\s*(\d+)\s*", args.canvas_anchor)
+        if not match or canvas is None:
+            raise ValueError("--canvas-anchor needs X,Y and a --canvas")
+        canvas_anchor = [int(match.group(1)), int(match.group(2))]
+    oneshot_ms = parse_oneshot_ms(args.oneshot_ms)
     if not float(args.duration).is_integer():
         raise ValueError("--duration must be whole seconds (route_media.py video takes an integer --duration)")
     formats = _parse_list(args.formats, ("png", "webm", "packed"), "--formats")
@@ -1221,9 +1478,13 @@ def cmd_plan(args: argparse.Namespace) -> dict:
             "masters": records,
             "generation": {"duration": args.duration, "resolution": args.resolution, "maxTakes": args.max_takes,
                            "jobs": args.jobs, "pinLastFrame": args.pin_last, "timeoutSeconds": args.gen_timeout},
-            "finish": {"mode": finish, "targetHeight": int(target), "scaleRefAction": ref_id, "palette": palette},
+            "finish": {"mode": finish, "targetHeight": int(target), "scaleRefAction": ref_id, "palette": palette,
+                       "colors": args.colors, "outline": args.outline, "canvas": canvas, "canvasAnchor": canvas_anchor,
+                       "colourLock": not args.no_colour_lock},
             "matteProfile": matte_profile,
-            "package": {"formats": formats, "tiers": args.tiers, "fps": int(fps) if fps else None},
+            "package": {"formats": formats, "tiers": args.tiers,
+                        "fps": None if fps is None else (int(fps) if fps.denominator == 1 else float(fps)),
+                        "frameMs": args.frame_ms},
             "library": {"name": LIBRARY_FILE.name if not args.library else Path(args.library).name,
                         "sha256": library.sha256},
             "clauses": library.clauses,
@@ -1248,6 +1509,12 @@ def cmd_plan(args: argparse.Namespace) -> dict:
                 "negatives": library.negatives.get(action, ""),
                 "gates": default_gates(action, preset, item.klass, view),
             }
+            if preset.kind == "oneshot":
+                timing = ({"mode": "source"} if args.oneshot_timing == "source"
+                          else json.loads(json.dumps(ONESHOT_TIMING.get(action, {"mode": "source"}))))
+                if timing.get("mode") == "auto" and action in oneshot_ms:
+                    timing["durationMs"] = oneshot_ms[action]
+                entry["timing"] = timing
             entry["prompt"] = build_prompt(entry, plan, [])
             entry["lint"] = lint_findings(entry["prompt"], master.key)
             plan["actions"].append(entry)
@@ -1419,10 +1686,20 @@ def rebind_selection(selection: Path, frames_dir: Path, expected: int, out: Path
             "start": start, "endExclusive": end}
 
 
-def _tick_grid(fps: int) -> tuple[int, int]:
-    """(tick Hz, ticks per frame): the 60 Hz forge grid when it divides evenly, else one tick per frame."""
-    fps = int(fps)
-    return (60, 60 // fps) if 60 % fps == 0 else (fps, 1)
+def _tick_grid(fps: Any) -> tuple[int, int]:
+    """(tick Hz, ticks per frame): the 60 Hz forge grid when a frame is a whole number of 60 Hz ticks, else the
+    rate's own fraction (24 fps: 24 Hz x 1; 12.5 fps or 80 ms frames: 25 Hz x 2)."""
+    rate = _fps_fraction(fps)
+    per = Fraction(60) / rate
+    if per.denominator == 1:
+        return 60, int(per)
+    return int(rate.numerator), int(rate.denominator)
+
+
+def _plan_fps(plan: dict) -> Fraction | None:
+    """The package frame rate of a plan (an int, a float such as 12.5, or "25/2"), or None for the clip's own."""
+    value = (plan.get("package") or {}).get("fps")
+    return None if value in (None, 0) else _fps_fraction(value)
 
 
 # --------------------------------------------------------------------------- the set runner
@@ -1757,12 +2034,14 @@ class SetRunner:
         document = qc_take(self.root / st["job"]["job"], keyed / "frames-clean", keyed / "frames-raw",
                            key=self.plan["key"], gates=entry["gates"], fps=_fps_value(record["stages"]["keyed"]["fps"]),
                            facing=self.master(ident)["facing"], kind=entry["kind"], airborne=entry["airborne"],
-                           returns_to_rest=entry["returnsToRest"], hit_tick=entry["hitTick"])
+                           returns_to_rest=entry["returnsToRest"], hit_tick=entry["hitTick"],
+                           timing_mode=oneshot_timing(entry).get("mode"))
         document.update({"action": ident, "take": record["take"], "clip": record.get("clip"),
                          "job": {"path": st["job"]["job"], "sha256": st["job"]["sha256"]}})
         _write_new_json(path, _scrub(document))
         record["qc"] = {"file": self.rel(path), "status": document["status"], "failures": document["failures"],
-                        "reasons": document["reasons"], "usableWindow": document["usableWindow"],
+                        "reasons": document["reasons"], "warnings": document.get("warnings", []),
+                        "usableWindow": document["usableWindow"],
                         "usableFrames": document["usableFrames"], "frames": document["frames"],
                         "motion": document["motion"], "badFrames": document["perFrame"]["bad"],
                         "gates": {name: {"status": gate["status"], "value": gate["value"]}
@@ -1808,6 +2087,15 @@ class SetRunner:
         motion = record["qc"]["motion"]
         offset = window[0] if window else 0
         count = int(registered["frames"])
+        timing = oneshot_timing(entry)
+        if timing.get("mode") == "auto":
+            try:
+                return self.run_auto_oneshot(ident, record, out, frames, fps_text, motion, offset, count, timing)
+            except ToolFailure as failure:   # never lose the take to the retimer: fall back to the clip's timing
+                self.notes.append(_ascii(f"{ident}: auto one-shot timing failed ({failure.message[:160]}); "
+                                         "kept the clip's own timing"))
+                if os.path.lexists(out):
+                    _move_aside(out)
         onset = motion.get("onset") if motion.get("onset") is not None else offset
         settle = motion.get("settle") if motion.get("settle") is not None else offset + count - 1
         start = max(0, min(count - 1, onset - 2 - offset))
@@ -1815,11 +2103,11 @@ class SetRunner:
         if end - start < 4:
             start, end = max(0, start - 2), min(count, end + 2)
         source = _fps_value(fps_text)
-        target = self.plan["package"].get("fps")
+        target = _plan_fps(self.plan)
         frames_out = end - start
         if target and target < source:
-            frames_out = max(4, min(end - start, forge_core.round_half_up((end - start) * target / source)))
-            hz, per = _tick_grid(int(target))
+            frames_out = max(4, min(end - start, forge_core.round_half_up((end - start) * float(target) / source)))
+            hz, per = _tick_grid(target)
         else:
             hz, per = max(1, forge_core.round_half_up(source)), 1
 
@@ -1850,6 +2138,42 @@ class SetRunner:
                 "start": start, "endExclusive": end, "frames": summary["frames"], "durationMs": summary["durationMs"],
                 "impactMs": summary.get("impactMs"), "tickHz": hz, "events": selection.get("events", [])}
 
+    def run_auto_oneshot(self, ident: str, record: dict, out: Path, frames: Path, fps_text: str, motion: dict,
+                         offset: int, count: int, timing: dict) -> dict:
+        """retime.py --auto-oneshot over the registered frames: the game length and keys from the plan's timing,
+        the key source frames from the take's QC landmarks (impact, peak, takeoff, land; cancel as an event)."""
+        entry = self.entries[ident]
+        source = _fps_fraction(fps_text)
+        target = _plan_fps(self.plan)
+        rate = target if target and target < source else source
+        keys = timing.get("keys") or {}
+        landmarks = {"hit": motion.get("impact"), "peak": motion.get("peakFrame"), "takeoff": motion.get("takeoff"),
+                     "land": motion.get("land")}
+        args = ["--frames-dir", frames, "--fps", fps_text, "--output-dir", out, "--kind", entry["retimeKind"],
+                "--range", f"0:{count}", "--auto-oneshot", "--duration", int(timing.get("durationMs", 700)),
+                "--output-fps", f"{rate.numerator}/{rate.denominator}"]
+        used = []
+        for name, spec in sorted(keys.items(), key=lambda item: float((item[1] or {}).get("at", 0))):
+            frame = landmarks.get(name)
+            if frame is None or not 0 <= frame - offset < count:
+                continue
+            if name == "hit" and not entry["hitTick"]:
+                continue
+            hold = int((spec or {}).get("holdMs", 0))
+            args += ["--key", f"{name}={frame - offset}@{float(spec['at']):g}" + (f"+{hold}" if hold else "")]
+            used.append(name)
+        cancel = motion.get("cancel")
+        if entry["hitTick"] and cancel is not None and 0 <= cancel - offset < count:
+            args += ["--event-source", f"cancel={cancel - offset}"]
+        summary, _ = run_tool(SCRIPTS["retime"], args, label="retime.py --auto-oneshot")
+        selection = forge_core.read_json(out / "selection.json")
+        hz, _per = _tick_grid(rate)
+        return {"tool": "retime --auto-oneshot", "selection": self.rel(out / "selection.json"), "policy": "oneshot",
+                "start": 0, "endExclusive": count, "frames": summary["frames"], "durationMs": summary["durationMs"],
+                "impactMs": summary.get("impactMs"), "tickHz": hz, "events": selection.get("events", []),
+                "timing": {"durationMs": int(timing.get("durationMs", 700)), "keys": used,
+                           "auto": summary.get("auto")}}
+
     def run_timed(self, ident: str, record: dict, out: Path, tag: str) -> dict:
         """A loop resampled to the plan's fps on the tick grid (retime --range over the gait_loop window)."""
         entry = self.entries[ident]
@@ -1857,8 +2181,8 @@ class SetRunner:
         frames = self.root / record["stages"]["registered" + tag]["dir"] / "frames"
         fps_text = record["stages"]["keyed"]["fps"]
         start, end = motion["start"], motion["endExclusive"]
-        target = int(self.plan["package"]["fps"])
-        frames_out = max(4, forge_core.round_half_up((end - start) * target / _fps_value(fps_text)))
+        target = _plan_fps(self.plan)
+        frames_out = max(4, forge_core.round_half_up((end - start) * float(target) / _fps_value(fps_text)))
         hz, per = _tick_grid(target)
         policy = motion["policy"] if motion["policy"] in ("cycle", "pingpong") else "cycle"
         args = ["--frames-dir", frames, "--fps", fps_text, "--output-dir", out, "--kind", entry["retimeKind"],
@@ -1869,13 +2193,13 @@ class SetRunner:
                 "endExclusive": end, "frames": summary["frames"], "durationMs": summary["durationMs"], "tickHz": hz}
 
     def needs_timed(self, ident: str, record: dict, tag: str) -> bool:
-        target = self.plan["package"].get("fps")
+        target = _plan_fps(self.plan)
         motion = record["stages"].get("motion" + tag) or {}
         if self.entries[ident]["kind"] != "loop" or not target:
             return False
         source = _fps_value(record["stages"]["keyed"]["fps"])
         length = motion.get("endExclusive", 0) - motion.get("start", 0)
-        return target < source and forge_core.round_half_up(length * target / source) < length
+        return target < source and forge_core.round_half_up(length * float(target) / source) < length
 
     def cut(self, ident: str, record: dict, tag: str, window: Sequence[int] | None) -> dict:
         """Registration and the loop or timeline of one take (or of its usable window)."""
@@ -1940,13 +2264,18 @@ class SetRunner:
         wanted = []
         for gate in record.get("failures", []):
             wanted += self.plan["gatefix"].get(gate, [])
+        if moves_feet(self.entries[ident]):   # a walk, run or jump never gets "feet stay planted"
+            wanted = [MOVING_FEET_CLAUSE if clause in PLANTED_CLAUSES else clause for clause in wanted]
         present = {fix["id"] for fix in st["fixes"]}
         added = []
         for clause in dict.fromkeys(wanted):
-            if clause in present or clause not in self.plan["clauses"]:
+            text = self.plan["clauses"].get(clause)
+            if text is None and clause == MOVING_FEET_CLAUSE:   # a plan from before the clause existed
+                text = load_library().clauses.get(clause)
+            if clause in present or text is None:
                 continue
-            st["fixes"].append({"id": clause, "text": self.plan["clauses"][clause], "source": "auto",
-                                "take": record["take"], "round": st["round"]})
+            st["fixes"].append({"id": clause, "text": text, "source": "auto", "take": record["take"],
+                                "round": st["round"]})
             added.append(clause)
         record["fixNext"] = added
 
@@ -2014,22 +2343,61 @@ class SetRunner:
         self.notes.append(f"{ident}: the scale reference {ref} has no finished frames; {ident} uses its own rest pose")
         return None
 
+    def ref_palette_file(self, ident: str) -> Path | None:
+        """Pixel sets without a plan palette: the palette the scale-reference action learned (palette.json in its
+        finish folder), so every action of the character shares one palette."""
+        ref = self.plan["finish"].get("scaleRefAction")
+        if not ref or ref == ident:
+            return None
+        chosen = (self.state["actions"].get(ref) or {}).get("chosen")
+        if not chosen:
+            return None
+        finished = self.take(ref, chosen["take"]).get("stages", {}).get("finished" + chosen.get("tag", ""))
+        if not finished:
+            return None
+        path = self.root / finished["dir"] / "palette.json"
+        return path if path.is_file() else None
+
     def run_finish(self, ident: str, record: dict, out: Path, tag: str) -> dict:
         finish = self.plan["finish"]
         frames = self.root / record["stages"]["registered" + tag]["dir"] / "frames"
         scale_ref = self.scale_ref_file(ident)
         palette = self.root / finish["palette"]["path"] if finish.get("palette") else None
+        pixel = finish["mode"] == "pixel"
+        shared = self.ref_palette_file(ident) if pixel and palette is None else None
+        lock = None
+        if finish.get("colourLock", True):
+            master = self.root / self.astate(ident)["job"]["dir"] / "master.png"
+            if master.is_file():
+                with Image.open(master) as image:   # the keyed job master; an opaque one cannot be a lock master
+                    keyed = image.convert("RGBA").getchannel("A").getextrema()[0] < 255
+                lock = master if keyed else None
+                if not keyed:
+                    self.notes.append(f"{ident}: the job master has no transparency; finished without the colour lock")
         script, name = resolve_finisher()
         if script is None:
-            summary = standin_finish(finish["mode"], frames, out, int(finish["targetHeight"]), scale_ref, palette)
+            summary = standin_finish(finish["mode"], frames, out, int(finish["targetHeight"]), scale_ref,
+                                     palette or shared, colours=int(finish.get("colors") or 32))
         else:
-            args = [finish["mode"], "--frames", frames, "--out", out]
+            args = [finish["mode"], "--frames", frames, "--output-dir", out]
             if scale_ref is not None:   # finish_frames.py takes --scale-ref OR --target-height, never both
                 args += ["--scale-ref", scale_ref]
             else:
                 args += ["--target-height", finish["targetHeight"]]
-            if palette is not None:
-                args += ["--palette", palette]
+            if palette is not None or shared is not None:
+                args += ["--palette", palette or shared]
+            elif pixel and finish.get("colors"):
+                args += ["--colors", int(finish["colors"])]
+            if pixel and finish.get("outline"):
+                args += ["--outline", finish["outline"]]
+            if finish.get("canvas"):
+                args += ["--canvas", "{}x{}".format(*finish["canvas"])]
+                if finish.get("canvasAnchor"):
+                    args += ["--canvas-anchor", "{},{}".format(*finish["canvasAnchor"])]
+            if lock is not None:
+                args += ["--colour-lock", lock]
+            if self.entries[ident]["kind"] == "oneshot":
+                args += ["--loop-policy", "oneshot"]
             summary, _ = run_tool(script, args, label=name)
         frames_dir = None
         for key in ("framesDir", "frames_dir"):
@@ -2071,8 +2439,10 @@ class SetRunner:
         width, height = finished["size"]
         args = ["package", "--clean-dir", self.root / finished["framesDir"], "--selection",
                 self.root / selection["selection"], "--output-dir", out, "--name", ident,
-                "--formats", ",".join(package["formats"]), "--crop-union",
-                "--max-side", min(4096, max(width, height, 2)),
+                "--formats", ",".join(package["formats"])]
+        if not self.plan["finish"].get("canvas"):   # a requested cell canvas (--canvas) is kept as the cell
+            args.append("--crop-union")
+        args += ["--max-side", min(4096, max(width, height, 2)),
                 "--source-size", f"{width},{height}", "--source-anchor", "{!r},{!r}".format(*finished["anchor"]),
                 "--body-height-px", self.plan["finish"]["targetHeight"], "--key", self.plan["key"]]
         if self.plan["finish"]["mode"] == "pixel":
@@ -2233,7 +2603,7 @@ class SetRunner:
 
 GREY, PANEL, INK, BAD = (118, 118, 118), (32, 36, 44), (236, 236, 236), (235, 60, 60)
 LETTERS = {"area": "A", "feet": "F", "identity": "I", "zoom": "Z", "turn": "T", "edge": "E", "background": "B",
-           "extra": "X"}
+           "extra": "X", "colour": "C"}
 CHECKLIST = ("the same character, face, colours and costume as the master in every frame",
              "facing {facing} the whole time; never turned around or toward the camera",
              "the {action} really happens, once, and reads at game size",
@@ -2323,9 +2693,10 @@ def take_sheet(runner: SetRunner, ident: str, record: dict) -> Image.Image:
     failing = [f"{gate}={item['status']}" for gate, item in (qc.get("gates") or {}).items() if item["status"] != "pass"]
     header.append("gates not passing: " + (", ".join(failing) if failing else "none"))
     header += [str(reason) for reason in qc.get("reasons", [])[:6]]
+    header += [f"warning: {warning}" for warning in qc.get("warnings", [])[:4]]
     if qc.get("usableWindow"):
         header.append(f"usable frames {qc['usableWindow'][0]}-{qc['usableWindow'][1] - 1} of {count}")
-    header.append("red: A area F feet I identity Z zoom T turned E edge B background X extra objects")
+    header.append("red: A area F feet I identity Z zoom T turned E edge B background X extra objects C colour bleed")
     header.append("LOOK FOR: " + "; ".join(fill(item, words) for item in CHECKLIST))
     return _grid(header, tiles)
 
@@ -2542,6 +2913,11 @@ def cmd_retake(args: argparse.Namespace) -> dict:
         text = " ".join(str(value).split())
         if not text:
             raise ValueError("--fix needs a clause id from motion-prompts.md or the clause text")
+        if text in PLANTED_CLAUSES and moves_feet(runner.entries.get(args.action, {})):
+            text = MOVING_FEET_CLAUSE   # a walk, run or jump keeps its feet moving on the ground line
+            if text not in runner.plan["clauses"]:   # a plan from before the clause existed
+                fixes.append({"id": text, "text": load_library().clauses[text]})
+                continue
         if text in runner.plan["clauses"]:
             fixes.append({"id": text, "text": runner.plan["clauses"][text]})
         else:
@@ -2698,8 +3074,26 @@ def build_parser() -> argparse.ArgumentParser:
                                                        "master's finish, else hd")
     pl.add_argument("--target-height", type=_positive_int(8, 4096),
                     help="finished body height in px (default hd 256, pixel 80; a boss twice that)")
-    pl.add_argument("--fps", type=_positive_int(1, 60),
-                    help="playback rate of the finished frames (default: the clip's own rate for hd, 12 for pixel)")
+    pl.add_argument("--fps",
+                    help="playback rate of the finished frames: 1-60, fractions allowed (12.5 or 25/2); default: the "
+                         "clip's own rate for hd, 12 for pixel")
+    pl.add_argument("--frame-ms", type=float,
+                    help="exact frame time instead of --fps, such as 80 (12.5 fps on a 25 Hz tick grid)")
+    pl.add_argument("--colors", type=int,
+                    help="pixel finish without --palette: palette size learned from the scale-reference action and "
+                         "shared by every action (default 32)")
+    pl.add_argument("--outline", choices=("selective", "dark", "none"),
+                    help="pixel finish: 1 px outline (default selective; finish_frames.py --outline)")
+    pl.add_argument("--canvas", help="fixed cell WIDTHxHEIGHT for every finished frame, such as 48x64")
+    pl.add_argument("--canvas-anchor", help="X,Y of the anchor inside the --canvas cell")
+    pl.add_argument("--no-colour-lock", action="store_true",
+                    help="do not lock the finished colours to the master (finish_frames.py --colour-lock, on by "
+                         "default for sets)")
+    pl.add_argument("--oneshot-timing", choices=("auto", "source"), default="auto",
+                    help="one-shots: auto (default) retimes the slow clip to game length (attack 0.7 s with the hit "
+                         "at 40%%, jump 0.9 s, hurt 0.5 s, cast 0.9 s; retime.py --auto-oneshot); source keeps the "
+                         "clip's speed")
+    pl.add_argument("--oneshot-ms", help="one-shot game lengths, such as attack=600,jump=800 (ms)")
     pl.add_argument("--formats", default="png,webm,packed", help="engine_export formats (default png,webm,packed)")
     pl.add_argument("--tiers", help="engine_export mobile tiers: actor, prop, fx or NAME:EDGE@FPS (default none)")
     pl.add_argument("--duration", type=_seconds(2, 30), default=6.0, help="clip seconds (default 6)")

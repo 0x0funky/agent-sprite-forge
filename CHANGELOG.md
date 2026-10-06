@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased — quality fixes from the 2026-10-06 live run
+
+Measured on the live run's real frames (Aria HD set, fox pixel set); nothing was regenerated.
+
+**video2dsprite**
+- `finish_frames.py pixel` is bold pixel art by default: a crisp downscale (two OKLab clusters per output pixel from 4x4 sub-pixels; darker details win from 35%; temporal hysteresis), a light contrast and saturation lift (1.1, 1.15), at most `--colors` colours (default 32, was 255: the live fox had 155-162 colours per frame, now 28-31), lone-pixel cleanup that keeps eyes and highlights, and a 1 px `--outline selective|dark|none`. `--downscale box --contrast 1 --saturation 1 --outline none` is the old finish. `palette-fit` now also fails on more colours per frame than the palette has.
+- `finish_frames.py --canvas WxH [--canvas-anchor X,Y]` (hd and pixel): fixed cells with the anchor kept; a clip too big is finished smaller (`canvas-fit` warning).
+- New `colour_lock.py` and `finish_frames.py --colour-lock MASTER|rest`: design colours locked to the master's in OKLab (positional master palette, local per-colour chroma offsets removed, soft snap, lightness untouched, temporal smoothing of still pixels). On Aria's run loop: hue flips 352 -> 170 per frame pair, region chroma spread 0.0059 -> 0.0012, boot chroma step 0.024 -> 0.003.
+- `retime.py --auto-oneshot`: motion-energy onset, holds and settle; frozen holds cut; `--key NAME=SRC@F[+HOLDms]` pins the hit (with a hit-stop), takeoff and land; fractional output rates (`--output-fps 25/2` gives exact 80 ms frames). Aria: attack 4.1 s -> 0.71 s (hit at 292 ms), jump 5.3 s -> 0.92 s, hurt 3.9 s -> 0.50 s.
+- `sprite_set.py`: one-shots retimed by default (plan `timing`, `--oneshot-ms`, `--oneshot-timing source`); `--fps` fractions and `--frame-ms`; `--colors`, `--outline`, `--canvas`, `--canvas-anchor`, `--no-colour-lock`; the colour lock on by default; a pixel character shares the scale-reference action's palette; the finisher gets `--output-dir` (the `--out` abbreviation became ambiguous) and `--loop-policy oneshot` for one-shots; a canvas skips `--crop-union`.
+- QC recalibrated on the 42 labelled live takes: identity is a warning unless the design is lost (scale-tolerant head match against the master and frame 0), a new colour gate (hues the master lacks at that height; drift only warns), a timing/hold gate for one-shots (warns while retimed), the run feet gate on the half-second median. Rejections 31 -> 9, precision 0.42 -> 1.00, good takes rejected 18 -> 0 of 24 (recall 0.72 -> 0.50; the old floor rejected almost everything). The feet fix never adds "feet stay planted" to a walk, run or jump (`feet-ground-line` instead).
+
 ## 0.4.0 — 2026-10-06
 
 One integrated release of the five skills (plugin version `0.4.0`). Not yet tagged; tagging and publishing are the owner's. Measured numbers below come from the repository's fixtures and one real clip unless stated; see [docs/known-limitations.md](./docs/known-limitations.md).

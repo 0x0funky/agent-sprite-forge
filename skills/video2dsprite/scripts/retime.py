@@ -17,6 +17,17 @@ impactMs/holdMs on the output frame nearest that source frame. Walks never ping-
 strikes never recover by playing frames backwards. A contact frame is suggested for gaits
 (widest ground contact) and actions (largest reach). Output stays
 'selected-needs-visual-review'.
+
+--auto-oneshot (with --range A:B and --duration MS) retimes a one-shot that the generator
+played in slow motion: the motion energy (mean premultiplied change between frames) finds
+the onset, the moving spans and the settle (the pose back near the first frame); static
+holds inside the action keep their first 2 frames and their last; then --key NAME=SRC@F[+HOLDms] pins
+source frame SRC to fraction F of the duration (hit=31@0.4+60: the strike lands at 40%
+and is held 60 ms, a hit-stop; takeoff=34@0.22 land=73@0.72 for jumps), the spans between
+keys are compressed evenly and sampled on the --output-fps grid (default the source fps;
+12.5 or 25/2 for 80 ms frames). Equal neighbours merge into one longer frame. Events: in,
+hit (a key named hit), custom:<key> for the other keys, --event-source NAME=SRC mapped
+through the same warp (cancel=80), and end.
 """
 from __future__ import annotations
 
@@ -49,6 +60,12 @@ EVENT_NAMES = ("in", "tell", "hit", "active_end", "cancel", "chain", "impact", "
 TICK_HZ = 60
 _MAP = re.compile(r"^\s*([0-9.]+s?)\s*/\s*([0-9.]+s?)\s*@\s*([0-9]+)\s*/\s*([0-9.]+s?)\s*$")
 _EVENT = re.compile(r"^\s*([A-Za-z_]+|custom:\S+)\s*@\s*([0-9]+)(t?)\s*$")
+_KEY = re.compile(r"^\s*([A-Za-z][A-Za-z0-9_-]*)\s*=\s*([0-9]+)\s*@\s*([0-9]*\.?[0-9]+)\s*(?:\+\s*([0-9]+)\s*(?:ms)?)?\s*$")
+_EVENT_SOURCE = re.compile(r"^\s*([A-Za-z_]+|custom:\S+)\s*=\s*([0-9]+)\s*$")
+AUTO_FLOOR = 0.15           # auto-oneshot: a step (mean |change| 0-255) below this is still, whatever the clip ...
+AUTO_ACTIVE = 0.20          # ... and below this share of the clip's 90th-percentile step
+AUTO_SETTLE = 0.15          # the settle: the pose stays within 15% of its largest excursion from the first frame
+AUTO_HOLD_KEEP = 2          # source frames kept of every static hold inside the action (a beat; the rest is cut)
 
 
 # --------------------------------------------------------------------------- frame choice
@@ -290,6 +307,192 @@ def suggest_contact(clip: gait_loop.Clip, kind: str, indices: Sequence[int], sta
             "score": scores[best], "method": method}
 
 
+# --------------------------------------------------------------------------- automatic one-shot retiming
+
+def tick_grid(rate: Fraction) -> tuple[int, int]:
+    """(tick Hz, ticks per frame) of an output frame rate: the 60 Hz grid when a frame is a whole number
+    of 60 Hz ticks (12, 15, 20, 30, 60 fps), else the rate's own fraction (24 fps: 24 Hz x 1; 12.5 fps:
+    25 Hz x 2, which is exactly 80 ms)."""
+    rate = Fraction(rate)
+    if rate <= 0:
+        raise ValueError("the output frame rate must be positive")
+    per = Fraction(TICK_HZ) / rate
+    if per.denominator == 1:
+        return TICK_HZ, int(per)
+    return int(rate.numerator), int(rate.denominator)
+
+
+def parse_key(text: str) -> dict:
+    """NAME=SRC@FRACTION[+HOLDms] -> {name, source, at, holdMs}."""
+    match = _KEY.match(str(text))
+    if not match:
+        raise ValueError(f"--key must be NAME=SOURCE@FRACTION[+HOLDms], such as hit=31@0.4+60; got {text!r}")
+    at = float(match.group(3))
+    if not 0.0 < at < 1.0:
+        raise ValueError(f"--key {text}: the fraction must lie strictly between 0 and 1")
+    return {"name": match.group(1), "source": int(match.group(2)), "at": at,
+            "holdMs": int(match.group(4)) if match.group(4) else 0}
+
+
+def parse_event_source(text: str) -> tuple[str, int]:
+    match = _EVENT_SOURCE.match(str(text))
+    if not match:
+        raise ValueError(f"--event-source must be NAME=SOURCE (a source frame), such as cancel=80; got {text!r}")
+    name = match.group(1)
+    if name not in EVENT_NAMES and not name.startswith("custom:"):
+        raise ValueError(f"event name {name!r} must be one of {', '.join(EVENT_NAMES)} or custom:<name>")
+    return name, int(match.group(2))
+
+
+def motion_profile(clip: gait_loop.Clip, start: int, end: int) -> dict:
+    """Motion energy of [start, end): ``steps[i]`` is the mean absolute change (0-255, premultiplied RGBA on
+    the clip's reduced copies, cropped to the frames' union) into frame start+i (steps[0] = 0), ``pose[i]``
+    the same against frame ``start``."""
+    if clip.reduced is None:
+        raise ValueError("motion_profile needs load_clip(..., keep_reduced=True)")
+    f = clip.reduction
+    boxes = clip.boxes[start:end]
+    finite = np.isfinite(boxes).all(axis=1)
+    if not finite.any():
+        raise ValueError("every frame of the range is blank")
+    x0, y0 = int(np.nanmin(boxes[finite, 0]) // f), int(np.nanmin(boxes[finite, 1]) // f)
+    x1, y1 = int(-(-np.nanmax(boxes[finite, 2]) // f)), int(-(-np.nanmax(boxes[finite, 3]) // f))
+    crops = [np.asarray(clip.reduced[i], np.float32)[y0:y1, x0:x1] for i in range(start, end)]
+    steps = np.zeros(len(crops))
+    pose = np.zeros(len(crops))
+    for i in range(1, len(crops)):
+        steps[i] = float(np.abs(crops[i] - crops[i - 1]).mean())
+        pose[i] = float(np.abs(crops[i] - crops[0]).mean())
+    return {"steps": steps, "pose": pose}
+
+
+def detect_phases(steps: np.ndarray, pose: np.ndarray) -> dict:
+    """Onset, settle and static holds (all relative to the range start) from the motion energy.
+
+    A frame moves when the mean of its step and its neighbours' is at least max(AUTO_FLOOR, AUTO_ACTIVE x
+    the 90th-percentile step). The onset is the first moving frame; the settle is the later of the last
+    moving frame and the first frame from which the pose stays within AUTO_SETTLE of its largest excursion
+    (back at rest). Holds are the runs of still frames between the onset and the settle (a held strike or
+    hunch: the generator's slow drift and its duplicated frames stay under the moving threshold)."""
+    count = len(steps)
+    padded = np.concatenate([[steps[min(1, count - 1)]], steps, [steps[-1]]])
+    smooth = (padded[:-2] + padded[1:-1] + padded[2:]) / 3.0
+    smooth[0] = 0.0
+    active = max(AUTO_FLOOR, AUTO_ACTIVE * float(np.percentile(smooth[1:], 90))) if count > 1 else AUTO_FLOOR
+    moving = smooth >= active
+    if not moving.any():
+        return {"onset": 0, "settle": count - 1, "holds": [], "active": active, "moving": False}
+    onset = int(np.flatnonzero(moving)[0])
+    last = int(np.flatnonzero(moving)[-1])
+    peak = float(pose.max())
+    settle = count - 1
+    if peak > 0:
+        near = pose <= AUTO_SETTLE * peak
+        after = np.flatnonzero(~near[onset:])
+        if after.size and int(after[-1]) + onset + 1 < count:
+            settle = int(after[-1]) + onset + 1
+    settle = max(last, min(settle, count - 1))
+    holds = []
+    run = None
+    for i in range(onset, settle + 1):
+        if not moving[i]:
+            run = [i, i] if run is None else [run[0], i]
+        elif run is not None:
+            holds.append(tuple(run))
+            run = None
+    if run is not None and run[1] < settle:
+        holds.append(tuple(run))
+    return {"onset": onset, "settle": settle, "holds": holds, "active": round(active, 4), "moving": True}
+
+
+def auto_oneshot(steps: np.ndarray, pose: np.ndarray, start: int, *, duration_ms: int, rate: Fraction,
+                 keys: Sequence[dict] = (), event_sources: Sequence[tuple[str, int]] = ()) -> dict:
+    """The played source frames, ticks and events of an automatically retimed one-shot.
+
+    ``steps``/``pose`` cover source frames start, start+1, ...; ``keys`` hold absolute source frames.
+    The output starts on the frame before the onset (the rest pose) and ends on the settle frame."""
+    phases = detect_phases(steps, pose)
+    first = max(0, phases["onset"] - 1)
+    last = phases["settle"]
+    kept = []
+    key_frames = {int(key["source"]) - start for key in keys}
+    cut = 0
+    hold_runs = []
+    for a, b in phases["holds"]:
+        if b - a + 1 > AUTO_HOLD_KEEP + 1:
+            hold_runs.append((a, b))
+    for i in range(first, last + 1):   # a hold keeps its first frames (a beat) and its last (the way out)
+        inside = next(((a, b) for a, b in hold_runs if a <= i <= b), None)
+        if inside is not None and i - inside[0] >= AUTO_HOLD_KEEP and i != inside[1] and i not in key_frames:
+            cut += 1
+            continue
+        kept.append(i)
+    hz, per = tick_grid(rate)
+    frame_ms = Fraction(1000, 1) / Fraction(rate)
+    frames = max(2, int(round(Fraction(duration_ms) / frame_ms)))
+    # keys: (output frame, kept position, hold frames, name); the first and the last frame are implicit keys
+    pins = [(0, 0, 0, "start")]
+    for key in sorted(keys, key=lambda item: item["source"]):
+        local = int(key["source"]) - start
+        if not first <= local <= last:
+            raise ValueError(f"--key {key['name']}={key['source']} lies outside the motion "
+                             f"{start + first}-{start + last}; check the source frame")
+        position = kept.index(local) if local in kept else min(range(len(kept)), key=lambda p: abs(kept[p] - local))
+        frame = int(round(key["at"] * frames))
+        frame = min(max(frame, pins[-1][0] + pins[-1][2] + 1), frames - 2)
+        if position <= pins[-1][1]:
+            raise ValueError(f"--key {key['name']} does not come after the previous key in the source")
+        hold = int(round(Fraction(int(key.get("holdMs", 0))) / frame_ms))
+        pins.append((frame, position, hold, key["name"]))
+    pins.append((frames - 1, len(kept) - 1, 0, "end"))
+    for a, b in zip(pins, pins[1:]):
+        if b[0] <= a[0] + a[2] - 1 or b[1] < a[1]:
+            raise ValueError(f"the keys {a[3]} and {b[3]} leave no frames between them; lengthen --duration")
+    positions = []
+    for (frame_a, pos_a, hold_a, _), (frame_b, pos_b, _, _) in zip(pins, pins[1:]):
+        base = frame_a + max(0, hold_a - 1)   # the last output frame that shows the key itself
+        for k in range(frame_a, frame_b):
+            if k <= base:
+                positions.append(pos_a)
+            else:
+                share = Fraction(k - base, frame_b - base)
+                positions.append(min(pos_b, gait_loop.round_half_up(pos_a + (pos_b - pos_a) * share)))
+    positions.append(len(kept) - 1)
+    indices, ticks = [], []
+    for position in positions:   # equal neighbours merge into one longer frame
+        source = start + kept[position]
+        if indices and indices[-1] == source:
+            ticks[-1] += per
+        else:
+            indices.append(source)
+            ticks.append(per)
+    edges = np.concatenate([[0], np.cumsum(ticks)]).astype(int).tolist()
+    frame_of = {}   # output frame (before merging) -> tick
+    tick = 0
+    for k in range(len(positions)):
+        frame_of[k] = tick
+        tick += per
+    events = [{"name": "in", "tick": 0}]
+    for frame, _pos, _hold, name in pins[1:-1]:
+        events.append({"name": "hit" if name == "hit" else (name if name in EVENT_NAMES else f"custom:{name}"),
+                       "tick": frame_of[frame]})
+    for name, source in event_sources:
+        local = source - start
+        later = [k for k, position in enumerate(positions) if kept[position] >= local]
+        if later:
+            events.append({"name": name, "tick": frame_of[later[0]]})
+    events.append({"name": "end", "tick": edges[-1]})
+    impact = next((frame_of[frame] for frame, _p, _h, name in pins if name == "hit"), None)
+    info = {"onset": start + phases["onset"], "settle": start + phases["settle"], "first": start + first,
+            "holds": [[start + a, start + b] for a, b in phases["holds"]], "cutFrames": cut,
+            "sourceFrames": last - first + 1, "activeStep": phases["active"],
+            "outputFps": gait_loop.fps_text(Fraction(rate)), "tickHz": hz, "ticksPerFrame": per,
+            "keys": [{"name": name, "frame": frame, "tick": frame_of[frame], "holdFrames": hold}
+                     for frame, _p, hold, name in pins[1:-1]]}
+    return {"indices": indices, "ticks": ticks, "edges": edges, "events": events, "hz": hz, "impactTick": impact,
+            "info": info}
+
+
 # --------------------------------------------------------------------------- command
 
 def choose_frames(args: argparse.Namespace, clip: gait_loop.Clip, fps: Fraction) -> dict:
@@ -386,7 +589,95 @@ def build_events(args: argparse.Namespace, timeline: dict, impact: int | None, h
     return sorted(placed, key=lambda event: (event["atMs"], event["name"]))
 
 
+def retime_auto(args: argparse.Namespace) -> dict:
+    """--auto-oneshot: motion-energy retiming of a one-shot (see the module help)."""
+    out = Path(args.output_dir)
+    fps = gait_loop.parse_fps(args.fps)
+    if not args.range:
+        raise ValueError("--auto-oneshot needs --range A:B (the source frames of the one-shot)")
+    if args.duration is None or args.duration < 2:
+        raise ValueError("--auto-oneshot needs --duration MS, the game length of the one-shot")
+    if args.ticks or args.stride is not None or args.speed is not None or args.max_frames is not None:
+        raise ValueError("--auto-oneshot times its frames itself: drop --ticks, --stride, --speed and --max-frames")
+    if args.impact_source is not None or args.hold_source is not None:
+        raise ValueError("--auto-oneshot pins source frames with --key (hit=SRC@0.4+60), not --impact-source")
+    kind = args.kind or "other"
+    if kind in GAIT_KINDS or kind in AMBIENT_KINDS:
+        raise ValueError(f"--auto-oneshot retimes one-shots; {kind} is a loop (use gait_loop select)")
+    if args.policy not in (None, "oneshot"):
+        raise ValueError("--auto-oneshot writes a oneshot policy")
+    clip = gait_loop.load_clip(Path(args.frames_dir), fps, 1, allow_blank=True, keep_reduced=True)
+    start, end = gait_loop.parse_interval(args.range)
+    if end > clip.count:
+        raise ValueError(f"--range ends after the last of {clip.count} frames")
+    if end - start < 3:
+        raise ValueError("--auto-oneshot needs at least 3 source frames")
+    rate = gait_loop.parse_fps(args.output_fps) if args.output_fps else fps
+    profile = motion_profile(clip, start, end)
+    keys = [parse_key(text) for text in args.key]
+    names = [key["name"] for key in keys]
+    if len(set(names)) != len(names):
+        raise ValueError("every --key needs its own name")
+    result = auto_oneshot(profile["steps"], profile["pose"], start, duration_ms=int(args.duration), rate=rate,
+                          keys=keys, event_sources=[parse_event_source(text) for text in args.event_source])
+    indices, ticks, hz = result["indices"], result["ticks"], result["hz"]
+    durations, edges = tick_durations(ticks, hz)
+    starts = frame_starts(durations)
+    total = starts[-1]
+    impact = None if result["impactTick"] is None else _frame_at(edges, result["impactTick"])
+    rules = check_policy(kind, "oneshot", indices, impact)
+    custom = [parse_event(text, True) for text in args.event]
+    events = sorted((place_event(event, starts, edges, hz) for event in result["events"] + custom),
+                    key=lambda event: (event["atMs"], event["name"]))
+    contact = suggest_contact(clip, kind, indices, starts)
+    info = result["info"]
+    extra: dict[str, Any] = {"ticks": ticks, "tickHz": hz, "auto": info}
+    if impact is not None:
+        extra["impactMs"] = int(starts[impact])
+    if contact:
+        extra["suggestedContact"] = contact
+    method = (f"retime --auto-oneshot: range {start}:{end}, motion {info['first']}-{info['settle']} "
+              f"({info['sourceFrames']} source frames, {info['cutFrames']} static hold frames cut), keys "
+              + (", ".join(f"{key['name']}@{key['frame']}" for key in info["keys"]) or "none")
+              + f"; {len(indices)} frames, {total} ms on {hz} Hz ticks")
+    review = ("Check the retimed one-shot at speed: the anticipation, the hit frame and its hold, the recovery and "
+              "the last frame back at rest are suggestions from motion energy, not approval.")
+    with forge_core.staged_output(out) as stage:
+        document = gait_loop.build_selection(clip, stage, indices, durations, policy="oneshot", method=method,
+                                             review=review, kind=kind, events=events, extra=extra,
+                                             window=(start, end))
+        gait_loop.write_selection_files(stage, {"selection.json": document})
+        rows = [{"frame": p, "sourceIndex": int(i), "startMs": int(starts[p]), "durationMs": int(durations[p]),
+                 "ticks": int(ticks[p]), "startTick": int(edges[p])} for p, i in enumerate(indices)]
+        checks = [{"id": "durations-sum", "status": "pass", "value": total, "threshold": int(args.duration)},
+                  {"id": "integer-durations", "status": "pass", "value": min(durations), "threshold": 1},
+                  {"id": "policy-rules", "status": "pass", "value": rules or ["none for this kind"]},
+                  {"id": "visual-review", "status": "needs-visual-review", "value": None}]
+        steps = [round(float(value), 3) for value in profile["steps"]]
+        report = {"schema": "video2dsprite.retime_report.v1",
+                  "tool": {"name": "retime", "version": RETIME_VERSION},
+                  "frames": {"directory": gait_loop.directory_ref(clip.directory, stage), "count": clip.count,
+                             "fps": gait_loop.fps_text(fps)},
+                  "kind": kind, "policy": "oneshot", "source": f"auto-oneshot range {start}:{end}", "map": None,
+                  "cadence": None, "timeline": rows, "events": events, "suggestedContact": contact, "rules": rules,
+                  "auto": {**info, "durationMs": int(args.duration), "motionSteps": steps,
+                           "pose": [round(float(value), 3) for value in profile["pose"]]},
+                  "qa": gait_loop.qa_envelope("needs-visual-review", method, checks,
+                                              gait_loop.frame_refs(clip, stage, sorted(set(indices))),
+                                              [gait_loop.file_ref(stage / "selection.json", stage)],
+                                              tool={"name": "retime", "version": RETIME_VERSION})}
+        gait_loop.write_selection_files(stage, {"retime-report.json": report})
+    summary = {"output": str(out), "selection": str(out / "selection.json"), "metadata": str(out / "retime-report.json"),
+               "frames": len(indices), "durationMs": total, "policy": "oneshot",
+               "auto": {key: info[key] for key in ("onset", "settle", "first", "cutFrames", "sourceFrames")}}
+    if impact is not None:
+        summary["impactMs"] = int(starts[impact])
+    return summary
+
+
 def retime(args: argparse.Namespace) -> dict:
+    if getattr(args, "auto_oneshot", False):
+        return retime_auto(args)
     out = Path(args.output_dir)
     fps = gait_loop.parse_fps(args.fps)
     if args.tick_hz < 1:
@@ -487,6 +778,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="extra event at ms, or NAME@Nt in ticks (repeatable), e.g. cancel@12t")
     parser.add_argument("--policy", choices=gait_loop.LOOP_POLICIES,
                         help="cycle | pingpong | oneshot (default: cycle for walks and idles, oneshot otherwise)")
+    parser.add_argument("--auto-oneshot", action="store_true",
+                        help="retime a slow one-shot from its motion energy: needs --range and --duration (ms); "
+                             "cuts static holds, pins --key frames and samples on the --output-fps grid")
+    parser.add_argument("--key", action="append", default=[], metavar="NAME=SRC@F[+HOLDms]",
+                        help="--auto-oneshot: source frame SRC shows at fraction F of the duration and is held HOLD ms "
+                             "(hit=31@0.4+60, takeoff=34@0.22, land=73@0.72); repeatable")
+    parser.add_argument("--event-source", action="append", default=[], metavar="NAME=SRC",
+                        help="--auto-oneshot: an event at the first output frame that reaches source frame SRC "
+                             "(cancel=80); repeatable")
     return parser
 
 

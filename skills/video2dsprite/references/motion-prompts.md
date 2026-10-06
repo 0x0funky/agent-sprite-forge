@@ -172,12 +172,16 @@ retakes in `art/logs/grok_vs_*.txt`:
 | feet stamped and stepped during a planted thrust | ashigaru atk r3 | feet-planted |
 | framing changed, the spear tip cut by the top edge | keiji r3a | inside-frame, camera-locked |
 | frozen or hovering mid-jump | homura jump | fluid-motion |
+| a run that drifted got "feet stay planted" and lost its stride | Aria run take 4, 2026-10-06 | feet-ground-line (never feet-planted for walk, run or jump) |
+| boots olive in one frame, maroon in the next; a pink hand | Aria run takes 1-9, 2026-10-06 | keep-colours (and the finish's colour lock) |
+| the attack thrust held 1.7 s, the jump 5.3 s: slow motion | Aria attack, jump, hurt, 2026-10-06 | fluid-motion (and retime --auto-oneshot) |
 
 ```clauses
 never-turn | The character keeps facing {facing} the whole time: never turns around, never shows {pos} back and never faces the camera.
 camera-locked | Locked camera and constant character size: no zoom, no push-in, no pull-out, no pan; the character is exactly the same size in every frame, before and after the action.
 constant-size | The character keeps exactly the same size and proportions as the still in every frame; arms, legs and the weapon never grow longer.
 feet-planted | Both feet stay planted on the same ground line and the body stays centered in the frame; no stepping away, no sliding, no drifting.
+feet-ground-line | Every step lands on the same ground line and the body stays centered in the frame; the character never drifts forward, backward, up or down.
 inside-frame | The whole body, the weapon and every moving part stay fully inside the frame with a clear margin on every side; nothing is cut off by the frame edge.
 flat-background | The background stays solid flat pure {key} for the whole shot: no floor, no ground, no shadow, no gradient, no glow, no haze, no light.
 no-extras | Nothing else appears in the frame: no dust, no dirt, no smoke, no puffs, no pebbles, no particles, no orbs, no sparks, no flashes, no projectiles, no arrows, no motion trails, no effects of any kind.
@@ -200,8 +204,16 @@ no-blur | No motion-blur smears, no afterimages, no colour fringing on the weapo
 ## Gate to fix map
 
 `run` adds these clauses to the next take when a numeric gate fails (each clause once per
-action). The semantic failures that no number can see (weapon shape, text, flares, colours) are
-added by the agent after review: `sprite_set.py retake --action attack --fix weapon-shape`.
+action). The semantic failures that no number can see (weapon shape, text, flares, a weak action)
+are added by the agent after review: `sprite_set.py retake --action attack --fix weapon-shape`.
+
+Feet: `feet-planted` is for actions that stand (idle, attack, hurt, cast). A walk, run or jump
+whose feet gate fails gets `feet-ground-line` instead, also when the agent asks for
+`feet-planted` with `retake`, and a planted-feet clause left in an older set's state is dropped
+from those prompts: telling a run to keep both feet planted freezes its stride. The colour gate
+(key bleed, hues the master lacks) adds `keep-colours`; the timing gate adds `fluid-motion` only
+when the set keeps the clip's speed (`"mode": "source"`), since one-shots are otherwise retimed to
+game length after generation.
 
 ```gatefix
 area | constant-size, camera-locked
@@ -214,6 +226,8 @@ background | flat-background
 extra | no-extras
 motion | visible-motion, single-action
 end-pose | same-start-end
+colour | keep-colours
+timing | fluid-motion
 loop | steady-cycle, in-place
 registration | starts-from-still, camera-locked
 keying | flat-background, inside-frame

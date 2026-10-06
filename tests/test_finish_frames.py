@@ -26,6 +26,7 @@ MAGENTA = (255, 0, 255)
 FLAT = (200, 60, 50)
 CANVAS = (200, 240)
 REST_HEIGHT = 158  # source px of the rest-pose body at scale 1 (rows with >= 6 px above 50% alpha)
+PLAIN = {"downscale": "box", "contrast": 1.0, "saturation": 1.0, "outline": "none"}   # the v1 pixel finish
 
 
 # --------------------------------------------------------------------------- synthetic clips
@@ -254,7 +255,7 @@ def test_palette_build_and_the_palette_size(clips, tmp_path):
 def test_hysteresis_reduces_flips_against_per_frame_quantization(clips, tmp_path):
     hd = FF.finish_clip(clips["noisy"], tmp_path / "hd", target_height=26)
     pixel = FF.finish_clip(clips["noisy"], tmp_path / "px", mode="pixel", target_height=26, colors=16,
-                           loop_policy="oneshot")
+                           loop_policy="oneshot", **PLAIN)   # the v1 finish quantizes exactly the hd frames
     assert hd["size"] == pixel["size"] and hd["anchor"] == pixel["anchor"]  # one registration for both finishes
     palette = FP.read_palette(tmp_path / "px" / FF.PALETTE_FILE)
     sources = frames_of(tmp_path / "hd" / "frames")  # the hd frames are exactly what the pixel finish quantized
@@ -419,3 +420,154 @@ def test_help_is_ascii_for_every_verb():
         result = run_cli([SCRIPT, *verb, "--help"], "cp1252")
         assert result.returncode == 0, result.stderr
         assert result.stdout.isascii() and "--" in result.stdout
+
+
+# --------------------------------------------------------------------------- bold pixel finish (f-quality)
+
+def _colours(frame):
+    return {tuple(pixel) for pixel in frame[..., :3][frame[..., 3] > 0].tolist()}
+
+
+def test_bold_pixel_enforces_the_palette_outline_and_anchor(clips, tmp_path):
+    summary = FF.finish_clip(clips["walk"], tmp_path / "bold", mode="pixel", target_height=30, colors=12)
+    document = json.loads((tmp_path / "bold" / FF.FINISH_FILE).read_text(encoding="utf-8"))
+    palette = FP.read_palette(tmp_path / "bold" / FF.PALETTE_FILE)
+    allowed = {tuple(colour) for colour in palette.rgb.tolist()}
+    frames = frames_of(tmp_path / "bold" / "frames")
+    for frame in frames:
+        assert _colours(frame) <= allowed and len(_colours(frame)) <= 12      # at most N colours, all from the palette
+        assert set(np.unique(frame[..., 3]).tolist()) <= {0, 255}
+    pixel = document["pixel"]
+    assert pixel["downscale"] == "crisp" and pixel["outline"] == "selective" and pixel["outlinePx"] > 0
+    assert summary["qa"]["coloursPerFrameMax"] <= 12 and document["targetHeight"] == 30
+    check = next(item for item in document["qa"]["checks"] if item["id"] == "palette-fit")
+    assert check["status"] == "pass" and check["value"]["coloursPerFrameMax"] <= 12
+    # the outline: the opaque pixels touching transparency (4-neighbour) are dark
+    rest = frames[0]
+    opaque = rest[..., 3] == 255
+    padded = np.pad(opaque, 1)
+    border = opaque & ~(padded[:-2, 1:-1] & padded[2:, 1:-1] & padded[1:-1, :-2] & padded[1:-1, 2:])
+    lightness = FP.to_oklab(rest[..., :3][border])[:, 0]
+    assert np.median(lightness) <= FF.OUTLINE_MAX_L + 0.01
+    # the target height includes the outline and the feet anchor sits on the outline's bottom edge
+    body = FF.measure_body(rest[..., 3], FF.OUTPUT_MIN_RUN)
+    assert abs(body.height - 30) <= 1.5 and abs(body.ground - summary["anchor"][1]) <= 1
+    plain = FF.finish_clip(clips["walk"], tmp_path / "plain", mode="pixel", target_height=30, colors=12, **PLAIN)
+    assert json.loads((tmp_path / "plain" / FF.FINISH_FILE).read_text(encoding="utf-8"))["pixel"]["outlinePx"] == 0
+    assert plain["qa"]["coloursPerFrameMax"] <= 12
+
+
+def test_crisp_downscale_keeps_a_thin_dark_line_that_box_blurs():
+    """A 3-source-px dark line on a light body, reduced 1:4: the box average is a mid tone, crisp keeps it dark."""
+    sub = np.zeros((64, 64, 4), np.uint8)
+    sub[..., :3], sub[..., 3] = (230, 180, 120), 255
+    sub[:, 29:32, :3] = (20, 15, 10)                      # 3 of the 4 sub-pixel columns of output column 7
+    clusters = FF.crisp_clusters(sub, 4)
+    crisp = FP.from_oklab(FF.crisp_choice(clusters, None))
+    assert int(crisp[:, 7].astype(int).sum(-1).max()) < 120   # the line survives as a dark pixel
+    box = sub.reshape(16, 4, 16, 4, 4).astype(float).mean(axis=(1, 3))
+    assert box[:, 7, :3].sum(-1).min() > 150                  # the area average is a mid tone
+
+
+def test_crisp_choice_keeps_details_and_holds_last_frames_cluster():
+    dark = np.array([[[0.30, 0.02, 0.02]]], np.float32)
+    light = np.array([[[0.80, 0.02, 0.05]]], np.float32)
+    near = np.array([[[0.74, 0.02, 0.05]]], np.float32)
+    assert np.allclose(FF.crisp_choice(FF.Clusters(dark, light, np.array([[0.40]], np.float32)), None), dark)
+    close = FF.Clusters(near, light, np.array([[0.45]], np.float32))
+    assert np.allclose(FF.crisp_choice(close, None), light)       # no detail gap: the heavier cluster wins
+    assert np.allclose(FF.crisp_choice(close, near), near)        # a 45/55 split keeps last frame's choice
+
+
+def test_outline_shades_follow_the_neighbour_hue():
+    palette = FP.as_palette({"colors": ["#ff8020", "#208080", "#4a1c08", "#0c3a3a", "#101010"],
+                             "transparent_index": 255})
+    shades = FF.outline_shades(palette)
+    order = {hex_colour: index for index, hex_colour in enumerate(palette.hex_colors)}
+    orange, teal, brown, dark_teal = (order[c] for c in ("#ff8020", "#208080", "#4a1c08", "#0c3a3a"))
+    assert shades[orange] == brown and shades[teal] == dark_teal and shades[255] == 255
+    idx = np.full((7, 9), 255, np.uint8)
+    idx[2:5, 1:4] = orange
+    idx[2:5, 5:8] = teal
+    outlined, ring = FF.add_outline(idx, palette, "selective", shades)
+    assert ring > 0 and outlined[1, 2] == brown and outlined[1, 6] == dark_teal
+    assert (outlined[2:5, 1:4] == orange).all()              # the fill is untouched
+    dark, _ = FF.add_outline(idx, palette, "dark")
+    assert dark[1, 2] == dark[1, 6] == order["#101010"]
+    assert FF.add_outline(idx, palette, "none")[1] == 0
+
+
+def test_lone_pixel_cleanup_keeps_features_and_merges_noise():
+    palette = FP.as_palette({"colors": ["#d06020", "#c86828", "#141010"], "transparent_index": 255})
+    order = {hex_colour: index for index, hex_colour in enumerate(palette.hex_colors)}
+    idx = np.full((7, 7), order["#d06020"], np.uint8)
+    idx[2, 2] = order["#c86828"]      # a lone pixel close to its neighbours: noise
+    idx[4, 4] = order["#141010"]      # a lone dark pixel: an eye
+    cleaned, fixed = FF.clean_lone_pixels(idx, palette)
+    assert fixed == 1 and cleaned[2, 2] == order["#d06020"] and cleaned[4, 4] == order["#141010"]
+
+
+def test_lift_spreads_lightness_and_chroma_and_one_is_identity():
+    frame = np.zeros((2, 2, 4), np.uint8)
+    frame[..., :3] = [[(200, 120, 80), (90, 60, 50)], [(60, 110, 120), (0, 0, 0)]]
+    frame[..., 3] = [[255, 255], [255, 0]]
+    assert np.array_equal(FF.lift_frame(frame, 1.0, 1.0, 0.5), frame)
+    lifted = FF.lift_frame(frame, 1.2, 1.3, 0.5)
+    before, after = FP.to_oklab(frame[..., :3]), FP.to_oklab(lifted[..., :3])
+    assert np.sqrt((after[0, 0, 1:] ** 2).sum()) > np.sqrt((before[0, 0, 1:] ** 2).sum())
+    assert abs(after[0, 0, 0] - after[0, 1, 0]) > abs(before[0, 0, 0] - before[0, 1, 0])
+    assert np.array_equal(lifted[1, 1], frame[1, 1])         # invisible pixels are untouched
+
+
+def test_canvas_pads_with_the_anchor_kept_and_fits_when_too_small(clips, tmp_path):
+    free = FF.finish_clip(clips["walk"], tmp_path / "free", target_height=40)
+    cell = FF.finish_clip(clips["walk"], tmp_path / "cell", target_height=40, canvas="64x80")
+    assert cell["size"] == [64, 80] and cell["anchor"][0] == 32 and cell["anchor"][1] == 79
+    a, b = frames_of(tmp_path / "free" / "frames")[3], frames_of(tmp_path / "cell" / "frames")[3]
+
+    def around_anchor(frame, anchor):   # every visible pixel relative to the anchor
+        ys, xs = np.nonzero(frame[..., 3])
+        return {(int(x) - anchor[0], int(y) - anchor[1], *map(int, frame[y, x])) for y, x in zip(ys, xs)}
+
+    assert around_anchor(a, free["anchor"]) == around_anchor(b, cell["anchor"])   # the same pixels, the same anchor
+    pinned = FF.finish_clip(clips["walk"], tmp_path / "pinned", target_height=40, canvas="64x80",
+                            canvas_anchor="30,70")
+    assert pinned["anchor"] == [30, 70]
+    small = FF.finish_clip(clips["walk"], tmp_path / "small", mode="pixel", target_height=60, canvas="32x40",
+                           colors=12)
+    assert small["size"] == [32, 40] and "canvas-fit" in small["qa"]["warnings"]
+    body = FF.measure_body(frames_of(tmp_path / "small" / "frames")[0][..., 3], FF.OUTPUT_MIN_RUN)
+    assert body.height < 40 and small["targetHeight"] < 60
+    with pytest.raises(FF.FinishError, match="canvas"):
+        FF.finish_clip(clips["walk"], tmp_path / "bad", target_height=40, canvas="64by80")
+    with pytest.raises(FF.FinishError, match="needs a canvas"):
+        FF.finish_clip(clips["walk"], tmp_path / "bad2", target_height=40, canvas_anchor="3,4")
+
+
+def test_colour_lock_in_the_finish_keeps_alpha_and_reports_numbers(clips, tmp_path):
+    plain = FF.finish_clip(clips["noisy"], tmp_path / "plain", target_height=26)
+    locked = FF.finish_clip(clips["noisy"], tmp_path / "locked", target_height=26, colour_lock="rest")
+    assert plain["size"] == locked["size"] and plain["anchor"] == locked["anchor"]
+    for a, b in zip(frames_of(tmp_path / "plain" / "frames"), frames_of(tmp_path / "locked" / "frames")):
+        assert np.array_equal(a[..., 3], b[..., 3])
+    document = json.loads((tmp_path / "locked" / FF.FINISH_FILE).read_text(encoding="utf-8"))
+    size = document["colourLock"]["sizes"]["1x"]
+    assert size["after"]["hueFlipsPerPair"] <= size["before"]["hueFlipsPerPair"]
+    assert locked["qa"]["colourLock"]["stats"]["frames"] == 10
+    with pytest.raises(FF.FinishError, match="not found"):
+        FF.finish_clip(clips["noisy"], tmp_path / "missing", target_height=26, colour_lock=tmp_path / "none.png")
+
+
+def test_pixel_only_options_are_refused_in_hd_and_the_cli_flags(clips, tmp_path):
+    with pytest.raises(FF.FinishError, match="pixel finish"):
+        FF.finish_clip(clips["walk"], tmp_path / "x", target_height=30, outline="dark")
+    with pytest.raises(FF.FinishError, match="contrast"):
+        FF.finish_clip(clips["walk"], tmp_path / "y", mode="pixel", target_height=30, contrast=5.0)
+    result = run_cli([SCRIPT, "pixel", "--frames", clips["walk"], "--output-dir", tmp_path / "cli", "--target-height",
+                      "24", "--colors", "10", "--outline", "dark", "--canvas", "40x48"], "cp1252")
+    assert result.returncode == 0, result.stderr
+    summary = json.loads(result.stdout)
+    assert summary["size"] == [40, 48] and summary["qa"]["coloursPerFrameMax"] <= 10
+    refused = run_cli([SCRIPT, "hd", "--frames", clips["walk"], "--output-dir", tmp_path / "hd", "--target-height",
+                       "24", "--outline", "dark"])
+    assert refused.returncode == 2                           # --outline is a pixel flag
