@@ -31,6 +31,7 @@ import math
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -144,10 +145,13 @@ def main():
     args = parser.parse_args()
     out = Path(args.out_dir)
     action = out.parents[2].name.split("-")[-1]
-    if os.environ.get("FAKE_LOG"):
-        with open(os.environ["FAKE_LOG"], "a", encoding="utf-8") as stream:
+    if os.environ.get("FAKE_LOG"):   # one new file per call: parallel takes never share an append
+        folder = Path(os.environ["FAKE_LOG"])
+        folder.mkdir(parents=True, exist_ok=True)
+        name = f"{action}-{out.parent.name}-{os.getpid()}-{time.time_ns()}.json"
+        with open(folder / name, "x", encoding="utf-8") as stream:
             stream.write(json.dumps({"action": action, "take": out.parent.name,
-                                     "lastFrame": bool(getattr(args, "last_frame", None))}) + "\n")
+                                     "lastFrame": bool(getattr(args, "last_frame", None))}))
     if os.environ.get("FAKE_NO_ROUTE"):
         print("error: no video route: no API key and no verified local daemon", file=sys.stderr)
         return 3
@@ -272,7 +276,7 @@ def cli(*args, env: dict | None = None, cwd: Path | None = None):
 
 def fake_env(fake: dict, tmp: Path, **extra) -> dict:
     env = {"FORGE_ROUTE_MEDIA_FAKE": str(fake["media"]), "FAKE_SCRIPTS": str(SCRIPTS), "FAKE_SECONDS": "1.5",
-           "FAKE_LOG": str(tmp / "fake-media.log"), "FORGE_FINISH_FRAMES": "standin", "FAKE_FAIL": "",
+           "FAKE_LOG": str(tmp / "fake-media-calls"), "FORGE_FINISH_FRAMES": "standin", "FAKE_FAIL": "",
            "FAKE_NO_ROUTE": "", "FAKE_NO_LAST_FRAME": "", "FAKE_ERROR": "",
            "FAKE_FINISH_LOG": str(tmp / "fake-finish.log")}
     env.update({key: str(value) for key, value in extra.items()})
@@ -280,6 +284,9 @@ def fake_env(fake: dict, tmp: Path, **extra) -> dict:
 
 
 def log_lines(path: Path) -> list[dict]:
+    """JSON lines of a log file, or one JSON document per file of a log folder (the fake media CLI's calls)."""
+    if path.is_dir():
+        return [json.loads(item.read_text(encoding="utf-8")) for item in sorted(path.glob("*.json"))]
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
 
 
@@ -465,7 +472,7 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
     assert {k: (v["status"], v["takes"], v["chosen"]) for k, v in summary["actions"].items()} == {
         "idle": ("done", 1, 1), "walk": ("done", 1, 1), "attack": ("done", 2, 2)}
     assert summary["finisher"] == "fake_finish_frames.py" and summary["needsReview"] == ["idle", "walk", "attack"]
-    calls = log_lines(tmp_path / "fake-media.log")
+    calls = log_lines(tmp_path / "fake-media-calls")
     assert sorted((c["action"], c["take"], c["lastFrame"]) for c in calls) == [
         ("attack", "t01", True), ("attack", "t02", True), ("idle", "t01", True),
         ("walk", "t01", False)]   # idle and attack are pinned to the master
@@ -500,7 +507,7 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
     before = state["actions"]["attack"]["takes"][1]["stages"]["package"]
     result, summary = cli("run", "--plan", plan_path, "--stagger", 0, env=env)
     assert result.returncode == 0 and summary["generated"] == 0 and summary["status"] == "complete"
-    assert len(log_lines(tmp_path / "fake-media.log")) == 4
+    assert len(log_lines(tmp_path / "fake-media-calls")) == 4
     again = json.loads((tmp_path / "set" / "set_state.json").read_text(encoding="utf-8"))
     assert again["actions"]["attack"]["takes"][1]["stages"]["package"] == before and again["runs"] == 2
 
@@ -526,7 +533,7 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
     assert result.returncode == 0, result.stderr
     assert summary["actions"]["attack"] == {"status": "done", "takes": 3, "chosen": 3, "accepted": False,
                                             "package": "actions/attack/takes/t03/package", "message": None}
-    assert summary["actions"]["idle"]["accepted"] is True and len(log_lines(tmp_path / "fake-media.log")) == 5
+    assert summary["actions"]["idle"]["accepted"] is True and len(log_lines(tmp_path / "fake-media-calls")) == 5
     third = (tmp_path / "set" / "actions" / "attack" / "takes" / "t03" / "prompt.txt").read_text("utf-8")
     assert "never doubling, no second blade" in third and "never faces the camera" in third
 
@@ -599,7 +606,7 @@ def test_provider_errors_stop_the_action_for_this_run_only(ss, fake, tmp_path):
     assert "the provider timed out" in summary["actions"]["idle"]["message"]
     lines = log_lines(tmp_path / "set" / "takes.jsonl")
     assert [(line["take"], line["status"]) for line in lines] == [(1, "error"), (2, "error")]
-    assert len(log_lines(tmp_path / "fake-media.log")) == 2   # two tries per run, then the run moves on
+    assert len(log_lines(tmp_path / "fake-media-calls")) == 2   # two tries per run, then the run moves on
 
 
 def test_master_json_shapes_and_path_scrubbing(ss, tmp_path):
