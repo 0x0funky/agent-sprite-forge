@@ -395,12 +395,16 @@ def test_cli_hd_and_pixel_print_one_ascii_json_line(clips, tmp_path):
     assert_valid_contract(document["qa"], "common", "qaEnvelope")
 
     result = run_cli([SCRIPT, "pixel", "--frames", clips["walk"], "--output-dir", tmp_path / "px",
-                      "--target-height", "22", "--colors", "16", "--indexed-sheet", "--loop-policy", "pingpong"],
-                     "cp1252")
+                      "--target-height", "22", "--colors", "16", "--indexed-sheet", "--loop-policy", "pingpong",
+                      "--shade-gap", "0"], "cp1252")
     assert result.returncode == 0, result.stderr
     summary = json.loads(result.stdout)
-    assert summary["paletteColors"] == 16 and summary["qa"]["alphaBinary"] is True
+    assert summary["paletteColors"] == 16 and summary["qa"]["alphaBinary"] is True   # unspaced: exactly --colors
     assert Path(summary["indexedSheet"]).is_file() and Path(summary["palette"]).is_file()
+    spaced = run_cli([SCRIPT, "pixel", "--frames", clips["walk"], "--output-dir", tmp_path / "px-spaced",
+                      "--target-height", "22", "--colors", "16"], "cp1252")
+    assert spaced.returncode == 0, spaced.stderr
+    assert json.loads(spaced.stdout)["paletteColors"] < 16                          # the default spaces the palette
 
     again = run_cli([SCRIPT, "hd", "--frames", clips["walk"], "--output-dir", tmp_path / "hd", "--target-height", "30"])
     assert again.returncode == 1 and again.stderr.startswith("error: output already exists")
@@ -505,6 +509,93 @@ def test_lone_pixel_cleanup_keeps_features_and_merges_noise():
     idx[4, 4] = order["#141010"]      # a lone dark pixel: an eye
     cleaned, fixed = FF.clean_lone_pixels(idx, palette)
     assert fixed == 1 and cleaned[2, 2] == order["#d06020"] and cleaned[4, 4] == order["#141010"]
+
+
+def _min_pair_distance(palette):
+    lab = palette.lab.astype(np.float64)
+    distance = np.sqrt(((lab[:, None] - lab[None]) ** 2).sum(-1))
+    np.fill_diagonal(distance, np.inf)
+    return float(distance.min())
+
+
+def _near_shade_share(frames, limit=0.06):
+    """Share of 4-adjacent opaque pixel pairs whose colours differ by a barely visible step (0 < dE < limit)."""
+    pairs = near = 0
+    for frame in frames:
+        lab = FP.to_oklab(frame[..., :3]).astype(np.float64)
+        opaque = frame[..., 3] == 255
+        for a, b, oa, ob in ((lab[:, :-1], lab[:, 1:], opaque[:, :-1], opaque[:, 1:]),
+                             (lab[:-1], lab[1:], opaque[:-1], opaque[1:])):
+            both = oa & ob
+            step = np.sqrt(((a - b) ** 2).sum(-1))
+            pairs += int(both.sum())
+            near += int((both & (step > 1e-6) & (step < limit)).sum())
+    return near / max(1, pairs)
+
+
+def test_space_palette_merges_near_shades_and_keeps_extremes_and_reserved():
+    """Three oranges 0.015 apart collapse into their usage-weighted mean; the lightest colour, a reserved colour
+    and the colours already far apart stay exactly as they were."""
+    def rgb(lab):
+        return tuple(int(v) for v in FP.from_oklab(np.array([lab]))[0])
+
+    teal = (58, 127, 128)
+    teal_near = rgb(FP.to_oklab(np.array([teal], np.uint8))[0] + np.array([0.01, 0.0, 0.0]))
+    oranges = [rgb([0.60 + 0.015 * i, 0.12, 0.11]) for i in range(3)]
+    colours = [teal, (0, 0, 0), (32, 48, 64), *oranges, teal_near, (248, 248, 248), (255, 255, 255)]
+    palette = FF.fp.Palette(tuple(colours), reserved=(True,) + (False,) * (len(colours) - 1),   # the finisher's
+                            transparent_index=255)                                        # own module
+    frame = np.zeros((4, 8, 4), np.uint8)
+    frame[..., 3] = 255
+    frame[0, :, :3] = oranges[0]                 # the darkest orange: 8 pixels
+    frame[1, :2, :3] = oranges[2]                # the lightest orange: 2 pixels (the middle one is unused)
+    frame[1, 2:, :3] = (255, 255, 255)
+    frame[2, :, :3] = (0, 0, 0)
+    frame[3, :, :3] = teal_near
+    spaced, merged = FF.space_palette(palette, [frame], 0.04)
+    assert _min_pair_distance(spaced) >= 0.04
+    assert merged == len(palette) - len(spaced) == 4          # teal_near, two oranges and #f8f8f8
+    assert spaced.colors[0] == teal and spaced.reserved == (True,) + (False,) * (len(spaced) - 1)
+    assert teal_near not in spaced.colors                     # merged into the reserved colour, which did not move
+    assert (255, 255, 255) in spaced.colors and (248, 248, 248) not in spaced.colors   # the extreme kept its place
+    assert (0, 0, 0) in spaced.colors and (32, 48, 64) in spaced.colors                # far apart: exact RGB kept
+    learned = np.array([c for c, r in zip(spaced.colors, spaced.reserved) if not r], np.uint8)
+    assert np.all(np.diff(FP.to_oklab(learned)[:, 0]) >= 0)  # learned colours stay darkest first
+    orange = [c for c in spaced.colors if c not in (teal, (0, 0, 0), (32, 48, 64), (255, 255, 255))]
+    assert len(orange) == 1                                   # one orange is left ...
+    lightness = float(FP.to_oklab(np.array(orange, np.uint8))[0, 0])
+    assert 0.60 < lightness < 0.615                           # ... near the orange the pixels use most
+    unchanged, none = FF.space_palette(palette, [frame], 0.0)
+    assert unchanged is palette and none == 0
+
+
+def test_bold_pixel_palette_has_no_near_duplicate_shades(clips, tmp_path):
+    """Regression (2026-10-06 fox): k-means gave a shaded body eight shades 0.03 apart, speckle at 4x nearest.
+    The bold finish spaces its learned palette; the frames then hold far fewer barely visible shade steps."""
+    spaced = FF.finish_clip(clips["walk"], tmp_path / "spaced", mode="pixel", target_height=40, colors=32)
+    raw = FF.finish_clip(clips["walk"], tmp_path / "raw", mode="pixel", target_height=40, colors=32, shade_gap=0)
+    spaced_palette = FP.read_palette(tmp_path / "spaced" / FF.PALETTE_FILE)
+    raw_palette = FP.read_palette(tmp_path / "raw" / FF.PALETTE_FILE)
+    assert _min_pair_distance(raw_palette) < FF.SHADE_GAP                 # plain k-means keeps near-duplicate shades
+    assert _min_pair_distance(spaced_palette) >= FF.SHADE_GAP
+    assert spaced["paletteColors"] < raw["paletteColors"] <= 32
+    document = json.loads((tmp_path / "spaced" / FF.FINISH_FILE).read_text(encoding="utf-8"))
+    assert document["pixel"]["shadeGap"] == FF.SHADE_GAP
+    assert document["pixel"]["shadeMerged"] == raw["paletteColors"] - spaced["paletteColors"]
+    assert next(c for c in document["qa"]["checks"] if c["id"] == "palette-fit")["status"] == "pass"
+    near_spaced = _near_shade_share(frames_of(tmp_path / "spaced" / "frames"))
+    near_raw = _near_shade_share(frames_of(tmp_path / "raw" / "frames"))
+    assert near_spaced < 0.5 * near_raw
+    for frame in frames_of(tmp_path / "spaced" / "frames"):                  # still one palette, binary alpha
+        assert _colours(frame) <= {tuple(c) for c in spaced_palette.rgb.tolist()}
+        assert set(np.unique(frame[..., 3]).tolist()) <= {0, 255}
+    given = FF.finish_clip(clips["walk"], tmp_path / "given", mode="pixel", target_height=40,
+                           palette=tmp_path / "raw" / FF.PALETTE_FILE)        # a given palette is used as it is
+    assert given["paletteColors"] == raw["paletteColors"]
+    with pytest.raises(FF.FinishError, match="shade gap"):
+        FF.finish_clip(clips["walk"], tmp_path / "bad", mode="pixel", target_height=40, shade_gap=0.5)
+    with pytest.raises(FF.FinishError, match="pixel finish"):
+        FF.finish_clip(clips["walk"], tmp_path / "hd", target_height=40, shade_gap=0.04)
 
 
 def test_lift_spreads_lightness_and_chroma_and_one_is_identity():

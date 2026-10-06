@@ -82,7 +82,14 @@ quantize:
    uses at most the palette's colours: the `palette-fit` check fails on an off-palette
    colour or on more colours per frame than the palette has, and `coloursPerFrameMax` is
    reported. A 45-90 px sprite reads as pixel art with 16-32 colours; 255 looks like a
-   downscaled painting.
+   downscaled painting. A learned palette is then **spaced** (`--shade-gap`, default
+   OKLab dE 0.04): the closest pair of learned colours merges into its usage-weighted mean
+   until no two are closer, the darkest, the lightest and reserved colours keeping their
+   place. k-means spends its colours where the pixels are, so plain k-means gave the
+   2026-10-06 fox eight oranges 0.03 apart, which read as speckle at 4x; spaced, each
+   material keeps a few distinct tones (fox2 run: 32 learned colours became 20 and the
+   share of barely visible shade steps between neighbours fell from 11.4% to 2.9%).
+   `--colors` is then a cap; a given `--palette` is used as it is; `--shade-gap 0` is off.
 5. **No dither** and **temporal hysteresis** (`forge_palette.quantize_sequence`): a pixel
    keeps last frame's index while that colour stays within `--margin` (squared OKLab
    distance; default 0.0004, dE 0.02) and its opacity while alpha stays between 0.4 and
@@ -287,7 +294,8 @@ finish_clip(frames_dir, out_dir, *, mode="hd", target_height, scale_ref=None, pa
             anchor="feet", display_sizes=(1.0,), colors=None, reserve=(), seed=0, loop_policy="cycle",
             margin=0.0004, area_norm=True, indexed_sheet=False, pattern="*.png", clip=None,
             character=None, role=None, strict=False, downscale=None, contrast=None, saturation=None,
-            outline=None, canvas=None, canvas_anchor=None, colour_lock=None, lock_strength=1.0) -> dict
+            outline=None, canvas=None, canvas_anchor=None, colour_lock=None, lock_strength=1.0,
+            shade_gap=None) -> dict
 build_cast_palette(frame_dirs, colors=255, *, reserve=(), seed=0, frames_per_set=12,
                    samples_per_set=22000, name=None) -> (Palette, stats)
 lineup(set_specs, out, *, rules=..., reference_role="hero", area_roles=("spirit",), exact=0.02,
@@ -296,10 +304,10 @@ lineup(set_specs, out, *, rules=..., reference_role="hero", area_roles=("spirit"
 
 `finish_clip` returns the CLI summary. Pass `target_height=None` with `scale_ref`. The
 pixel-only keywords (`palette`, `colors`, `reserve`, `indexed_sheet`, `downscale`,
-`contrast`, `saturation`, `outline`) are refused in HD; left as None in pixel they take the
+`contrast`, `saturation`, `outline`, `shade_gap`) are refused in HD; left as None in pixel they take the
 bold defaults. It raises `FinishError` (a ValueError) on refused input or failed QA, and
 FileExistsError for an existing output. The bold pieces are library functions too:
-`crisp_clusters`/`crisp_choice`, `lift_frame`, `clean_lone_pixels`, `outline_shades`/
+`crisp_clusters`/`crisp_choice`, `lift_frame`, `space_palette`, `clean_lone_pixels`, `outline_shades`/
 `add_outline`, `canvas_window`; the lock is `colour_lock.master_colours`, `lock_frames` and
 `measure`.
 

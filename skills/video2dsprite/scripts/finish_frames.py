@@ -12,7 +12,8 @@
                  pixel takes the dominant of two OKLab colour clusters of its 4x4 sub-pixels,
                  so edges do not blur into in-between colours and thin dark lines and eyes
                  survive), a light contrast and saturation lift, one OKLab palette of at
-                 most --colors (default 32) colours (--palette, or built from the clip), no
+                 most --colors (default 32) colours (--palette, or built from the clip and
+                 spaced so no two colours are closer than --shade-gap, OKLab dE 0.04), no
                  dither, temporal hysteresis (forge_palette.quantize_sequence), lone-pixel
                  cleanup that keeps eyes and highlights, speck cleanup, binary alpha at 0.5
                  and a 1 px outline (--outline selective|dark|none). --downscale box
@@ -98,6 +99,8 @@ HOLD_SHARE = 0.30           # crisp hysteresis: the previous frame's cluster sta
 HOLD_DELTA_E = 0.06         # ... and is within OKLab dE 0.06 of the previous choice
 LIFT_CONTRAST = 1.10        # pixel lift: OKLab lightness spread around the rest pose's mean lightness
 LIFT_SATURATION = 1.15      # pixel lift: OKLab chroma scale
+SHADE_GAP = 0.04            # bold pixel finish: no two learned palette colours closer than this OKLab dE (flat
+                            # colour clusters; k-means alone put 8 oranges 0.03 apart on the 2026-10-06 fox)
 FEATURE_DELTA_L = 0.22      # a lone pixel this much lighter or darker than every 4-neighbour is a feature (kept)
 PIXEL_CLEAN_PASSES = 2      # lone-pixel passes of the bold finish
 OUTLINE_MAX_L = 0.34        # an outline colour is at most this light (OKLab L) ...
@@ -135,7 +138,9 @@ BOLD_METHOD = ("finish_frames pixel v2 (bold): the hd registration; alpha from t
                "colour from a 4x4 supersampled box downscale split per output pixel into two OKLab clusters (4 Lloyd "
                "steps), the heavier cluster winning, a cluster 0.15 L darker from 35% (lines and eyes survive), the "
                "previous frame's cluster kept from 30% (no 50/50 flicker); OKLab lift (lightness spread around the "
-               "rest pose's mean, chroma scale); one palette (given, or k-means++ on the lifted frames); "
+               "rest pose's mean, chroma scale); one palette (given, or k-means++ on the lifted frames, then spaced: "
+               "the closest pair of learned colours merged, usage-weighted, until no two are closer than the shade "
+               "gap, OKLab dE 0.04 by default, the darkest, the lightest and reserved colours kept in place); "
                "forge_palette.quantize_sequence hysteresis and cleanup_alpha; lone pixels merged into their "
                "neighbours' majority unless 0.22 L lighter or darker than every neighbour (features kept), 2 passes; "
                "a 1 px outline outside the 4-connected silhouette in the palette's dark shade of the darkest "
@@ -617,6 +622,67 @@ def lift_frame(frame: np.ndarray, contrast: float, saturation: float, pivot: flo
     return out
 
 
+def space_palette(pal: fp.Palette, frames: Sequence[np.ndarray], gap: float = SHADE_GAP) -> tuple[fp.Palette, int]:
+    """``pal`` with no two colours closer than ``gap`` (OKLab dE), and the number of colours merged away.
+
+    k-means spends its colours where the pixels are: a fur that fills half the sprite gets eight oranges 0.03
+    apart, and at 4x those near-identical shades read as speckle instead of shading. The closest pair merges
+    first, into its usage-weighted OKLab mean (usage: the opaque pixels of ``frames`` nearest to each colour),
+    until every pair is at least ``gap`` apart, so each material keeps a few clearly distinct tones. Reserved
+    colours never move (a learned colour close to one merges into it) and the darkest and the lightest colour
+    keep their place (the outline and the highlights); untouched colours keep their exact RGB. Learned colours
+    stay darkest first after the reserved ones, as build_palette orders them. A palette whose transparent index
+    is a colour slot is returned unchanged."""
+    count = len(pal)
+    slot = pal.transparent_index
+    if not gap > 0 or count < 3 or (slot is not None and slot < count):
+        return pal, 0
+    lab = pal.lab.astype(np.float64).copy()
+    weights = np.full(count, 1e-6)
+    opaque = [np.asarray(frame)[..., :3][np.asarray(frame)[..., 3] >= 128] for frame in frames]
+    opaque = [part for part in opaque if len(part)]
+    if opaque:
+        weights += np.bincount(fp.nearest_index(np.concatenate(opaque), pal), minlength=count)[:count]
+    fixed = np.array(pal.reserved, bool)
+    alive = np.ones(count, bool)
+    rgb = {i: tuple(int(v) for v in pal.colors[i]) for i in range(count)}
+    merged = 0
+    while alive.sum() > 2:
+        index = np.flatnonzero(alive)
+        sub = lab[index]
+        distance = np.sqrt(((sub[:, None, :] - sub[None, :, :]) ** 2).sum(-1))
+        np.fill_diagonal(distance, np.inf)
+        distance[np.ix_(fixed[index], fixed[index])] = np.inf     # two reserved colours never merge
+        first, second = np.unravel_index(int(np.argmin(distance)), distance.shape)
+        if not distance[first, second] < gap:
+            break
+        keep, drop = int(index[first]), int(index[second])
+        extremes = {int(index[np.argmin(sub[:, 0])]), int(index[np.argmax(sub[:, 0])])}
+        if fixed[drop] or (drop in extremes and not fixed[keep]):
+            keep, drop = drop, keep
+        if not (fixed[keep] or keep in extremes):
+            mean = (lab[keep] * weights[keep] + lab[drop] * weights[drop]) / (weights[keep] + weights[drop])
+            rgb[keep] = tuple(int(v) for v in fp.from_oklab(mean[None])[0])
+            lab[keep] = fp.to_oklab(np.array([rgb[keep]], np.uint8))[0]   # measured as stored: 8-bit RGB
+        weights[keep] += weights[drop]
+        alive[drop] = False
+        merged += 1
+    if not merged:
+        return pal, 0
+    reserved = [i for i in range(count) if alive[i] and fixed[i]]
+    learned = [i for i in range(count) if alive[i] and not fixed[i]]
+    learned.sort(key=lambda i: (float(lab[i][0]), rgb[i]))
+    colours = [tuple(pal.colors[i]) for i in reserved]
+    for i in learned:
+        if rgb[i] not in colours:
+            colours.append(rgb[i])
+    kept = len(colours) - len(reserved)
+    return pal.replace(colors=tuple(colours), names=tuple(pal.names[i] for i in reserved) + (None,) * kept,
+                       reserved=(True,) * len(reserved) + (False,) * kept,
+                       source=f"{pal.source}; spaced to OKLab dE >= {gap:g} ({count - len(colours)} merged)"), \
+        count - len(colours)
+
+
 def clean_lone_pixels(idx: np.ndarray, pal: fp.Palette, passes: int = PIXEL_CLEAN_PASSES) -> tuple[np.ndarray, int]:
     """Lone pixels (no 4-neighbour of their own index) take the neighbours' majority index, as
     forge_palette.cleanup_orphans, except features: a pixel FEATURE_DELTA_L lighter or darker than every
@@ -892,7 +958,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 role: str | None = None, strict: bool = False, downscale: str | None = None,
                 contrast: float | None = None, saturation: float | None = None, outline: str | None = None,
                 canvas: Any = None, canvas_anchor: Any = None, colour_lock: Any = None,
-                lock_strength: float = 1.0) -> dict[str, Any]:
+                lock_strength: float = 1.0, shade_gap: float | None = None) -> dict[str, Any]:
     """Finish one registered clip into ``out_dir`` (new; staged, published only after QA).
 
     ``mode`` is ``hd`` (default) or ``pixel``. Exactly one of ``target_height`` (output px of the
@@ -900,7 +966,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     clip's finish.json, its folder or the loaded document) sets the scale. ``palette`` (pixel only) is a
     palette file, a forge_palette.Palette or a palette mapping; without it ``colors`` (default 32) colours
     are learned from the finished frames, ``reserve`` colours first. Pixel only: ``downscale`` (crisp or
-    box), ``contrast`` and ``saturation`` (the lift; 1 is off), ``outline`` (selective, dark or none); the
+    box), ``contrast`` and ``saturation`` (the lift; 1 is off), ``outline`` (selective, dark or none) and
+    ``shade_gap`` (a learned palette keeps no two colours closer than this OKLab dE; 0 is off); the
     defaults are the bold finish. ``canvas`` (WxH) and ``canvas_anchor`` (X,Y) put every frame on a fixed
     cell. ``colour_lock`` (a keyed master image or "rest") locks the design colours (colour_lock.py).
     Returns the summary the CLI prints (paths, scale, palette colours, QA).
@@ -911,10 +978,10 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         raise FinishError(f"anchor must be one of {', '.join(ANCHORS)}, got {anchor!r}")
     if loop_policy not in LOOP_POLICIES:
         raise FinishError(f"loop policy must be one of {', '.join(LOOP_POLICIES)}, got {loop_policy!r}")
-    pixel_only = (palette, colors, downscale, contrast, saturation, outline)
+    pixel_only = (palette, colors, downscale, contrast, saturation, outline, shade_gap)
     if mode == "hd" and (any(value is not None for value in pixel_only) or reserve or indexed_sheet):
-        raise FinishError("palette, colors, reserve, indexed sheets, downscale, contrast, saturation and outline belong "
-                          "to the pixel finish")
+        raise FinishError("palette, colors, reserve, indexed sheets, downscale, contrast, saturation, outline and the "
+                          "shade gap belong to the pixel finish")
     if palette is not None and (colors is not None or reserve):
         raise FinishError("colors and reserve build a palette; drop them when a palette is given")
     if colors is not None and (isinstance(colors, bool) or not 2 <= int(colors) <= 255):
@@ -933,6 +1000,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         for name, value in (("contrast", contrast), ("saturation", saturation)):
             if not (math.isfinite(value) and 0.5 <= value <= 2.0):
                 raise FinishError(f"{name} must be 0.5..2 (1 is no change), got {value!r}")
+        shade_gap = SHADE_GAP if shade_gap is None else float(shade_gap)
+        if not (math.isfinite(shade_gap) and 0.0 <= shade_gap <= 0.3):
+            raise FinishError(f"the shade gap must be 0..0.3 (OKLab dE; 0 is off), got {shade_gap!r}")
     if not 0.0 <= float(lock_strength) <= 1.0:
         raise FinishError("the colour-lock strength must be 0..1")
     cell = parse_canvas(canvas)
@@ -1066,6 +1136,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     pal: fp.Palette | None = None
     palette_path: Path | None = None
     built = False
+    shade_merged = 0
     quantized: dict[float, list[np.ndarray]] = {}
     pivot = None
     if mode == "pixel":
@@ -1088,6 +1159,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             pal = pal.replace(source=f"finish_frames pixel: OKLab k-means++ of {len(files)} finished frame(s), "
                                      f"{count} colours, seed {int(seed)}")
             built = True
+            if bold and shade_gap:   # flat colour clusters: no near-identical shades (a given palette is kept as is)
+                pal, shade_merged = space_palette(pal, quantized[1.0], shade_gap)
         if pal.transparent_index is None:
             raise FinishError("the pixel finish needs a palette with a transparent index (at most 255 colours)")
 
@@ -1295,6 +1368,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 "lift": {"contrast": contrast, "saturation": saturation, "pivotL": None if pivot is None
                          else round(pivot, 5)},
                 "outline": outline, "outlinePx": qa1["outlinePx"], "featureDeltaL": FEATURE_DELTA_L if bold else None,
+                "shadeGap": shade_gap if (built and bold) else None, "shadeMerged": shade_merged,
                 "coloursPerFrameMax": qa1["coloursPerFrameMax"],
                 "noiseFlipReduction": qa1["noiseFlipReduction"], "perFrameNearest": qa1["perFrameNearest"],
                 "heldIndexPx": qa1["heldIndexPx"], "heldAlphaPx": qa1["heldAlphaPx"],
@@ -1815,6 +1889,11 @@ def build_parser() -> argparse.ArgumentParser:
                        help="1 px outline outside the silhouette: selective (default; the palette's dark shade of "
                             "the darkest neighbour), dark (the darkest palette colour) or none; the target height "
                             "includes it")
+    pixel.add_argument("--shade-gap", type=float, default=SHADE_GAP,
+                       help=f"a palette learned from the clip keeps no two colours closer than this OKLab dE: the "
+                            f"closest pair merges first, so each material keeps a few distinct tones instead of "
+                            f"near-identical shades that read as speckle (default {SHADE_GAP:g}; 0 = off; a "
+                            f"--palette is used as given)")
     pixel.set_defaults(func=cmd_finish, mode="pixel")
 
     palette = sub.add_parser("palette", help="palettes for the pixel finish (palette build)",
@@ -1874,7 +1953,7 @@ def cmd_finish(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         downscale=args.downscale if pixel else None, contrast=args.contrast if pixel else None,
         saturation=args.saturation if pixel else None, outline=args.outline if pixel else None,
         canvas=args.canvas, canvas_anchor=args.canvas_anchor, colour_lock=args.colour_lock,
-        lock_strength=args.lock_strength)
+        lock_strength=args.lock_strength, shade_gap=args.shade_gap if pixel else None)
     return summary, 0
 
 
