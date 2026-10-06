@@ -28,7 +28,7 @@ Run `python "<skill-dir>/../generate2dmedia/scripts/forge_doctor.py" --host-tool
 
 The master still comes from [generate2dsprite](../generate2dsprite/SKILL.md) (image generation, approved by the user) or from the user. Motion is image-to-video, one clip per action from that master; record the route as `art_source` and name it in your reply:
 
-1. **API**, when a key is configured: xAI `grok-imagine-video-1.5`. The configured key is the owner's consent, so there is no per-call question. `--last-frame <still>` pins idle and attack clips to end on their first pose.
+1. **API**, when a key is configured: xAI Grok Imagine Video (`XAI_API_KEY`), BytePlus Seedance (`ARK_API_KEY`) or fal.ai (`FAL_KEY`: Kling v3, Veo 3.1, Luma Ray 3.2, MiniMax H3, Wan 3.0, Vidu Q3, LTX) ([route-media.md](../generate2dmedia/references/route-media.md)). The configured key is the owner's consent, so there is no per-call question. `--last-frame <still>` pins idle and attack clips to end on their first pose.
 2. **Local**: your own image-to-video tool (Grok's native `image_to_video`) when you have one, otherwise the user's Grok CLI in ACP mode (it cannot pin a last frame; the result says `lastFrameUsed`).
 3. A clip the user supplies (no account needed).
 4. codeart2d only when the user explicitly asks for code-drawn animation, or when `route_media.py` prints `no-route` (exit 3); otherwise prepare the job and prompt, explain the gap, and never invent a successful generation.

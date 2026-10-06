@@ -27,7 +27,7 @@ Run `python "<skill-dir>/../generate2dmedia/scripts/forge_doctor.py" --host-tool
 
 Image generation is the default for map art: terrain and tile sheets, prop kits, HD-2D plates, painted backgrounds and parallax layers. Map data (layout, collision, exits, spawns) is data you write and validate, not art. Record each asset's `art_source` (`api`, `host_image`, `existing`, or `code` only on request) and name the route in your reply. A route the user names explicitly wins.
 
-1. **API**, when a key is configured (`OPENAI_API_KEY` or `XAI_API_KEY`, in the environment or the user config file): the configured key is the owner's consent, so there is no per-call question.
+1. **API**, when a key is configured: OpenAI (`OPENAI_API_KEY`), Google Gemini (`GEMINI_API_KEY`), xAI (`XAI_API_KEY`), BytePlus Seedream (`ARK_API_KEY`) or fal.ai (`FAL_KEY`), in the environment or the user config file ([route-media.md](../generate2dmedia/references/route-media.md)). The configured key is the owner's consent, so there is no per-call question.
 2. **Local**: your own image tool (Codex `image_gen`, Grok's native tool) when you have one, otherwise the user's signed-in Codex CLI, then Grok CLI.
 3. **codeart2d** (autotiles, layouts, stylized parallax, ambient loops) only when the user explicitly asks for code-drawn art, or when `route_media.py` prints `no-route` (exit 3). Then say "code-drawn, no image model".
 
