@@ -1,0 +1,47 @@
+{
+  "schema": "codeart2d.plate_effects.v1",
+  "units": "uv",
+  "period_ms": 4800,
+  "frames": 48,
+  "sampling": "bilinear",
+  "effects": [
+    {
+      "id": "harbour-water",
+      "kind": "ripple",
+      "polygon": [[0.0, 0.64], [1.0, 0.64], [1.0, 1.0], [0.0, 1.0]],
+      "period": 4.8,
+      "amplitude": 1.8,
+      "wavelength": 96,
+      "axis": "x",
+      "feather": 8
+    },
+    {
+      "id": "reeds",
+      "kind": "sway",
+      "polygon": [[0.04, 0.5], [0.2, 0.5], [0.22, 0.66], [0.03, 0.66]],
+      "period": 2.4,
+      "amplitude": 1.5,
+      "wavelength": 40,
+      "feather": 6
+    },
+    {
+      "id": "chimney-haze",
+      "kind": "shimmer",
+      "polygon": [[0.7, 0.08], [0.78, 0.08], [0.8, 0.26], [0.68, 0.26]],
+      "period": 1.6,
+      "amplitude": 0.8,
+      "wavelength": 18,
+      "feather": 6
+    },
+    {
+      "id": "lantern",
+      "kind": "glow",
+      "polygon": [[0.52, 0.4], [0.6, 0.4], [0.6, 0.52], [0.52, 0.52]],
+      "period": 1.6,
+      "amplitude": 0.35,
+      "color": "#ffd98a",
+      "feather": 10
+    }
+  ],
+  "protected": [{"id": "moored-boat", "box": [0.42, 0.7, 0.58, 0.84]}]
+}

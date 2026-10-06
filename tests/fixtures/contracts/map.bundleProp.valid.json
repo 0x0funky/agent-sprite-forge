@@ -1,0 +1,13 @@
+{
+  "label": "tree",
+  "display_name": "tree",
+  "image": "props/tree.png",
+  "sha256": "78b130cb9b4237aea1c812009e85f8b36bf2cedea0447223486141957a6b9334",
+  "anchor_px": [10, 25],
+  "footprint": {"shape": "ellipse", "width": 7, "depth": 4, "offset": [0, -2], "rotate": 0},
+  "solid": true,
+  "occlusion_class": "tall",
+  "status": "accepted",
+  "size": [20, 26],
+  "origin": "pixelspec"
+}

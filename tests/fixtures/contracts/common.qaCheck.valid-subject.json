@@ -1,0 +1,7 @@
+{
+  "id": "grid_clean",
+  "status": "warn",
+  "value": {"period": 8, "phase": [0, 0], "score": 0.015, "uniformity": 0.271},
+  "threshold": {"min_score": 0.5, "min_uniformity": 0.9},
+  "subject": "raw-fox-run-v1.png"
+}

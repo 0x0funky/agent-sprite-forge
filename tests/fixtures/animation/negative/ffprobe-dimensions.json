@@ -1,0 +1,20 @@
+{
+  "rule": "ffprobe-dimensions",
+  "why": "the MP4 has the packed size",
+  "base": "video",
+  "args": [],
+  "ops": [
+    {
+      "op": "encode",
+      "file": "idle-packed.mp4",
+      "kind": "packed",
+      "size": [
+        46,
+        48
+      ],
+      "frames": 8,
+      "fps": "12/1"
+    }
+  ],
+  "alsoFails": []
+}

@@ -1,0 +1,151 @@
+{
+  "schema": "generate2dsprite.sheet_plan.v1",
+  "request": {
+    "frames": 8,
+    "cycle": "run",
+    "facing": "right",
+    "aspect": "auto",
+    "envelope_aspect": 1.0,
+    "safe": 0.15,
+    "gutter": 0.04,
+    "budget_px": 1572864,
+    "max_empty": 1
+  },
+  "predicted_size": [1774, 887],
+  "aspect": "2:1",
+  "layout": {
+    "rows": 2,
+    "cols": 4,
+    "empty_cells": 0,
+    "cell": [443.5, 443.5],
+    "divides_exactly": false,
+    "safe_box": [310.4, 310.4],
+    "envelope_px": [310.1, 310.1]
+  },
+  "candidates": [
+    {
+      "aspect": "2:1",
+      "predicted_size": [1774, 887],
+      "rows": 2,
+      "cols": 4,
+      "empty_cells": 0,
+      "cell": [443.5, 443.5],
+      "divides_exactly": false,
+      "safe_box": [310.4, 310.4],
+      "envelope_px": [310.4, 310.4]
+    },
+    {
+      "aspect": "1:2",
+      "predicted_size": [887, 1774],
+      "rows": 4,
+      "cols": 2,
+      "empty_cells": 0,
+      "cell": [443.5, 443.5],
+      "divides_exactly": false,
+      "safe_box": [310.4, 310.4],
+      "envelope_px": [310.4, 310.4]
+    }
+  ],
+  "cells": [
+    {
+      "cell": [0, 0],
+      "box": [0, 0, 444, 444],
+      "safe_box": [66.6, 66.6, 377.4, 377.4],
+      "gutter_px": 18,
+      "ground_y": 377.4,
+      "root_x": 237.5,
+      "used": true,
+      "phase": "contact",
+      "pose_bounds": [134.8, 82.9, 329.3, 386.9],
+      "inside_safe_box": true,
+      "toe_ahead": "near",
+      "foot_gap_px": {"near": 0.0, "far": 72.0}
+    },
+    {
+      "cell": [0, 1],
+      "box": [444, 0, 887, 444],
+      "safe_box": [510.4, 66.6, 820.5, 377.4],
+      "gutter_px": 18,
+      "ground_y": 377.4,
+      "root_x": 681.0,
+      "used": true,
+      "phase": "down",
+      "pose_bounds": [604.3, 87.4, 743.9, 386.9],
+      "inside_safe_box": true,
+      "toe_ahead": "near",
+      "foot_gap_px": {"near": 0.0, "far": 78.7}
+    }
+  ],
+  "phases": [
+    {
+      "index": 0,
+      "name": "contact",
+      "half": 0,
+      "near": [30.0, 5.0],
+      "far": [-28.0, 75.0],
+      "lift": 0.0,
+      "contact_leg": "near",
+      "ground": {"near": true, "far": false}
+    },
+    {
+      "index": 1,
+      "name": "down",
+      "half": 0,
+      "near": [5.0, 50.0],
+      "far": [-10.0, 110.0],
+      "lift": 0.0,
+      "contact_leg": "near",
+      "ground": {"near": true, "far": false}
+    }
+  ],
+  "prompt": "prompt.txt",
+  "qa": {
+    "status": "pass",
+    "method": "geometry of the drawn guide plus sheet_qc.leg_lead/alternation_verdict on its own skeleton drawn clean on transparency",
+    "notProven": [
+      "That an image model follows the guide: not A/B tested (report v2 P2-4).",
+      "The host size rule was observed on 3 calls of one host tool; other tools differ."
+    ],
+    "checks": [
+      {
+        "id": "min_envelope",
+        "status": "pass",
+        "value": 310.1,
+        "threshold": 0.0,
+        "note": "predicted motion-envelope height per pose, in host pixels"
+      },
+      {
+        "id": "skeleton_in_safe_box",
+        "status": "pass",
+        "value": [],
+        "threshold": [],
+        "note": "every pose, line widths included, inside its safe box"
+      }
+    ],
+    "inputs": [],
+    "outputs": [
+      {
+        "path": "guide.png",
+        "sha256": "8a3e625226c05dc128d093b013706894593df9e7c09493657b29227496def74a",
+        "bytes": 18275
+      },
+      {
+        "path": "guide.svg",
+        "sha256": "8aeeb68a97bf0afdf5f6fdce97d6239e21261567f9dde886725e09cb910e2da3",
+        "bytes": 9776
+      },
+      {
+        "path": "guide-annotated.png",
+        "sha256": "937845dc260e048ce899d58d86fe2c9d1c4dff92776629e6203ad5201724a9d5",
+        "bytes": 24645
+      },
+      {
+        "path": "prompt.txt",
+        "sha256": "827632094b553151dd4c48180d860412a5b347071043b26b8fe23c3948b25389",
+        "bytes": 2091
+      }
+    ],
+    "tool": {"name": "plan_guide.py", "version": "0.4.0"}
+  },
+  "tool": {"name": "plan_guide.py", "version": "0.4.0"}
+}

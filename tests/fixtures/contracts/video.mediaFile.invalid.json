@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "hash is mandatory", "remove": "/sha256"},
+    {"why": "absolute path", "set": "/file", "value": "D:/out/idle-poster.png"}
+  ]
+}

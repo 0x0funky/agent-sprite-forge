@@ -1,0 +1,171 @@
+{
+  "schema": "generate2dsprite.animation_clips.v1",
+  "source_manifest": {
+    "path": "clips.json",
+    "file_sha256": "43d14fe5101637a4241868f1c2d4294e97717c637a3a36358db07584d75d522d"
+  },
+  "frame_size": [48, 48],
+  "anchor_px": [24, 44],
+  "anchor_semantics": "shared canvas/root origin, often a ground reference; not per-frame visible bottom",
+  "frames": [
+    {
+      "index": 0,
+      "name": "idle-1",
+      "source": {
+        "path": "proc/idle-1.png",
+        "file_sha256": "aadd3c446147770911a00486c46b7360b426159c3b8f6cbb50937b5ca59dc5dc",
+        "bytes": 205,
+        "size": [48, 48],
+        "mode": "RGBA"
+      },
+      "rgba_pixel_sha256": "a105e359e491e23ac84adbf66566d1c1ef73f22a6660a3d610d11c5b46257a25",
+      "transparent_pixel_count": 704,
+      "visible_pixel_count": 1600,
+      "file": "frames/frame-00.png"
+    },
+    {
+      "index": 1,
+      "name": "idle-2",
+      "source": {
+        "path": "proc/idle-2.png",
+        "file_sha256": "aadd3c446147770911a00486c46b7360b426159c3b8f6cbb50937b5ca59dc5dc",
+        "bytes": 205,
+        "size": [48, 48],
+        "mode": "RGBA"
+      },
+      "rgba_pixel_sha256": "a105e359e491e23ac84adbf66566d1c1ef73f22a6660a3d610d11c5b46257a25",
+      "transparent_pixel_count": 704,
+      "visible_pixel_count": 1600,
+      "file": "frames/frame-01.png"
+    },
+    {
+      "index": 2,
+      "name": "idle-3",
+      "source": {
+        "path": "proc/idle-3.png",
+        "file_sha256": "aadd3c446147770911a00486c46b7360b426159c3b8f6cbb50937b5ca59dc5dc",
+        "bytes": 205,
+        "size": [48, 48],
+        "mode": "RGBA"
+      },
+      "rgba_pixel_sha256": "a105e359e491e23ac84adbf66566d1c1ef73f22a6660a3d610d11c5b46257a25",
+      "transparent_pixel_count": 704,
+      "visible_pixel_count": 1600,
+      "file": "frames/frame-02.png"
+    },
+    {
+      "index": 3,
+      "name": "idle-4",
+      "source": {
+        "path": "proc/idle-4.png",
+        "file_sha256": "aadd3c446147770911a00486c46b7360b426159c3b8f6cbb50937b5ca59dc5dc",
+        "bytes": 205,
+        "size": [48, 48],
+        "mode": "RGBA"
+      },
+      "rgba_pixel_sha256": "a105e359e491e23ac84adbf66566d1c1ef73f22a6660a3d610d11c5b46257a25",
+      "transparent_pixel_count": 704,
+      "visible_pixel_count": 1600,
+      "file": "frames/frame-03.png"
+    }
+  ],
+  "clips": {
+    "idle": {
+      "frames": [0, 1, 2, 3],
+      "duration_ms": [120, 120, 140, 160],
+      "loop": true,
+      "total_duration_ms": 540,
+      "nominal_fps": null,
+      "average_fps": 7.407407407407407,
+      "preview": {
+        "file": "clips/clip-00.webp",
+        "decoded_frames": [{"index": 0, "start_ms": 0, "duration_ms": 540, "clip_positions": [0, 1, 2, 3]}],
+        "decoded_frame_count": 1,
+        "total_duration_ms": 540,
+        "native_loop_count": 0,
+        "timeline_verified": true,
+        "alpha_and_visible_rgb_exact": true,
+        "hidden_rgb_guaranteed": false,
+        "lossless": true,
+        "file_sha256": "87f35e12e7d89564291721bbbe35a2402a97ffec7ce85c32e417cdccd4d24e17"
+      },
+      "transitions": [
+        {
+          "from_position": 0,
+          "to_position": 1,
+          "premultiplied_rgb_mae": 0.0,
+          "alpha_mae": 0.0,
+          "changed_visible_pixels": 0
+        },
+        {
+          "from_position": 1,
+          "to_position": 2,
+          "premultiplied_rgb_mae": 0.0,
+          "alpha_mae": 0.0,
+          "changed_visible_pixels": 0
+        },
+        {
+          "from_position": 2,
+          "to_position": 3,
+          "premultiplied_rgb_mae": 0.0,
+          "alpha_mae": 0.0,
+          "changed_visible_pixels": 0
+        }
+      ],
+      "last_to_first": {
+        "applies_to_playback": true,
+        "premultiplied_rgb_mae": 0.0,
+        "alpha_mae": 0.0,
+        "changed_visible_pixels": 0
+      }
+    },
+    "pose": {
+      "frames": [2],
+      "duration_ms": [300],
+      "loop": false,
+      "total_duration_ms": 300,
+      "nominal_fps": 3.3333333333333335,
+      "average_fps": 3.3333333333333335,
+      "preview": {
+        "file": "clips/clip-01.webp",
+        "decoded_frames": [{"index": 0, "start_ms": 0, "duration_ms": 300, "clip_positions": [0]}],
+        "decoded_frame_count": 1,
+        "total_duration_ms": 300,
+        "native_loop_count": 1,
+        "timeline_verified": true,
+        "alpha_and_visible_rgb_exact": true,
+        "hidden_rgb_guaranteed": false,
+        "lossless": true,
+        "file_sha256": "a30cc630917ddb64cc0b0229d4811c11c4fd775c22563efe0e7014c87326ff6d"
+      },
+      "transitions": [],
+      "last_to_first": {
+        "applies_to_playback": false,
+        "premultiplied_rgb_mae": 0.0,
+        "alpha_mae": 0.0,
+        "changed_visible_pixels": 0
+      }
+    }
+  },
+  "states": {"idle": "idle"},
+  "diagnostics": {
+    "visible_pixel_duplicate_groups": [[0, 1, 2, 3]],
+    "visual_approval": false,
+    "note": "Pixel differences and duplicates do not establish animation quality or physical root stability."
+  },
+  "contact_sheet": {
+    "file": "contact-sheet.png",
+    "native_scale": true,
+    "annotated_with_shared_root": true,
+    "not_a_runtime_atlas": true,
+    "file_sha256": "060ea33552dde67336fab7ef9b887adf5f0bd2430afcc79e5744a094f833d828"
+  },
+  "processing": {
+    "source_pngs_byte_identical": true,
+    "resized": false,
+    "cropped": false,
+    "per_frame_alignment": false,
+    "chroma_keyed": false
+  },
+  "alpha_validation": "Every input has fully transparent and visible pixels; edge quality still requires visual review."
+}

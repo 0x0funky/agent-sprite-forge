@@ -1,0 +1,17 @@
+{
+  "colors": {
+    "outline": "#2b1d33",
+    "glass": "#d9eef2",
+    "shine": "#ffffff",
+    "cork": "#c08552",
+    "cork-dark": "#87573a",
+    "liquid": "#d93a4b",
+    "liquid-dark": "#9c2236",
+    "liquid-light": "#ff8a7a"
+  },
+  "variants": {
+    "health": {},
+    "mana": {"liquid": "#3b6fe0", "liquid-dark": "#22409c", "liquid-light": "#86b8ff"},
+    "venom": {"liquid": "#5cb848", "liquid-dark": "#2f7a35", "liquid-light": "#b4ec7c"}
+  }
+}

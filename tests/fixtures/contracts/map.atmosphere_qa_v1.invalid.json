@@ -1,0 +1,21 @@
+{
+  "cases": [
+    {
+      "why": "the summary is recorded",
+      "remove": "/summary",
+      "error": "'summary' is a required property"
+    },
+    {
+      "why": "counts are whole and not negative",
+      "set": "/summary/motes",
+      "value": -1,
+      "error": "-1 is less than the minimum of 0"
+    },
+    {
+      "why": "mist is a yes or no",
+      "set": "/summary/mist",
+      "value": "light",
+      "error": "'light' is not of type 'boolean'"
+    }
+  ]
+}

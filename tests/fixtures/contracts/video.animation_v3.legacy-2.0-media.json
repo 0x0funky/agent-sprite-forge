@@ -1,0 +1,106 @@
+{
+  "schemaVersion": "2.0",
+  "name": "idle",
+  "sourceSize": [64, 64],
+  "sourceAnchor": [32.0, 56.0],
+  "inputFrameSize": [32, 32],
+  "sourceRect": [16.0, 16.0, 30.0, 40.0],
+  "sourceRectFormat": "x,y,width,height",
+  "encodedSize": [16, 20],
+  "contentSize": [15, 20],
+  "encodedAnchor": [8.0, 20.0],
+  "registration": "fixed-union-envelope",
+  "fps": 12.0,
+  "frameCount": 4,
+  "durationSeconds": 0.3333333333333333,
+  "loop": true,
+  "reviewStatus": "needs-visual-review",
+  "hitEvents": [],
+  "poster": {
+    "file": "idle-poster.png",
+    "bytes": 98,
+    "sha256": "b78ac1cd1a4e4764a0202b0784bcca10b0daa264b9bc6f2cd759141b3019987d"
+  },
+  "fallback": {
+    "type": "png-atlas",
+    "cellSize": [16, 20],
+    "pages": [
+      {
+        "file": "idle-atlas-00.png",
+        "bytes": 146,
+        "sha256": "19b65322ca85e6e052ea9fecd47eb72bbb99f4f005c1f910fc23a67d65e08171",
+        "firstFrame": 0,
+        "frameCount": 4,
+        "columns": 4
+      }
+    ]
+  },
+  "webm": {
+    "file": "idle.webm",
+    "bytes": 849,
+    "sha256": "97849222dc41e27c34a7afec4401976836bde629b3fc43173c1bc3591f6ded38",
+    "mimeType": "video/webm",
+    "alpha": "native-vp9",
+    "requiresAlphaPlaybackVerification": true,
+    "fullDecodePassed": true
+  },
+  "packedAlpha": {
+    "file": "idle-packed.mp4",
+    "bytes": 1781,
+    "sha256": "960182794f808dcdea49da63ee58b9e6fcba434e529e17c2340e64f53c33e642",
+    "mimeType": "video/mp4",
+    "layout": "rgb-left-alpha-right",
+    "width": 16,
+    "height": 20,
+    "encodedSize": [32, 20],
+    "requiresCompositor": true,
+    "fullDecodePassed": true
+  },
+  "qa": {
+    "status": "needs-visual-review",
+    "loopRequested": true,
+    "frameCount": 4,
+    "durationSeconds": 0.3333333333333333,
+    "blankFrames": [],
+    "edgeTouchFrames": [],
+    "boundsBottomSpanPx": 0,
+    "boundsCenterXSpanPx": 1.5,
+    "seamPremultipliedMAE": 0.038201,
+    "adjacentMedianMAE": 0.012734,
+    "seamToMedianRatio": 3.0,
+    "adjacentMaxMAE": 0.012734,
+    "notes": [
+      "Bounds bottom is a contact-drift proxy, not a tracked foot/root.",
+      "A similar first/last frame does not prove a seamless cycle or stable identity.",
+      "Airborne poses may legitimately change bottom position; review at runtime scale."
+    ]
+  },
+  "inputFrames": [
+    {
+      "file": "clean_0000.png",
+      "bytes": 127,
+      "sha256": "7b3c83bea7e9fba5a070fdc8552b0a082d178be69fa8e7041fbc705e8a155ca0"
+    },
+    {
+      "file": "clean_0001.png",
+      "bytes": 128,
+      "sha256": "a3ca02bbf167ea73a54c05de756c43f62d2b946748e16b0de391f6a17572961e"
+    },
+    {
+      "file": "clean_0002.png",
+      "bytes": 127,
+      "sha256": "7d1f261468acc56de8dedcd61be159c9b8137d5f0cf9d3f54be441da60963595"
+    },
+    {
+      "file": "clean_0003.png",
+      "bytes": 126,
+      "sha256": "6310fa5ac5ccd5561849eba3c318665bf68d15ec32a99433854a44989c8e50cf"
+    }
+  ],
+  "runtimeNotes": [
+    "Game logic owns hit timings, damage and root motion.",
+    "Packed MP4 has no native alpha; reconstruct RGB and alpha before displaying.",
+    "Keep sourceSize/sourceAnchor for world geometry when selecting smaller media.",
+    "Use the PNG poster until a decoded first frame exists; preload only current scene actions."
+  ]
+}

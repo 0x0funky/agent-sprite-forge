@@ -1,0 +1,137 @@
+{
+  "schemaVersion": "3.0",
+  "name": "idle",
+  "sourceSize": [64, 64],
+  "sourceAnchor": [32.0, 56.0],
+  "inputFrameSize": [32, 32],
+  "sourceRect": [0.0, 0.0, 64.0, 64.0],
+  "sourceRectFormat": "x,y,width,height",
+  "encodedSize": [24, 24],
+  "contentSize": [24, 24],
+  "encodedAnchor": [12.0, 21.0],
+  "registration": {
+    "mode": "construction",
+    "jobSha256": "6bb958fe341cb5044e2cbb773828eec3f39d65b029dd86505cb34bada7007cf7"
+  },
+  "fps": 12.0,
+  "frameCount": 4,
+  "durationSeconds": 0.3333333333333333,
+  "loop": true,
+  "reviewStatus": "needs-visual-review",
+  "hitEvents": [],
+  "poster": {
+    "file": "idle-poster.png",
+    "bytes": 254,
+    "sha256": "db0e6ed85600465ddd8fb00873d8084a73b348b39c4028a4cf70d2309a303516"
+  },
+  "fallback": {
+    "type": "png-atlas",
+    "cellSize": [24, 24],
+    "pages": [
+      {
+        "file": "idle-atlas-00.png",
+        "bytes": 555,
+        "sha256": "d5d5aa36ab3be81117401d3159aba61abbd437ca320ca1943b6430d976266ec3",
+        "firstFrame": 0,
+        "frameCount": 4,
+        "columns": 4
+      }
+    ]
+  },
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "engine_export analyze plus matte_qa on the packaged frames",
+    "notProven": ["A low seam ratio does not prove a seamless gait or a stable identity."],
+    "checks": [
+      {"id": "opaque_key_px", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "seam_over_p95", "status": "warn", "value": 1.3, "threshold": 1.0}
+    ],
+    "inputs": [
+      {
+        "path": "clean/clean_0081.png",
+        "sha256": "1b149143bc100a029cfd963d41e188f1af2a06dc93b2760aa5c9ff0ac62e84ca"
+      }
+    ],
+    "outputs": [
+      {
+        "path": "idle-atlas-00.png",
+        "sha256": "3ba7df2912d8da12380f0e7e562c8b4b61012b6f2dc0e6dbfef41a779b68f581"
+      }
+    ],
+    "tool": {"name": "engine_export.py", "version": "0.4.0"},
+    "seamPremultipliedMAE": 0.038201
+  },
+  "inputFrames": [
+    {
+      "file": "clean_0000.png",
+      "bytes": 127,
+      "sha256": "7b3c83bea7e9fba5a070fdc8552b0a082d178be69fa8e7041fbc705e8a155ca0"
+    },
+    {
+      "file": "clean_0001.png",
+      "bytes": 128,
+      "sha256": "a3ca02bbf167ea73a54c05de756c43f62d2b946748e16b0de391f6a17572961e"
+    },
+    {
+      "file": "clean_0002.png",
+      "bytes": 127,
+      "sha256": "7d1f261468acc56de8dedcd61be159c9b8137d5f0cf9d3f54be441da60963595"
+    },
+    {
+      "file": "clean_0003.png",
+      "bytes": 126,
+      "sha256": "6310fa5ac5ccd5561849eba3c318665bf68d15ec32a99433854a44989c8e50cf"
+    }
+  ],
+  "runtimeNotes": [
+    "Game logic owns hit timings, damage and root motion.",
+    "Packed MP4 has no native alpha; reconstruct RGB and alpha before displaying.",
+    "Keep sourceSize/sourceAnchor for world geometry when selecting smaller media.",
+    "Use the PNG poster until a decoded first frame exists; preload only current scene actions."
+  ],
+  "sourceIndices": [81, 82, 83, 84],
+  "durationsMs": [83, 83, 84, 83],
+  "loopPolicy": "cycle",
+  "events": [{"name": "step_l", "atMs": 0, "frame": 0}, {"name": "step_r", "atMs": 166, "frame": 2}],
+  "cadenceMs": 333,
+  "cycles": 1,
+  "strideWorldUnits": 1.65,
+  "speedRef": 4.95,
+  "displayScale": 0.5,
+  "sampling": "linear",
+  "pixelArt": false,
+  "bodyHeightPx": 37.5,
+  "shadow": {"rx": 9, "ry": 3, "opacity": 0.3},
+  "packedAlpha": {
+    "file": "idle-packed.mp4",
+    "bytes": 4096,
+    "sha256": "88cb8a087b6e8cebfc9ae5602f5a2159a6bcf923e7f2c56809bcda6cad1727a7",
+    "mimeType": "video/mp4",
+    "layout": "rgb-left-alpha-right",
+    "width": 24,
+    "height": 24,
+    "halfWidth": 24,
+    "halfHeight": 24,
+    "fps": "12/1",
+    "requiresCompositor": true,
+    "fullDecodePassed": true
+  },
+  "mobilePackedAlpha": [
+    {
+      "tier": "actor",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "width": 24,
+      "height": 24,
+      "halfWidth": 24,
+      "halfHeight": 24,
+      "fps": "12/1",
+      "file": "idle-packed-actor.mp4",
+      "sha256": "f6ba0ee6f4046802f42c9ca6c24f0101c0a0d2da4018d81ba02ae1d632e2a039"
+    }
+  ],
+  "budgetClass": "actor",
+  "provenanceFile": "provenance.json",
+  "artSource": "video",
+  "placeholder": false
+}

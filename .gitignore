@@ -3,3 +3,9 @@ __pycache__/
 .DS_Store
 outputs/
 .tmp/
+.pytest_cache/
+.env
+.env.*
+!.env.example
+.forge/
+AGENTS.md

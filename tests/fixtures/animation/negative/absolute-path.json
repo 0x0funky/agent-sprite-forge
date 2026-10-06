@@ -1,0 +1,16 @@
+{
+  "rule": "paths",
+  "why": "manifests never hold absolute paths",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/provenanceFile",
+      "value": "C:/work/provenance.json"
+    }
+  ],
+  "alsoFails": [
+    "schema"
+  ]
+}

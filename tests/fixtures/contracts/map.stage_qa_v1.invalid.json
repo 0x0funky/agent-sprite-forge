@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "layouts are stageLayouts",
+      "set": "/layouts/0/formation",
+      "value": "duel",
+      "error": "'duel' is not one of"
+    },
+    {
+      "why": "the stage summary states its fit",
+      "set": "/stage/fit",
+      "value": "fill",
+      "error": "'fill' is not one of"
+    },
+    {
+      "why": "settings are recorded",
+      "remove": "/settings",
+      "error": "'settings' is a required property"
+    },
+    {"why": "it is a QA envelope", "remove": "/method", "error": "'method' is a required property"}
+  ]
+}

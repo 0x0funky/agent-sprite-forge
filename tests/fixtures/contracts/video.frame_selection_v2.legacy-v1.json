@@ -1,0 +1,14 @@
+{
+  "schema": "forge-frame-selection/v1",
+  "sourceDirectory": "/work/clip/frames-clean",
+  "start": 81,
+  "endExclusive": 85,
+  "fps": 24,
+  "sourceHashes": [
+    "e1283a0d3bbe31f65b91eba8cb1b8f89a479a2762714d7b02c14804a81d3a939",
+    "f29735811393cf33ea86f6af6d55078fdcaf292da170c24164f01517e3dd7a19",
+    "05729ac051abfcbd5aa39b2bfaebdb26f30e0ab9786bcf87ee16e42a875594ab",
+    "a3e524f7b4989387770673d21c521e8524b26e4a5b74591c8057a8ced651a9a4"
+  ],
+  "status": "selected-needs-visual-review"
+}

@@ -1,0 +1,30 @@
+{
+  "schema": "generate2dmedia.batch_progress.v1",
+  "jobsFile": "props.json",
+  "execution": "execute",
+  "workers": 1,
+  "startedAt": "2026-10-05T05:24:32.648Z",
+  "updatedAt": "2026-10-05T05:24:32.715Z",
+  "results": [
+    {
+      "id": "k0",
+      "status": "generated",
+      "outcomeCode": "ok",
+      "jobDir": "out/k0",
+      "artifact": "generated.png",
+      "estimateUsd": null
+    },
+    {
+      "id": "k1",
+      "status": "failed",
+      "outcomeCode": "quota",
+      "jobDir": "out/k1",
+      "error": "API HTTP 429 insufficient_quota: You exceeded your current quota; request was not retried"
+    }
+  ],
+  "inFlight": [],
+  "remaining": ["k2"],
+  "stopped": true,
+  "stopReason": "k1: quota",
+  "complete": false
+}

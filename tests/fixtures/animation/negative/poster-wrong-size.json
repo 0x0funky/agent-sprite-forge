@@ -1,0 +1,18 @@
+{
+  "rule": "poster",
+  "why": "the poster keeps the encoded canvas",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "png",
+      "file": "idle-poster.png",
+      "size": [
+        10,
+        10
+      ],
+      "rehash": true
+    }
+  ],
+  "alsoFails": []
+}

@@ -1,0 +1,7 @@
+interface:
+  display_name: "Generate 2D Media"
+  short_description: "One generate command: API first, then local CLIs; keys and ledger"
+  default_prompt: "Use $generate2dmedia to check the art routes (API keys configured or not, local CLIs, the resolved order), generate through route_media.py and hand the result to the matching Forge skill."
+
+policy:
+  allow_implicit_invocation: false

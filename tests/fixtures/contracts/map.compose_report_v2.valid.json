@@ -1,0 +1,126 @@
+{
+  "schema": "generate2dmap.compose_report.v2",
+  "tool": {"name": "compose_layered_preview", "version": "2.0"},
+  "base": "../src/base.png",
+  "base_sha256": "92ea173db5fc5ec99cdd9517b70d3ad8045e75425f7d0a9974695e154b8b2c33",
+  "placements": "../src/placements.json",
+  "placements_sha256": "b31f722498f08de90fb1d3651cd8cde3718be6db37753b85ead677d473adb702",
+  "output": "preview.png",
+  "output_sha256": "3a0791753e3394906f60e931fb67a6653c9717c1798d49e8532aa45b99a148b1",
+  "canvas_size": [256, 160],
+  "scale": 1.0,
+  "resampler": "lanczos",
+  "sort": "ground-line",
+  "anchor_policy": "manifest",
+  "compositing_order": [
+    {"band": "base", "draws": "the base image (scaled by --scale)"},
+    {
+      "band": "background",
+      "draws": "placements on layer background",
+      "sorted_by": ["sortY", "x", "id"]
+    },
+    {
+      "band": "world",
+      "draws": "props, objects, actors and every other layer",
+      "sorted_by": ["sortY", "x", "id"]
+    },
+    {
+      "band": "foreground",
+      "draws": "the foreground list and layer foreground",
+      "sorted_by": ["sortY", "x", "id"]
+    },
+    {"band": "not baked", "draws": "the debug overlay and plate pan are separate files"}
+  ],
+  "prop_packs": [
+    {
+      "path": "../props/prop-pack.json",
+      "sha256": "807fa72ddc6f680ab362ef6ac498d70d75e4fee4bb9937c6fa1ba35a4282df1d",
+      "bytes": 12846
+    }
+  ],
+  "pasted": [
+    {
+      "id": "p0",
+      "group": "props",
+      "kind": "prop",
+      "layer": "props",
+      "band": "world",
+      "draw_index": 0,
+      "image": "../props/tree/prop.png",
+      "image_sha256": "b85b6a28167a571d0536e4fa54f260a458f1b2461e9c84f80a7cec54da6f34c7",
+      "left": 19,
+      "top": 61,
+      "w": 41,
+      "h": 62,
+      "source_size": [41, 62],
+      "anchorPx": [21.0, 59.0],
+      "anchor_source": "manifest",
+      "anchor_world": [40.0, 120.0],
+      "anchor_canvas": [40.0, 120.0],
+      "anchor_world_error": [0.0, 0.0],
+      "resampler": "lanczos",
+      "clipped": false,
+      "visible_bounds": [27, 69, 52, 120],
+      "sortY": 120.0,
+      "sort_source": "ground-line",
+      "footprint": {
+        "shape": "ellipse",
+        "cx": 39.5,
+        "cy": 117.25,
+        "rx": 5.5,
+        "ry": 2.75,
+        "rotate": 0.0,
+        "source": "manifest",
+        "solid": true
+      },
+      "warnings": [
+        "p0: footprint basis 'prop_px' is not one of image_px, world_px; read as image_px."
+      ]
+    },
+    {
+      "id": "p1",
+      "group": "props",
+      "kind": "prop",
+      "layer": "props",
+      "band": "world",
+      "draw_index": 1,
+      "image": "../props/rock/prop.png",
+      "image_sha256": "b13057574f72f75796855b6b6147b91e31c584762b6072dd8e3b400a101e6827",
+      "left": 65,
+      "top": 83,
+      "w": 49,
+      "h": 42,
+      "source_size": [49, 42],
+      "anchorPx": [25.0, 37.0],
+      "anchor_source": "manifest",
+      "anchor_world": [90.0, 120.0],
+      "anchor_canvas": [90.0, 120.0],
+      "anchor_world_error": [0.0, 0.0],
+      "resampler": "lanczos",
+      "clipped": false,
+      "visible_bounds": [73, 91, 106, 120],
+      "sortY": 120.0,
+      "sort_source": "ground-line",
+      "footprint": {
+        "shape": "ellipse",
+        "cx": 89.5,
+        "cy": 111.75,
+        "rx": 16.5,
+        "ry": 8.25,
+        "rotate": 0.0,
+        "source": "manifest",
+        "solid": true
+      },
+      "warnings": [
+        "p1: footprint basis 'prop_px' is not one of image_px, world_px; read as image_px."
+      ]
+    }
+  ],
+  "warnings": [
+    "p0: footprint basis 'prop_px' is not one of image_px, world_px; read as image_px.",
+    "p1: footprint basis 'prop_px' is not one of image_px, world_px; read as image_px.",
+    "p2: footprint basis 'prop_px' is not one of image_px, world_px; read as image_px.",
+    "hero: footprint basis 'prop_px' is not one of image_px, world_px; read as image_px."
+  ],
+  "audit_status": "warn"
+}

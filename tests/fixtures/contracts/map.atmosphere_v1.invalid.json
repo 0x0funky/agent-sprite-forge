@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "grade is mandatory", "remove": "/grade"},
+    {"why": "negative bloom", "set": "/grade/bloom", "value": -1}
+  ]
+}

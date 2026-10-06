@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "t above 1", "set": "/rotate/0", "value": [1.5, -26]},
+    {"why": "no tracks", "document": {}},
+    {"why": "translate needs [dx, dy]", "set": "/translate", "value": [[0, 5]]}
+  ]
+}

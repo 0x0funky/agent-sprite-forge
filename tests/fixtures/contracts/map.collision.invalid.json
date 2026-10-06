@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "actor radius is mandatory", "remove": "/actorRadius"},
+    {"why": "zero squash", "set": "/ySquash", "value": 0},
+    {"why": "negative width", "set": "/rects/0", "value": [0, 0, -5, 16]},
+    {
+      "why": "the rect cell is positive",
+      "set": "/rectCell",
+      "value": 0,
+      "error": "0 is less than or equal to the minimum of 0"
+    }
+  ]
+}

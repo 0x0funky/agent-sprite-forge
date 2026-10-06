@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 2,
+  "provider": "xai",
+  "kind": "video",
+  "route": "rest",
+  "apiBase": "https://api.x.ai/v1",
+  "endpoint": "https://api.x.ai/v1/videos/generations",
+  "requestedModel": "grok-imagine-video-1.5",
+  "options": {"model": "grok-imagine-video-1.5", "duration": 4, "resolution": "720p", "generate_audio": false},
+  "promptSha256": "17fc4886124f201a84e6622702340e0e316d4ad8cd0256cba730b30c94a4f63c",
+  "references": [
+    {
+      "path": "D:\\games\\hero\\art\\hero-master.png",
+      "sha256": "746ced7f9247b7505c1549e5c53a720f25df609750d5ec40f3d83157e8f281e6",
+      "size": [32, 48],
+      "mime": "image/png",
+      "bytes": 123
+    }
+  ],
+  "lastFrame": null,
+  "keyEnv": "XAI_API_KEY",
+  "paidRequests": 1,
+  "automaticPostRetries": 0,
+  "outDir": "D:\\games\\hero\\jobs\\hero-idle-video",
+  "execution": "execute",
+  "uploadUrl": {
+    "host": "uploads.example.com",
+    "sha256": "095fd5769ffc7570c5264673c954818efc1ff43998a23934166e81206608c886"
+  },
+  "fingerprint": "fcc18ae94a06270c923c8710d4d5983eed43ddbd81e89b24278a4c1cd1d98acb",
+  "estimate": {
+    "usd": 0.57,
+    "currency": "USD",
+    "basis": "4 output_second x 0.14 + 1 input_image x 0.01 = 0.57 USD list price (verified 2026-10-05); excludes tax and rejected attempts",
+    "pricesVersion": "2026-10-05",
+    "items": [
+      {
+        "unit": "output_second",
+        "quantity": 4,
+        "usdEach": 0.14,
+        "usd": 0.56,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verifiedAt": "2026-10-05",
+        "resolution": "720p"
+      },
+      {
+        "unit": "input_image",
+        "quantity": 1,
+        "usdEach": 0.01,
+        "usd": 0.01,
+        "source": "https://docs.x.ai/developers/pricing",
+        "verifiedAt": "2026-10-05"
+      }
+    ]
+  },
+  "consent": {
+    "provider": "xai",
+    "model": "grok-imagine-video-1.5",
+    "calls": 1,
+    "estimateUsd": 0.57,
+    "apiHost": "api.x.ai"
+  },
+  "status": "interrupted",
+  "clientRequestId": "85a815c5713043c2b0009223ea439826",
+  "receipt": {
+    "startedAt": "2026-10-05T05:24:32.245Z",
+    "submittedAt": "2026-10-05T05:24:32.258Z",
+    "completedAt": null,
+    "wallMs": null,
+    "providerMs": null,
+    "attempt": 1,
+    "purpose": null,
+    "toolVersion": "generate_media/2.0",
+    "outcomeCode": "network"
+  },
+  "ledger": {
+    "projectDir": "D:\\games\\hero\\project",
+    "reservationId": "4ba171d874e640ffb4589e0d72c89805",
+    "status": "reserved"
+  },
+  "requestId": "req-video-1",
+  "errorType": "MediaError"
+}

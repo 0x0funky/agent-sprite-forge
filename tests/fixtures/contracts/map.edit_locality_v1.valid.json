@@ -1,0 +1,111 @@
+{
+  "schema": "generate2dmap.edit_locality.v1",
+  "status": "pass",
+  "method": "edit_locality_check: before-space comparison at 334x188 (identity transform, Lanczos), 3x3 box blur, per-pixel peak channel difference > 24 counts as changed; per region: changed fraction, mean absolute difference and 8-connected change components.",
+  "notProven": [
+    "Locality only: the tool does not judge whether the intended edit looks right, only where pixels changed.",
+    "Changes below --pixel-threshold after the blur (soft relighting, slight blur or sharpening) pass unless they raise a region's mean difference above --max-mae.",
+    "A resized variant is compared through the given transform with Lanczos resampling; a generator that also shifted, rotated or warped the picture shows up as change everywhere, and a sub-pixel misregistration as change along edges.",
+    "Regions are the given UV boxes and polygons; content that should have been protected but was not listed is only covered by the outside-edit check (when --edit-box is given)."
+  ],
+  "checks": [
+    {
+      "id": "transform recorded",
+      "status": "pass",
+      "value": {
+        "kind": "identity",
+        "scale": [1.0, 1.0],
+        "src_rect": [0.0, 0.0, 334.0, 188.0],
+        "out_size": [334, 188],
+        "map": "out = (src - src_rect[0:2]) * scale",
+        "aspectDistortion": 0.0
+      },
+      "threshold": {"maxAspectDistortion": 0.01}
+    },
+    {
+      "id": "outside the edit unchanged",
+      "status": "pass",
+      "value": {
+        "pixels": 58632,
+        "changedPx": 0,
+        "changedFraction": 0.0,
+        "mae": 0.0,
+        "p99": 0.0,
+        "largestComponentPx": 0,
+        "components": [],
+        "minComponentPx": 31.396
+      },
+      "threshold": {
+        "pixelThreshold": 24.0,
+        "maxChangedFraction": 0.002,
+        "maxMae": 3.0,
+        "minComponentPx": 31.396
+      }
+    },
+    {
+      "id": "edit is visible",
+      "status": "pass",
+      "value": {"changedPx": 700, "mae": 16.7464},
+      "threshold": "> 0 changed pixels"
+    },
+    {
+      "id": "changes overall",
+      "status": "pass",
+      "value": {
+        "pixels": 62792,
+        "changedPx": 700,
+        "changedFraction": 0.0111,
+        "mae": 0.6689,
+        "p99": 36.6667,
+        "largestComponentPx": 700,
+        "components": [
+          {"areaPx": 700, "box": [149, 149, 181, 171], "uv": [0.4461, 0.7926, 0.5419, 0.9096]}
+        ],
+        "minComponentPx": 31.396
+      },
+      "threshold": "with no --edit-box, look at every change component"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "../src/battle.png",
+      "sha256": "373aefae2516919ae4614b68b02052dfa02dcd78feb42aae52444f777bfd6747",
+      "bytes": 692
+    },
+    {
+      "path": "../src/battle-edit.png",
+      "sha256": "709c27b0f0c4cdba8bb2f7aa0c311bf50b24555dca5c21314dee5dfd433dd836",
+      "bytes": 722
+    },
+    {
+      "path": "../src/stage.json",
+      "sha256": "59d6054c366cd0e25f9d55b5fa89f673c302f84767f4e4be9f33a41d773d3daa",
+      "bytes": 759
+    }
+  ],
+  "outputs": [
+    {
+      "path": "locality-diff.png",
+      "sha256": "8919b327ead3368986445f8265fe6b43d02445d248802111947577eb935b1cd0",
+      "bytes": 5742
+    }
+  ],
+  "tool": {"name": "edit_locality_check", "version": "1.0"},
+  "transform": {
+    "kind": "identity",
+    "scale": [1.0, 1.0],
+    "src_rect": [0.0, 0.0, 334.0, 188.0],
+    "out_size": [334, 188],
+    "map": "out = (src - src_rect[0:2]) * scale"
+  },
+  "comparison": {
+    "space": "before",
+    "size": [334, 188],
+    "blur": 1,
+    "pixelThreshold": 24.0,
+    "exact": false
+  },
+  "regions": [],
+  "editBoxes": [[0.4, 0.75, 0.6, 0.95]],
+  "warnings": []
+}

@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "MISSING needs a remedy", "remove": "/checks/1/remedy"},
+    {"why": "statuses are upper case", "set": "/checks/0/status", "value": "ok"},
+    {"why": "routes are mandatory", "remove": "/routes"},
+    {
+      "why": "the overall verdict is OK, WARN or FAIL",
+      "set": "/overall",
+      "value": "GOOD",
+      "error": "'GOOD' is not one of"
+    }
+  ]
+}

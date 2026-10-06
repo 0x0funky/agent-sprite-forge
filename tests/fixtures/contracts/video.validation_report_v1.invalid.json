@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "video2dsprite.validation.v2",
+      "error": "was expected"
+    },
+    {
+      "why": "it is a QA envelope",
+      "remove": "/notProven",
+      "error": "'notProven' is a required property"
+    },
+    {"why": "a pass cannot hold a failed check", "set": "/checks/0/status", "value": "fail"}
+  ]
+}

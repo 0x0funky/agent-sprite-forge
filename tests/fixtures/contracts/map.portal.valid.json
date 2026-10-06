@@ -1,0 +1,11 @@
+{
+  "id": "exit-east",
+  "rect": [624, 192, 16, 48],
+  "to": "route-1:spawn-west",
+  "activation": "intent",
+  "travelDirection": [1, 0],
+  "radius": 12,
+  "entranceByFrom": {"route-1": "spawn-east"},
+  "latch": true,
+  "requiresMovement": true
+}

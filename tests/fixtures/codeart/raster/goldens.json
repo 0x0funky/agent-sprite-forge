@@ -1,0 +1,52 @@
+{
+  "about": "Rasterizer goldens for the codeart2d doctor corpus. The SVGs are byte-identical to codeart_core.doctor_cases() (t01, t03, t07, t09, t10, t16, t17 equal design/raster-tests/svg; t06A is the rotate(a cx cy) part of t06; t13 is t13 without mix-blend-mode/isolation). sha256 values hash the canonical RGBA pixel bytes (codeart_core.rgba_sha256), not PNG files.",
+  "provenance": {
+    "generator": "codeart_core.rasterize(case.svg, zoom, backend)",
+    "date": "2026-10-05",
+    "machine": "Windows 11 AMD64",
+    "license": "synthetic test images generated from the SVGs in this folder; no third-party art"
+  },
+  "resvg_py": {
+    "version": "0.5.0",
+    "engine": "resvg 0.48.1",
+    "platform": "win32",
+    "sha256": {
+      "t01@1x": "190f07bfb7a46fd3edd3caedbf0d3cc3b7ee531d5e404b05207dd7c793ea7b89",
+      "t01@4x": "e8dab49e10e57fa07bbe11cc9217ce6da6d5224b59268a489825c5d994b72825",
+      "t03@1x": "978fc371169c0930794427ab932c6cc2d6c936b03bafe4594808d8e71a5ab7ca",
+      "t06A@1x": "b2a44ca0351fe52c1b84be4874c123e7799786a474139b141632e8782a252d07",
+      "t07@1x": "e9f17d22c4f4889686f21289279d861bb8d1beb2ca944a4f8efe7542b5ffbfae",
+      "t09@1x": "b05bbc2678d47c8c3823de9bdf2152e2daac719df1b20b1446732a5bb070c59a",
+      "t10@1x": "92ddfe88a570af7ea9f2b36cee2fa41e3a532f48d10eff581008e783189bc7a7",
+      "t13@1x": "789defd071a1700e6d142672fbc0681bded267635d677dfc0884d24c6ff0c550",
+      "t16@1x": "190f07bfb7a46fd3edd3caedbf0d3cc3b7ee531d5e404b05207dd7c793ea7b89",
+      "t17@1x": "00c3b0dae22e336a87c678ef05a2cc062daf3c8f0229b15a4803286d0db5b2fa"
+    }
+  },
+  "chrome": {
+    "version": "154.0.8037.57",
+    "mode": "headless CLI --screenshot of a file:// SVG",
+    "images": {
+      "t09@1x": "t09_gradients.chrome.png",
+      "t10@1x": "t10_clip_mask_pattern.chrome.png",
+      "t13@1x": "t13_group_opacity.chrome.png"
+    },
+    "sha256": {
+      "t09@1x": "89529b063eac26f8277ac51888ec277fe0225c9c242b6ca8b47da117a6f0f521",
+      "t10@1x": "16c989d6f3e195582e208d49f1cfc6d0d1cbcff3d7ffc9c5bf8378309f119a91",
+      "t13@1x": "b2b69eae97240bb6f167bcae795b1958e79099aa503e64e5dd0a5954ab71643e"
+    }
+  },
+  "max_mae_vs_chrome": 1.0,
+  "cases": {
+    "t01": "t01_pixel_grid_crisp.svg",
+    "t03": "t03_shapes_crisp_1x.svg",
+    "t06A": "t06A_rotate_pivot.svg",
+    "t07": "t07_use_symbol.svg",
+    "t09": "t09_gradients.svg",
+    "t10": "t10_clip_mask_pattern.svg",
+    "t13": "t13_group_opacity.svg",
+    "t16": "t16_css_class_palette.svg",
+    "t17": "t17_css_class_swap.svg"
+  }
+}

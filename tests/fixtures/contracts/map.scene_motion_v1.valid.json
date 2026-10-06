@@ -1,0 +1,290 @@
+{
+  "schema": "generate2dmap.scene_motion.v1",
+  "tool": {"name": "scene_motion", "version": "1.0.0"},
+  "plan": {
+    "path": "../src/motion.json",
+    "sha256": "c449b40cd3733fa1d6dbb4e7dbdbaa8221d030f0be444a69721a1f5b09074e9a",
+    "bytes": 375,
+    "document": {
+      "schema": "generate2dmap.motion_plan.v1",
+      "sourceSize": [96, 64],
+      "regions": [
+        {
+          "id": "water",
+          "kind": "rect",
+          "box": [10, 30, 80, 60],
+          "feather": 3,
+          "strength": 1,
+          "motion": "flow"
+        }
+      ],
+      "protected": [{"id": "rock", "box": [40, 40, 50, 50], "margin": 1, "feather": 2}],
+      "loop": {"policy": "forward-overlap", "overlap": 4, "range": [0, 16]},
+      "encode": {"crf": 18, "keyint": 12}
+    }
+  },
+  "plate": {
+    "path": "../src/scene.png",
+    "sha256": "90cb35f20d5e4100f875a88499f06a2a4c7458b321df4eaab72db5faac3a0f39",
+    "bytes": 212,
+    "size": [96, 64]
+  },
+  "clip": {
+    "path": "../src/clip",
+    "sha256": "1bf49c89fbf9a47ef437e1ab4b000e394eb63eaaa305a5356c90ccb292d5f6c5",
+    "kind": "frames",
+    "frames": 16,
+    "size": [96, 64],
+    "fps": "12/1"
+  },
+  "maskSource": {
+    "path": "../mask/motion-mask.png",
+    "sha256": "2980e91e46da3844a6ce06ce5aaec6186fcfa7eaadcdef67363cec48191b0a56",
+    "bytes": 235
+  },
+  "registration": {
+    "fit": "contain",
+    "scale": 1.0,
+    "offset": [0.0, 0.0],
+    "clipSize": [96, 64],
+    "plateSize": [96, 64],
+    "footprint": [0.0, 0.0, 96.0, 64.0],
+    "map": "plate = clip * scale + offset",
+    "edgeFadePx": 24.0,
+    "coverageMin": 1.0,
+    "shiftEstimates": [
+      {
+        "frame": 0,
+        "status": "measured",
+        "shift": [0, 0],
+        "maeAtZero": 0.1648,
+        "maeAtBest": 0.1648,
+        "pixels": 3144
+      },
+      {
+        "frame": 7,
+        "status": "measured",
+        "shift": [0, 0],
+        "maeAtZero": 0.0449,
+        "maeAtBest": 0.0449,
+        "pixels": 3144
+      },
+      {
+        "frame": 15,
+        "status": "measured",
+        "shift": [0, 0],
+        "maeAtZero": 0.1681,
+        "maeAtBest": 0.1681,
+        "pixels": 3144
+      }
+    ]
+  },
+  "loop": {
+    "policy": "forward-overlap",
+    "overlap": 4,
+    "range": [0, 16],
+    "frameCount": 12,
+    "fps": "12/1",
+    "durationMs": 1000.0,
+    "blend": "tail b-overlap+j and head a+j, head weight smoothstep((j + 1) / (overlap + 1))",
+    "reversedSteps": 0,
+    "frames": [[[4, 1.0]], [[5, 1.0]]]
+  },
+  "composite": {
+    "outsideMaskMaxDelta": 0,
+    "sourceSeam": {
+      "frames": 12,
+      "seam": 1.565785,
+      "adjacent_median": 1.568765,
+      "adjacent_p95": 7.394825,
+      "adjacent_max": 7.395141,
+      "seam_over_median": 0.998101,
+      "seam_over_p95": 0.211741,
+      "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+    },
+    "formula": "plate + (clip - plate) * mask / 255, rounded half-up"
+  },
+  "video": {
+    "path": "loop.mp4",
+    "sha256": "1192f8559fe647ba9d876fde3f7c9693c3e58c3c2f28d74ebcfee12ea33becd2",
+    "bytes": 2992,
+    "codec": "h264",
+    "profile": "main",
+    "encodedSize": [96, 64],
+    "crop": [0, 0, 96, 64],
+    "padding": [0, 0, 0, 0],
+    "crf": 18,
+    "keyint": 12,
+    "closedGop": true,
+    "keyframes": [0],
+    "wrapQp": null,
+    "wrapFrames": 0,
+    "fps": "12/1",
+    "decodedPixelsPerSecond": 73728.0
+  },
+  "poster": {
+    "path": "poster.png",
+    "sha256": "de7a87145abfefe4eebdc5fd60dbc8c60ae705296df288288699f8b2b88f4dbc",
+    "bytes": 610,
+    "frame": 0,
+    "from": "decoded loop frame 0 composited over the plate with the mask"
+  },
+  "mask": {
+    "path": "motion-mask.png",
+    "sha256": "2980e91e46da3844a6ce06ce5aaec6186fcfa7eaadcdef67363cec48191b0a56",
+    "bytes": 235
+  },
+  "encodeAttempts": [
+    {
+      "crf": 18,
+      "wrapQp": null,
+      "wrapFrames": 0,
+      "bytes": 2992,
+      "sha256": "1192f8559fe647ba9d876fde3f7c9693c3e58c3c2f28d74ebcfee12ea33becd2",
+      "decodedSeamOverP95": 0.207556,
+      "status": "pass"
+    }
+  ],
+  "qa": {
+    "status": "warn",
+    "method": "scene_motion build: composite only inside the mask (outside equal to the plate before encoding), forward-only frame map, closed GOPs aligned to the loop, then the encoded file decoded and composited over the plate with the mask: forge_core.seam_report weighted by the mask plus RGB motion, leak and stability measures. The poster is the decoded frame 0 over the plate.",
+    "notProven": [
+      "Playback in a browser, engine or device: only an offline ffmpeg decode was measured; decoder throughput, memory and autoplay are not.",
+      "Perceptual seamlessness: the seam ratio compares the wrap with the loop's own steps inside the mask; watch the loop at gameplay scale.",
+      "Generated content: compositing cannot remove a hallucinated object, a ring on wet ground or a drifting landmark; review the clip and regenerate instead.",
+      "Registration is one fixed transform; the shift estimate covers whole pixels in static areas of three frames.",
+      "Thresholds (seam 1.0, mean opacity 0.07, motion energy 2.0, leak and protected drift 0.5) come from one project's loops."
+    ],
+    "checks": [
+      {"id": "outside_delta", "status": "pass", "value": 0, "threshold": 0},
+      {
+        "id": "forward_only",
+        "status": "pass",
+        "value": 0,
+        "threshold": "0 reversed steps unless every region is motion: sway"
+      },
+      {"id": "protected_max", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "source_seam", "status": "pass", "value": 0.211741, "threshold": 1.0},
+      {
+        "id": "registration",
+        "status": "pass",
+        "value": [
+          {"frame": 0, "shift": [0, 0]},
+          {"frame": 7, "shift": [0, 0]},
+          {"frame": 15, "shift": [0, 0]}
+        ],
+        "threshold": "best whole-pixel shift (0, 0) on static plate areas"
+      },
+      {"id": "frame_count", "status": "pass", "value": 12, "threshold": 12},
+      {
+        "id": "gop_aligned",
+        "status": "pass",
+        "value": {"keyframes": [0], "gop": 12, "frames": 12},
+        "threshold": "keyframes at 0, g, 2g, ... with g dividing the loop and g = 12"
+      },
+      {
+        "id": "container",
+        "status": "pass",
+        "value": {"timestampsIncreasing": true, "moovBeforeMdat": true},
+        "threshold": "increasing decode timestamps; moov before mdat for streaming"
+      },
+      {"id": "decoded_seam", "status": "pass", "value": 0.207556, "threshold": 1.0},
+      {"id": "mean_opacity", "status": "pass", "value": 0.347871, "threshold": 0.07},
+      {"id": "motion_energy", "status": "pass", "value": 7.981297, "threshold": 2.0},
+      {"id": "leak_ring", "status": "pass", "value": 0.491796, "threshold": 0.5},
+      {"id": "protected_stability", "status": "warn", "value": 1.459524, "threshold": 0.5},
+      {
+        "id": "region_stability",
+        "status": "pass",
+        "value": {"unstable": [], "stills": []},
+        "threshold": {"maxSeamRatio": 1.0, "stillFloor": 0.05, "stillTolerance": 1.0}
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../src/motion.json",
+        "sha256": "c449b40cd3733fa1d6dbb4e7dbdbaa8221d030f0be444a69721a1f5b09074e9a",
+        "bytes": 375
+      },
+      {
+        "path": "../src/scene.png",
+        "sha256": "90cb35f20d5e4100f875a88499f06a2a4c7458b321df4eaab72db5faac3a0f39",
+        "bytes": 212
+      },
+      {
+        "path": "../src/clip",
+        "sha256": "1bf49c89fbf9a47ef437e1ab4b000e394eb63eaaa305a5356c90ccb292d5f6c5"
+      },
+      {
+        "path": "../mask/motion-mask.png",
+        "sha256": "2980e91e46da3844a6ce06ce5aaec6186fcfa7eaadcdef67363cec48191b0a56",
+        "bytes": 235
+      }
+    ],
+    "outputs": [
+      {
+        "path": "loop.mp4",
+        "sha256": "1192f8559fe647ba9d876fde3f7c9693c3e58c3c2f28d74ebcfee12ea33becd2",
+        "bytes": 2992
+      },
+      {
+        "path": "poster.png",
+        "sha256": "de7a87145abfefe4eebdc5fd60dbc8c60ae705296df288288699f8b2b88f4dbc",
+        "bytes": 610
+      },
+      {
+        "path": "motion-mask.png",
+        "sha256": "2980e91e46da3844a6ce06ce5aaec6186fcfa7eaadcdef67363cec48191b0a56",
+        "bytes": 235
+      }
+    ],
+    "tool": {"name": "scene_motion", "version": "1.0.0"}
+  },
+  "metrics": {
+    "frames": 12,
+    "keyframes": [0],
+    "gop": 12,
+    "video": {"width": 96, "height": 64, "fps": "12/1", "codec": "h264", "pixFmt": "yuv420p"},
+    "decodedSeam": {
+      "frames": 12,
+      "seam": 1.687712,
+      "adjacent_median": 2.038793,
+      "adjacent_p95": 8.131338,
+      "adjacent_max": 8.375658,
+      "seam_over_median": 0.827799,
+      "seam_over_p95": 0.207556,
+      "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first"
+    },
+    "rgbSteps": {"median": 2.718391, "p95": 10.841784, "max": 11.167545},
+    "meanOpacity": 0.347871,
+    "motionEnergy": {"max": 7.981297, "mean": 4.506444},
+    "leakRing": {
+      "ringPx": 4,
+      "pixels": 868,
+      "meanStep": 0.491796,
+      "maxStep": 1.225039,
+      "staticError": 1.389785
+    },
+    "protectedDrift": 1.459524,
+    "regions": [
+      {
+        "id": "water",
+        "mode": "loop",
+        "status": "pass",
+        "seam": 2.250283,
+        "adjacentP95": 10.841784,
+        "seamOverP95": 0.207556,
+        "maxDrift": 7.981297
+      }
+    ],
+    "poster": null
+  },
+  "thresholds": {
+    "maxSeamRatio": 1.0,
+    "warnMeanOpacity": 0.07,
+    "warnMotionEnergy": 2.0,
+    "warnLeak": 0.5,
+    "warnProtected": 0.5,
+    "ringPx": 4
+  }
+}

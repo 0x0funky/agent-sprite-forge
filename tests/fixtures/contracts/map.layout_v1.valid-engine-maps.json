@@ -1,0 +1,19 @@
+{
+  "schema": "generate2dmap.layout.v1",
+  "segments": [[0, 262, "ground"], [262, 346, "gap"], [346, 640, "ground"], [640, 830, "slope"]],
+  "surface": [[0, 216], [640, 216], [700, 240], [770, 240], [830, 216]],
+  "props": [
+    {"id": "lantern", "x": 118, "y": 216, "w": 10},
+    {"id": "plank", "kind": "deck", "x0": 280, "x1": 330, "y": 190, "thickness": 4}
+  ],
+  "spawns": [{"id": "start", "x": 40, "y": 216}],
+  "exits": [{"id": "gate", "x": 820}],
+  "camera": {"viewHeight": 270, "travel": 80},
+  "physics": {
+    "jumpHeight": 72,
+    "jumpDistance": 120,
+    "maxSlopeDeg": 35,
+    "stepUp": 8,
+    "colliderSubstep": 3
+  }
+}

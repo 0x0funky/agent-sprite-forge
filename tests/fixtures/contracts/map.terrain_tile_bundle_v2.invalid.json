@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "why": "v1 bundles have their own id",
+      "set": "/schema",
+      "value": "generate2dmap.terrain_tile_bundle.v1",
+      "error": "'generate2dmap.terrain_tile_bundle.v2' was expected"
+    },
+    {
+      "why": "image tiles have no exact seam proof",
+      "set": "/qc/seamless_verified",
+      "value": true,
+      "error": "False was expected"
+    },
+    {
+      "why": "a Wang row needs materials and per-tile masks",
+      "set": "/terrains/grass/kind",
+      "value": "wang_corner",
+      "error": "'materials' is a required property"
+    },
+    {
+      "why": "shapes are square, rect, iso-diamond, hex-pointy, hex-flat",
+      "set": "/tile/shape",
+      "value": "octagon",
+      "error": "is not one of"
+    },
+    {
+      "why": "paths are manifest-relative",
+      "set": "/terrains/grass/variants/0/path",
+      "value": "C:/x/grass-1.png",
+      "error": "does not match"
+    }
+  ]
+}

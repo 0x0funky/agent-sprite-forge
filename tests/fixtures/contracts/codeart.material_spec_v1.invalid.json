@@ -1,0 +1,20 @@
+{
+  "cases": [
+    {"why": "wang sets need two materials", "set": "/sets/0/materials", "value": ["water"]},
+    {"why": "unknown kind", "set": "/sets/0/kind", "value": "hex"},
+    {"why": "seed is mandatory", "remove": "/seed"},
+    {"why": "empty ramp", "set": "/materials/water/ramp", "value": []},
+    {
+      "why": "blob47 takes exactly two materials",
+      "set": "/sets/1/materials",
+      "value": ["grass", "dirt", "water"],
+      "error": "is too long"
+    },
+    {
+      "why": "noise levels are [threshold, amplitude, ramp position]",
+      "set": "/materials/grass/texture",
+      "value": {"noise": {"levels": [[0.5, 0.2]]}},
+      "error": "is not valid under any"
+    }
+  ]
+}

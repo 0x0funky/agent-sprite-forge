@@ -1,0 +1,32 @@
+{
+  "schema": "video2dsprite.character_profile.v1",
+  "id": "hero",
+  "sourceSize": [256, 256],
+  "sourceAnchor": [130.5, 233.0],
+  "registration": {
+    "scale": 0.655940594059406,
+    "anchorMode": "stance",
+    "masterSha256": "732d33ff6c099a43da3724e376f78780557e5034a53441f620adc7ecda2383e1",
+    "referenceCanvas": [320, 180],
+    "fit": "auto",
+    "resampler": "lanczos",
+    "groundMinRun": 3,
+    "restFootBottom": 233
+  },
+  "matte": {"mode": "soft", "key": "magenta", "erode": 0.0, "unmix": true, "despill": "auto"},
+  "clips": {
+    "run": {
+      "padding": [0, 0, 0, 0],
+      "sourceSize": [256, 256],
+      "sourceAnchor": [130.5, 233.0],
+      "registration": {
+        "path": "../work/hero-run-reg/registration.json",
+        "sha256": "20eecbfa104f7991cc358981a3d92abf5096964557205e23d4fc0c7be17714ac"
+      },
+      "jobSha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55",
+      "nativeFootBottom": 234.0
+    }
+  },
+  "nativeFootBottomRange": [234.0, 234.0],
+  "tool": {"name": "register_clip", "version": "1"}
+}

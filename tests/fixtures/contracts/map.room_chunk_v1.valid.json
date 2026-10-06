@@ -1,0 +1,16 @@
+{
+  "schema": "generate2dmap.room_chunk.v1",
+  "chunks": [
+    {
+      "id": "a",
+      "size": [320, 180],
+      "sockets": {"E": [{"offset": 80, "width": 32, "material": "floor"}]}
+    },
+    {
+      "id": "b",
+      "size": [320, 180],
+      "sockets": {"W": [{"offset": 80, "width": 32, "material": "floor"}]}
+    }
+  ],
+  "graph": [{"from": "a", "to": "b", "side": "E"}]
+}

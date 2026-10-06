@@ -1,0 +1,142 @@
+{
+  "schema": "generate2dmap.layout_validation.v1",
+  "tool": {"name": "validate_layout", "version": "1.0"},
+  "status": "pass",
+  "extent": {"x0": 0, "x1": 830},
+  "physics": {
+    "jumpHeight": 72.0,
+    "jumpDistance": 120.0,
+    "maxSlopeDeg": 35.0,
+    "stepUp": 8.0,
+    "colliderSubstep": 3.0,
+    "minDeckThickness": 4,
+    "groundTolerance": 1.0
+  },
+  "spans": [
+    {
+      "id": "ground-0",
+      "kind": "ground",
+      "x0": 0,
+      "x1": 262,
+      "top_min": 216.0,
+      "top_max": 216.0,
+      "reachable": true
+    },
+    {
+      "id": "ground-1",
+      "kind": "ground",
+      "x0": 346,
+      "x1": 830,
+      "top_min": 216.0,
+      "top_max": 240.0,
+      "reachable": true
+    },
+    {
+      "id": "deck-plank",
+      "kind": "deck",
+      "x0": 280,
+      "x1": 330,
+      "top_min": 190.0,
+      "top_max": 190.0,
+      "reachable": true
+    }
+  ],
+  "pieces": [],
+  "gaps": [
+    {
+      "x0": 262,
+      "x1": 346,
+      "width": 84,
+      "kind": "gap",
+      "near": "ground-0",
+      "far": "ground-1",
+      "direct": {
+        "from": [261.5, 216.0],
+        "to": [346.5, 216.0],
+        "distance": 85.0,
+        "rise": 0.0,
+        "reach": 120.0,
+        "feasible": true
+      },
+      "crossable": true
+    }
+  ],
+  "props": [
+    {
+      "id": "lantern",
+      "x": 118.0,
+      "y": 216.0,
+      "w": 10.0,
+      "status": "supported",
+      "floating_columns": 0,
+      "sunk_columns": 0,
+      "max_gap_px": null
+    }
+  ],
+  "arenas": [
+    {
+      "arena": "level",
+      "viewport": "16:9",
+      "arena_width": 830.0,
+      "view_width": 480.0,
+      "travel": 80.0,
+      "needed": 560.0,
+      "status": "pass"
+    },
+    {
+      "arena": "level",
+      "viewport": "19.5:9",
+      "arena_width": 830.0,
+      "view_width": 585.0,
+      "travel": 80.0,
+      "needed": 665.0,
+      "status": "pass"
+    }
+  ],
+  "reachability": {
+    "start": "start",
+    "reached_spans": ["deck-plank", "ground-0", "ground-1"],
+    "unreached_spans": []
+  },
+  "qa": {
+    "status": "pass",
+    "method": "validate_layout: per-column ground from segments and the surface polyline; standable spans linked by a parabolic jump arc (apex jumpHeight, range jumpDistance) checked for clearance over solid columns; breadth-first search from the first spawn; base-line support for props.",
+    "notProven": [
+      "The actor is a point at its feet: collider width, head room under decks and ceilings are not modelled.",
+      "Jumps follow one parabola (apex jumpHeight, range jumpDistance) with full air control down to zero horizontal speed; coyote time, double jumps, dashes and variable gravity are not modelled.",
+      "Decks are one-way (landable from any arc that reaches their top); they never block an arc.",
+      "Floating and sunk props are judged from their base line only; their art and colliders are not inspected.",
+      "Camera travel is the value given (default 0); the tool does not simulate the camera."
+    ],
+    "checks": [
+      {"id": "segments", "status": "pass", "value": [], "threshold": null},
+      {
+        "id": "slope_limit",
+        "status": "pass",
+        "value": [],
+        "threshold": {"max_slope_deg": 35.0, "step_up_px": 8.0}
+      },
+      {
+        "id": "step_limit",
+        "status": "pass",
+        "value": {"ledges": [], "impassable": []},
+        "threshold": {"step_up_px": 8.0, "jump_height_px": 72.0}
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../src/layout.json",
+        "sha256": "cb3d4b3a1398ab27c32ac2c0d43924e826beb89437a7ba486c643e752c98e6dd",
+        "bytes": 580
+      }
+    ],
+    "outputs": [
+      {
+        "path": "layout-debug.png",
+        "sha256": "2822d1014460dd36691de34ad47f0e69bc3ebf64d2d2c78c175c1edfbeeb572f",
+        "bytes": 1816
+      }
+    ],
+    "tool": {"name": "validate_layout", "version": "1.0"}
+  }
+}

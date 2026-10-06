@@ -1,0 +1,140 @@
+{
+  "schema": "video2dsprite.registration.v1",
+  "mode": "construction",
+  "tool": {"name": "register_clip", "version": "1"},
+  "clip": "run",
+  "action": "run",
+  "profile": "actor",
+  "jobSha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55",
+  "job": {
+    "path": "../../jobs/hero-run/registration_job.json",
+    "sha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55"
+  },
+  "master": {
+    "path": "../../jobs/hero-run/master.png",
+    "sha256": "732d33ff6c099a43da3724e376f78780557e5034a53441f620adc7ecda2383e1",
+    "size": [256, 256],
+    "anchor": [130.5, 233.0]
+  },
+  "anchorMode": "stance",
+  "keyColor": "magenta",
+  "referenceCanvas": [320, 180],
+  "referenceScale": 0.655940594059406,
+  "referenceOffset": [74.39975247524752, 2.1658415841584144],
+  "baseSize": [256, 256],
+  "baseAnchor": [130.5, 233.0],
+  "padding": [0, 0, 0, 0],
+  "sourceSize": [256, 256],
+  "sourceAnchor": [130.5, 233.0],
+  "masterGeometry": {
+    "groundLine": 233,
+    "top": 31,
+    "height": 202,
+    "centroidX": 126.99064614568131,
+    "hipX": 128.5,
+    "anchor": [130.5, 233.0],
+    "anchorBandRows": 8
+  },
+  "video": {
+    "size": [320, 180],
+    "frameCount": 64,
+    "range": [0, 64],
+    "frameDirectory": "../hero-run/frames-clean"
+  },
+  "transform": {
+    "fit": "auto",
+    "fitApplied": "uniform",
+    "videoScale": [1.0, 1.0],
+    "videoOffset": [0.0, 0.0],
+    "anchorVideo": [160.0, 155.0],
+    "anchorOutput": [130.5, 233.0],
+    "inverse": {
+      "scale": [1.5245283018867923, 1.5245283018867923],
+      "offset": [-113.42452830188677, -3.3018867924528195]
+    },
+    "resampler": "lanczos",
+    "note": "output = video * inverse.scale + inverse.offset + shift; one transform for every frame"
+  },
+  "lock": {
+    "modes": ["feet"],
+    "maxShift": null,
+    "groundMinRun": 3,
+    "targets": {
+      "source": "rest",
+      "ground": 234,
+      "x": 127.19835587377354,
+      "hip": 129.0,
+      "height": 203.0
+    }
+  },
+  "rest": {
+    "frames": [0],
+    "nativeFootBottom": 234.0,
+    "anchor": [130.5, 234.0],
+    "anchorExpected": [130.5, 233.0],
+    "anchorError": [0.0, 1.0],
+    "heightRatio": 1.004950495049505,
+    "areaRatio": 1.0006633939233116
+  },
+  "nativeFootBottomRange": [207, 234],
+  "frames": [
+    {
+      "file": "frames/frame_000000.png",
+      "sha256": "c0f9ebacd6fa0143e299d44f8fc3999f4c41045915f5173a870bdf73faac09c0",
+      "sourceIndex": 0,
+      "sourceFile": "clean_0000.png",
+      "sourceSha256": "b3a49771ceed4df278f2e2d97d591caf8500bdf3ccb554f02ad3e79f1e0fcfad",
+      "shift": [0, 0],
+      "nativeFootBottom": 234
+    },
+    {
+      "file": "frames/frame_000001.png",
+      "sha256": "28fcadafadd881c1129732fb27307bbc8e1362b2dee4cdf4b6e7b6b284e1721a",
+      "sourceIndex": 1,
+      "sourceFile": "clean_0001.png",
+      "sourceSha256": "5b4495236a909717aa3a5925d887eb1b6f19c1f561488dd8773056bd79f03b4b",
+      "shift": [0, 6],
+      "nativeFootBottom": 228
+    }
+  ],
+  "review": {"path": "review-contact.png", "frames": [0, 6, 11, 17, 23, 29, 34, 40, 46, 52, 57, 63]},
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "register_clip apply v1: one inverse transform from registration_job.v1 (registration by construction), forge_core.resample_rgba anchor-pinned premultiplied resampling; subject = alpha > 16; edge, overflow and rest-pose checks on the source and registered alpha",
+    "notProven": [
+      "identity, contact and pose quality (look at review-contact.png and the frames)",
+      "matte quality of the input frames",
+      "loop seams and timing (gait_loop, retime)"
+    ],
+    "checks": [
+      {"id": "video-edge-touch", "status": "pass", "value": [], "threshold": 0},
+      {
+        "id": "canvas-overflow",
+        "status": "pass",
+        "value": {"frames": [], "neededPadding": [0, 0, 0, 0]},
+        "threshold": 0.5
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../../jobs/hero-run/registration_job.json",
+        "sha256": "d27f41c65683f47fb688d6ee063957c33acbd48ec94ab9d008e316304c834e55"
+      },
+      {
+        "path": "../../jobs/hero-run/master.png",
+        "sha256": "732d33ff6c099a43da3724e376f78780557e5034a53441f620adc7ecda2383e1"
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/frame_000000.png",
+        "sha256": "c0f9ebacd6fa0143e299d44f8fc3999f4c41045915f5173a870bdf73faac09c0"
+      },
+      {
+        "path": "frames/frame_000001.png",
+        "sha256": "28fcadafadd881c1129732fb27307bbc8e1362b2dee4cdf4b6e7b6b284e1721a"
+      }
+    ],
+    "tool": {"name": "register_clip", "version": "1"}
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "schema": "video2dsprite.character_profile.v1",
+  "id": "traveler",
+  "sourceSize": [448, 448],
+  "sourceAnchor": [224, 392],
+  "worldScale": 0.25,
+  "registration": {"scale": 0.35, "anchorMode": "feet"},
+  "matte": {
+    "mode": "soft",
+    "key": "magenta",
+    "erode": 0,
+    "unmix": true,
+    "despill": "auto",
+    "params": {"w_chroma": 0.2, "r_c": 6, "interior_despill": true, "snap": "ramp", "refine": "none"}
+  },
+  "clips": {"attack": {"padding": [96, 80, 96, 24], "sourceSize": [640, 552], "sourceAnchor": [320, 510]}}
+}

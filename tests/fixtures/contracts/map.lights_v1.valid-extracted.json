@@ -1,0 +1,33 @@
+{
+  "schema": "generate2dmap.lights.v1",
+  "tool": {"name": "extract_scene_lights", "version": "1.0"},
+  "plate": {
+    "path": "../src/battle.png",
+    "sha256": "373aefae2516919ae4614b68b02052dfa02dcd78feb42aae52444f777bfd6747",
+    "bytes": 692
+  },
+  "sourceSize": [334, 188],
+  "radiusUnit": "plate-width",
+  "ambient": "#243044",
+  "cookie": "light-cookie.png",
+  "cookieSize": [512, 288],
+  "cookieSha256": "b319744051c2d763a23d1e2b210c7561103bc5f5a230c71c049cfc7e6d9f4a7b",
+  "lights": [
+    {
+      "id": "L1",
+      "u": 0.13772,
+      "v": 0.15957,
+      "color": "#ffc10e",
+      "radius": 0.15,
+      "strength": 0.37521
+    },
+    {
+      "id": "L2",
+      "u": 0.79042,
+      "v": 0.15957,
+      "color": "#ffb300",
+      "radius": 0.15,
+      "strength": 0.40904
+    }
+  ]
+}

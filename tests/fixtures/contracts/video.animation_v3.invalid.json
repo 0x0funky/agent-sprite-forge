@@ -1,0 +1,28 @@
+{
+  "cases": [
+    {
+      "why": "3.0 registration is an object",
+      "set": "/registration",
+      "value": "preserved-source-canvas"
+    },
+    {"why": "3.0 carries per-frame durations", "remove": "/durationsMs"},
+    {"why": "3.0 qa is a QA envelope", "set": "/qa", "value": {"status": "needs-visual-review"}},
+    {"why": "3.0 packed alpha records halves", "remove": "/packedAlpha/halfWidth"},
+    {"why": "absolute path", "set": "/poster/file", "value": "C:\\out\\idle-poster.png"},
+    {"why": "unknown version", "set": "/schemaVersion", "value": "4.0"},
+    {"why": "a rational fps has positive integer parts", "set": "/packedAlpha/fps", "value": "30000/0", "error": "$.packedAlpha.fps:"},
+    {"why": "mobile tiers state their fps", "remove": "/mobilePackedAlpha/0/fps", "error": "'fps' is a required property"},
+    {
+      "why": "fpsRational is num/den",
+      "set": "/fpsRational",
+      "value": "12",
+      "error": "does not match"
+    },
+    {
+      "why": "mobile halves are positive integers",
+      "set": "/mobilePackedAlpha/0/halfWidth",
+      "value": 0,
+      "error": "0 is less than the minimum of 1"
+    }
+  ]
+}

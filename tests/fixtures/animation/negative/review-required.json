@@ -1,0 +1,10 @@
+{
+  "rule": "review",
+  "why": "an unreviewed clip with --require-review",
+  "base": "png",
+  "args": [
+    "--require-review"
+  ],
+  "ops": [],
+  "alsoFails": []
+}

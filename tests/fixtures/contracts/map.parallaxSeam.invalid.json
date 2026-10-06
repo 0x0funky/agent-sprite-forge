@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "verdicts are snake_case, one vocabulary with edgeSeam (per D9)",
+      "set": "/verdict",
+      "value": "duplicate-edge",
+      "error": "$.verdict: 'duplicate-edge' is not one of"
+    },
+    {
+      "why": "a statistic never claims a seamless proof",
+      "set": "/seamless_verified",
+      "value": true,
+      "error": "False was expected"
+    },
+    {"why": "axes are x or y", "set": "/axis", "value": "z", "error": "'z' is not one of"},
+    {
+      "why": "a measured seam records the seamReport numbers",
+      "remove": "/adjacent_p95",
+      "error": "'adjacent_p95' is a required property"
+    }
+  ]
+}

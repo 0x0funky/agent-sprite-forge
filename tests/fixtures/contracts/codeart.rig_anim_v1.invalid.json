@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "no clips", "set": "/clips", "value": {}},
+    {"why": "Windows path", "set": "/rig", "value": "C:\\rigs\\hero.rig.svg"},
+    {"why": "unknown easing", "set": "/clips/walk/ease", "value": "bounce"},
+    {
+      "why": "pixel outline modes are fixed",
+      "set": "/pixel",
+      "value": {"outline_mode": "glow"},
+      "error": "'glow' is not one of"
+    }
+  ]
+}

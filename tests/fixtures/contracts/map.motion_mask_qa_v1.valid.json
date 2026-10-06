@@ -1,0 +1,70 @@
+{
+  "schema": "generate2dmap.motion_mask_qa.v1",
+  "status": "pass",
+  "method": "build_motion_mask: plan regions rasterised on pixel centres, grown by margin and feathered outside by exact Euclidean distance; protected cores forced to 0 with their transition outside; optional clip luma-range envelope admitted within reach of each region.",
+  "notProven": [
+    "Whether the regions are the right ones: the mask follows the plan; review the overlay at gameplay scale.",
+    "Generated content: a mask cannot remove a hallucinated object, a ring on wet ground or a drifting landmark; regenerate the clip instead.",
+    "The envelope is the clip's luma range per pixel after one fixed transform; motion below the threshold, or a provider camera drift the transform does not model, is not detected.",
+    "Thresholds (mean opacity 0.07, envelope 10 luma levels) come from one project's scenes."
+  ],
+  "checks": [
+    {"id": "protected_max", "status": "pass", "value": 0, "threshold": 0},
+    {"id": "mask_not_empty", "status": "pass", "value": 0.386719, "threshold": "> 0"},
+    {
+      "id": "regions_visible",
+      "status": "pass",
+      "value": [],
+      "threshold": "every region shows at least one pixel"
+    },
+    {"id": "mean_opacity", "status": "pass", "value": 0.347871, "threshold": 0.07}
+  ],
+  "inputs": [
+    {
+      "path": "../src/motion.json",
+      "sha256": "c449b40cd3733fa1d6dbb4e7dbdbaa8221d030f0be444a69721a1f5b09074e9a",
+      "bytes": 375
+    },
+    {
+      "path": "../src/scene.png",
+      "sha256": "90cb35f20d5e4100f875a88499f06a2a4c7458b321df4eaab72db5faac3a0f39",
+      "bytes": 212
+    }
+  ],
+  "outputs": [
+    {
+      "path": "motion-mask.png",
+      "sha256": "2980e91e46da3844a6ce06ce5aaec6186fcfa7eaadcdef67363cec48191b0a56",
+      "bytes": 235
+    },
+    {
+      "path": "mask-overlay.png",
+      "sha256": "851d346e2596406faaa6e8360871dfe69892a1f9924cfb7ccdc1cd09aab60487",
+      "bytes": 439
+    }
+  ],
+  "tool": {"name": "build_motion_mask", "version": "1.0.0"},
+  "plateSize": [96, 64],
+  "protectedMax": 0,
+  "coverage": 0.386719,
+  "coverageOver50": 0.351562,
+  "meanOpacity": 0.347871,
+  "regions": [
+    {
+      "id": "water",
+      "supportPx": 2516,
+      "visiblePx": 2376,
+      "meanOpacity": 0.84949,
+      "kind": "rect",
+      "motion": "flow"
+    }
+  ],
+  "protected": [{"id": "rock", "corePx": 140, "max": 0}],
+  "envelope": null,
+  "settings": {
+    "protectFeather": 8.0,
+    "lumaMinArea": 16,
+    "luma": "Rec.601 (0.299, 0.587, 0.114) after a 3x3 box blur",
+    "warnMeanOpacity": 0.07
+  }
+}

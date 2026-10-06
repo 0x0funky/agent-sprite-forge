@@ -1,0 +1,14 @@
+{
+  "rule": "timing",
+  "why": "durationSeconds disagrees with durationsMs and fps",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/durationSeconds",
+      "value": 9.5
+    }
+  ],
+  "alsoFails": []
+}

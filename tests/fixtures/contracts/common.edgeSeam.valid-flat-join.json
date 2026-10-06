@@ -1,0 +1,12 @@
+{
+  "seam": 0.0,
+  "adjacent_median": 0.0,
+  "adjacent_p95": 0.0,
+  "adjacent_max": 0.0,
+  "seam_over_median": 0.0,
+  "seam_over_p95": 0.0,
+  "seam_ratio": 0.0,
+  "near_median": 0.0,
+  "verdict": "continuous",
+  "method": "premultiplied RGBA column steps (0-255); join vs interior steps within 8 columns per side, whole edge and worst 4-row window"
+}

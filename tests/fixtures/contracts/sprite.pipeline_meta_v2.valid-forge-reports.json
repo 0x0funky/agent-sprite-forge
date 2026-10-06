@@ -1,0 +1,102 @@
+{
+  "schema": "generate2dsprite.pipeline_meta.v2",
+  "target": "player",
+  "mode": "player_walk",
+  "background_mode": "chroma_key",
+  "resampler": "lanczos",
+  "rows": 1,
+  "cols": 2,
+  "cell_size": 64,
+  "frames": [
+    {"grid": [0, 0], "trim_offset": [16, 8], "source_rect": [16, 8, 46, 58]},
+    {"grid": [0, 1], "trim_offset": [16, 8], "source_rect": [80, 8, 110, 58]}
+  ],
+  "geometry": {
+    "alpha_geometry_threshold": 16,
+    "connectivity": 8,
+    "anchor_mode": "stance",
+    "scale_strategy": "fit",
+    "pixel_scale": null,
+    "grid_rounding": "nearest",
+    "pad_offset": [0, 0]
+  },
+  "hygiene": {
+    "mode": "both",
+    "floor": 4,
+    "solid_min": 32,
+    "attach_radius": 2,
+    "connectivity": 8,
+    "floor_px": 67907,
+    "detached_px": 11,
+    "detached_components": 7,
+    "max_removed_alpha": 5
+  },
+  "provenance": {
+    "input_sha256": "566fc07c42bea8ac81ecd163dd130f336114bd30c8a63c8f4b8ec9562f125671",
+    "source_mode": "P",
+    "bit_depth": 8,
+    "conversion": "P+tRNS -> RGBA",
+    "raw_copy": "raw-sheet.png"
+  },
+  "matte": {
+    "quality": "soft",
+    "requested_quality": "auto",
+    "resampler_hint": "lanczos",
+    "key": [249.0, 5.0, 249.0],
+    "key_estimate": {
+      "declared": "magenta",
+      "declared_rgb": [255, 0, 255],
+      "ring_px": 2816,
+      "native_alpha": false,
+      "use_native_alpha": false,
+      "near_share": 0.957386,
+      "key": [249.0, 5.0, 249.0],
+      "source": "border_median",
+      "valid": true,
+      "reason": null,
+      "ring_share": 0.957386,
+      "coverage": 0.633789,
+      "distance_from_declared": 9.85
+    },
+    "params": {
+      "w_chroma": 1.0,
+      "t_bg": 18.0,
+      "t_fg": 40.0,
+      "keylike": 0.5,
+      "r_a": 3,
+      "r_c": 3,
+      "radius": 4,
+      "tau": 6.0,
+      "kappa": 0.6,
+      "temp": 0.4,
+      "a_lo": 0.04,
+      "a_hi": 0.96,
+      "unmix_from": 0.0,
+      "excess_slack": 3.0,
+      "ref_r": 10,
+      "speck_steps": 3,
+      "monotone": true,
+      "interior_despill": true,
+      "snap": "ramp",
+      "refine": "none",
+      "gf_r": 2,
+      "gf_eps": 0.004
+    },
+    "interior_despill": true,
+    "key_material_share": 0.0,
+    "qa": {
+      "key": [249.0, 5.0, 249.0],
+      "opaque_key_px": 0,
+      "outer_ring_spill_fraction": 0.0,
+      "semitransparent_fraction": 0.0,
+      "enclosed_key_pockets": 0,
+      "key_hued_px": 0,
+      "visible_px": 3000,
+      "outer_ring_px": 312,
+      "thresholds": {"key_tolerance": 48.0, "spill_threshold": 20.0, "min_pocket_area": 16, "opaque_alpha": 128},
+      "method": "forge_matte.matte_qa v1: straight-colour key distance and dominance on the keyed image"
+    }
+  },
+  "art_source": "host_image",
+  "placeholder": false
+}

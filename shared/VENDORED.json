@@ -1,0 +1,105 @@
+{
+  "description": "Canonical shared files and the byte-identical copies each skill ships (skills never import across skill folders). Edit only the canonical, then run python tools/vendor_sync.py --write followed by --check. A canonical whose owning module has not landed yet is skipped unless FORGE_VENDOR_STRICT=1. Paths are relative to the repository root.",
+  "files": [
+    {
+      "canonical": "shared/forge_core.py",
+      "owner": "A1-forge-core",
+      "targets": [
+        "skills/generate2dsprite/scripts/forge_core.py",
+        "skills/generate2dmap/scripts/forge_core.py",
+        "skills/video2dsprite/scripts/forge_core.py",
+        "skills/codeart2d/scripts/forge_core.py"
+      ]
+    },
+    {
+      "canonical": "shared/forge_matte.py",
+      "owner": "A2-forge-matte",
+      "targets": [
+        "skills/generate2dsprite/scripts/forge_matte.py",
+        "skills/generate2dmap/scripts/forge_matte.py",
+        "skills/video2dsprite/scripts/forge_matte.py"
+      ]
+    },
+    {
+      "canonical": "shared/forge_av.py",
+      "owner": "A5-forge-av",
+      "targets": [
+        "skills/video2dsprite/scripts/forge_av.py",
+        "skills/generate2dmap/scripts/forge_av.py"
+      ]
+    },
+    {
+      "canonical": "shared/forge_palette.py",
+      "owner": "B04-palette-pixel",
+      "targets": [
+        "skills/generate2dsprite/scripts/forge_palette.py",
+        "skills/video2dsprite/scripts/forge_palette.py"
+      ]
+    },
+    {
+      "canonical": "shared/forge_nav.py",
+      "owner": "integration (D4)",
+      "targets": [
+        "skills/generate2dmap/scripts/forge_nav.py",
+        "skills/codeart2d/scripts/forge_nav.py"
+      ]
+    },
+    {
+      "canonical": "shared/forge_schema.py",
+      "owner": "integration (D31)",
+      "targets": [
+        "skills/generate2dmap/scripts/forge_schema.py",
+        "skills/codeart2d/scripts/forge_schema.py",
+        "skills/video2dsprite/scripts/forge_schema.py"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/common.schema.json",
+      "owner": "A0-contracts",
+      "targets": [
+        "skills/generate2dsprite/references/schemas/common.schema.json",
+        "skills/generate2dmap/references/schemas/common.schema.json",
+        "skills/video2dsprite/references/schemas/common.schema.json",
+        "skills/codeart2d/references/schemas/common.schema.json",
+        "skills/generate2dmedia/references/schemas/common.schema.json"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/sprite.schema.json",
+      "owner": "A0-contracts",
+      "targets": [
+        "skills/generate2dsprite/references/schemas/sprite.schema.json",
+        "skills/codeart2d/references/schemas/sprite.schema.json"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/video.schema.json",
+      "owner": "A0-contracts",
+      "targets": [
+        "skills/video2dsprite/references/schemas/video.schema.json"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/map.schema.json",
+      "owner": "A0-contracts",
+      "targets": [
+        "skills/generate2dmap/references/schemas/map.schema.json",
+        "skills/codeart2d/references/schemas/map.schema.json"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/codeart.schema.json",
+      "owner": "A0-contracts",
+      "targets": [
+        "skills/codeart2d/references/schemas/codeart.schema.json"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/media.schema.json",
+      "owner": "A0-contracts",
+      "targets": [
+        "skills/generate2dmedia/references/schemas/media.schema.json"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "cases": [
+    {"why": "no T separator", "document": "2026-10-05 04:16:00"},
+    {"why": "no offset", "document": "2026-10-05T04:16:00"}
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": "3.0",
+  "name": "idle_ntsc",
+  "sourceSize": [64, 64],
+  "sourceAnchor": [32.0, 56.0],
+  "inputFrameSize": [32, 32],
+  "sourceRect": [0.0, 0.0, 64.0, 64.0],
+  "sourceRectFormat": "x,y,width,height",
+  "encodedSize": [24, 24],
+  "contentSize": [24, 24],
+  "encodedAnchor": [12.0, 21.0],
+  "registration": {"mode": "fixed-envelope"},
+  "fps": "30000/1001",
+  "frameCount": 4,
+  "durationSeconds": 0.13346666666666668,
+  "loop": true,
+  "reviewStatus": "needs-visual-review",
+  "hitEvents": [],
+  "poster": {
+    "file": "idle_ntsc-poster.png",
+    "bytes": 254,
+    "sha256": "db0e6ed85600465ddd8fb00873d8084a73b348b39c4028a4cf70d2309a303516"
+  },
+  "fallback": {
+    "type": "png-atlas",
+    "cellSize": [24, 24],
+    "pages": [
+      {
+        "file": "idle_ntsc-atlas-00.png",
+        "bytes": 555,
+        "sha256": "d5d5aa36ab3be81117401d3159aba61abbd437ca320ca1943b6430d976266ec3",
+        "firstFrame": 0,
+        "frameCount": 4,
+        "columns": 4
+      }
+    ]
+  },
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "engine_export analyze plus matte_qa on the packaged frames",
+    "notProven": ["A low seam ratio does not prove a seamless gait or a stable identity."],
+    "checks": [
+      {"id": "opaque_key_px", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "seam_over_p95", "status": "pass", "value": 0.96, "threshold": 1.0}
+    ],
+    "inputs": [
+      {
+        "path": "clean/clean_0081.png",
+        "sha256": "1b149143bc100a029cfd963d41e188f1af2a06dc93b2760aa5c9ff0ac62e84ca"
+      }
+    ],
+    "outputs": [
+      {
+        "path": "idle_ntsc-packed.mp4",
+        "sha256": "433eb24203447269c308b813310a65922ebe3e977a871394b8b197667e987903"
+      }
+    ],
+    "tool": {"name": "engine_export.py", "version": "0.4.0"}
+  },
+  "sourceIndices": [81, 82, 83, 84],
+  "durationsMs": [33, 34, 33, 33],
+  "loopPolicy": "cycle",
+  "events": [{"name": "step_l", "atMs": 0, "frame": 0}, {"name": "step_r", "atMs": 67, "frame": 2}],
+  "packedAlpha": {
+    "file": "idle_ntsc-packed.mp4",
+    "bytes": 1808,
+    "sha256": "433eb24203447269c308b813310a65922ebe3e977a871394b8b197667e987903",
+    "mimeType": "video/mp4",
+    "codec": "h264",
+    "layout": "rgb-left-alpha-right",
+    "width": 24,
+    "height": 24,
+    "halfWidth": 24,
+    "halfHeight": 24,
+    "encodedSize": [48, 24],
+    "fps": "30000/1001",
+    "inputFps": "30000/1001",
+    "fpsCapped": false,
+    "crf": 18,
+    "keyint": null,
+    "keyframes": [0],
+    "requiresCompositor": true
+  },
+  "mobilePackedAlpha": [
+    {
+      "tier": "actor",
+      "sourceWidth": 24,
+      "sourceHeight": 24,
+      "width": 48,
+      "height": 24,
+      "fps": "30000/1001",
+      "file": "idle_ntsc-packed-actor.mp4",
+      "sha256": "f6ba0ee6f4046802f42c9ca6c24f0101c0a0d2da4018d81ba02ae1d632e2a039"
+    }
+  ],
+  "artSource": "video",
+  "placeholder": false
+}

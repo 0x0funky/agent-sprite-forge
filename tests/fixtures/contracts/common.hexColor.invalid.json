@@ -1,0 +1,3 @@
+{
+  "cases": [{"why": "five digits", "document": "#12345"}, {"why": "missing #", "document": "1a1c2c"}]
+}

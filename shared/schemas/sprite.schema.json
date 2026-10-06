@@ -1,0 +1,1203 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/sprite.schema.json",
+  "title": "generate2dsprite contracts",
+  "description": "Frozen contracts, version 1, for still sprites, animation clips, process metadata, scale profiles, sheet QC and palettes. v1 documents written by the cfed170 tools stay valid. Objects stay open (additionalProperties true).",
+  "$defs": {
+    "clipFrame": {
+      "description": "A clip frame source: a manifest-relative PNG path, or {name, file}. Frames share one canvas and one anchor_px, so per-frame anchors are refused.",
+      "anyOf": [
+        {"$ref": "common.schema.json#/$defs/relPath"},
+        {
+          "type": "object",
+          "required": ["file", "name"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "name": {"type": "string", "minLength": 1, "pattern": "\\S"}
+          },
+          "not": {"anyOf": [{"required": ["anchor_px"]}, {"required": ["anchorPx"]}]}
+        }
+      ]
+    },
+    "clipEvent": {
+      "description": "A gameplay event at a 0-based position within the clip's frame list.",
+      "type": "object",
+      "required": ["at", "name"],
+      "properties": {
+        "at": {"type": "integer", "minimum": 0},
+        "name": {"$ref": "common.schema.json#/$defs/eventName"},
+        "data": true
+      }
+    },
+    "clipTransition": {
+      "description": "A hint for switching from this clip to another: enter it at entry_frame, optionally dissolving over dissolve_ms.",
+      "type": "object",
+      "required": ["to"],
+      "properties": {
+        "to": {"type": "string", "minLength": 1},
+        "entry_frame": {"type": "integer", "minimum": 0},
+        "dissolve_ms": {"type": "integer", "minimum": 0},
+        "mode": {"enum": ["dither", "premultiplied"]}
+      }
+    },
+    "clipSpec": {
+      "description": "One clip in a clips manifest. frames are 0-based indices or frame names. Timing is duration_ms (integer ms per frame, or one value for all) or ticks at tick_hz (default 60). Looping is loop (v1) or loop_policy (v2).",
+      "type": "object",
+      "required": ["frames"],
+      "properties": {
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"anyOf": [{"type": "integer", "minimum": 0}, {"type": "string", "minLength": 1}]}
+        },
+        "duration_ms": {
+          "anyOf": [{"type": "integer", "minimum": 1}, {"$ref": "common.schema.json#/$defs/durationsMs"}]
+        },
+        "loop": {"type": "boolean"},
+        "stride_world_units": {"type": "number", "exclusiveMinimum": 0},
+        "ticks": {
+          "anyOf": [
+            {"type": "integer", "minimum": 1},
+            {"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 1}
+          ]
+        },
+        "tick_hz": {"type": "integer", "minimum": 1, "default": 60},
+        "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
+        "events": {"type": "array", "items": {"$ref": "#/$defs/clipEvent"}},
+        "keys": {
+          "description": "Action key poses as 0-based clip positions.",
+          "type": "object",
+          "properties": {
+            "wind_start": {"type": "integer", "minimum": 0},
+            "wind_peak": {"type": "integer", "minimum": 0},
+            "strike": {"type": "integer", "minimum": 0},
+            "recover": {"type": "integer", "minimum": 0},
+            "end": {"type": "integer", "minimum": 0}
+          }
+        },
+        "entry_frame": {"type": "integer", "minimum": 0},
+        "stride_px_per_frame": {"type": "number", "exclusiveMinimum": 0},
+        "cadence_ms": {"type": "number", "exclusiveMinimum": 0},
+        "speed_ref": {"type": "number", "exclusiveMinimum": 0},
+        "transitions": {"type": "array", "items": {"$ref": "#/$defs/clipTransition"}},
+        "hitstop_ticks": {"type": "integer", "minimum": 0},
+        "role": {"enum": ["player", "enemy", "npc", "fx", "prop"]}
+      },
+      "allOf": [
+        {"anyOf": [{"required": ["duration_ms"]}, {"required": ["ticks"]}]},
+        {"anyOf": [{"required": ["loop"]}, {"required": ["loop_policy"]}]}
+      ]
+    },
+    "clips_input": {
+      "description": "Input manifest for build_animation_clips.py. schema is generate2dsprite.animation_clips.v1 or .v2; a missing schema means v1, where every clip needs duration_ms and loop. anchor_px is the shared canvas root, never a per-frame visible bottom. Indexed PNG frames are not valid builder input. The top-level art_source, placeholder, pixel_art and sampling and the clip events are not gated by version: the builder honours them in v1 manifests too (per D11); code-art producers (render_pixelspec, rig_animate) and scale_frames --emit-clips write v2.",
+      "type": "object",
+      "required": ["frames", "anchor_px", "clips"],
+      "properties": {
+        "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]},
+        "frames": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/clipFrame"}},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/clipSpec"}},
+        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
+        "pixel_art": {"type": "boolean"},
+        "palette_ref": {"$ref": "common.schema.json#/$defs/relPath"},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"},
+        "body_height_px": {"type": "number", "exclusiveMinimum": 0},
+        "shadow": {"$ref": "common.schema.json#/$defs/shadow"}
+      },
+      "if": {"properties": {"schema": {"const": "generate2dsprite.animation_clips.v2"}}, "required": ["schema"]},
+      "then": true,
+      "else": {"properties": {"clips": {"additionalProperties": {"required": ["duration_ms", "loop"]}}}}
+    },
+    "builtClip": {
+      "description": "One clip as written by build_animation_clips.py: resolved frame indices, exact per-frame durations and the WebP preview record. v2 adds events_ms and tick_grid. frames and duration_ms are the played timeline: a pingpong clip is expanded (0 1 2 3 2 1), so v1 players loop it correctly, and its authored order stays in authored_frames and authored_duration_ms. Positions (per D12): ticks, keys and entry_frame stay authored positions (indices into the clip's authored frame list), as in the clips input; events_ms[].at is the authored position too, events_ms[].position is the index into the played frames timeline, and events_ms[].at_ms is authoritative. A consumer that needs timeline indices (an Aseprite tag, Godot ticks) uses position, or derives it from at_ms by a search over the duration edges, and checks that the two agree. transitions keeps its v1 meaning, the frame-to-frame metrics {from_position, to_position, premultiplied_rgb_mae, alpha_mae, changed_visible_pixels}; the authored transition hints {to, entry_frame, dissolve_ms, mode} are written as transition_hints (per D13), and readers fall back to legacy transitions items that have a string to.",
+      "type": "object",
+      "required": ["frames", "duration_ms", "loop", "total_duration_ms"],
+      "properties": {
+        "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+        "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+        "loop": {"type": "boolean"},
+        "total_duration_ms": {"type": "integer", "minimum": 1},
+        "nominal_fps": {"type": ["number", "null"]},
+        "average_fps": {"type": "number", "exclusiveMinimum": 0},
+        "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
+        "events_ms": {
+          "description": "Events resolved to whole milliseconds from clip start. at_ms is authoritative; at is the authored clip position, position the index into frames (the played timeline; a pingpong event can occur twice) and at_tick the tick at tick_grid.hz.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "at_ms"],
+            "properties": {
+              "name": {"$ref": "common.schema.json#/$defs/eventName"},
+              "at_ms": {"type": "integer", "minimum": 0},
+              "at": {"description": "The authored position (an index into the clip's authored frame list).", "type": "integer", "minimum": 0},
+              "position": {"description": "The index into frames, the played timeline.", "type": "integer", "minimum": 0},
+              "at_tick": {"type": "integer", "minimum": 0},
+              "data": true
+            }
+          }
+        },
+        "tick_grid": {
+          "description": "How well the integer-ms timeline lands on a fixed tick grid: frame_ticks per played frame, the positions that got zero ticks, whether the ticks are even, the cycle length in ticks and whether it is whole.",
+          "type": "object",
+          "required": ["hz", "max_drift_ms"],
+          "properties": {
+            "hz": {"type": "integer", "minimum": 1},
+            "max_drift_ms": {"type": "number", "minimum": 0},
+            "frame_ticks": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "zero_tick_positions": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+            "even": {"type": "boolean"},
+            "cycle_ticks": {"type": "number", "minimum": 0},
+            "cycle_aligned": {"type": "boolean"},
+            "method": {"type": "string"}
+          }
+        },
+        "preview": {"type": "object"},
+        "transitions": {
+          "description": "v1 meaning: the frame-to-frame metrics of the played timeline. The authored hints are in transition_hints (per D13).",
+          "type": "array",
+          "items": {"type": "object"}
+        },
+        "transition_hints": {
+          "description": "The authored transition hints (clips input transitions), with entry_ms and dissolve_ticks resolved. entry_frame is an authored position.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["to", "entry_frame", "dissolve_ms", "mode"],
+            "properties": {
+              "to": {"type": "string", "minLength": 1},
+              "entry_frame": {"type": "integer", "minimum": 0},
+              "entry_ms": {"type": "integer", "minimum": 0},
+              "dissolve_ms": {"type": "integer", "minimum": 0},
+              "dissolve_ticks": {"type": "integer", "minimum": 0},
+              "mode": {"enum": ["dither", "premultiplied"]}
+            }
+          }
+        },
+        "last_to_first": {"type": "object"},
+        "authored_frames": {"description": "The authored frame order (a pingpong clip's forward frames).", "type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+        "authored_duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+        "timing_source": {"enum": ["duration_ms", "ticks"]},
+        "ticks": {"description": "Ticks per authored position at tick_hz (authored, per D12).", "type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 1}},
+        "tick_hz": {"type": "integer", "minimum": 1},
+        "fps_rational": {"type": "string", "pattern": "^[1-9][0-9]*/[1-9][0-9]*$"},
+        "stride_world_units": {"type": "number", "exclusiveMinimum": 0},
+        "stride_source": {"const": "user_declared"},
+        "nominal_travel_speed_world_units_per_second": {"type": "number", "exclusiveMinimum": 0},
+        "stride_px_per_frame": {"type": "number", "exclusiveMinimum": 0},
+        "nominal_speed_px_per_second": {"type": "number", "exclusiveMinimum": 0},
+        "cadence_ms": {"type": "number", "exclusiveMinimum": 0},
+        "speed_ref": {"type": "number", "exclusiveMinimum": 0},
+        "speed_ref_playback_rate": {"type": "number", "exclusiveMinimum": 0},
+        "keys": {"description": "Action key poses as authored positions (per D12); keys_ms gives their times.", "$ref": "#/$defs/clipSpec/properties/keys"},
+        "keys_ms": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "entry_frame": {"description": "An authored position (per D12); entry_ms gives its time.", "type": "integer", "minimum": 0},
+        "entry_ms": {"type": "integer", "minimum": 0},
+        "hitstop_ticks": {"type": "integer", "minimum": 0},
+        "hitstop_ms": {"type": "integer", "minimum": 0},
+        "role": {"enum": ["player", "enemy", "npc", "fx", "prop"]},
+        "holds": {
+          "description": "Held poses: repeated frames or near duplicates at consecutive played positions.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["positions", "frames", "kind", "duration_ms"],
+            "properties": {
+              "positions": {"type": "array", "minItems": 2, "items": {"type": "integer", "minimum": 0}},
+              "frames": {"type": "array", "minItems": 2, "items": {"type": "integer", "minimum": 0}},
+              "kind": {"enum": ["repeat", "near_duplicate"]},
+              "max_distance": {"type": "number", "minimum": 0},
+              "duration_ms": {"type": "integer", "minimum": 1}
+            }
+          }
+        },
+        "seam": {
+          "description": "forge_core.seam_report of the loop wrap plus adjacent_mean and wrap_ratio.",
+          "allOf": [
+            {"$ref": "common.schema.json#/$defs/seamReport"},
+            {
+              "type": "object",
+              "required": ["adjacent_mean", "wrap_ratio"],
+              "properties": {
+                "adjacent_mean": {"type": "number", "minimum": 0},
+                "wrap_ratio": {"type": "number", "minimum": 0}
+              }
+            }
+          ]
+        },
+        "telegraph": {
+          "description": "Enemy attack telegraphs: the tell and hit times and the gap in 60 Hz ticks.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["tell_ms", "hit_ms", "ticks_60hz", "source"],
+            "properties": {
+              "tell_ms": {"type": "integer", "minimum": 0},
+              "hit_ms": {"type": "integer", "minimum": 0},
+              "ticks_60hz": {"type": "number", "minimum": 0},
+              "source": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "animation_clips_v2": {
+      "description": "animation-clips.json written by build_animation_clips.py. v1 output stays valid; with schema .v2 every clip carries events_ms and tick_grid, and frame records may list holds and near_duplicates. v2 also carries the clips input's top-level sampling, pixel_art, palette_ref (with its sha256), body_height_px and shadow, the review sheets record and the build's QA envelope; frame records keep their source facts and pixel counts. diagnostics may hold lint ({code, severity, message, clip?}), near_duplicate_mae, near_duplicate_pairs and tick_hz; source_manifest may hold copy; contact_sheet may hold scale.",
+      "type": "object",
+      "required": ["schema", "frame_size", "anchor_px", "frames", "clips", "states"],
+      "properties": {
+        "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]},
+        "source_manifest": {
+          "type": "object",
+          "required": ["file_sha256"],
+          "properties": {"path": {"type": "string"}, "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"}}
+        },
+        "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["index", "name", "file"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "name": {"type": "string", "minLength": 1},
+              "file": {"$ref": "common.schema.json#/$defs/relPath"},
+              "rgba_pixel_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "holds": {"type": "array"},
+              "near_duplicates": {"type": "array"},
+              "source": {
+                "type": "object",
+                "required": ["file_sha256"],
+                "properties": {
+                  "path": {"type": "string", "minLength": 1},
+                  "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+                  "bytes": {"type": "integer", "minimum": 0},
+                  "size": {"$ref": "common.schema.json#/$defs/size2"},
+                  "mode": {"const": "RGBA"}
+                }
+              },
+              "transparent_pixel_count": {"type": "integer", "minimum": 0},
+              "visible_pixel_count": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/builtClip"}},
+        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "diagnostics": {"type": "object"},
+        "contact_sheet": {"type": "object"},
+        "processing": {"type": "object"},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"},
+        "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
+        "pixel_art": {"type": "boolean"},
+        "palette_ref": {"$ref": "common.schema.json#/$defs/relPath"},
+        "palette_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "body_height_px": {"type": "number", "exclusiveMinimum": 0},
+        "shadow": {"$ref": "common.schema.json#/$defs/shadow"},
+        "review": {
+          "description": "The review sheets (--review): scale, backgrounds and the turn test; null when not requested.",
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["scale", "backgrounds", "turn_test"],
+              "properties": {
+                "scale": {"type": "integer", "minimum": 1},
+                "backgrounds": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                "turn_test": {"type": "object", "required": ["file", "cells"]}
+              }
+            }
+          ]
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      },
+      "if": {"properties": {"schema": {"const": "generate2dsprite.animation_clips.v2"}}, "required": ["schema"]},
+      "then": {"properties": {"clips": {"additionalProperties": {"required": ["events_ms", "tick_grid"]}}}}
+    },
+    "pipeline_meta_v2": {
+      "description": "pipeline-meta.json written by generate2dsprite.py process. v1 files carry no schema key and stay valid. v2 (schema generate2dsprite.pipeline_meta.v2) adds the geometry, hygiene and provenance blocks, and every frame record gains trim_offset and source_rect (null for an empty frame). A keyed sheet may also record the forge_matte.key_still info in matte. v1 stored godot_sprite3d_output, scale_profile_output and scale_profile.path as absolute path strings; v2 stores fileRefs relative to the output folder (a file name plus sha256 when another drive has no relative route). qa is the QA envelope of the run; profile_applied records a --scale-profile run (the keys applied and the flags kept with --profile-override).",
+      "type": "object",
+      "required": ["target", "mode"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.pipeline_meta.v2"},
+        "target": {"type": "string", "minLength": 1},
+        "mode": {"type": "string", "minLength": 1},
+        "background_mode": {"enum": ["chroma_key", "native_alpha", "opaque"]},
+        "resampler": {"type": "string", "minLength": 1},
+        "rows": {"type": "integer", "minimum": 1},
+        "cols": {"type": "integer", "minimum": 1},
+        "cell_size": {"type": "integer", "minimum": 1},
+        "frames": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "trim_offset": {"description": "[dx, dy] from the source cell origin to the trimmed crop.", "$ref": "common.schema.json#/$defs/point2"},
+              "source_rect": {
+                "description": "Subject box in sheet pixels, [x0, y0, x1, y1); null for an empty frame.",
+                "anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}]
+              },
+              "subject_bbox": {"description": "Subject box in the cell, [x0, y0, x1, y1); null for an empty frame.", "anyOf": [{"$ref": "common.schema.json#/$defs/box"}, {"type": "null"}]},
+              "anchor_cell": {"description": "The measured anchor in cell pixels; null for an empty frame.", "anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
+              "offset_px": {"$ref": "common.schema.json#/$defs/point2"},
+              "output_anchor": {"$ref": "common.schema.json#/$defs/point2"},
+              "output_subject_height_px": {"type": "number", "minimum": 0},
+              "body_scale": {"type": "number", "minimum": 0},
+              "pixel_grid_off_edges": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "qc_summary": {
+          "type": "object",
+          "properties": {
+            "legacy_body_scale_mean": {"type": "number", "minimum": 0},
+            "legacy_body_scale_cv": {"type": "number", "minimum": 0},
+            "output_subject_height_median": {"type": "number", "minimum": 0},
+            "scale_reference_height_px": {"type": "number", "minimum": 0},
+            "scale_reference_frames": {
+              "description": "The [row, col] grid cells whose heights form the scale reference.",
+              "type": "array",
+              "items": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2}
+            },
+            "pixel_grid_off_edges": {"description": "Null when no frame was sampled on a pixel grid.", "type": ["integer", "null"], "minimum": 0},
+            "profile_body_scale_drift": {"type": "number", "minimum": 0}
+          }
+        },
+        "qc_config": {"type": "object"},
+        "geometry": {
+          "type": "object",
+          "required": ["alpha_geometry_threshold", "connectivity", "anchor_mode", "scale_strategy"],
+          "properties": {
+            "alpha_geometry_threshold": {"type": "integer", "minimum": 0, "maximum": 255},
+            "connectivity": {"enum": [4, 8]},
+            "anchor_mode": {"enum": ["feet", "stance", "bbox", "centroid", "center", "legacy-p98"]},
+            "scale_strategy": {"enum": ["fit", "preserve", "registered"]},
+            "pixel_scale": {"type": ["integer", "null"], "minimum": 1},
+            "grid_rounding": {"type": ["string", "null"]},
+            "pad_offset": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
+            "logical_pixel": {"type": "integer", "minimum": 1},
+            "anchor_px": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
+            "anchor_band_fraction": {"type": "number", "minimum": 0},
+            "scale": {"type": ["number", "null"], "exclusiveMinimum": 0},
+            "scale_ratio": {
+              "description": "The scale as an exact [numerator, denominator], or null.",
+              "anyOf": [{"type": "array", "items": {"type": "integer", "minimum": 1}, "minItems": 2, "maxItems": 2}, {"type": "null"}]
+            },
+            "registration_anchor": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
+            "injected_shift_px": {
+              "description": "The [min, max] whole-pixel shift injected on each axis, or null.",
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "x": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+                    "y": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2}
+                  }
+                },
+                {"type": "null"}
+              ]
+            },
+            "legacy_fractional_nearest": {"type": "boolean"}
+          }
+        },
+        "hygiene": {
+          "description": "The forge_core.alpha_hygiene report: the settings used (mode, floor, solid_min, attach_radius, connectivity) and what was removed (floor_px, detached_px, detached_components, max_removed_alpha).",
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {"enum": ["none", "floor", "detached", "both"]},
+            "floor": {"type": "integer", "minimum": 0, "maximum": 255},
+            "solid_min": {"type": "integer", "minimum": 1, "maximum": 255},
+            "attach_radius": {"type": "integer", "minimum": 0},
+            "connectivity": {"enum": [4, 8]},
+            "floor_px": {"type": "integer", "minimum": 0},
+            "detached_px": {"type": "integer", "minimum": 0},
+            "detached_components": {"type": "integer", "minimum": 0},
+            "max_removed_alpha": {"type": "integer", "minimum": 0, "maximum": 255}
+          }
+        },
+        "profile_applied": {
+          "description": "The --scale-profile run: the profile's name and version, its file, the processing keys it applied and the explicit flags kept over it (--profile-override).",
+          "type": "object",
+          "required": ["name", "version", "applied", "overrides"],
+          "properties": {
+            "name": {"type": "string"},
+            "version": {"enum": [1, 2]},
+            "path": {"$ref": "common.schema.json#/$defs/fileRef"},
+            "applied": {"type": "object"},
+            "overrides": {"type": "array", "items": {"type": "object", "required": ["key", "profile", "flag"]}}
+          }
+        },
+        "provenance": {
+          "description": "The input as forge_core.load_rgba read it (sha256, Pillow mode, bit depth, conversion to 8-bit RGBA, bytes, format and size); raw_copy names the copied original, or null.",
+          "type": "object",
+          "required": ["input_sha256", "source_mode"],
+          "properties": {
+            "input_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+            "source_mode": {"type": "string", "minLength": 1},
+            "bit_depth": {"enum": [1, 2, 4, 8, 16]},
+            "conversion": {"type": "string", "minLength": 1},
+            "raw_copy": {"anyOf": [{"$ref": "common.schema.json#/$defs/relPath"}, {"type": "null"}]},
+            "bytes": {"type": "integer", "minimum": 0},
+            "format": {"type": ["string", "null"]},
+            "size": {"$ref": "common.schema.json#/$defs/size2"}
+          }
+        },
+        "matte": {
+          "description": "forge_matte.key_still info for a keyed sheet: the quality used and requested, the key as floats, key_estimate (forge_matte.estimate_key info, null for an explicit key), the soft-matte params (KeyParams.to_dict()), interior_despill, key_material_share, qa (forge_matte.matte_qa metrics of the result, not a QA envelope), resampler_hint, thresholds (the hard key's), despill (the forge_matte.despill report) and, only when a despill ran (--despill-radius), qa_after_despill: the same matte_qa metrics measured again on the despilled sheet. The process QA checks key_residue and key_ring_spill (outer-ring key share, warn above 0.01) judge what is published: qa_after_despill when present, else qa.",
+          "type": "object",
+          "properties": {
+            "quality": {"enum": ["hard", "soft", "dominance", "native_alpha"]},
+            "requested_quality": {"enum": ["hard", "soft", "dominance", "auto"]},
+            "key": {"type": "array", "items": {"type": "number", "minimum": 0, "maximum": 255}, "minItems": 3, "maxItems": 3},
+            "key_estimate": {"type": ["object", "null"]},
+            "params": {"type": "object"},
+            "interior_despill": {"type": "boolean"},
+            "key_material_share": {"type": "number", "minimum": 0, "maximum": 1},
+            "qa": {"type": "object"},
+            "resampler_hint": {"type": "string", "minLength": 1},
+            "thresholds": {"type": "object"},
+            "despill": {"type": "object"},
+            "qa_after_despill": {"type": "object"}
+          }
+        },
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
+        "godot_sprite3d_output": {"description": "v2: a fileRef; v1: an absolute path string.", "anyOf": [{"$ref": "common.schema.json#/$defs/fileRef"}, {"type": "string"}]},
+        "scale_profile_output": {"description": "v2: a fileRef; v1: an absolute path string.", "anyOf": [{"$ref": "common.schema.json#/$defs/fileRef"}, {"type": "string"}]},
+        "gif_decoded_duration_ms": {"description": "Per animated GIF input, the decoded frame durations.", "type": "object", "additionalProperties": {"type": "array", "items": {"type": "integer", "minimum": 0}}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "prompt_source": {"enum": ["file", "argument"]},
+        "prompt_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "key_quality": {"enum": ["hard", "soft", "dominance", "auto"]},
+        "key": {"enum": ["magenta", "green", "blue"]},
+        "alpha_hygiene": {"enum": ["none", "floor", "detached", "both"]},
+        "alpha_floor": {"type": "integer", "minimum": 0, "maximum": 255},
+        "logical_pixel": {"type": "integer", "minimum": 1},
+        "art_source": {"$ref": "common.schema.json#/$defs/artSource"},
+        "placeholder": {"type": "boolean"}
+      },
+      "if": {"required": ["schema"]},
+      "then": {
+        "required": ["background_mode", "geometry", "hygiene", "provenance"],
+        "properties": {
+          "frames": {"items": {"required": ["trim_offset", "source_rect"]}},
+          "godot_sprite3d_output": {"$ref": "common.schema.json#/$defs/fileRef"},
+          "scale_profile_output": {"$ref": "common.schema.json#/$defs/fileRef"},
+          "scale_profile": {"type": "object", "properties": {"path": {"$ref": "common.schema.json#/$defs/fileRef"}}}
+        }
+      }
+    },
+    "scale_profile_v2": {
+      "description": "Scale profile written by process --write-scale-profile. version 1 stays readable and must carry the eleven processing keys of cfed170; version 2 adds reference.output_subject_height_px so drift is judged in output pixels, reference.legacy_body_scale_mean (the v1 body-scale measure, for comparison) and the processing keys of the v2 process (key_quality, key, alpha_geometry_threshold, connectivity, anchor_mode, alpha_hygiene, alpha_floor, pixel_scale, logical_pixel).",
+      "type": "object",
+      "required": ["version", "processing", "reference"],
+      "properties": {
+        "version": {"enum": [1, 2]},
+        "schema": {"const": "generate2dsprite.scale_profile.v2"},
+        "name": {"type": "string"},
+        "processing": {
+          "type": "object",
+          "properties": {
+            "key_quality": {"enum": ["hard", "soft", "dominance", "auto"]},
+            "key": {"enum": ["magenta", "green", "blue"]},
+            "alpha_geometry_threshold": {"type": "integer", "minimum": 0, "maximum": 255},
+            "connectivity": {"enum": [4, 8]},
+            "anchor_mode": {"enum": ["feet", "stance", "bbox", "centroid", "center", "legacy-p98"]},
+            "alpha_hygiene": {"enum": ["none", "floor", "detached", "both"]},
+            "alpha_floor": {"type": "integer", "minimum": 0, "maximum": 255},
+            "pixel_scale": {"type": ["integer", "null"], "minimum": 1},
+            "logical_pixel": {"type": "integer", "minimum": 1}
+          }
+        },
+        "output_origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "reference": {
+          "type": "object",
+          "required": ["body_scale_mean"],
+          "properties": {
+            "body_scale_mean": {"type": "number", "exclusiveMinimum": 0},
+            "output_subject_height_px": {"type": "number", "exclusiveMinimum": 0},
+            "legacy_body_scale_mean": {"type": "number", "minimum": 0}
+          }
+        },
+        "qc": {"type": "object"},
+        "godot_sprite3d": {"type": "object"}
+      },
+      "if": {"properties": {"version": {"const": 1}}},
+      "then": {
+        "properties": {
+          "processing": {
+            "required": ["cell_size", "fit_scale", "trim_border", "edge_clean_depth", "align", "shared_scale", "scale_strategy", "component_mode", "component_padding", "min_component_area", "edge_touch_margin"]
+          }
+        }
+      },
+      "else": {"properties": {"reference": {"required": ["output_subject_height_px"]}}}
+    },
+    "sheet_qc_v1": {
+      "description": "sheet_qc.py report (spill or frames subcommand). It is a QA envelope: status, method, notProven, checks, and hashed inputs and outputs. Cell indices are 0-based and row-major; cells[].cell is [row, col]. spill reports the input facts in image (with the key used for an opaque chroma sheet), the components crossing a cell line, the solid boundary band and the specks; frames reports the input facts and ownership slicing record in input, identity, near duplicates, the half-cycle and alternation checks, torso, row baselines and the seam ranking. frames reports give each cell its frame index, and for --frames input cell is null and the file name is in source.",
+      "type": "object",
+      "allOf": [{"$ref": "common.schema.json#/$defs/qaEnvelope"}],
+      "required": ["schema", "check", "grid"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.sheet_qc.v1"},
+        "check": {"enum": ["spill", "frames"]},
+        "grid": {
+          "type": "object",
+          "required": ["rows", "cols"],
+          "properties": {"rows": {"type": "integer", "minimum": 1}, "cols": {"type": "integer", "minimum": 1}}
+        },
+        "image": {"description": "spill: input facts (sha256, size, source mode, bit depth, conversion) and the key used for an opaque chroma sheet.", "type": "object"},
+        "input": {"description": "frames: input facts and the ownership slicing record.", "type": "object"},
+        "params": {"type": "object"},
+        "crossing_components": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["label", "area", "bbox", "owner_cell", "pixels_over_line", "overhang_px"],
+            "properties": {
+              "bbox": {"$ref": "common.schema.json#/$defs/box"},
+              "owner_cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+              "pixels_over_line": {"type": "integer", "minimum": 0},
+              "overhang_px": {"type": "integer", "minimum": 0},
+              "pixels_per_cell": {"type": "object", "additionalProperties": {"type": "integer"}}
+            }
+          }
+        },
+        "visible_crossing_components": {"type": "array", "items": {"type": "object"}},
+        "boundary_band": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["axis", "at", "solid_px"],
+            "properties": {
+              "axis": {"enum": ["x", "y"]},
+              "at": {"type": "integer"},
+              "solid_px": {"type": "integer", "minimum": 0}
+            }
+          }
+        },
+        "specks": {
+          "type": "object",
+          "properties": {
+            "floor_px": {"type": "integer", "minimum": 0},
+            "detached_px": {"type": "integer", "minimum": 0},
+            "detached_components": {"type": "integer", "minimum": 0}
+          }
+        },
+        "identity": {"type": "object"},
+        "near_duplicates": {"type": "object"},
+        "half_cycle": {"type": ["object", "null"]},
+        "alternation": {
+          "type": "object",
+          "properties": {
+            "verdict": {"type": "string"},
+            "near_leading": {"type": "integer", "minimum": 0},
+            "far_leading": {"type": "integer", "minimum": 0},
+            "unclear": {"type": "integer", "minimum": 0}
+          }
+        },
+        "torso": {"type": "object"},
+        "row_baselines": {"type": "object", "additionalProperties": {"type": "integer"}},
+        "seam_ranking": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["from", "to", "mae", "over_median"],
+            "properties": {
+              "from": {"type": "integer", "minimum": 0},
+              "to": {"type": "integer", "minimum": 0},
+              "mae": {"type": "number", "minimum": 0},
+              "over_median": {"type": "number", "minimum": 0}
+            }
+          }
+        },
+        "seam": {"anyOf": [{"$ref": "common.schema.json#/$defs/seamReport"}, {"type": "null"}]},
+        "cells": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "cell": {
+                "description": "[row, col], or null for --frames input.",
+                "anyOf": [
+                  {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+                  {"type": "null"}
+                ]
+              },
+              "index": {"type": "integer", "minimum": 0},
+              "frame": {"type": "integer", "minimum": 0},
+              "box": {"$ref": "common.schema.json#/$defs/box"},
+              "pixels_over_line": {"type": "integer", "minimum": 0},
+              "overhang_px": {"type": "integer", "minimum": 0},
+              "lead": {"type": "object", "properties": {"lead": {"enum": ["near", "far", "unclear"]}}}
+            }
+          }
+        }
+      }
+    },
+    "scale_frames_v1": {
+      "description": "scale_frames.py processing record: one scale for the whole set and every per-frame shift, so registration can be audited. Padding grows the canvas; frames are never clamped. frames[].source is the sheet itself for --sheet input (the same fileRef for every frame, with cell naming the cell); shift is in output pixels relative to the neutral frame's placement; turn_slide_px is 2 x |stance x - anchor x| before pixel sampling and turn_slide_output_px the same measured on the output pixels; transitions are forge_core.transition_mae before (no locks) and after, on one shared crop, and seam the loop's forge_core.seam_report before and after.",
+      "type": "object",
+      "required": ["schema", "scale", "canvas", "anchor_px", "frames"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.scale_frames.v1"},
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "resampler": {"enum": ["box", "lanczos", "nearest"]},
+        "canvas": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "padding": {"$ref": "common.schema.json#/$defs/padding4"},
+        "root_lock": {"type": "string"},
+        "scale_from": {"description": "neutral, union, profile, or the fixed scale as a fraction.", "type": "string"},
+        "target_body_px": {"type": ["number", "null"]},
+        "base_canvas": {"anyOf": [{"$ref": "common.schema.json#/$defs/size2"}, {"type": "null"}]},
+        "base_anchor_px": {"anyOf": [{"$ref": "common.schema.json#/$defs/point2"}, {"type": "null"}]},
+        "needed_padding": {"anyOf": [{"$ref": "common.schema.json#/$defs/padding4"}, {"type": "null"}]},
+        "margin": {"type": ["integer", "null"], "minimum": 0},
+        "anchor_mode": {"enum": ["stance", "feet", "bbox"]},
+        "source_anchor": {"$ref": "common.schema.json#/$defs/point2"},
+        "reference_frame": {"type": "integer", "minimum": 0},
+        "lock": {"type": "array", "items": {"enum": ["feet", "x", "hip"]}},
+        "row_baseline": {"type": "boolean"},
+        "shift_quantum": {"type": "integer", "minimum": 1},
+        "alpha_threshold": {"type": "integer", "minimum": 0, "maximum": 254},
+        "frames_per_row": {"type": "integer", "minimum": 1},
+        "torso": {"type": "object"},
+        "transitions": {"type": "object", "required": ["pairs", "before", "after"]},
+        "seam": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["before", "after"],
+              "properties": {
+                "before": {"$ref": "common.schema.json#/$defs/seamReport"},
+                "after": {"$ref": "common.schema.json#/$defs/seamReport"}
+              }
+            }
+          ]
+        },
+        "input": {"type": "object"},
+        "profile": {"anyOf": [{"$ref": "common.schema.json#/$defs/fileRef"}, {"type": "null"}]},
+        "clips": {"$ref": "common.schema.json#/$defs/relPath"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["source", "output", "shift"],
+            "properties": {
+              "source": {"$ref": "common.schema.json#/$defs/fileRef"},
+              "output": {"$ref": "common.schema.json#/$defs/fileRef"},
+              "shift": {"description": "[dx, dy] applied after scaling, in output pixels.", "$ref": "common.schema.json#/$defs/point2"},
+              "cell": {
+                "description": "[row, col] of the frame's sheet cell, or null for --frames input.",
+                "anyOf": [
+                  {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+                  {"type": "null"}
+                ]
+              },
+              "output_bbox": {"$ref": "common.schema.json#/$defs/box"},
+              "turn_slide_px": {"type": "number", "minimum": 0},
+              "turn_slide_output_px": {"type": ["number", "null"], "minimum": 0},
+              "measure": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "palette_v1": {
+      "description": "A palette file. colors are ordered: a colour's position is its index in indexed exports. transparent_index (or null) names the transparent slot; locked palettes must not be re-quantised. name, when given, is also the GIMP palette name.",
+      "type": "object",
+      "required": ["schema", "colors", "transparent_index", "locked", "source"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.palette.v1"},
+        "name": {"type": "string"},
+        "colors": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {
+            "type": "object",
+            "required": ["hex"],
+            "properties": {
+              "hex": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"},
+              "name": {"type": "string", "minLength": 1},
+              "reserved": {"type": "boolean"}
+            }
+          }
+        },
+        "transparent_index": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+        "locked": {"type": "boolean"},
+        "source": {"type": "string", "minLength": 1}
+      }
+    },
+    "palette_lock_v1": {
+      "description": "Record of locking a palette for an asset set, with the colour-fit report of every source (forge_palette.fit_report: measured_px, alpha_threshold, off_palette_px, partial_alpha_px, colors, palette_colors_used, mean/p95/max delta E). colors are the locked colours in index order: the sources listed here are re-applied with exactly these colours after the palette grows (forge_palette.lock_view).",
+      "type": "object",
+      "required": ["schema", "palette", "sources"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.palette_lock.v1"},
+        "palette": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "colors": {
+          "description": "The locked colours in index order (#rrggbb).",
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 256,
+          "items": {"type": "string", "pattern": "^#[0-9a-fA-F]{6}$"}
+        },
+        "transparent_index": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": {"$ref": "common.schema.json#/$defs/relPath"},
+              "sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "fit": {"type": "object"}
+            }
+          }
+        }
+      }
+    },
+    "palette_luts_v1": {
+      "description": "luts.json from palette_tool.py luts: palette-swap LUTs with one colour per palette index for every row. image is the 256-wide LUT texture, one row per entry of rows, in that order; palettize is the optional RGB-cube lookup texture. Engines and export_engine read it.",
+      "type": "object",
+      "required": ["schema", "palette", "size", "rows", "luts"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.palette_luts.v1"},
+        "palette": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "image": {"$ref": "common.schema.json#/$defs/fileRef"},
+        "size": {"type": "integer", "minimum": 1, "maximum": 256},
+        "transparent_index": {"type": ["integer", "null"], "minimum": 0, "maximum": 255},
+        "rows": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}},
+        "luts": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "required": ["kind", "colors"],
+            "properties": {
+              "kind": {"enum": ["identity", "hitflash", "frozen", "silhouette", "skin"]},
+              "colors": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"$ref": "common.schema.json#/$defs/hexColor"}},
+              "index": {"type": "array", "minItems": 1, "maxItems": 256, "items": {"type": "integer", "minimum": 0, "maximum": 255}}
+            }
+          }
+        },
+        "palettize": {
+          "type": "object",
+          "required": ["image", "size"],
+          "properties": {
+            "image": {"$ref": "common.schema.json#/$defs/fileRef"},
+            "size": {"type": "integer", "minimum": 2, "maximum": 64},
+            "layout": {"type": "string"}
+          }
+        },
+        "usage": {"type": "string"}
+      }
+    },
+    "sheet_plan_v1": {
+      "description": "sheet-plan.json from plan_guide.py (an opt-in generation aid, not A/B tested with an image model): the host size predicted for an aspect-only request, the chosen grid and the candidates, the guide's cells (box, safe box, ground line, root; boxes are half-open [x0, y0, x1, y1)) and gait phases, and the guide's self-check as a QA envelope. cell is [row, col].",
+      "type": "object",
+      "required": ["schema", "predicted_size", "aspect", "layout", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.sheet_plan.v1"},
+        "request": {"type": "object"},
+        "predicted_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "aspect": {"type": "string", "pattern": "^[1-9][0-9]*:[1-9][0-9]*$"},
+        "layout": {
+          "type": "object",
+          "required": ["rows", "cols", "cell", "safe_box", "envelope_px"],
+          "properties": {
+            "rows": {"type": "integer", "minimum": 1},
+            "cols": {"type": "integer", "minimum": 1},
+            "empty_cells": {"type": "integer", "minimum": 0},
+            "cell": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+            "safe_box": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+            "envelope_px": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}, "minItems": 2, "maxItems": 2},
+            "divides_exactly": {"type": "boolean"}
+          }
+        },
+        "candidates": {"type": "array", "items": {"type": "object", "required": ["aspect", "rows", "cols"]}},
+        "cells": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["cell", "box", "safe_box", "ground_y", "root_x"],
+            "properties": {
+              "cell": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+              "box": {"$ref": "common.schema.json#/$defs/box"},
+              "safe_box": {"$ref": "common.schema.json#/$defs/box"},
+              "gutter_px": {"type": "integer", "minimum": 1},
+              "ground_y": {"type": "number"},
+              "root_x": {"type": "number"},
+              "used": {"type": "boolean"},
+              "phase": {"type": "string"},
+              "pose_bounds": {"$ref": "common.schema.json#/$defs/box"},
+              "inside_safe_box": {"type": "boolean"},
+              "toe_ahead": {"enum": ["near", "far"]}
+            }
+          }
+        },
+        "phases": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["index", "name", "half", "near", "far", "contact_leg", "ground"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "name": {"type": "string", "minLength": 1},
+              "half": {"enum": [0, 1]},
+              "near": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+              "far": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+              "lift": {"type": "number"},
+              "contact_leg": {"enum": ["near", "far"]},
+              "ground": {
+                "type": "object",
+                "required": ["near", "far"],
+                "properties": {"near": {"type": "boolean"}, "far": {"type": "boolean"}}
+              }
+            }
+          }
+        },
+        "prompt": {"$ref": "common.schema.json#/$defs/relPath"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"}
+      }
+    },
+    "full_frames_v2": {
+      "description": "animation.json written by assemble_frames.py: complete frames packed without resizing or alignment, an atlas, a decoded and verified lossless WebP, and loop diagnostics. generate2dsprite.full_frames.v1 documents stay valid; v2 adds the loop seam (common seamReport plus adjacent_mean and wrap_ratio), the key, slicing and spill-check records and a QA envelope. Frames may also carry crop_id, sheet_origin, owned_components and pixels_from_outside_cell (ownership slicing) and derived (overlap blends); webp may carry all_keyframes. Boxes are half-open [x0, y0, x1, y1) in sheet pixels.",
+      "type": "object",
+      "required": ["schema", "frame_size", "source_frame_count", "sources", "frames", "sequence", "duration_ms", "total_duration_ms", "atlas", "webp", "transitions"],
+      "properties": {
+        "schema": {"enum": ["generate2dsprite.full_frames.v1", "generate2dsprite.full_frames.v2"]},
+        "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "source_frame_count": {"type": "integer", "minimum": 1},
+        "sources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["file_sha256", "size"],
+            "properties": {
+              "path": {"type": "string", "minLength": 1},
+              "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "bytes": {"type": "integer", "minimum": 0},
+              "size": {"$ref": "common.schema.json#/$defs/size2"},
+              "mode": {"enum": ["RGB", "RGBA"]},
+              "source_mode": {"type": "string"},
+              "bit_depth": {"enum": [1, 2, 4, 8, 16]},
+              "conversion": {"type": "string"},
+              "key": {
+                "type": "object",
+                "required": ["quality", "key_rgb"],
+                "properties": {
+                  "quality": {"type": "string"},
+                  "key_rgb": {"$ref": "common.schema.json#/$defs/rgb"},
+                  "qa": {"type": "object"}
+                }
+              }
+            }
+          }
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["index", "file", "size", "mode", "rgba_pixel_sha256"],
+            "properties": {
+              "index": {"type": "integer", "minimum": 0},
+              "file": {"$ref": "common.schema.json#/$defs/relPath"},
+              "source_index": {"type": "integer", "minimum": 0},
+              "crop_box": {"$ref": "common.schema.json#/$defs/box"},
+              "crop_id": {"type": "string", "minLength": 1},
+              "sheet_origin": {"$ref": "common.schema.json#/$defs/point2"},
+              "derived": {
+                "description": "An overlap blend of two source frames at weight, with its easing curve.",
+                "type": "object",
+                "required": ["blend_of", "weight"],
+                "properties": {
+                  "blend_of": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 2, "maxItems": 2},
+                  "weight": {"type": "number", "exclusiveMinimum": 0, "exclusiveMaximum": 1},
+                  "curve": {"type": "string"}
+                }
+              },
+              "size": {"$ref": "common.schema.json#/$defs/size2"},
+              "mode": {"enum": ["RGB", "RGBA"]},
+              "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+              "rgba_pixel_sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+            }
+          }
+        },
+        "sequence": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+        "duration_ms": {"type": "integer", "minimum": 1},
+        "total_duration_ms": {"type": "integer", "minimum": 1},
+        "loop": {"const": 0},
+        "atlas": {
+          "type": "object",
+          "required": ["file", "size", "rows", "cols"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "size": {"$ref": "common.schema.json#/$defs/size2"},
+            "rows": {"type": "integer", "minimum": 1},
+            "cols": {"type": "integer", "minimum": 1},
+            "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+          }
+        },
+        "webp": {
+          "type": "object",
+          "required": ["file", "total_duration_ms", "timeline_verified"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "total_duration_ms": {"type": "integer", "minimum": 1},
+            "timeline_verified": {"const": true},
+            "file_sha256": {"$ref": "common.schema.json#/$defs/sha256"}
+          }
+        },
+        "transitions": {"type": "array", "items": {"type": "object", "required": ["from_frame", "to_frame", "wrap"]}},
+        "loop_seam": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "allOf": [
+                {"$ref": "common.schema.json#/$defs/seamReport"},
+                {
+                  "type": "object",
+                  "required": ["adjacent_mean", "wrap_ratio"],
+                  "properties": {
+                    "adjacent_mean": {"type": "number", "minimum": 0},
+                    "wrap_ratio": {"type": "number", "minimum": 0}
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        "loop_overlap": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["frames", "played_before", "played_after"],
+              "properties": {
+                "frames": {"type": "integer", "minimum": 2},
+                "played_before": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+                "played_after": {"type": "array", "items": {"type": "integer", "minimum": 0}}
+              }
+            }
+          ]
+        },
+        "static_regions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["box", "reference_frame", "against_reference"],
+            "properties": {"box": {"$ref": "common.schema.json#/$defs/box"}}
+          }
+        },
+        "key": {"type": "object", "required": ["mode"], "properties": {"mode": {"enum": ["none", "chroma"]}}},
+        "slicing": {
+          "type": "object",
+          "required": ["mode"],
+          "properties": {
+            "mode": {"enum": ["inputs", "grid", "ownership"]},
+            "padding": {"$ref": "common.schema.json#/$defs/padding4"},
+            "canvas": {"$ref": "common.schema.json#/$defs/size2"}
+          }
+        },
+        "spill_check": {
+          "anyOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "required": ["status"],
+              "properties": {
+                "status": {"enum": ["clean", "resolved", "allowed", "skipped"]},
+                "crossing": {"type": "array", "items": {"type": "object", "required": ["owner_id", "pixels_over", "bbox"]}}
+              }
+            }
+          ]
+        },
+        "provenance": {"type": "object"},
+        "validation": {"type": "object"},
+        "processing": {"type": "object"},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      },
+      "if": {"properties": {"schema": {"const": "generate2dsprite.full_frames.v2"}}, "required": ["schema"]},
+      "then": {"required": ["loop_seam", "key", "slicing", "spill_check", "qa"]}
+    },
+    "exportedClip": {
+      "description": "A clip in engine-export.json (export_engine.py): source frame indices, integer durations, events and the per-target placement (Aseprite tag range, Godot speed and relative durations, Sprite3D contract). Per D12, events_ms[].at_ms is authoritative, position is the index into frames (the played frame shown at at_ms; an event at the end edge names the last frame) and at is the authored position the built clip gives. page is the clip's atlas page; it is absent when no atlas target was exported (atlas.pages is then empty, a godot-sprite3d-only export). transition_hints holds the transition hints (per D13); a transitions list of hint items {to, entry_frame, dissolve_ms, mode} is what export_engine wrote before D13, and readers still accept it.",
+      "type": "object",
+      "required": ["frames", "duration_ms", "total_duration_ms", "loop", "loop_policy", "events_ms"],
+      "properties": {
+        "frames": {"type": "array", "minItems": 1, "items": {"type": "integer", "minimum": 0}},
+        "duration_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+        "total_duration_ms": {"type": "integer", "minimum": 1},
+        "loop": {"type": "boolean"},
+        "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
+        "events_ms": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "at_ms", "at", "position"],
+            "properties": {
+              "name": {"$ref": "common.schema.json#/$defs/eventName"},
+              "at_ms": {"type": "integer", "minimum": 0},
+              "at": {"type": "integer", "minimum": 0},
+              "position": {"type": "integer", "minimum": 0},
+              "data": true
+            }
+          }
+        },
+        "page": {"type": "integer", "minimum": 0},
+        "transitions": {"type": "array", "items": {"$ref": "#/$defs/clipTransition"}},
+        "transition_hints": {"type": "array", "items": {"$ref": "#/$defs/clipTransition"}},
+        "aseprite": {
+          "type": "object",
+          "required": ["file", "from", "to"],
+          "properties": {
+            "file": {"$ref": "common.schema.json#/$defs/relPath"},
+            "from": {"type": "integer", "minimum": 0},
+            "to": {"type": "integer", "minimum": 0}
+          }
+        },
+        "godot": {
+          "type": "object",
+          "required": ["speed", "relative_durations"],
+          "properties": {
+            "speed": {"type": "number", "exclusiveMinimum": 0},
+            "relative_durations": {"type": "array", "items": {"type": "number", "exclusiveMinimum": 0}},
+            "basis": {"type": "string"}
+          }
+        },
+        "sprite3d": {
+          "type": "object",
+          "required": ["action", "contract"],
+          "properties": {
+            "action": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+            "contract": {"$ref": "common.schema.json#/$defs/relPath"}
+          }
+        }
+      }
+    },
+    "engine_export_v1": {
+      "description": "engine-export.json (export_engine.py): the files written for each engine target, the clip timing, the anchor and pixel-size mapping table and the QA envelope. Paths are relative to engine-export.json. atlas.pages is empty when only godot-sprite3d is exported (per-frame textures).",
+      "type": "object",
+      "required": ["schema", "name", "tool", "source", "targets", "frame_size", "anchor_px", "sampling", "atlas", "clips", "mapping", "files", "qa"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.engine_export.v1"},
+        "name": {"type": "string", "pattern": "^[A-Za-z0-9_-]+$"},
+        "tool": {"$ref": "common.schema.json#/$defs/toolInfo"},
+        "source": {
+          "allOf": [{"$ref": "common.schema.json#/$defs/fileRef"}],
+          "properties": {
+            "schema": {"enum": ["generate2dsprite.animation_clips.v1", "generate2dsprite.animation_clips.v2"]}
+          }
+        },
+        "targets": {"type": "array", "minItems": 1, "items": {"enum": ["aseprite-json", "godot-spriteframes", "godot-sprite3d"]}},
+        "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "anchor_px": {"$ref": "common.schema.json#/$defs/point2"},
+        "sampling": {"$ref": "common.schema.json#/$defs/sampling"},
+        "default_clip": {"type": "string", "minLength": 1},
+        "atlas": {
+          "type": "object",
+          "required": ["max_size", "padding", "extrude", "pages"],
+          "properties": {
+            "max_size": {"type": "integer", "minimum": 16, "maximum": 4096},
+            "padding": {"type": "integer", "minimum": 0},
+            "extrude": {"type": "integer", "minimum": 0},
+            "pages": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["index", "size", "cells", "clips"],
+                "properties": {
+                  "index": {"type": "integer", "minimum": 0},
+                  "size": {"$ref": "common.schema.json#/$defs/size2"},
+                  "cells": {"type": "integer", "minimum": 1},
+                  "clips": {"type": "array", "items": {"type": "string"}}
+                }
+              }
+            }
+          }
+        },
+        "scale": {
+          "type": "object",
+          "required": ["pixel_size", "subject_height_px", "world_height"],
+          "properties": {
+            "pixel_size": {"type": "number", "exclusiveMinimum": 0},
+            "subject_height_px": {"type": "number", "exclusiveMinimum": 0},
+            "world_height": {"type": "number", "exclusiveMinimum": 0}
+          }
+        },
+        "clips": {"type": "object", "minProperties": 1, "additionalProperties": {"$ref": "#/$defs/exportedClip"}},
+        "states": {"type": "object", "additionalProperties": {"type": "string", "minLength": 1}},
+        "unused_frames": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "mapping": {"type": "object", "required": ["anchor_px", "frame_size", "godot", "unity", "phaser", "pitch_compensation"]},
+        "files": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/fileRef"}},
+        "qa": {"$ref": "common.schema.json#/$defs/qaEnvelope"}
+      }
+    },
+    "godot_sprite3d_v1": {
+      "description": "Godot Sprite3D contract (generate2dsprite.py process --godot-world-height, export_engine.py godot-sprite3d, rig_animate.py): frames are relative to this file (S19); duration_ms is the nominal frame length and durations_ms the exact per-frame list; frame_size may be non-square.",
+      "type": "object",
+      "required": ["schema", "frame_size", "output_origin", "sprite3d_offset", "world_height", "recommended_pixel_size", "duration_ms", "fps", "frames"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.godot_sprite3d.v1"},
+        "clip": {"type": "string", "minLength": 1},
+        "frame_size": {"$ref": "common.schema.json#/$defs/size2"},
+        "output_origin": {"$ref": "common.schema.json#/$defs/point2"},
+        "sprite3d_offset": {"$ref": "common.schema.json#/$defs/point2"},
+        "reference_subject_height_px": {"type": "number", "exclusiveMinimum": 0},
+        "world_height": {"type": "number", "exclusiveMinimum": 0},
+        "recommended_pixel_size": {"type": "number", "exclusiveMinimum": 0},
+        "rendered_subject_height_world": {"type": "number", "exclusiveMinimum": 0},
+        "scale_source": {"type": "string"},
+        "billboard": {"enum": ["enabled", "disabled", "fixed-y"]},
+        "texture_filter": {"$ref": "common.schema.json#/$defs/sampling"},
+        "duration_ms": {"type": "integer", "minimum": 1},
+        "fps": {"type": "number", "exclusiveMinimum": 0},
+        "frames": {"type": "array", "minItems": 1, "items": {"$ref": "common.schema.json#/$defs/relPath"}},
+        "frame_sha256": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/sha256"}},
+        "durations_ms": {"$ref": "common.schema.json#/$defs/durationsMs"},
+        "loop": {"type": "boolean"},
+        "loop_policy": {"$ref": "common.schema.json#/$defs/loopPolicy"},
+        "events_ms": {"type": "array"}
+      }
+    },
+    "godot_sprite3d_bundle_v1": {
+      "description": "Per-action Sprite3D contracts combined (generate2dsprite.py build-godot-bundle, export_engine.py); contract paths are relative to this file.",
+      "type": "object",
+      "required": ["schema", "default_action", "world_height", "pixel_size", "actions"],
+      "properties": {
+        "schema": {"const": "generate2dsprite.godot_sprite3d_bundle.v1"},
+        "default_action": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_-]*$"},
+        "world_height": {"type": "number", "exclusiveMinimum": 0},
+        "world_height_max_drift": {"type": "number", "minimum": 0},
+        "pixel_size": {"type": "number", "exclusiveMinimum": 0},
+        "pixel_size_max_drift": {"type": "number", "minimum": 0},
+        "actions": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {"pattern": "^[a-z0-9][a-z0-9_-]*$"},
+          "additionalProperties": {
+            "type": "object",
+            "required": ["contract", "loop"],
+            "properties": {
+              "contract": {"$ref": "common.schema.json#/$defs/relPath"},
+              "loop": {"type": "boolean"},
+              "clip": {"type": "string"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

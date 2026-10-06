@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "terrain shapes are fixed",
+      "set": "/terrain/0/shape",
+      "value": "star",
+      "error": "'star' is not one of"
+    },
+    {
+      "why": "materials have a colour",
+      "remove": "/materials/grass/color",
+      "error": "'color' is a required property"
+    },
+    {
+      "why": "the map id is a file-safe id",
+      "set": "/map_id",
+      "value": "meadow:1",
+      "error": "does not match"
+    },
+    {
+      "why": "tiles are at least 2 px",
+      "set": "/tile_size",
+      "value": 1,
+      "error": "1 is less than the minimum of 2"
+    }
+  ]
+}

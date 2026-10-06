@@ -1,0 +1,159 @@
+{
+  "schema": "codeart2d.pixelspec.v1",
+  "name": "walker",
+  "canvas": [16, 24],
+  "anchor_px": [8, 23],
+  "palette": {
+    "k": "#22182c",
+    "s": "#f2c69a",
+    "S": "#c98f6b",
+    "h": "#6e4a33",
+    "H": "#9a6a44",
+    "t": "#3f8f68",
+    "T": "#2b5f47",
+    "b": "#e3b04b",
+    "p": "#4b3f5e",
+    "P": "#352b45",
+    "o": "#5a3a2a"
+  },
+  "variants": {
+    "forest": {},
+    "crimson": {"t": "#b8433f", "T": "#7c2a31"},
+    "sky": {"t": "#4a7fd0", "T": "#2f4f8f"}
+  },
+  "outline": {"mode": "solid", "color": "k"},
+  "poses": {
+    "head_front": [
+      "..hhhhhh..",
+      ".hHHHHHHh.",
+      "hHHhhhhHHh",
+      "hHhhhhhhHh",
+      "hhsssssshh",
+      "hssksskssh",
+      "hssksskssh",
+      ".ssssssss.",
+      ".SssssssS.",
+      "..SSSSSS.."
+    ],
+    "head_back": [
+      "..hhhhhh..",
+      ".hHHHHHHh.",
+      "hHHHHHHHHh",
+      "hHHhhhhHHh",
+      "hhhhhhhhhh",
+      "hhhhhhhhhh",
+      "hhhhhhhhhh",
+      ".hhhhhhhh.",
+      ".ShhhhhhS.",
+      "..SSSSSS.."
+    ],
+    "head_side": [
+      "..hhhhh...",
+      ".hHHHHHh..",
+      "hHHHHHHHh.",
+      "hHHHhhhhhh",
+      "hHHhhsssss",
+      "hHhhsssks.",
+      "hhhssssks.",
+      ".hhsssssss",
+      ".hSssssss.",
+      "..SSSSS..."
+    ],
+    "body_front": [
+      "..tttttt..",
+      ".TttttttT.",
+      "TTttttttTT",
+      "TtbbbbbbtT",
+      "s.pppppp.s",
+      "..pppppp.."
+    ],
+    "body_side": [
+      "...tttt...",
+      "..tttttt..",
+      "..ttTTtt..",
+      "..bbTTbb..",
+      "...pssp...",
+      "...pppp..."
+    ],
+    "body_side_back": [
+      "...tttt...",
+      "..tttttt..",
+      "..tTTttt..",
+      "..TTbbbb..",
+      "..sspp....",
+      "...pppp..."
+    ],
+    "body_side_fore": [
+      "...tttt...",
+      "..tttttt..",
+      "..tttTTt..",
+      "..bbbbTT..",
+      "...pppss..",
+      "...pppp..."
+    ],
+    "legs_front": [
+      "..pppppp..",
+      "..pp..pp..",
+      "..pp..pp..",
+      "..oo..oo..",
+      ".ooo..ooo."
+    ],
+    "legs_front_step": [
+      "..pppppp..",
+      "..pp..pp..",
+      "..oo..pp..",
+      ".ooo..oo..",
+      "......ooo."
+    ],
+    "legs_side": [
+      "...pppp...",
+      "...pppp...",
+      "...pPPp...",
+      "...ooo....",
+      "...ooooo.."
+    ],
+    "legs_side_near_fore": [
+      "...pppp...",
+      "..PP..ppp.",
+      ".PP....pp.",
+      ".oo....ooo",
+      "oo.....ooo"
+    ],
+    "legs_side_near_back": [
+      "...pppp...",
+      "..pp..PPP.",
+      ".pp....PP.",
+      ".oo....ooo",
+      "oo.....ooo"
+    ]
+  },
+  "layers": [
+    {"name": "legs", "z": 0, "origin": [3, 17], "rows": "legs_front"},
+    {"name": "body", "z": 1, "origin": [3, 11], "rows": "body_front"},
+    {"name": "head", "z": 2, "origin": [3, 1], "rows": "head_front"}
+  ],
+  "frames": [
+    {"name": "down-stand"},
+    {"name": "down-step-a", "layers": {"head": {"dy": 1}, "body": {"dy": 1}, "legs": {"rows": "legs_front_step"}}},
+    {"name": "down-stand-2"},
+    {"name": "down-step-b", "layers": {"head": {"dy": 1}, "body": {"dy": 1}, "legs": {"rows": "legs_front_step", "mirror": true}}},
+    {"name": "up-stand", "layers": {"head": {"rows": "head_back"}}},
+    {"name": "up-step-a", "layers": {"head": {"rows": "head_back", "dy": 1}, "body": {"dy": 1}, "legs": {"rows": "legs_front_step"}}},
+    {"name": "up-stand-2", "layers": {"head": {"rows": "head_back"}}},
+    {"name": "up-step-b", "layers": {"head": {"rows": "head_back", "dy": 1}, "body": {"dy": 1}, "legs": {"rows": "legs_front_step", "mirror": true}}},
+    {"name": "right-stand", "layers": {"head": {"rows": "head_side"}, "body": {"rows": "body_side"}, "legs": {"rows": "legs_side"}}},
+    {"name": "right-step-a", "layers": {"head": {"rows": "head_side", "dy": 1}, "body": {"rows": "body_side_back", "dy": 1}, "legs": {"rows": "legs_side_near_fore"}}},
+    {"name": "right-stand-2", "layers": {"head": {"rows": "head_side"}, "body": {"rows": "body_side"}, "legs": {"rows": "legs_side"}}},
+    {"name": "right-step-b", "layers": {"head": {"rows": "head_side", "dy": 1}, "body": {"rows": "body_side_fore", "dy": 1}, "legs": {"rows": "legs_side_near_back"}}},
+    {"name": "left-stand", "layers": {"head": {"rows": "head_side"}, "body": {"rows": "body_side"}, "legs": {"rows": "legs_side"}}, "flip_x": true},
+    {"name": "left-step-a", "layers": {"head": {"rows": "head_side", "dy": 1}, "body": {"rows": "body_side_back", "dy": 1}, "legs": {"rows": "legs_side_near_fore"}}, "flip_x": true},
+    {"name": "left-stand-2", "layers": {"head": {"rows": "head_side"}, "body": {"rows": "body_side"}, "legs": {"rows": "legs_side"}}, "flip_x": true},
+    {"name": "left-step-b", "layers": {"head": {"rows": "head_side", "dy": 1}, "body": {"rows": "body_side_fore", "dy": 1}, "legs": {"rows": "legs_side_near_back"}}, "flip_x": true}
+  ],
+  "clips": {
+    "walk_down": {"frames": ["down-stand", "down-step-a", "down-stand-2", "down-step-b"], "duration_ms": 150, "loop": true},
+    "walk_up": {"frames": ["up-stand", "up-step-a", "up-stand-2", "up-step-b"], "duration_ms": 150, "loop": true},
+    "walk_right": {"frames": ["right-stand", "right-step-a", "right-stand-2", "right-step-b"], "duration_ms": 150, "loop": true},
+    "walk_left": {"frames": ["left-stand", "left-step-a", "left-stand-2", "left-step-b"], "duration_ms": 150, "loop": true}
+  }
+}

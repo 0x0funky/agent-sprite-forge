@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "why": "LUT kinds are fixed",
+      "set": "/luts/hitflash/kind",
+      "value": "glow",
+      "error": "'glow' is not one of"
+    },
+    {
+      "why": "LUT colours are #rrggbb",
+      "set": "/luts/identity/colors/0",
+      "value": "red",
+      "error": "does not match"
+    },
+    {
+      "why": "the palette is bound by sha256",
+      "remove": "/palette/sha256",
+      "error": "'sha256' is a required property"
+    },
+    {
+      "why": "a LUT texture is at most 256 wide",
+      "set": "/size",
+      "value": 512,
+      "error": "512 is greater than the maximum of 256"
+    },
+    {
+      "why": "rows are named",
+      "set": "/rows",
+      "value": [],
+      "error": "$.rows: [] should be non-empty"
+    }
+  ]
+}

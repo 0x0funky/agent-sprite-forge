@@ -1,0 +1,12 @@
+{
+  "tool": "render_pixelspec.py",
+  "version": "0.4.0",
+  "params": {"variant": "blue", "scale": 1},
+  "inputs": [
+    {
+      "path": "slime.pixelspec.json",
+      "sha256": "168cf777757788c4c669278aa4ab2c39aad78c3c55238b69ed76c47ae3bbbe3e"
+    }
+  ],
+  "renderer": {"name": "numpy", "version": "2.1.0"}
+}

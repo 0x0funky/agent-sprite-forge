@@ -1,0 +1,12 @@
+{
+  "type": "sparks",
+  "ramp": "spark",
+  "origin": [45.5, 41],
+  "count": 8,
+  "angle": 20,
+  "spread": 130,
+  "speed": 55,
+  "lifeMs": 220,
+  "length": 4,
+  "gravity": 60
+}

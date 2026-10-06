@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "unknown status", "set": "/status", "value": "maybe"},
+    {"why": "a rejection states a reason", "set": "/reasons", "value": []},
+    {"why": "metrics are mandatory", "remove": "/metrics"},
+    {
+      "why": "a take's source is frames or a video",
+      "set": "/source",
+      "value": {"kind": "camera", "name": "t", "frames": 4, "size": [64, 64]},
+      "error": "'camera' is not one of"
+    }
+  ]
+}

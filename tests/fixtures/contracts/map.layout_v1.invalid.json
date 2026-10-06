@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {"why": "segments are [x0, x1, kind]", "set": "/segments/0", "value": [0, 640]},
+    {"why": "jump distance is mandatory", "remove": "/physics/jumpDistance"},
+    {"why": "not an aspect ratio", "set": "/viewports/1", "value": "wide"},
+    {
+      "why": "give surface or groundY, not both",
+      "document": {
+        "schema": "generate2dmap.layout.v1",
+        "segments": [[0, 640, "ground"]],
+        "groundY": 400,
+        "surface": [[0, 400], [640, 400]],
+        "physics": {"jumpHeight": 72, "jumpDistance": 120, "maxSlopeDeg": 35, "stepUp": 8}
+      },
+      "error": "should not be valid under"
+    },
+    {
+      "why": "deck props have a thickness of at least 0",
+      "set": "/props/0",
+      "value": {"id": "plank", "kind": "deck", "x0": 280, "x1": 330, "y": 190, "thickness": -1},
+      "error": "-1 is less than the minimum of 0"
+    }
+  ]
+}

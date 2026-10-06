@@ -1,0 +1,139 @@
+{
+  "ok": true,
+  "speed": 60,
+  "budget": 1,
+  "tickHz": 60,
+  "cell": 2,
+  "spawns": [
+    {"id": "start", "valid": true, "reachableCells": 5199},
+    {"id": "arrive-east", "valid": true, "reachableCells": 5199}
+  ],
+  "results": [
+    {
+      "target": "exit-east",
+      "kind": "exit",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 155,
+      "distance": 155,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [178.996, 69],
+      "fired": true,
+      "inwardFired": false
+    },
+    {
+      "target": "cellar",
+      "kind": "exit",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 45,
+      "distance": 45,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [68.9, 67.007],
+      "fired": true
+    },
+    {
+      "target": "well",
+      "kind": "interaction",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 65,
+      "distance": 64.885,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [81, 39]
+    },
+    {
+      "target": "sign",
+      "kind": "interaction",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 41,
+      "distance": 40.224,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [57, 93]
+    },
+    {
+      "target": "well.approach[0]",
+      "kind": "approach",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 77,
+      "distance": 76.551,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [96, 44]
+    },
+    {
+      "target": "well.slot[0]",
+      "kind": "slot",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 68,
+      "distance": 67.231,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [86, 44]
+    },
+    {
+      "target": "well.slot[1]",
+      "kind": "slot",
+      "from": "start",
+      "ok": true,
+      "reachable": true,
+      "reason": null,
+      "ticks": 87,
+      "distance": 86.023,
+      "maxStep": 1,
+      "zeroMotionTicks": 0,
+      "blocked": false,
+      "firedEnRoute": [],
+      "end": [106, 44]
+    }
+  ],
+  "portals": [
+    {
+      "id": "exit-east",
+      "activation": "intent",
+      "to": "road:arrive-west",
+      "arrivals": [
+        {
+          "from": "road",
+          "spawn": "arrive-east",
+          "found": true,
+          "insideTrigger": false,
+          "inZone": false,
+          "latchedOnArrival": false
+        }
+      ]
+    },
+    {"id": "cellar", "activation": "crossing", "to": "meadow:start", "arrivals": []}
+  ]
+}

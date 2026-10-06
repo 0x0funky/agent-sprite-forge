@@ -1,0 +1,6 @@
+{
+  "bones": ["thigh_f", "shin_f"],
+  "end": "foot_f",
+  "pole": [1, 0],
+  "gait": {"phase": 0.0625, "stance": 0.625, "lift": 3, "roll": 15, "x": 33.5}
+}

@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "display sizes come from the image", "set": "/width", "value": 640},
+    {"why": "alpha is declared", "set": "/alpha", "value": "auto"},
+    {"why": "repeat has two axes", "set": "/repeat", "value": [true]},
+    {"why": "sha256 is the image's hex digest", "set": "/sha256", "value": "sky.png", "error": "does not match"},
+    {"why": "kind names a generator", "set": "/kind", "value": "", "error": "should be non-empty"}
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "schema": "generate2dmap.parallax_plan.v1",
+  "viewport": [64, 32],
+  "camera": {"x": [0, 128], "zoom": [1, 1.5], "pivot": "center"},
+  "pixel_art": true,
+  "aspects": ["16:9", "4:3"],
+  "aspect_policy": "expand",
+  "layers": [
+    {
+      "id": "sky",
+      "role": "sky",
+      "image": "sky.png",
+      "alpha": "opaque",
+      "scroll_factor": [0, 0],
+      "require_canvas_coverage": true
+    },
+    {
+      "id": "far",
+      "role": "far",
+      "image": "far.png",
+      "alpha": "transparent",
+      "scroll_factor": [0.5, 0],
+      "repeat": [true, false]
+    }
+  ]
+}

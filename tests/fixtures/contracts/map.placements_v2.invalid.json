@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "v2 placements need ids", "remove": "/props/0/id"},
+    {"why": "v2 anchors are manifest or px", "set": "/props/0/anchor", "value": "center"},
+    {"why": "no placement groups", "document": {}}
+  ]
+}

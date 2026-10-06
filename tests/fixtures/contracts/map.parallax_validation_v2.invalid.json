@@ -1,0 +1,31 @@
+{
+  "cases": [
+    {
+      "why": "a passed plan has no issues",
+      "document": {
+        "schema": "generate2dmap.parallax_validation.v2",
+        "passed": true,
+        "issues": ["sky does not cover the viewport"]
+      },
+      "error": "is expected to be empty"
+    },
+    {
+      "why": "pivot modes are top-left, center or point",
+      "set": "/pivot/mode",
+      "value": "middle",
+      "error": "'middle' is not one of"
+    },
+    {
+      "why": "coverage policies are fixed",
+      "set": "/coverage_policy",
+      "value": "some",
+      "error": "'some' is not one of"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.parallax_validation.v3",
+      "error": "is not one of"
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "schema": "generate2dmap.parallax_validation.v2",
+  "passed": false,
+  "issues": ["plan.json: layers[0] needs an image"]
+}

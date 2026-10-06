@@ -1,0 +1,14 @@
+{
+  "schema": "codeart2d.pixelspec.v1",
+  "canvas": [24, 10],
+  "palette": {"k": "#1a1c2c", "l": "#a7f070", "g": "#38b764", "b": "#3b5dc9", "x": "#00000000"},
+  "poses": {
+    "body": {"segments": ["6.8l", "4.12l", "3.14g", "2.16g", "2.16g", "3.14g", "4.12g"]},
+    "emblem": {"rows": ["bb", "bx"]}
+  },
+  "layers": [
+    {"name": "body", "z": 0, "origin": [1, 1], "rows": "body"},
+    {"name": "emblem", "z": 0.5, "origin": [9, 3], "rows": "emblem", "mirror_safe": false}
+  ],
+  "outline": {"mode": "solid", "color": "k"}
+}

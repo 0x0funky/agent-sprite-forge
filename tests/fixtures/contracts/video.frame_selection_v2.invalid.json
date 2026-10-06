@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {"why": "v2 names its method", "remove": "/method"},
+    {"why": "v2 carries durations", "remove": "/durations_ms"},
+    {"why": "unknown policy", "set": "/loopPolicy", "value": "loop"},
+    {"why": "negative index", "set": "/sourceIndices/0", "value": -1},
+    {"why": "bad hash", "set": "/sourceHashes/0", "value": "abc"},
+    {"why": "kinds are fixed", "set": "/kind", "value": "dance", "error": "'dance' is not one of"},
+    {
+      "why": "ticks are whole and positive",
+      "set": "/ticks",
+      "value": [0],
+      "error": "0 is less than the minimum of 1"
+    }
+  ]
+}

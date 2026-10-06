@@ -1,0 +1,279 @@
+{
+  "schema": "codeart2d.fx_report.v1",
+  "route": "pixel",
+  "canvas": [64, 64],
+  "origin": [32.0, 34.0],
+  "zoom": 1,
+  "palette": [
+    "#1a1c2c",
+    "#3b5dc9",
+    "#41a6f6",
+    "#6f6050",
+    "#a6f0ff",
+    "#a8957a",
+    "#b13e53",
+    "#d8c8aa",
+    "#ef7d57",
+    "#ffcd75",
+    "#ffffff"
+  ],
+  "effects": {
+    "slash": {
+      "durationMs": 400,
+      "impactMs": 150,
+      "loop": false,
+      "frames": [
+        {
+          "id": "slash-00",
+          "start_ms": 0,
+          "duration_ms": 50,
+          "sample_ms": 25.0,
+          "qa": {
+            "visible": 94,
+            "partial_alpha": 0,
+            "colors": 3,
+            "off_palette": 0,
+            "orphans": 8,
+            "l_corners": null,
+            "outline_gaps": null,
+            "bbox": [17, 10, 35, 20]
+          },
+          "margin_px": 10,
+          "file": "frames/slash-00.png"
+        },
+        {
+          "id": "slash-01",
+          "start_ms": 50,
+          "duration_ms": 50,
+          "sample_ms": 75.0,
+          "qa": {
+            "visible": 201,
+            "partial_alpha": 0,
+            "colors": 3,
+            "off_palette": 0,
+            "orphans": 3,
+            "l_corners": null,
+            "outline_gaps": null,
+            "bbox": [20, 12, 50, 33]
+          },
+          "margin_px": 12,
+          "file": "frames/slash-01.png"
+        }
+      ],
+      "duration_ms": [50, 50, 50, 50, 50, 50, 50, 50],
+      "hit_frame": 3,
+      "dropped_tail_frames": 0,
+      "events": [{"at": 3, "name": "hit", "data": {"impactMs": 150}}],
+      "seam": null,
+      "hit_on_60hz_tick": true
+    }
+  },
+  "arcs": [
+    {
+      "effect": "slash",
+      "hit_frame": 3,
+      "arc_complete_frame": 3,
+      "progress": [0.421296, 0.875, 0.99537, 1.0, 1.0, 1.0, 1.0, 1.0]
+    }
+  ],
+  "margin_failures": [],
+  "build_clips": null,
+  "runtime": null,
+  "review": {
+    "slash": "review/slash.png",
+    "impact": "review/impact.png",
+    "dust": "review/dust.png",
+    "orb": "review/orb.png"
+  },
+  "qa": {
+    "status": "pass",
+    "method": "fx_build: frames cut at impactMs and sampled mid-frame; codeart_core.qa_pixels per frame against the spec palette (pixel route); slash head progress at each frame; forge_core.seam_report on loops; transparent margin; optional build_animation_clips and fx_verify.mjs runs",
+    "notProven": [
+      "Readability and impact at game scale and in motion: look at review/*.png and play the clips.",
+      "That the effect suits the move it accompanies; the checks prove timing and palette only.",
+      "build_animation_clips was not run (--build-clips not given)."
+    ],
+    "checks": [
+      {"id": "partial_alpha", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "off_palette", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "outline_gaps", "status": "pass", "value": 0, "threshold": 0},
+      {"id": "l_corners", "status": "pass", "value": 9, "threshold": 10},
+      {
+        "id": "arc_on_hit",
+        "status": "pass",
+        "value": [],
+        "threshold": "slash head completes on the hit frame"
+      },
+      {"id": "seam:orb", "status": "pass", "value": 1.0808, "threshold": [0.8, 1.25]},
+      {"id": "margins", "status": "pass", "value": 0, "threshold": 1},
+      {
+        "id": "timing",
+        "status": "pass",
+        "value": {"slash": 400, "impact": 300, "dust": 400, "orb": 400},
+        "threshold": {"slash": 400, "impact": 300, "dust": 400, "orb": 400}
+      },
+      {"id": "build_clips", "status": "skipped", "value": null, "threshold": 0},
+      {"id": "runtime_verify", "status": "skipped", "value": null, "threshold": "pass"}
+    ],
+    "inputs": [
+      {
+        "path": "slash.fx.json",
+        "sha256": "09669824e88266a1b3498b788b603a57dbf485a8ee89ecec97758be2bf3b8a12",
+        "bytes": 2138
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/slash-00.png",
+        "sha256": "fe4f0e37e91b484896f2fa7cf41ce32cc874541143cb8be371494ff41dc3258f",
+        "bytes": 255
+      },
+      {
+        "path": "frames/slash-01.png",
+        "sha256": "4a2e705d32d885f66e6f40ef7dfffc68a57a83a879546d5b1dd27620132ca0e6",
+        "bytes": 327
+      },
+      {
+        "path": "frames/slash-02.png",
+        "sha256": "6f5fa43e666d6d4e9359e2d078d5433d2aff5d752cf1dde5d4427fc480053762",
+        "bytes": 338
+      },
+      {
+        "path": "frames/slash-03.png",
+        "sha256": "e3094cb02f1b88a5a25c49a8f096fc01a9ddc5556cfe729627e9588ddbe45fb9",
+        "bytes": 392
+      },
+      {
+        "path": "frames/slash-04.png",
+        "sha256": "2abe730f30ca8143cbf969146cfc56ed66bf8f355089b0dcb5488ef2435d73df",
+        "bytes": 430
+      },
+      {
+        "path": "frames/slash-05.png",
+        "sha256": "b030327973a14815d5412515bec12dd2a11a929328316851f2a8154452b3990d",
+        "bytes": 350
+      },
+      {
+        "path": "frames/slash-06.png",
+        "sha256": "98ed17cdf427c5a5fa6f5caea490581d9a2a17c7ce8fbb8f955a1b243c750bda",
+        "bytes": 265
+      },
+      {
+        "path": "frames/slash-07.png",
+        "sha256": "8a935e46744b7a5077285fe6b9fdf1866219af215e93eee17730e98dcc94005d",
+        "bytes": 185
+      },
+      {
+        "path": "frames/impact-00.png",
+        "sha256": "e281d95ab5549a8c7d9a4e5391dbd84b18da3b1ebb01752511c3f07037accc71",
+        "bytes": 277
+      },
+      {
+        "path": "frames/impact-01.png",
+        "sha256": "850b9a8126c07d9cea212e83e6f6f028f5aeb44dd5b75f9633b808ab32746074",
+        "bytes": 392
+      },
+      {
+        "path": "frames/impact-02.png",
+        "sha256": "4dd31745fd255d6cf180c6e19ae9b682a2dffb7dd84ca8bdf26a3d90743fa23b",
+        "bytes": 399
+      },
+      {
+        "path": "frames/impact-03.png",
+        "sha256": "080fa66857809c8188a122421b78b1e2b697d6e452ae909df0a3d7afe1ac1614",
+        "bytes": 324
+      },
+      {
+        "path": "frames/impact-04.png",
+        "sha256": "e3e21bc3b58cd55a703049e54db08caf2e626901a6809826dfdb93a46f468885",
+        "bytes": 276
+      },
+      {
+        "path": "frames/dust-00.png",
+        "sha256": "eb586ca5ce9fe728b08882b7049b5389bb398a5ed5e07c9bede136f490a7bf4a",
+        "bytes": 149
+      },
+      {
+        "path": "frames/dust-01.png",
+        "sha256": "0e9f11a15a3c704f28c7bad62c11ad8da426498027000cf2ed9fecc2ed2f1c84",
+        "bytes": 176
+      },
+      {
+        "path": "frames/dust-02.png",
+        "sha256": "ef345724c6d2b1efdb582ce77ffd2b365c62d35229e17087f4365c08a36d036e",
+        "bytes": 232
+      },
+      {
+        "path": "frames/dust-03.png",
+        "sha256": "2d4a48a7b98706b1dc65340360f427a4a290406cedab01e1cde4f8d42bd30b9b",
+        "bytes": 218
+      },
+      {
+        "path": "frames/dust-04.png",
+        "sha256": "7a7475fb42a9d2e522ee274eb29d8c15b5e48222a578614e02fdf11751a1e0a3",
+        "bytes": 238
+      },
+      {
+        "path": "frames/dust-05.png",
+        "sha256": "05950fbd71404bf637342ca550db07474542a013490380fc640b020e45d72874",
+        "bytes": 222
+      },
+      {
+        "path": "frames/dust-06.png",
+        "sha256": "9ad6ad86bfa8d7f59d27f68e318342d3353560a748a4b3693031296df9b3e024",
+        "bytes": 175
+      },
+      {
+        "path": "frames/dust-07.png",
+        "sha256": "099b822db67a48aabdca7eb070c6443e5b1755dd57cad5779f26d9fe6d0430d1",
+        "bytes": 153
+      },
+      {
+        "path": "frames/orb-00.png",
+        "sha256": "43ffe8b1353904f128438d85ed92f747e5b6e0a31dbbd817b57b036567cdbe26",
+        "bytes": 329
+      },
+      {
+        "path": "frames/orb-01.png",
+        "sha256": "f802de500d7c53fdcfc961e7db6f45ee88a1082c6d47a3d6cbb51db1d6a23592",
+        "bytes": 342
+      },
+      {
+        "path": "frames/orb-02.png",
+        "sha256": "ade3fde2db83f2466f5607693f415c9a89ab4824ec73a1c40de57efee5fb3b1c",
+        "bytes": 340
+      },
+      {
+        "path": "frames/orb-03.png",
+        "sha256": "920f7afd78ea72c12aa8d354035970dbf058d0b302dd1d980761863d791cffa9",
+        "bytes": 313
+      },
+      {
+        "path": "frames/orb-04.png",
+        "sha256": "9754ddf0ec9eb296252d90f22dcb730d5a607754e60ab9b02063aefb93d35c91",
+        "bytes": 299
+      },
+      {
+        "path": "frames/orb-05.png",
+        "sha256": "f5891f7b211dcf6e88cfd657c04cb07fe241316539acea19f68e446a96ade98d",
+        "bytes": 272
+      },
+      {
+        "path": "frames/orb-06.png",
+        "sha256": "493c5fe5ada4fc3f86e1a74bd56e7a166372ba26c75c7433740982b1b0d84569",
+        "bytes": 266
+      },
+      {
+        "path": "frames/orb-07.png",
+        "sha256": "b47ef809a01aea2e5b47c5608211efe986350b97c3e43e963f1639b82c230e7e",
+        "bytes": 303
+      },
+      {
+        "path": "clips.json",
+        "sha256": "d0e96a492fc0c859f1b378c3ce2ba77d15f077c7e50e80e8389561fda5688ad7",
+        "bytes": 4319
+      }
+    ],
+    "tool": {"name": "codeart2d/fx_build.py", "version": "1"}
+  }
+}

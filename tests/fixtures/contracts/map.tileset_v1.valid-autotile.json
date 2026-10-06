@@ -1,0 +1,60 @@
+{
+  "schema": "generate2dmap.tileset.v1",
+  "id": "water-grass-wang16",
+  "image": "water-grass-wang16.png",
+  "sha256": "b229d61907e1da2c708e18418904df0ce4f0019bf5b20a043ef497619312bb4d",
+  "tile_size": 16,
+  "columns": 16,
+  "tilecount": 64,
+  "kind": "wang_corner",
+  "materials": ["water", "grass"],
+  "variants": 4,
+  "seamless_verified": true,
+  "seam_proof": {
+    "method": "Tiles assembled from the atlas by key, compared pixel for pixel (RGBA) with an independent global render: noise evaluated at map coordinates, every pixel classified from its own cell, band and face look-ups read at their true positions across tile edges. Cases: every 2x2 tile block (all 3x3 corner lattices) (512 configurations, 4 variant passes); a seeded random 30x20 map.",
+    "pixels_compared": 2250752,
+    "mismatches": 0
+  },
+  "repetition_index": 0.2624,
+  "wangset": {
+    "type": "corner",
+    "colors": [{"name": "water", "color": "#4b98dc"}, {"name": "grass", "color": "#5aa344"}]
+  },
+  "plateau": 3,
+  "art_source": "code",
+  "generator": {"name": "codeart2d/autotile_build", "version": "0.4.0"},
+  "spec_sha256": "2e84e8fb179d9de472561253de9732316dec7deda5fe1ada788ec1fe0d12a108",
+  "qa": {"path": "autotile-qa.json", "sha256": "eeeb6588212fa0b2027781354f6397bbd54ee4541a26a47d01129fbc20f2ae99", "bytes": 5934},
+  "tiles": [
+    {
+      "index": 0,
+      "variant": 0,
+      "wang": [0, 0, 0, 0],
+      "wangid": [0, 1, 0, 1, 0, 1, 0, 1],
+      "collision": [{"shape": "rect", "x": 0, "y": 0, "w": 16, "h": 16}],
+      "properties": {"walkable": false}
+    },
+    {
+      "index": 1,
+      "variant": 0,
+      "wang": [0, 0, 0, 1],
+      "wangid": [0, 1, 0, 2, 0, 1, 0, 1],
+      "collision": [
+        {"shape": "rect", "x": 0, "y": 0, "w": 16, "h": 8},
+        {"shape": "rect", "x": 0, "y": 8, "w": 8, "h": 8}
+      ],
+      "properties": {"walkable": false}
+    },
+    {
+      "index": 2,
+      "variant": 0,
+      "wang": [0, 0, 1, 0],
+      "wangid": [0, 1, 0, 1, 0, 2, 0, 1],
+      "collision": [
+        {"shape": "rect", "x": 0, "y": 0, "w": 16, "h": 8},
+        {"shape": "rect", "x": 8, "y": 8, "w": 8, "h": 8}
+      ],
+      "properties": {"walkable": false}
+    }
+  ]
+}

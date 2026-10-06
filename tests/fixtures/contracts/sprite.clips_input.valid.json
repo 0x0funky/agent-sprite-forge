@@ -1,0 +1,51 @@
+{
+  "schema": "generate2dsprite.animation_clips.v2",
+  "frames": [
+    "frames/walk-0.png",
+    "frames/walk-1.png",
+    "frames/walk-2.png",
+    "frames/walk-3.png",
+    {"name": "atk-0", "file": "frames/attack-0.png"},
+    {"name": "atk-1", "file": "frames/attack-1.png"},
+    {"name": "atk-2", "file": "frames/attack-2.png"},
+    {"name": "atk-3", "file": "frames/attack-3.png"},
+    {"name": "idle", "file": "frames/idle.png"}
+  ],
+  "anchor_px": [32, 60],
+  "clips": {
+    "walk": {
+      "frames": [0, 1, 2, 3],
+      "ticks": 6,
+      "loop_policy": "cycle",
+      "events": [{"at": 0, "name": "step_l"}, {"at": 2, "name": "step_r"}],
+      "entry_frame": 0,
+      "stride_world_units": 24,
+      "stride_px_per_frame": 6,
+      "speed_ref": 60,
+      "transitions": [{"to": "idle", "entry_frame": 0, "dissolve_ms": 60, "mode": "dither"}],
+      "role": "player"
+    },
+    "attack": {
+      "frames": [4, 5, 6, 7],
+      "duration_ms": [80, 60, 120, 200],
+      "loop": false,
+      "events": [
+        {"at": 1, "name": "tell"},
+        {"at": 2, "name": "hit", "data": {"damage": 2}},
+        {"at": 3, "name": "end"}
+      ],
+      "keys": {"wind_start": 0, "wind_peak": 1, "strike": 2, "recover": 3},
+      "hitstop_ticks": 4,
+      "role": "player"
+    },
+    "idle": {"frames": ["idle"], "duration_ms": 400, "loop": true}
+  },
+  "states": {"moving": "walk", "attack": "attack", "idle": "idle"},
+  "sampling": "nearest",
+  "pixel_art": true,
+  "palette_ref": "palette.json",
+  "art_source": "code",
+  "placeholder": false,
+  "body_height_px": 44,
+  "shadow": {"rx": 10, "ry": 4, "opacity": 0.35}
+}

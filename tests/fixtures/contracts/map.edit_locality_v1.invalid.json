@@ -1,0 +1,36 @@
+{
+  "cases": [
+    {
+      "why": "transform kinds are fixed",
+      "set": "/transform/kind",
+      "value": "rotate",
+      "error": "'rotate' is not one of"
+    },
+    {
+      "why": "comparisons run before or after",
+      "set": "/comparison/space",
+      "value": "during",
+      "error": "'during' is not one of"
+    },
+    {
+      "why": "region origins are stage or cli",
+      "set": "/regions",
+      "value": [
+        {
+          "id": "arch",
+          "origin": "auto",
+          "kind": "box",
+          "uv": [0.5, 0.2, 0.7, 0.5],
+          "status": "pass"
+        }
+      ],
+      "error": "'auto' is not one of"
+    },
+    {
+      "why": "the scale is two positive factors",
+      "set": "/transform/scale",
+      "value": [1.0],
+      "error": "is too short"
+    }
+  ]
+}

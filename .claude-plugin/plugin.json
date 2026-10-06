@@ -1,0 +1,11 @@
+{
+  "name": "agent-sprite-forge",
+  "displayName": "Agent Sprite Forge",
+  "version": "0.4.0",
+  "description": "Game-ready 2D sprites, maps, code-drawn pixel art, video-derived animation and API media generation as agent skills, with deterministic Python processors.",
+  "author": { "name": "0x0funky" },
+  "homepage": "https://github.com/0x0funky/agent-sprite-forge",
+  "repository": "https://github.com/0x0funky/agent-sprite-forge",
+  "license": "MIT",
+  "keywords": ["gamedev", "sprites", "pixel-art", "tilemap", "godot", "spritesheet", "code-art"]
+}

@@ -1,0 +1,74 @@
+{
+  "schema": "video2dsprite.registration_job.v1",
+  "tool": {"name": "prepare_i2v_input", "version": "1"},
+  "action": "run",
+  "actionKind": "loop",
+  "returnsToRest": true,
+  "master": {
+    "path": "master.png",
+    "sha256": "732d33ff6c099a43da3724e376f78780557e5034a53441f620adc7ecda2383e1",
+    "size": [256, 256],
+    "anchor": [130.5, 233.0],
+    "sourceName": "hero.png"
+  },
+  "sourceSize": [256, 256],
+  "sourceAnchor": [130.5, 233.0],
+  "anchorMode": "stance",
+  "referenceCanvas": [320, 180],
+  "referenceScale": 0.655940594059406,
+  "referenceOffset": [74.39975247524752, 2.1658415841584144],
+  "referenceRoot": [160.0, 155.0],
+  "pixelArt": false,
+  "placementResampler": "lanczos",
+  "keyColor": "magenta",
+  "keyChoice": {
+    "requested": "auto",
+    "status": "ok",
+    "candidates": [
+      {"key": "magenta", "overlapShare": 0.0, "rejected": false},
+      {"key": "green", "overlapShare": 0.0, "rejected": false},
+      {"key": "blue", "overlapShare": 0.0, "rejected": false}
+    ],
+    "rule": "reject a key when more than 0.5% of subject pixels have key dominance >= 40; first acceptable candidate wins"
+  },
+  "workRegion": [74, 20, 243, 160],
+  "workRegionClipped": [0.0, 17.834, 0.0, 10.087],
+  "margin": 20.0,
+  "padding": [0, 0, 0, 0],
+  "durationS": 6.0,
+  "calmSpanS": 0.4,
+  "timeline": [
+    {
+      "startS": 0.0,
+      "endS": 0.4,
+      "text": "hold exactly the supplied reference pose, nothing moves yet"
+    },
+    {
+      "startS": 0.4,
+      "endS": 5.0,
+      "text": "a steady run in place, one full left-right pair of strides about every 0.5 seconds"
+    },
+    {
+      "startS": 5.0,
+      "endS": 5.6,
+      "text": "slow to a stop and bring the feet back into the starting stance"
+    },
+    {"startS": 5.6, "endS": 6.0, "text": "hold exactly the starting pose, position and scale"}
+  ],
+  "prompt": {
+    "path": "prompt.txt",
+    "sha256": "7c98c19c26f40dc94ce9d454a9d59d635f2b9edee1ee4cb6972c19367e84658c"
+  },
+  "lint": [],
+  "warnings": [],
+  "input": {
+    "path": "input.png",
+    "sha256": "4df8b40c5b13804af543318cf4cd403dd79c10f7287db6cf97789190acaf624e",
+    "size": [320, 180]
+  },
+  "reviewGuide": {
+    "path": "review-guide.png",
+    "sha256": "00b65dd65a9e8eddcacb5c5d9795c1f628ab72d774784fd7d2e0b4712f6581a6",
+    "note": "review aid only; never send it to the provider"
+  }
+}

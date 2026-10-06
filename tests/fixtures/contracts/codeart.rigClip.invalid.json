@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "zero frames", "set": "/frames", "value": 0},
+    {"why": "loop is mandatory", "remove": "/loop"},
+    {"why": "t above 1", "set": "/events/0/t", "value": 2},
+    {
+      "why": "ik chains are ikChains",
+      "set": "/ik",
+      "value": {"leg": {"bones": ["a"]}},
+      "error": "is too short"
+    }
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "version": 2,
+  "schema": "generate2dsprite.scale_profile.v2",
+  "name": "fox",
+  "processing": {
+    "cell_size": 64,
+    "fit_scale": 0.85,
+    "trim_border": 0,
+    "edge_clean_depth": 0,
+    "align": "feet",
+    "shared_scale": true,
+    "scale_strategy": "fit",
+    "component_mode": "all",
+    "component_padding": 0,
+    "min_component_area": 1,
+    "edge_touch_margin": 0,
+    "background_mode": "native_alpha",
+    "resampler": "lanczos",
+    "despill_radius": 0,
+    "alpha_geometry_threshold": 16
+  },
+  "output_origin": [32, 60],
+  "reference": {
+    "target": "player",
+    "mode": "player_walk",
+    "rows": 1,
+    "cols": 2,
+    "body_scale_mean": 0.62,
+    "body_scale_cv": 0.01,
+    "anchor_y_mean": 0.93,
+    "output_subject_height_px": 44.0
+  },
+  "qc": {"max_body_scale_drift": 0.08}
+}

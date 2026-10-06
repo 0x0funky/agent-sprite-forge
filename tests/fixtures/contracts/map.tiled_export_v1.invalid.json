@@ -1,0 +1,16 @@
+{
+  "cases": [
+    {
+      "why": "the Tiled record is kept",
+      "remove": "/tiled",
+      "error": "'tiled' is a required property"
+    },
+    {"why": "a pass cannot hold a failed check", "set": "/checks/0/status", "value": "fail"},
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "generate2dmap.tiled_export.v2",
+      "error": "was expected"
+    }
+  ]
+}

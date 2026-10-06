@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "verify statuses are fixed",
+      "set": "/verify/status",
+      "value": "ok",
+      "error": "'ok' is not one of"
+    },
+    {
+      "why": "the page is bound by sha256",
+      "remove": "/preview/sha256",
+      "error": "'sha256' is a required property"
+    },
+    {
+      "why": "the page file is relative",
+      "set": "/preview/file",
+      "value": "C:/out/preview.html",
+      "error": "does not match"
+    },
+    {
+      "why": "layer sources are image, tiles or objects",
+      "set": "/preview/layers/0/source",
+      "value": "video",
+      "error": "is not one of"
+    }
+  ]
+}

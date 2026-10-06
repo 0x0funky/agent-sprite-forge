@@ -1,0 +1,26 @@
+{
+  "schema": "codeart2d.pixelspec.v1",
+  "name": "slime",
+  "canvas": [16, 12],
+  "anchor_px": [8, 11],
+  "palette": {"k": "#1a1c2c", "d": "#257179", "g": "#38b764", "l": "#a7f070"},
+  "variants": {"blue": {"d": "#29366f", "g": "#3b5dc9", "l": "#41a6f6"}, "green": {}},
+  "outline": {"mode": "solid", "color": "k"},
+  "poses": {
+    "rest": ["...llll...", "..lllggg..", ".lllggggg.", ".llgggggdd", "..dddddd.."],
+    "squash": ["..llllll..", ".lllgggggd", "dddddddddd"]
+  },
+  "layers": [
+    {"name": "body", "z": 0, "origin": [3, 0], "rows": "rest"},
+    {"name": "eyes", "z": 1, "origin": [6, 0], "rows": ["k.k"], "mirror_safe": true}
+  ],
+  "frames": [
+    {"name": "rest", "layers": {"body": {"rows": "rest", "dy": 5}, "eyes": {"dy": 7}}},
+    {
+      "name": "squash",
+      "layers": {"body": {"rows": "squash", "dy": 7}, "eyes": {"dy": 8}},
+      "flip_x": false
+    }
+  ],
+  "clips": {"idle": {"frames": ["rest", "squash"], "duration_ms": [180, 120], "loop": true}}
+}

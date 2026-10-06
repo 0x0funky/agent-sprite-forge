@@ -1,0 +1,17 @@
+{
+  "rule": "qa-foreign",
+  "why": "QA of a file this package does not ship",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "append",
+      "path": "/qa/outputs",
+      "value": {
+        "path": "other.png",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    }
+  ],
+  "alsoFails": []
+}

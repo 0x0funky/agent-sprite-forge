@@ -1,0 +1,373 @@
+{
+  "schema": "generate2dmap.map_bundle.v2",
+  "id": "meadow",
+  "tile_size": 16,
+  "world": {"width": 640, "height": 400, "unit": "px"},
+  "terrain": {"vertex_grid": "terrain-vertices.json", "materials": ["grass", "path", "water"]},
+  "layers": [
+    {
+      "name": "ground",
+      "kind": "image",
+      "image": "ground.png",
+      "sha256": "b2c912f2d1df9afe20e01707005105c77575fa739ed4494bc5ff2a624ddbfcba"
+    },
+    {"name": "props", "kind": "objects"}
+  ],
+  "props": {
+    "tree": {
+      "label": "tree",
+      "display_name": "tree",
+      "image": "props/tree.png",
+      "sha256": "78b130cb9b4237aea1c812009e85f8b36bf2cedea0447223486141957a6b9334",
+      "anchor_px": [10, 25],
+      "footprint": {"shape": "ellipse", "width": 7, "depth": 4, "offset": [0, -2], "rotate": 0},
+      "solid": true,
+      "occlusion_class": "tall",
+      "status": "accepted",
+      "size": [20, 26],
+      "origin": "pixelspec"
+    },
+    "pine": {
+      "label": "pine",
+      "display_name": "pine",
+      "image": "props/pine.png",
+      "sha256": "16e1690132a2d346bf6b6cb0cad802fdb821778363cbd94cba083c614187f68d",
+      "anchor_px": [9, 29],
+      "footprint": {"shape": "ellipse", "width": 6, "depth": 3.5, "offset": [0, -1.75], "rotate": 0},
+      "solid": true,
+      "occlusion_class": "tall",
+      "status": "accepted",
+      "size": [18, 30],
+      "origin": "pixelspec"
+    }
+  },
+  "objects": [
+    {
+      "id": "house-1",
+      "prop": "house",
+      "kind": "house",
+      "x": 216,
+      "y": 186,
+      "anchor_px": [23, 41],
+      "solid": true,
+      "sortY": 186,
+      "occlusion": "tall",
+      "scale": 1,
+      "flip_x": false,
+      "footprint": {"shape": "rect", "width": 38, "depth": 16, "offset": [0, -8], "rotate": 0}
+    },
+    {
+      "id": "house-2",
+      "prop": "house",
+      "kind": "house",
+      "x": 312,
+      "y": 186,
+      "anchor_px": [23, 41],
+      "solid": true,
+      "sortY": 186,
+      "occlusion": "tall",
+      "scale": 1,
+      "flip_x": false,
+      "footprint": {"shape": "rect", "width": 38, "depth": 16, "offset": [0, -8], "rotate": 0}
+    }
+  ],
+  "collision": {
+    "actorRadius": 5,
+    "ySquash": 1,
+    "solids": [
+      {
+        "id": "terrain-water-1",
+        "shape": "rect",
+        "x": 472,
+        "y": 56,
+        "w": 48,
+        "h": 16,
+        "material": "water"
+      },
+      {
+        "id": "terrain-water-2",
+        "shape": "rect",
+        "x": 456,
+        "y": 72,
+        "w": 80,
+        "h": 16,
+        "material": "water"
+      }
+    ],
+    "rects": [[232, 8, 8, 8], [464, 8, 8, 8]],
+    "rectCell": 8
+  },
+  "portals": [
+    {
+      "id": "exit-west",
+      "rect": [0, 232, 8, 16],
+      "to": "west-field:from-meadow",
+      "activation": "intent",
+      "travelDirection": [-1, 0],
+      "radius": 5,
+      "latch": true,
+      "requiresMovement": true,
+      "edge": "west",
+      "entranceByFrom": {"west-field": "from-exit-west"}
+    },
+    {
+      "id": "exit-east",
+      "rect": [632, 232, 8, 16],
+      "to": "harbor-road:from-meadow",
+      "activation": "intent",
+      "travelDirection": [1, 0],
+      "radius": 5,
+      "latch": true,
+      "requiresMovement": true,
+      "edge": "east",
+      "entranceByFrom": {"harbor-road": "from-exit-east"}
+    },
+    {
+      "id": "exit-north",
+      "rect": [376, 0, 32, 8],
+      "to": "north-woods:from-meadow",
+      "activation": "intent",
+      "travelDirection": [0, -1],
+      "radius": 5,
+      "latch": true,
+      "requiresMovement": true,
+      "edge": "north",
+      "entranceByFrom": {"north-woods": "from-exit-north"}
+    }
+  ],
+  "spawns": [
+    {"id": "start", "x": 300, "y": 216, "facing": "south"},
+    {"id": "from-exit-west", "x": 16.5, "y": 238.5, "facing": "east"},
+    {"id": "from-exit-east", "x": 622.5, "y": 238.5, "facing": "west"},
+    {"id": "from-exit-north", "x": 391.5, "y": 16.5, "facing": "south"}
+  ],
+  "interactions": [
+    {"id": "house-1.door", "x": 216, "y": 188, "reach": 12},
+    {"id": "house-2.door", "x": 312, "y": 188, "reach": 12},
+    {"id": "house-3.door", "x": 408, "y": 188, "reach": 12}
+  ],
+  "roads": [
+    {
+      "id": "west-road",
+      "material": "path",
+      "width": 27.2,
+      "polyline": [
+        [-16, 240],
+        [-13.9009, 239.934],
+        [-11.4338, 239.8856],
+        [-8.6297, 239.8507],
+        [-5.5199, 239.8252],
+        [-2.1354, 239.8048],
+        [1.4927, 239.7854],
+        [5.3333, 239.763],
+        [9.3554, 239.7332],
+        [13.5277, 239.6921],
+        [17.8192, 239.6355],
+        [22.1989, 239.5591],
+        [26.6356, 239.4589],
+        [31.0982, 239.3307],
+        [35.5556, 239.1704],
+        [39.9767, 238.9738],
+        [44.3304, 238.7367],
+        [48.5857, 238.4551],
+        [52.7114, 238.1248],
+        [56.6764, 237.7416],
+        [60.4496, 237.3014],
+        [64, 236.8],
+        [68.2076, 236.0666],
+        [72.3599, 235.1958],
+        [76.4567, 234.2051],
+        [80.4983, 233.1122],
+        [84.4844, 231.9345],
+        [88.4152, 230.6898],
+        [92.2907, 229.3956],
+        [96.1107, 228.0695],
+        [99.8754, 226.7291],
+        [103.5848, 225.3919],
+        [107.2388, 224.0756],
+        [110.8374, 222.7976],
+        [114.3806, 221.5757],
+        [117.8685, 220.4274],
+        [121.301, 219.3703],
+        [124.6782, 218.422],
+        [128, 217.6],
+        [132.3477, 216.6707],
+        [136.7465, 215.8463],
+        [141.1525, 215.1181],
+        [145.5221, 214.4772],
+        [149.8116, 213.915],
+        [153.9772, 213.4227],
+        [157.9754, 212.9915],
+        [161.7624, 212.6128],
+        [165.2945, 212.2778],
+        [168.528, 211.9778],
+        [171.4192, 211.704],
+        [173.9244, 211.4476],
+        [176, 211.2]
+      ]
+    },
+    {
+      "id": "east-road",
+      "material": "path",
+      "width": 27.2,
+      "polyline": [
+        [432, 216],
+        [434.0973, 216.5794],
+        [436.5984, 217.2743],
+        [439.4643, 218.0732],
+        [442.6558, 218.9642],
+        [446.1339, 219.9357],
+        [449.8596, 220.9759],
+        [453.7936, 222.073],
+        [457.897, 223.2155],
+        [462.1307, 224.3915],
+        [466.4555, 225.5893],
+        [470.8325, 226.7972],
+        [475.2225, 228.0034],
+        [479.5864, 229.1963],
+        [483.8852, 230.3642],
+        [488.0798, 231.4952],
+        [492.1311, 232.5777],
+        [496, 233.6],
+        [499.7908, 234.6193],
+        [503.6271, 235.6924],
+        [507.4993, 236.8065],
+        [511.3975, 237.949],
+        [515.312, 239.107],
+        [519.2331, 240.268],
+        [523.1508, 241.4193],
+        [527.0556, 242.548],
+        [530.9375, 243.6416],
+        [534.7869, 244.6873],
+        [538.5939, 245.6725],
+        [542.3489, 246.5843],
+        [546.0419, 247.4102],
+        [549.6633, 248.1374],
+        [553.2033, 248.7533],
+        [556.6521, 249.245],
+        [560, 249.6],
+        [564.2167, 249.833],
+        [568.2658, 249.817],
+        [572.1693, 249.5869],
+        [575.949, 249.1776],
+        [579.6268, 248.6241],
+        [583.2244, 247.9614],
+        [586.7638, 247.2244],
+        [590.2667, 246.4481],
+        [593.7551, 245.6674],
+        [597.2508, 244.9173],
+        [600.7756, 244.2327],
+        [604.3514, 243.6486],
+        [608, 243.2],
+        [611.8234, 242.8402],
+        [615.8653, 242.4994],
+        [620.0601, 242.1775],
+        [624.3423, 241.8746],
+        [628.6463, 241.5905],
+        [632.9067, 241.3254],
+        [637.0578, 241.0793],
+        [641.0341, 240.8521],
+        [644.7701, 240.6438],
+        [648.2003, 240.4544],
+        [651.259, 240.284],
+        [653.8807, 240.1325],
+        [656, 240]
+      ]
+    }
+  ],
+  "camera": {"bounds": [0, 0, 640, 400]},
+  "art_source": "code",
+  "placeholder": true,
+  "qa": {
+    "status": "pass",
+    "report": "layout-qa.json",
+    "checks": {
+      "tiles_drawable": "skipped",
+      "rect_union_equals_blocked": "pass",
+      "rects_disjoint": "pass",
+      "spawns_reachable": "pass",
+      "exits_reachable": "pass",
+      "arrivals_outside_triggers": "pass",
+      "interactions_reachable": "pass",
+      "enclosed_pockets": "pass",
+      "prop_variety": "pass",
+      "scatter_filled": "pass",
+      "hygiene_converged": "pass"
+    },
+    "reachability": {
+      "cell": 3,
+      "valid_cells": 23830,
+      "reachable_cells": 23767,
+      "reachable_fraction": 0.9974
+    }
+  },
+  "provenance": {
+    "tool": "layout_build",
+    "version": "1.0",
+    "params": {
+      "seed": 7,
+      "rect_cell": 8,
+      "preview": false,
+      "strict_qc": false,
+      "hygiene": {
+        "demoted_vertices": 0,
+        "saddles_filled": 0,
+        "specks_removed": 0,
+        "passes": 1,
+        "converged": true
+      },
+      "scatter": [
+        {
+          "id": "forest",
+          "requested": 70,
+          "placed": 70,
+          "candidates": 1552,
+          "looks": 4,
+          "same_look_neighbour_share": 0.0857
+        },
+        {
+          "id": "hedgerow",
+          "requested": 18,
+          "placed": 18,
+          "candidates": 35,
+          "looks": 4,
+          "same_look_neighbour_share": 0.0
+        },
+        {
+          "id": "shore",
+          "requested": 8,
+          "placed": 8,
+          "candidates": 251,
+          "looks": 4,
+          "same_look_neighbour_share": 0.0
+        },
+        {
+          "id": "flowers",
+          "requested": 24,
+          "placed": 24,
+          "candidates": 725,
+          "looks": 2,
+          "same_look_neighbour_share": 0.0
+        }
+      ],
+      "navigation": {
+        "cell": 3,
+        "spawn_problems": [],
+        "unreachable_exits": [],
+        "no_arrival": [],
+        "unreachable_interactions": [],
+        "pockets": [],
+        "valid_cells": 23830,
+        "reachable_cells": 23767,
+        "reachable_fraction": 0.9974
+      }
+    },
+    "inputs": [
+      {
+        "path": "meadow-layout.json",
+        "sha256": "e5f5c52926c6a6eecccba679683a2f7e569e8b844660ed480071d969fdf4f55b",
+        "bytes": 13765
+      }
+    ]
+  }
+}

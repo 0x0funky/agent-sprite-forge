@@ -1,0 +1,79 @@
+{
+  "schema": "codeart2d.pixelspec.v1",
+  "name": "slime",
+  "canvas": [32, 32],
+  "anchor_px": [16, 31],
+  "palette": {
+    "k": "#1a1c2c",
+    "d": "#257179",
+    "g": "#38b764",
+    "l": "#a7f070",
+    "H": "#f4f4f4"
+  },
+  "variants": {
+    "green": {},
+    "blue": {"d": "#29366f", "g": "#3b5dc9", "l": "#41a6f6", "H": "#f4f4f4"},
+    "red": {"d": "#5d275d", "g": "#b13e53", "l": "#ef7d57", "H": "#ffcd75"}
+  },
+  "poses": {
+    "rest": [
+      ".............llllll.............",
+      "...........Hlllllllll...........",
+      "..........lllllllllggg..........",
+      ".........lllllllllggggg.........",
+      "........lllllllllggggggg........",
+      "........llllllllgggggggg........",
+      ".......llllllllgggggggggd.......",
+      ".......lllllllgggggggggdd.......",
+      ".......lllllggggggggggddd.......",
+      "......lllllgggggggggdddddd......",
+      "......llllgggggggggddddddd......",
+      "......lllgggggggggdddddddd......",
+      ".......dddddddddddddddddd......."
+    ],
+    "squash": [
+      "............llllllll............",
+      "..........lllllllllllg..........",
+      ".........llllllllllgggg.........",
+      ".......lllllllllllggggggg.......",
+      ".......lllllllllggggggggg.......",
+      "......lllllllllggggggggggd......",
+      ".....llllllllggggggggggdddd.....",
+      ".....llllllgggggggggggddddd.....",
+      ".....lllllggggggggggddddddd.....",
+      ".....lllgggggggggggdddddddd.....",
+      "......dddddddddddddddddddd......"
+    ],
+    "stretch": [
+      "..............llll..............",
+      "............llllllll............",
+      "...........Hlllllllgg...........",
+      "..........Hlllllllgggg..........",
+      "..........llllllllgggg..........",
+      ".........llllllllgggggg.........",
+      ".........lllllllggggggg.........",
+      ".........llllllgggggggg.........",
+      "........llllllggggggggdd........",
+      "........lllllggggggggddd........",
+      "........llllggggggggdddd........",
+      "........llllgggggggddddd........",
+      "........lllgggggggdddddd........",
+      "........llggggggggdddddd........",
+      ".........dddddddddddddd........."
+    ]
+  },
+  "outline": {"mode": "solid", "color": "k"},
+  "layers": [
+    {"name": "body", "z": 0, "origin": [0, 0], "rows": [".............llllll.............", "...........Hlllllllll...........", "..........lllllllllggg..........", ".........lllllllllggggg.........", "........lllllllllggggggg........", "........llllllllgggggggg........", ".......llllllllgggggggggd.......", ".......lllllllgggggggggdd.......", ".......lllllggggggggggddd.......", "......lllllgggggggggdddddd......", "......llllgggggggggddddddd......", "......lllgggggggggdddddddd......", ".......dddddddddddddddddd......."]},
+    {"name": "eyes", "z": 1, "origin": [16, 0], "rows": ["k.k"]}
+  ],
+  "frames": [
+    {"name": "rest", "layers": {"body": {"rows": "rest", "dy": 17}, "eyes": {"dx": -1, "dy": 22}}},
+    {"name": "squash", "layers": {"body": {"rows": "squash", "dy": 19}, "eyes": {"dx": -1, "dy": 23}}},
+    {"name": "rest-2", "layers": {"body": {"rows": "rest", "dy": 17}, "eyes": {"dx": -1, "dy": 22}}},
+    {"name": "stretch", "layers": {"body": {"rows": "stretch", "dy": 15}, "eyes": {"dx": -1, "dy": 20}}}
+  ],
+  "clips": {
+    "idle": {"frames": ["rest", "squash", "rest-2", "stretch"], "duration_ms": [180, 120, 140, 160], "loop": true}
+  }
+}

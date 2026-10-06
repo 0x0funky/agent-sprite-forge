@@ -1,0 +1,102 @@
+{
+  "policy": "Real art may be used in tests only when listed here with a matching sha256. These crops are owner-generated, kept for regression tests only, and are not shipped as assets. Nothing comes from outside this repository.",
+  "source": {
+    "clip": "outputs/fresh-agent-20261005/grok-native/grok-native.mp4",
+    "clip_note": "Git-ignored outputs/ of the owner's working tree (2026-10-05 cold-start trial; the 'Ryo' clip of comparison report v2).",
+    "clip_sha256": "fe76e72655205de9920674a5ba258f8d57f096cca339c439cefda8fdf2958e3d",
+    "clip_format": "H.264 yuv420p 960x960, 24 fps, 145 frames (plus an AAC track and an MJPEG cover)",
+    "generator": "Grok Build native image_to_video (720p request) from the owner's input.png (sha256 88ca646cc99682fddfa4fed14c40b16476b78dc834a5d0a7ea5236af7cf9ab7c)",
+    "decode": "video2dsprite.py process --fps 24 (cfed170) wrote frames-raw/frame_0001.png ...; frame_{i+1:04d}.png is 0-based frame i",
+    "date": "2026-10-05",
+    "usage": "owner-generated, test-only"
+  },
+  "regenerate": "python tests/fixtures/keys/make_key_fixtures.py ryo-crops --frames <frames-raw dir> --output-dir <new dir>; compare pixels_sha256 (PNG bytes depend on the zlib build).",
+  "clip_decisions": {
+    "interior_despill": true,
+    "reference_share": 0.000117,
+    "clip_median_share": 0.00205,
+    "rule": "report v2 5.1: reference still and clip median key-material share <= 0.5% -> interior despill on"
+  },
+  "fixtures": [
+    {
+      "file": "ryo-f057-crop.png",
+      "sha256": "1c227a4084aa0db2ef948e9a560daf89f9b7db46a87d65dece95c732aebb5ccf",
+      "pixels_sha256": "23816f0b284cce65df93c6e9241d8c5101472a84ce45a55d0e75436e4cc2eddc",
+      "size": [
+        192,
+        192
+      ],
+      "mode": "RGB",
+      "frame_index_0based": 57,
+      "crop_box": [
+        256,
+        736,
+        448,
+        928
+      ],
+      "decoded_frame": "outputs/fresh-agent-20261005/grok-native/forge-process/frames-raw/frame_0058.png",
+      "decoded_frame_sha256": "ec5745ed4ea0e9621c71f08310456c759a3c3005e7d58df650d9ac8cf2a9b4cd",
+      "content": "back boot: a key tint the video model painted inside the subject (report v2 f057_interior-tint)"
+    },
+    {
+      "file": "ryo-f065-crop.png",
+      "sha256": "dd1f9706a0097cac7a2987c831efcbd85a868465743c4e5b1732bb4b69f6e2a1",
+      "pixels_sha256": "762984af1ac629a0ef3a2e9191bf05f69af259a357f6350ff78d9adfcb2f6bd1",
+      "size": [
+        200,
+        200
+      ],
+      "mode": "RGB",
+      "frame_index_0based": 65,
+      "crop_box": [
+        400,
+        624,
+        600,
+        824
+      ],
+      "decoded_frame": "outputs/fresh-agent-20261005/grok-native/forge-process/frames-raw/frame_0066.png",
+      "decoded_frame_sha256": "671cf80446754a28c3ad2e86e55ddbae8244cd9986d39df4cd9c3f9a836483fe",
+      "content": "enclosed key hole between the legs; the cfed170 video keyer kept it opaque (report v2 P0-1, f065_enclosed-hole)"
+    },
+    {
+      "file": "ryo-f070-crop.png",
+      "sha256": "b4f19142875ae5d7073d18b43c7437e5a1cec7f2b2e9436b731147c22c15eaf2",
+      "pixels_sha256": "7166ad4490b847c2e84d571e1868c32b98961b748c39e161a7c2fe29e2832e5d",
+      "size": [
+        256,
+        256
+      ],
+      "mode": "RGB",
+      "frame_index_0based": 70,
+      "crop_box": [
+        176,
+        336,
+        432,
+        592
+      ],
+      "decoded_frame": "outputs/fresh-agent-20261005/grok-native/forge-process/frames-raw/frame_0071.png",
+      "decoded_frame_sha256": "1b9199ee1910ddefdf7434ec86f4a9044680424ea279102f2393e344358ecc6b",
+      "content": "scarf tails: chroma-smeared outline and the narrow-gap glow that frozen v13 keeps (report v2 f070_scarf-gap-glow)"
+    },
+    {
+      "file": "ryo-f089-crop.png",
+      "sha256": "49b2794cd20f936fda51ba36b6b7694191542f642ba65a7966427d6754ab16ca",
+      "pixels_sha256": "ac072754c29db8fa9cef483da39825896c661505f9d3e146c65fb725b75cdfa4",
+      "size": [
+        240,
+        240
+      ],
+      "mode": "RGB",
+      "frame_index_0based": 89,
+      "crop_box": [
+        272,
+        400,
+        512,
+        640
+      ],
+      "decoded_frame": "outputs/fresh-agent-20261005/grok-native/forge-process/frames-raw/frame_0090.png",
+      "decoded_frame_sha256": "93c869364832df7ac7ef4a2c3cf61c36e593165e114038a9ef7d6e0be25a9ac6",
+      "content": "enclosed key hole between fist, forearm and torso (1,420 px in the full frame; report v2 blob_89)"
+    }
+  ]
+}

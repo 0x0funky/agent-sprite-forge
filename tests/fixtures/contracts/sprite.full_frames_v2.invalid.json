@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "why": "v2 records the loop seam, key, slicing, spill check and QA",
+      "remove": "/qa",
+      "error": "'qa' is a required property"
+    },
+    {
+      "why": "the WebP timeline is verified",
+      "set": "/webp/timeline_verified",
+      "value": false,
+      "error": "True was expected"
+    },
+    {
+      "why": "frames name their RGBA pixel hash",
+      "remove": "/frames/0/rgba_pixel_sha256",
+      "error": "'rgba_pixel_sha256' is a required property"
+    },
+    {
+      "why": "slicing modes are inputs, grid or ownership",
+      "set": "/slicing/mode",
+      "value": "auto",
+      "error": "'auto' is not one of"
+    },
+    {
+      "why": "frame files are manifest-relative",
+      "set": "/frames/0/file",
+      "value": "C:/out/frame-00.png",
+      "error": "does not match"
+    }
+  ]
+}

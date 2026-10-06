@@ -1,0 +1,7 @@
+interface:
+  display_name: "Code Art 2D"
+  short_description: "Code-drawn art on request: the last resort, no image model"
+  default_prompt: "Use $codeart2d because I asked for code-drawn art: draw it as code (PixelSpec, SVG, rig, FX, autotile, layout or parallax), review it at game size and tell me it is code-drawn."
+
+policy:
+  allow_implicit_invocation: false

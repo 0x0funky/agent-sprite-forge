@@ -1,0 +1,189 @@
+{
+  "schema": "generate2dmap.prop_pack.v2",
+  "tool": {"name": "extract_prop_pack", "version": "2.0.0"},
+  "input": "../src/props.png",
+  "source_size": [192, 128],
+  "source_sha256": "b64e20fd1c8bf84417b79f16d13542f271d9cc0c6fee3528d122ab3aebe8ed2a",
+  "source_mode": "RGBA",
+  "layout_mode": "grid",
+  "boxes_file": null,
+  "labels_file": null,
+  "background_mode": "chroma_key",
+  "rows": 2,
+  "cols": 3,
+  "threshold": 100,
+  "edge_threshold": 150,
+  "despill_radius": 1,
+  "despill": {"mode": "edge", "applied": "edge", "radius": 1, "margin": 12, "changed_px": 0},
+  "hygiene": {
+    "mode": "none",
+    "floor": 4,
+    "solid_min": 32,
+    "attach_radius": 2,
+    "connectivity": 8,
+    "floor_px": 0,
+    "detached_px": 0,
+    "detached_components": 0,
+    "max_removed_alpha": 0
+  },
+  "alpha_floor": 0,
+  "alpha_floor_pixels_removed": 0,
+  "trim_border": 0,
+  "edge_clean_depth": 0,
+  "component_mode": "largest",
+  "component_padding": 8,
+  "min_component_area": "auto",
+  "edge_touch_margin": 0,
+  "geometry": {
+    "connectivity": 8,
+    "alpha_geometry_threshold": 16,
+    "anchor_mode": "stance",
+    "support_band_fraction": 0.25,
+    "anchor_rounding": "whole pixels, half-up",
+    "grid_rounding": "exact",
+    "keep_canvas": false,
+    "world_scale": null
+  },
+  "accepted": [
+    {
+      "index": 0,
+      "label": "tree",
+      "display_name": "tree",
+      "status": "accepted",
+      "image": "tree/prop.png",
+      "sha256": "b85b6a28167a571d0536e4fa54f260a458f1b2461e9c84f80a7cec54da6f34c7",
+      "output_size": [41, 62],
+      "grid": [0, 0],
+      "cell_box": [0, 0, 64, 64],
+      "source_box": [0, 0, 64, 64],
+      "source_rect": [12, 2, 53, 64],
+      "trim_offset": [12, 2],
+      "padding": [8, 8, 8, 3],
+      "anchor_px": [21, 59],
+      "anchor_source": "measured",
+      "component_mode": "largest",
+      "component_count": 1,
+      "min_component_area": 2,
+      "trim_applied": 0,
+      "crop_bbox": [20, 10, 45, 61],
+      "padded_crop_bbox": [12, 2, 53, 64],
+      "selected_component_area": 967,
+      "selected_component_bbox": [20, 10, 45, 61],
+      "kept_area": 967,
+      "dropped_components": 0,
+      "dropped_area": 0,
+      "edge_touch": false,
+      "footprint": {
+        "shape": "ellipse",
+        "width": 11,
+        "depth": 5.5,
+        "offset": [-0.5, -2.75],
+        "rotate": 0,
+        "basis": "prop_px",
+        "suggested": true,
+        "method": "columns at least half covered in the bottom 25% of alpha > 16; depth = width x 0.5; front edge on the ground line"
+      },
+      "edge_fringe_px": 0
+    },
+    {
+      "index": 1,
+      "label": "rock",
+      "display_name": "rock",
+      "status": "accepted",
+      "image": "rock/prop.png",
+      "sha256": "b13057574f72f75796855b6b6147b91e31c584762b6072dd8e3b400a101e6827",
+      "output_size": [49, 42],
+      "grid": [0, 1],
+      "cell_box": [64, 0, 128, 64],
+      "source_box": [64, 0, 128, 64],
+      "source_rect": [72, 22, 121, 64],
+      "trim_offset": [8, 22],
+      "padding": [8, 8, 8, 5],
+      "anchor_px": [25, 37],
+      "anchor_source": "measured",
+      "component_mode": "largest",
+      "component_count": 1,
+      "min_component_area": 2,
+      "trim_applied": 0,
+      "crop_bbox": [16, 30, 49, 59],
+      "padded_crop_bbox": [8, 22, 57, 64],
+      "selected_component_area": 957,
+      "selected_component_bbox": [16, 30, 49, 59],
+      "kept_area": 957,
+      "dropped_components": 0,
+      "dropped_area": 0,
+      "edge_touch": false,
+      "footprint": {
+        "shape": "ellipse",
+        "width": 33,
+        "depth": 16.5,
+        "offset": [-0.5, -8.25],
+        "rotate": 0,
+        "basis": "prop_px",
+        "suggested": true,
+        "method": "columns at least half covered in the bottom 25% of alpha > 16; depth = width x 0.5; front edge on the ground line"
+      },
+      "edge_fringe_px": 0
+    }
+  ],
+  "rejected": [],
+  "edge_touch_props": [],
+  "warnings": [
+    "tall or wide props in a square grid (aspect > 1.6): ['tree 25x51', 'bush 21x39']; generate them one by one or in custom cells, or extract with --auto-boxes"
+  ],
+  "qa": {
+    "status": "warn",
+    "method": "legacy #FF00FF key (100/150) and edge despill radius 1; alpha hygiene none; 8-connected components (largest); checks measured on the published pixels",
+    "notProven": [
+      "that each label names the art in its cell or box",
+      "that a prop is complete: clipping is detected only where art meets the cell edge",
+      "keyed-edge quality beyond the edge fringe count",
+      "that anchors and suggested footprints match gameplay contact (both are measured from alpha)",
+      "runtime placement, collision or occlusion"
+    ],
+    "checks": [
+      {"id": "accepted", "status": "pass", "value": 4, "threshold": ">= 1"},
+      {"id": "edge_touch", "status": "pass", "value": [], "threshold": 0}
+    ],
+    "inputs": [
+      {
+        "path": "../src/props.png",
+        "sha256": "b64e20fd1c8bf84417b79f16d13542f271d9cc0c6fee3528d122ab3aebe8ed2a",
+        "bytes": 871
+      }
+    ],
+    "outputs": [
+      {
+        "path": "tree/prop.png",
+        "sha256": "b85b6a28167a571d0536e4fa54f260a458f1b2461e9c84f80a7cec54da6f34c7",
+        "bytes": 308
+      },
+      {
+        "path": "rock/prop.png",
+        "sha256": "b13057574f72f75796855b6b6147b91e31c584762b6072dd8e3b400a101e6827",
+        "bytes": 151
+      },
+      {
+        "path": "pine/prop.png",
+        "sha256": "18d088a0fe542661d3c870022a841adaa2c9bf72f2c340866121a774e405c916",
+        "bytes": 277
+      },
+      {
+        "path": "bush/prop.png",
+        "sha256": "0c4bb2a352d43855a378ef0ce95528a6b798cf4f5d31ede71253fdd5dc1daafc",
+        "bytes": 262
+      },
+      {
+        "path": "prop-5/prop.png",
+        "sha256": "c2153f77e11087fcb078ae38527fa83bef29791e3700e30cc87fec4405a66d0f",
+        "bytes": 70
+      },
+      {
+        "path": "prop-6/prop.png",
+        "sha256": "c2153f77e11087fcb078ae38527fa83bef29791e3700e30cc87fec4405a66d0f",
+        "bytes": 70
+      }
+    ],
+    "tool": {"name": "extract_prop_pack", "version": "2.0.0"}
+  }
+}

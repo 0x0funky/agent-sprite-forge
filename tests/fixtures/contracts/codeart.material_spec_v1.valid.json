@@ -1,0 +1,54 @@
+{
+  "schema": "codeart2d.material_spec.v1",
+  "tile_size": 16,
+  "variants": 4,
+  "seed": 7,
+  "materials": {
+    "water": {
+      "ramp": ["#1d3d73", "#2c62ab", "#4b98dc", "#a5dcf5"],
+      "walkable": false,
+      "texture": {
+        "base": 0,
+        "marks": [
+          {"rows": ["222"], "weight": 3},
+          {"rows": ["22"], "weight": 2},
+          {"rows": ["3"], "weight": 1}
+        ],
+        "marks_per_tile": [2, 3]
+      },
+      "edge": {"colors": [3, 2], "against": ["grass", "dirt"]},
+      "shadow": {"colors": ["#43291a", "#6a4a2c", 1], "from": ["grass", "dirt"]}
+    },
+    "grass": {
+      "ramp": ["#23502f", "#377a3b", "#5aa344", "#8cc657"],
+      "texture": {
+        "base": 2,
+        "marks": [
+          {"rows": ["1.1", ".1."], "weight": 3},
+          {"rows": ["3", "1"], "weight": 3},
+          {"rows": ["3"], "weight": 2}
+        ],
+        "marks_per_tile": [3, 5]
+      },
+      "edge": {"colors": [0], "against": ["water"]}
+    },
+    "dirt": {
+      "ramp": ["#6a4a2c", "#9c733f", "#c79d62", "#e3c690"],
+      "texture": {
+        "base": 2,
+        "marks": [
+          {"rows": ["3", "1"], "weight": 3},
+          {"rows": ["33", "10"], "weight": 1},
+          {"rows": ["1"], "weight": 2}
+        ],
+        "marks_per_tile": [3, 5]
+      },
+      "edge": {"colors": ["#3d2618"], "against": ["grass"]},
+      "shadow": {"colors": [0, 1], "from": ["grass"]}
+    }
+  },
+  "sets": [
+    {"kind": "wang_corner", "materials": ["water", "grass"]},
+    {"kind": "blob47", "materials": ["grass", "dirt"]}
+  ]
+}

@@ -1,0 +1,5 @@
+-r requirements.txt
+-r requirements-codeart.txt
+pytest>=8
+PyYAML>=6
+jsonschema>=4.18

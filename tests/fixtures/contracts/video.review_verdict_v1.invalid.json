@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "accept_with_mask names an issue", "set": "/issues", "value": []},
+    {"why": "unknown status", "set": "/status", "value": "ok"},
+    {"why": "the verdict is hash-bound", "remove": "/reviewedSha256"}
+  ]
+}

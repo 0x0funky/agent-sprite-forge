@@ -1,0 +1,15 @@
+{
+  "rule": "files",
+  "why": "an atlas page edited after packaging",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "touch",
+      "file": "idle-atlas-00.png"
+    }
+  ],
+  "alsoFails": [
+    "qa-stale"
+  ]
+}

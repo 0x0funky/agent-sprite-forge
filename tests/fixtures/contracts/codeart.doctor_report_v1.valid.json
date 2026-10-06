@@ -1,0 +1,118 @@
+{
+  "schema": "codeart2d.doctor_report.v1",
+  "cases": ["t01", "t03", "t06A", "t07", "t09", "t10", "t13", "t16", "t17", "t06B", "t06C", "t13B"],
+  "backends": {
+    "resvg_py": {
+      "status": "pass",
+      "renderer": {
+        "backend": "resvg_py",
+        "name": "resvg-py",
+        "version": "0.5.0",
+        "engine": "resvg 0.48.1"
+      },
+      "results": [
+        {"case": "t01", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t01", "zoom": 4, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {
+          "case": "t03",
+          "zoom": 1,
+          "status": "pass",
+          "method": "palette",
+          "off_palette_px": 0,
+          "partial_alpha_px": 0
+        },
+        {"case": "t06A", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t07", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {
+          "case": "t09",
+          "zoom": 1,
+          "status": "pass",
+          "method": "sha256",
+          "sha256": "b05bbc2678d47c8c3823de9bdf2152e2daac719df1b20b1446732a5bb070c59a"
+        },
+        {
+          "case": "t10",
+          "zoom": 1,
+          "status": "pass",
+          "method": "sha256",
+          "sha256": "92ddfe88a570af7ea9f2b36cee2fa41e3a532f48d10eff581008e783189bc7a7"
+        },
+        {
+          "case": "t13",
+          "zoom": 1,
+          "status": "pass",
+          "method": "sha256",
+          "sha256": "789defd071a1700e6d142672fbc0681bded267635d677dfc0884d24c6ff0c550"
+        },
+        {"case": "t16", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t17", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0}
+      ]
+    },
+    "resvg_js_cli": {
+      "status": "unavailable",
+      "reason": "resvg-js-cli is not on PATH (npm install -g @resvg/resvg-js-cli)"
+    },
+    "chrome": {
+      "status": "pass",
+      "renderer": {"backend": "chrome", "name": "chrome", "version": "154.0.8037.57"},
+      "results": [
+        {"case": "t01", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t01", "zoom": 4, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {
+          "case": "t03",
+          "zoom": 1,
+          "status": "pass",
+          "method": "palette",
+          "off_palette_px": 0,
+          "partial_alpha_px": 0
+        },
+        {"case": "t06A", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t07", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t09", "zoom": 1, "status": "pass", "method": "probes", "max_probe_error": 0},
+        {"case": "t10", "zoom": 1, "status": "pass", "method": "probes", "max_probe_error": 0},
+        {"case": "t13", "zoom": 1, "status": "pass", "method": "probes", "max_probe_error": 0},
+        {"case": "t16", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0},
+        {"case": "t17", "zoom": 1, "status": "pass", "method": "truth", "mismatch_px": 0}
+      ]
+    }
+  },
+  "primary": "resvg_py",
+  "lint": [
+    {
+      "case": "t06B",
+      "status": "pass",
+      "method": "lint",
+      "codes": ["css-transform", "transform-origin"],
+      "missing": []
+    },
+    {
+      "case": "t06C",
+      "status": "pass",
+      "method": "lint",
+      "codes": ["transform-origin"],
+      "missing": []
+    },
+    {"case": "t13B", "status": "pass", "method": "lint", "codes": ["mix-blend-mode"], "missing": []}
+  ],
+  "status": "pass",
+  "method": "svg_render.py doctor: codeart_core.run_doctor renders the conformance corpus on each backend; exact cases compare every pixel with the truth image (t01 also at 4x), the palette case checks colours and alpha, golden cases compare pinned resvg-py hashes or Chrome-measured probe pixels, and lint cases must be rejected by the portable lint. Only the primary backend gates the status; deviations of fallback backends are warnings",
+  "notProven": [
+    "SVG features outside the corpus, text and fonts (text is outside the portable profile).",
+    "Bit-exact goldens are pinned for resvg-py 0.5.0 on win32 only; elsewhere probes allow 8/255.",
+    "Rendering speed and memory use."
+  ],
+  "checks": [
+    {"id": "primary", "status": "pass", "value": "resvg_py", "threshold": "an available backend"},
+    {"id": "resvg_py:t01@1x", "status": "pass", "value": {"method": "truth", "mismatch_px": 0}},
+    {"id": "resvg_py:t01@4x", "status": "pass", "value": {"method": "truth", "mismatch_px": 0}},
+    {
+      "id": "resvg_py:t03@1x",
+      "status": "pass",
+      "value": {"method": "palette", "off_palette_px": 0, "partial_alpha_px": 0}
+    }
+  ],
+  "inputs": [],
+  "outputs": [],
+  "tool": {"name": "svg_render.py doctor", "version": "0.4.0"},
+  "platform": {"system": "win32", "python": "3.13.2"}
+}

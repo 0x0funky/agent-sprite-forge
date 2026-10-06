@@ -1,0 +1,448 @@
+{
+  "schema": "generate2dsprite.engine_export.v1",
+  "name": "hero",
+  "tool": {"name": "export_engine.py", "version": "0.4.0"},
+  "source": {
+    "path": "../built/animation-clips.json",
+    "sha256": "af30ab4027f997d77e0feb79d06fdfb278182b3c2d61d3a16c8582e01d9b6ce3",
+    "bytes": 22574,
+    "schema": "generate2dsprite.animation_clips.v2"
+  },
+  "targets": ["aseprite-json", "godot-spriteframes", "godot-sprite3d"],
+  "frame_size": [64, 96],
+  "anchor_px": [32.0, 92.0],
+  "sampling": "nearest",
+  "pixel_art": true,
+  "art_source": "code",
+  "placeholder": false,
+  "shadow": {"rx": 10, "ry": 3, "opacity": 0.3},
+  "default_clip": "idle",
+  "atlas": {
+    "max_size": 4096,
+    "padding": 2,
+    "extrude": 1,
+    "pages": [
+      {
+        "index": 0,
+        "size": [206, 202],
+        "cells": 6,
+        "clips": ["idle", "attack", "walk"]
+      }
+    ]
+  },
+  "scale": {
+    "pixel_size": 0.02206896551724138,
+    "subject_height_px": 72.5,
+    "world_height": 1.6,
+    "source": "--world-height",
+    "subject_height_source": "median visible height of clip idle"
+  },
+  "clips": {
+    "idle": {
+      "frames": [0, 1, 2, 3, 2, 1],
+      "duration_ms": [100, 100, 100, 100, 100, 100],
+      "total_duration_ms": 600,
+      "loop": true,
+      "loop_policy": "pingpong",
+      "events_ms": [
+        {"name": "sfx", "at_ms": 100, "at": 1, "position": 1},
+        {"name": "sfx", "at_ms": 500, "at": 1, "position": 5}
+      ],
+      "page": 0,
+      "tick_grid": {
+        "hz": 60,
+        "max_drift_ms": 0.0,
+        "frame_ticks": [6, 6, 6, 6, 6, 6],
+        "zero_tick_positions": [],
+        "even": true,
+        "cycle_ticks": 36.0,
+        "cycle_aligned": true,
+        "method": "cumulative integer-ms frame boundaries rounded half-up to the nearest tick"
+      },
+      "ticks": [6, 6, 6, 6],
+      "tick_hz": 60,
+      "authored_frames": [0, 1, 2, 3],
+      "aseprite": {"file": "hero.json", "from": 0, "to": 5},
+      "godot": {
+        "speed": 60.0,
+        "basis": "ticks at 60 Hz",
+        "relative_durations": [6.0, 6.0, 6.0, 6.0, 6.0, 6.0]
+      },
+      "sprite3d": {"action": "idle", "contract": "action-idle.json", "speed": 60.0, "basis": "ticks at 60 Hz"}
+    },
+    "attack": {
+      "frames": [2, 3, 4, 5],
+      "duration_ms": [80, 60, 120, 100],
+      "total_duration_ms": 360,
+      "loop": false,
+      "loop_policy": "oneshot",
+      "events_ms": [
+        {"name": "tell", "at_ms": 80, "at": 1, "position": 1},
+        {
+          "name": "hit",
+          "at_ms": 140,
+          "at": 2,
+          "position": 2,
+          "data": {"damage": 2}
+        }
+      ],
+      "page": 0,
+      "transition_hints": [
+        {
+          "to": "idle",
+          "entry_frame": 0,
+          "entry_ms": 0,
+          "dissolve_ms": 60,
+          "dissolve_ticks": 4,
+          "mode": "dither"
+        }
+      ],
+      "keys": {"wind_start": 0, "strike": 2, "end": 3},
+      "keys_ms": {"wind_start": 0, "strike": 140, "end": 260},
+      "hitstop_ticks": 3,
+      "hitstop_ms": 50,
+      "role": "enemy",
+      "tick_grid": {
+        "hz": 60,
+        "max_drift_ms": 6.667,
+        "frame_ticks": [5, 3, 8, 6],
+        "zero_tick_positions": [],
+        "even": false,
+        "cycle_ticks": 21.6,
+        "cycle_aligned": false,
+        "method": "cumulative integer-ms frame boundaries rounded half-up to the nearest tick"
+      },
+      "aseprite": {"file": "hero.json", "from": 6, "to": 9},
+      "godot": {
+        "speed": 16.666666666666668,
+        "basis": "shortest frame = 1.0",
+        "relative_durations": [1.3333333333333333, 1.0, 2.0, 1.6666666666666667]
+      },
+      "sprite3d": {
+        "action": "attack",
+        "contract": "action-attack.json",
+        "speed": 16.666666666666668,
+        "basis": "shortest frame = 1.0"
+      }
+    },
+    "walk": {
+      "frames": [0, 1, 2, 3, 2, 1],
+      "duration_ms": [83, 84, 100, 66, 100, 84],
+      "total_duration_ms": 517,
+      "loop": true,
+      "loop_policy": "pingpong",
+      "events_ms": [
+        {"name": "step_l", "at_ms": 0, "at": 0, "position": 0},
+        {"name": "step_r", "at_ms": 167, "at": 2, "position": 2},
+        {"name": "step_r", "at_ms": 333, "at": 2, "position": 4}
+      ],
+      "page": 0,
+      "entry_frame": 2,
+      "entry_ms": 167,
+      "tick_grid": {
+        "hz": 60,
+        "max_drift_ms": 0.333,
+        "frame_ticks": [5, 5, 6, 4, 6, 5],
+        "zero_tick_positions": [],
+        "even": false,
+        "cycle_ticks": 31.02,
+        "cycle_aligned": false,
+        "method": "cumulative integer-ms frame boundaries rounded half-up to the nearest tick"
+      },
+      "ticks": [5, 5, 6, 4],
+      "tick_hz": 60,
+      "authored_frames": [0, 1, 2, 3],
+      "aseprite": {"file": "hero.json", "from": 10, "to": 15},
+      "godot": {
+        "speed": 60.0,
+        "basis": "ticks at 60 Hz",
+        "relative_durations": [5.0, 5.0, 6.0, 4.0, 6.0, 5.0]
+      },
+      "sprite3d": {"action": "walk", "contract": "action-walk.json", "speed": 60.0, "basis": "ticks at 60 Hz"}
+    }
+  },
+  "states": {"idle": "idle", "attack": "attack", "walk": "walk"},
+  "unused_frames": [],
+  "mapping": {
+    "anchor_px": [32.0, 92.0],
+    "frame_size": [64, 96],
+    "anchor_normalized_top_left": [0.5, 0.9583333333333334],
+    "sampling": "nearest",
+    "godot": {
+      "animated_sprite_2d": {
+        "centered": false,
+        "offset": [-32.0, -92.0],
+        "texture_filter": 1
+      },
+      "animated_sprite_3d": {
+        "centered": true,
+        "offset": [0.0, 44.0],
+        "pixel_size": 0.02206896551724138,
+        "texture_filter": 0
+      }
+    },
+    "unity": {
+      "pivot": [0.5, 0.04166666666666663],
+      "pixels_per_unit": 45.31249999999999,
+      "filter_mode": "Point"
+    },
+    "phaser": {
+      "origin": [0.5, 0.9583333333333334],
+      "pixel_art": true
+    },
+    "pixi": {
+      "anchor": [0.5, 0.9583333333333334],
+      "scale_mode": "nearest"
+    },
+    "pitch_compensation": {
+      "applies_to": "yaw-only (fixed-y) billboards seen by a pitched camera",
+      "formula": "scale_y = 1 / cos(camera_pitch), applied about the anchor"
+    }
+  },
+  "files": [
+    {
+      "path": "aseprite/hero.png",
+      "sha256": "6cfde6900b115e6859d0d0f1914a74dd04b730707330d1926898f48258f047ae",
+      "bytes": 743
+    },
+    {
+      "path": "aseprite/hero.json",
+      "sha256": "10abfe60529585feb259cb74c96aeec2fcfd66140880d67c64462aa5dc7cdb98",
+      "bytes": 7831
+    },
+    {
+      "path": "godot/hero-atlas-00.png",
+      "sha256": "6cfde6900b115e6859d0d0f1914a74dd04b730707330d1926898f48258f047ae",
+      "bytes": 743
+    },
+    {
+      "path": "godot/hero.tres",
+      "sha256": "e994ab1588d9e9799bd1f908a57f6da733eac280bef290f5647577a83187f0c8",
+      "bytes": 2296
+    },
+    {
+      "path": "godot/hero.tscn",
+      "sha256": "d394f088203b6c31d06709624cca71a4c50b7a216f4e9660fffb2c785d284432",
+      "bytes": 289
+    },
+    {
+      "path": "godot-sprite3d/frames/frame-000.png",
+      "sha256": "bd586bce3b7768a229e622a6d751523d6009dad12bca4e57782d2073a6824379",
+      "bytes": 255
+    },
+    {
+      "path": "godot-sprite3d/frames/frame-001.png",
+      "sha256": "8395342ecede8787b6dac833c1a771cd2b5a311c65461f5e34e1efbe37c4231a",
+      "bytes": 258
+    },
+    {
+      "path": "godot-sprite3d/frames/frame-002.png",
+      "sha256": "cf015d41887ec967dd37b486d1d09946c60a9c4c485fd9f022f02942f37edd45",
+      "bytes": 254
+    },
+    {
+      "path": "godot-sprite3d/frames/frame-003.png",
+      "sha256": "0699454746523270e7eab6ff38d90791946fdf57454de55bb939f23bb5dd0471",
+      "bytes": 253
+    },
+    {
+      "path": "godot-sprite3d/frames/frame-004.png",
+      "sha256": "73cf75d2749a6f60552f44029bc12e64e5f00772957a5d05868ce2baab207caa",
+      "bytes": 256
+    },
+    {
+      "path": "godot-sprite3d/frames/frame-005.png",
+      "sha256": "9c9e9896ff32a78c7a6c7129d58941c70af1ce51aa444bd7d12b64465296e71e",
+      "bytes": 254
+    },
+    {
+      "path": "godot-sprite3d/action-idle.json",
+      "sha256": "423d9a959dbfc9faf4e9105be69f96ec197eef1182f02d62c2832a91d5f84d44",
+      "bytes": 1445
+    },
+    {
+      "path": "godot-sprite3d/action-attack.json",
+      "sha256": "99240a4f23cb6408930b0346cb4cabbc8bf1a266decdc991c65b3348ee94aa0b",
+      "bytes": 1284
+    },
+    {
+      "path": "godot-sprite3d/action-walk.json",
+      "sha256": "636ef381353f834679d79a3bbcd3320df1392c829b75037af2dd6a3ed0bc487c",
+      "bytes": 1549
+    },
+    {
+      "path": "godot-sprite3d/hero.tres",
+      "sha256": "b601d4408433eb054f3f77c04f5a8ee43f8b87593b6909baa2c9b14e8438c962",
+      "bytes": 1672
+    },
+    {
+      "path": "godot-sprite3d/hero.tscn",
+      "sha256": "2ffda0af5e6ea425b0b352dc6d01ceb16af90a70915a56b3ae5c18912991eab0",
+      "bytes": 316
+    },
+    {
+      "path": "godot-sprite3d/bundle.json",
+      "sha256": "2c82097efa72a6c6dea7239d3d248e1a38dcf9350316f4e4e89aa5eb91799e39",
+      "bytes": 538
+    }
+  ],
+  "qa": {
+    "status": "pass",
+    "method": "round trip: every written atlas, Aseprite JSON, SpriteFrames .tres, scene .tscn and Sprite3D contract was parsed back and compared with the source frames (exact RGBA), integer durations, loop flags, events and the shared anchor",
+    "notProven": ["Imports into the Aseprite, Godot 4, Phaser, PixiJS and Unity editors or runtimes were not run; only parse-level round trips were checked.", "Engine import settings (filter, compression, mipmaps) are not written; set them as engine-export.md describes.", "Animation quality, timing feel and silhouette consistency are not judged."],
+    "checks": [
+      {
+        "id": "aseprite_roundtrip",
+        "status": "pass",
+        "value": {"pages": 1, "frames": 16},
+        "threshold": null
+      },
+      {"id": "aseprite_pivot_rounding_px", "status": "pass", "value": 0.0, "threshold": 0},
+      {
+        "id": "godot_spriteframes_roundtrip",
+        "status": "pass",
+        "value": {"animations": 3},
+        "threshold": null
+      },
+      {
+        "id": "godot_spriteframes_duration_error_ms",
+        "status": "pass",
+        "value": 0.6666666666666714,
+        "threshold": 1.0
+      },
+      {
+        "id": "godot_sprite3d_frames_roundtrip",
+        "status": "pass",
+        "value": {"animations": 3},
+        "threshold": null
+      },
+      {
+        "id": "godot_sprite3d_frames_duration_error_ms",
+        "status": "pass",
+        "value": 0.6666666666666714,
+        "threshold": 1.0
+      },
+      {
+        "id": "sprite3d_paths_relative",
+        "status": "pass",
+        "value": {"contracts": 3},
+        "threshold": null
+      },
+      {"id": "atlas_max_side_px", "status": "pass", "value": 206, "threshold": 4096},
+      {
+        "id": "source_frame_hashes",
+        "status": "pass",
+        "value": {"verified": 6, "frames": 6},
+        "threshold": null
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../built/animation-clips.json",
+        "sha256": "af30ab4027f997d77e0feb79d06fdfb278182b3c2d61d3a16c8582e01d9b6ce3",
+        "bytes": 22574
+      },
+      {
+        "path": "../built/frames/frame-00.png",
+        "sha256": "bd586bce3b7768a229e622a6d751523d6009dad12bca4e57782d2073a6824379",
+        "bytes": 255
+      },
+      {
+        "path": "../built/frames/frame-01.png",
+        "sha256": "8395342ecede8787b6dac833c1a771cd2b5a311c65461f5e34e1efbe37c4231a",
+        "bytes": 258
+      },
+      {
+        "path": "../built/frames/frame-02.png",
+        "sha256": "cf015d41887ec967dd37b486d1d09946c60a9c4c485fd9f022f02942f37edd45",
+        "bytes": 254
+      },
+      {
+        "path": "../built/frames/frame-03.png",
+        "sha256": "0699454746523270e7eab6ff38d90791946fdf57454de55bb939f23bb5dd0471",
+        "bytes": 253
+      },
+      {
+        "path": "../built/frames/frame-04.png",
+        "sha256": "73cf75d2749a6f60552f44029bc12e64e5f00772957a5d05868ce2baab207caa",
+        "bytes": 256
+      },
+      {
+        "path": "../built/frames/frame-05.png",
+        "sha256": "9c9e9896ff32a78c7a6c7129d58941c70af1ce51aa444bd7d12b64465296e71e",
+        "bytes": 254
+      }
+    ],
+    "outputs": [
+      {
+        "path": "aseprite/hero.png",
+        "sha256": "6cfde6900b115e6859d0d0f1914a74dd04b730707330d1926898f48258f047ae"
+      },
+      {
+        "path": "aseprite/hero.json",
+        "sha256": "10abfe60529585feb259cb74c96aeec2fcfd66140880d67c64462aa5dc7cdb98"
+      },
+      {
+        "path": "godot/hero-atlas-00.png",
+        "sha256": "6cfde6900b115e6859d0d0f1914a74dd04b730707330d1926898f48258f047ae"
+      },
+      {
+        "path": "godot/hero.tres",
+        "sha256": "e994ab1588d9e9799bd1f908a57f6da733eac280bef290f5647577a83187f0c8"
+      },
+      {
+        "path": "godot/hero.tscn",
+        "sha256": "d394f088203b6c31d06709624cca71a4c50b7a216f4e9660fffb2c785d284432"
+      },
+      {
+        "path": "godot-sprite3d/frames/frame-000.png",
+        "sha256": "bd586bce3b7768a229e622a6d751523d6009dad12bca4e57782d2073a6824379"
+      },
+      {
+        "path": "godot-sprite3d/frames/frame-001.png",
+        "sha256": "8395342ecede8787b6dac833c1a771cd2b5a311c65461f5e34e1efbe37c4231a"
+      },
+      {
+        "path": "godot-sprite3d/frames/frame-002.png",
+        "sha256": "cf015d41887ec967dd37b486d1d09946c60a9c4c485fd9f022f02942f37edd45"
+      },
+      {
+        "path": "godot-sprite3d/frames/frame-003.png",
+        "sha256": "0699454746523270e7eab6ff38d90791946fdf57454de55bb939f23bb5dd0471"
+      },
+      {
+        "path": "godot-sprite3d/frames/frame-004.png",
+        "sha256": "73cf75d2749a6f60552f44029bc12e64e5f00772957a5d05868ce2baab207caa"
+      },
+      {
+        "path": "godot-sprite3d/frames/frame-005.png",
+        "sha256": "9c9e9896ff32a78c7a6c7129d58941c70af1ce51aa444bd7d12b64465296e71e"
+      },
+      {
+        "path": "godot-sprite3d/action-idle.json",
+        "sha256": "423d9a959dbfc9faf4e9105be69f96ec197eef1182f02d62c2832a91d5f84d44"
+      },
+      {
+        "path": "godot-sprite3d/action-attack.json",
+        "sha256": "99240a4f23cb6408930b0346cb4cabbc8bf1a266decdc991c65b3348ee94aa0b"
+      },
+      {
+        "path": "godot-sprite3d/action-walk.json",
+        "sha256": "636ef381353f834679d79a3bbcd3320df1392c829b75037af2dd6a3ed0bc487c"
+      },
+      {
+        "path": "godot-sprite3d/hero.tres",
+        "sha256": "b601d4408433eb054f3f77c04f5a8ee43f8b87593b6909baa2c9b14e8438c962"
+      },
+      {
+        "path": "godot-sprite3d/hero.tscn",
+        "sha256": "2ffda0af5e6ea425b0b352dc6d01ceb16af90a70915a56b3ae5c18912991eab0"
+      },
+      {
+        "path": "godot-sprite3d/bundle.json",
+        "sha256": "2c82097efa72a6c6dea7239d3d248e1a38dcf9350316f4e4e89aa5eb91799e39"
+      }
+    ],
+    "tool": {"name": "export_engine.py", "version": "0.4.0"}
+  }
+}

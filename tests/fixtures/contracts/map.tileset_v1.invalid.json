@@ -1,0 +1,26 @@
+{
+  "cases": [
+    {"why": "verified tiles have zero mismatches", "set": "/seam_proof/mismatches", "value": 3},
+    {"why": "verified tiles need a proof", "remove": "/seam_proof"},
+    {"why": "wang tiles list corners", "remove": "/tiles/0/wang"},
+    {"why": "unknown kind", "set": "/kind", "value": "wang16"},
+    {
+      "why": "Tiled wangids have eight entries",
+      "set": "/tiles/0/wangid",
+      "value": [1, 1, 1, 1],
+      "error": "is too short"
+    },
+    {
+      "why": "qa is a fileRef (per D5), never a bare path",
+      "set": "/qa",
+      "value": "autotile-qa.json",
+      "error": "is not of type 'object'"
+    },
+    {
+      "why": "the qa fileRef binds the QA file by its sha256",
+      "set": "/qa",
+      "value": {"path": "autotile-qa.json"},
+      "error": "'sha256' is a required property"
+    }
+  ]
+}

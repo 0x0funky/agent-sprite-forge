@@ -1,0 +1,80 @@
+{
+  "schema": "generate2dsprite.palette_luts.v1",
+  "palette": {
+    "path": "../palette/palette.json",
+    "sha256": "cf73ba57f528e43a4a495a5ec3597ea5c1552b62e8e8f2b5699798b7dde3c193",
+    "bytes": 483
+  },
+  "image": {
+    "path": "luts.png",
+    "sha256": "d5b72d2495196454f9864b1c57a98307b0136618896aa4217228988bd643350c",
+    "bytes": 181
+  },
+  "size": 8,
+  "transparent_index": 255,
+  "rows": ["identity", "hitflash", "frozen", "silhouette"],
+  "luts": {
+    "identity": {
+      "kind": "identity",
+      "colors": [
+        "#272622",
+        "#282828",
+        "#3c508c",
+        "#425796",
+        "#ab9898",
+        "#c9ac9e",
+        "#e7bea0",
+        "#f7cca9"
+      ]
+    },
+    "hitflash": {
+      "kind": "hitflash",
+      "colors": [
+        "#ffffff",
+        "#ffffff",
+        "#ffffff",
+        "#ffffff",
+        "#ffffff",
+        "#ffffff",
+        "#ffffff",
+        "#ffffff"
+      ]
+    },
+    "frozen": {
+      "kind": "frozen",
+      "colors": [
+        "#486379",
+        "#49657c",
+        "#6286b3",
+        "#678cb9",
+        "#a5bcd7",
+        "#b7cce2",
+        "#c8daec",
+        "#d3e4f5"
+      ]
+    },
+    "silhouette": {
+      "kind": "silhouette",
+      "colors": [
+        "#000000",
+        "#000000",
+        "#000000",
+        "#000000",
+        "#000000",
+        "#000000",
+        "#000000",
+        "#000000"
+      ]
+    }
+  },
+  "palettize": {
+    "image": {
+      "path": "palettize-32.png",
+      "sha256": "c0125af082a542c7db86f5c40d9adf3116f96ccdd15d53d28d4e592caa89807f",
+      "bytes": 2244
+    },
+    "size": 32,
+    "layout": "texel (x = r + size * b, y = g) holds the OKLab-nearest palette colour of RGB level (r, g, b); level v is 8-bit round(v * 255 / (size - 1)); sample with nearest filtering"
+  },
+  "usage": "luts.png row r is LUT row rows[r]; column i is the colour index i shows in that row; the transparent index and unused columns are transparent"
+}

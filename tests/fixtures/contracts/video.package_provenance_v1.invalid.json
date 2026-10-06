@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "the input digest is a sha256",
+      "set": "/inputDigest",
+      "value": "3ed4",
+      "error": "does not match"
+    },
+    {
+      "why": "provenance names its tool version",
+      "remove": "/version",
+      "error": "'version' is a required property"
+    },
+    {
+      "why": "unknown document id",
+      "set": "/schema",
+      "value": "video2dsprite.provenance.v2",
+      "error": "was expected"
+    },
+    {
+      "why": "inputDirectory is relative",
+      "set": "/inputDirectory",
+      "value": "D:/work/frames",
+      "error": "does not match"
+    }
+  ]
+}

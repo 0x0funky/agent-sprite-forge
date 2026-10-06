@@ -1,0 +1,14 @@
+{
+  "rule": "qa-failed",
+  "why": "a failed QA is never shipped",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/qa/status",
+      "value": "fail"
+    }
+  ],
+  "alsoFails": []
+}

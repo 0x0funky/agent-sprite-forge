@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {
+      "why": "action names are lower-case ids",
+      "set": "/default_action",
+      "value": "Idle",
+      "error": "does not match"
+    },
+    {
+      "why": "each action names its contract",
+      "remove": "/actions/idle/contract",
+      "error": "'contract' is a required property"
+    },
+    {
+      "why": "contracts are relative paths (S19)",
+      "set": "/actions/idle/contract",
+      "value": "C:/game/action-idle.json",
+      "error": "does not match"
+    },
+    {
+      "why": "a bundle has at least one action",
+      "set": "/actions",
+      "value": {},
+      "error": "should be non-empty"
+    }
+  ]
+}

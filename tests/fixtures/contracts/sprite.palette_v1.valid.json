@@ -1,0 +1,13 @@
+{
+  "schema": "generate2dsprite.palette.v1",
+  "colors": [
+    {"hex": "#1a1c2c", "name": "ink", "reserved": true},
+    {"hex": "#5d275d"},
+    {"hex": "#b13e53"},
+    {"hex": "#ef7d57"},
+    {"hex": "#ffcd75", "name": "highlight"}
+  ],
+  "transparent_index": null,
+  "locked": true,
+  "source": "palette_tool.py build --colors 5 fox-master.png"
+}

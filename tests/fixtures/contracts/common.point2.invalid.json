@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "one coordinate", "document": [1]},
+    {"why": "three coordinates", "document": [1, 2, 3]},
+    {"why": "string coordinate", "document": ["1", 2]}
+  ]
+}

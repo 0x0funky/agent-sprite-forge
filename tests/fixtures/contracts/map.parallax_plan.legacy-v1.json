@@ -1,0 +1,14 @@
+{
+  "viewport": [32, 16],
+  "camera": {"x": [0, 64], "zoom": [1, 2]},
+  "layers": [
+    {"id": "sky", "role": "sky", "image": "sky.png", "alpha": "opaque", "scroll_factor": [0, 0]},
+    {
+      "id": "near",
+      "role": "foreground",
+      "image": "near.png",
+      "alpha": "transparent",
+      "repeat": [true, false]
+    }
+  ]
+}

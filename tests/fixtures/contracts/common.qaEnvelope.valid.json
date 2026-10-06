@@ -1,0 +1,25 @@
+{
+  "status": "pass",
+  "method": "matte_qa over every packaged frame at alpha >= 16",
+  "notProven": ["Edge quality at gameplay scale still needs a visual review."],
+  "checks": [
+    {"id": "opaque_key_px", "status": "pass", "value": 0, "threshold": 0},
+    {"id": "outer_ring_spill_fraction", "status": "pass", "value": 0.004, "threshold": 0.01}
+  ],
+  "inputs": [
+    {
+      "path": "clean/clean_0000.png",
+      "sha256": "f429915f72c00d78e6c266f255c085a1399b21b1730110a53197e75ba20c5619",
+      "bytes": 2048
+    }
+  ],
+  "outputs": [
+    {
+      "path": "idle-atlas-00.png",
+      "sha256": "3ba7df2912d8da12380f0e7e562c8b4b61012b6f2dc0e6dbfef41a779b68f581",
+      "bytes": 555
+    }
+  ],
+  "tool": {"name": "engine_export.py", "version": "0.4.0"},
+  "createdAt": "2026-10-05T04:16:00Z"
+}

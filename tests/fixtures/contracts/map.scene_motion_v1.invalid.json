@@ -1,0 +1,34 @@
+{
+  "cases": [
+    {
+      "why": "the composite never changes pixels outside the mask",
+      "set": "/composite/outsideMaskMaxDelta",
+      "value": 2,
+      "error": "0 was expected"
+    },
+    {
+      "why": "scene loops are H.264",
+      "set": "/video/codec",
+      "value": "vp9",
+      "error": "'h264' was expected"
+    },
+    {
+      "why": "loops use a closed GOP",
+      "set": "/video/closedGop",
+      "value": false,
+      "error": "True was expected"
+    },
+    {
+      "why": "loop policies are forward-overlap or pingpong",
+      "set": "/loop/policy",
+      "value": "cycle",
+      "error": "'cycle' is not one of"
+    },
+    {
+      "why": "H.264 Main has no lossless mode",
+      "set": "/video/crf",
+      "value": 0,
+      "error": "0 is less than the minimum of 1"
+    }
+  ]
+}

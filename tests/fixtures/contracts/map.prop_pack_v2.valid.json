@@ -1,0 +1,36 @@
+{
+  "schema": "generate2dmap.prop_pack.v2",
+  "source_size": [1254, 418],
+  "source_sha256": "78af7bdb5626eb0a046772b3edda705ca9e60ba7af0960eea89f7fa201d685a8",
+  "background_mode": "chroma_key",
+  "accepted": [
+    {
+      "label": "tree",
+      "display_name": "Tree",
+      "image": "tree/prop.png",
+      "sha256": "dc9c5edb8b2d479e697b4b0b8ab874f32b325138598ce9e7b759eb8292110622",
+      "source_rect": [862, 18, 1230, 400],
+      "cell_box": [836, 0, 1254, 418],
+      "padding": [8, 8, 8, 8],
+      "anchor_px": [192, 374],
+      "footprint": {
+        "shape": "ellipse",
+        "width": 18,
+        "depth": 8,
+        "offset": [0, -2],
+        "rotate": 0,
+        "basis": "prop_px"
+      },
+      "solid": true,
+      "contact": "ground",
+      "occlusion_class": "tall",
+      "occupant_policy": "y_sort",
+      "dropped_components": 2,
+      "dropped_area": 37,
+      "status": "accepted"
+    }
+  ],
+  "rejected": [{"index": 1, "label": "empty-cell", "status": "empty"}],
+  "art_source": "host_image",
+  "placeholder": false
+}

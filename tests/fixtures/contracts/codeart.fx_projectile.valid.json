@@ -1,0 +1,8 @@
+{
+  "type": "projectile",
+  "colors": ["white", "ice", "cyan", "blue"],
+  "angle": 0,
+  "radius": 4,
+  "trail": 16,
+  "orbiters": 3
+}

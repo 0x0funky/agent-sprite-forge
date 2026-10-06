@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "v2 stores the output height", "remove": "/reference/output_subject_height_px"},
+    {"why": "unknown version", "set": "/version", "value": 3},
+    {"why": "zero scale", "set": "/reference/body_scale_mean", "value": 0},
+    {
+      "why": "v2 processing keys are typed",
+      "set": "/processing/connectivity",
+      "value": 6,
+      "error": "6 is not one of"
+    }
+  ]
+}

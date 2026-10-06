@@ -1,0 +1,241 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/common.schema.json",
+  "title": "Agent Sprite Forge shared contract types",
+  "description": "Frozen contracts, version 1. Building blocks referenced by the sprite, video, map, codeart and media schemas. Canonical copy in shared/schemas; tools/vendor_sync.py copies it byte for byte into skills/*/references/schemas. Objects stay open (additionalProperties true): producers may add optional fields. Pixel boxes are half-open [x0, y0, x1, y1); paths are manifest-relative POSIX.",
+  "$defs": {
+    "sha256": {
+      "description": "Lowercase hexadecimal SHA-256 digest.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "relPath": {
+      "description": "Manifest-relative POSIX path: forward slashes only, no leading slash, no drive letter and no URL scheme. '..' segments are allowed. Inputs on another drive record their file name plus sha256.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z][A-Za-z0-9+.-]*:)[^\\\\]+$"
+    },
+    "fileRef": {
+      "description": "A file the document depends on, bound to its content by sha256.",
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"$ref": "#/$defs/relPath"},
+        "sha256": {"$ref": "#/$defs/sha256"},
+        "bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "toolInfo": {
+      "description": "A tool or renderer and its exact version.",
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "timestamp": {
+      "description": "RFC 3339 date-time with an explicit offset, for example 2026-10-05T04:16:00Z.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "qaStatus": {
+      "description": "Overall verdict of a QA document. needs-visual-review means the numbers passed but a human or agent must still look.",
+      "enum": ["pass", "fail", "warn", "needs-visual-review"]
+    },
+    "qaCheck": {
+      "description": "One measured check. value and threshold are whatever the check measures (number, list, boolean or null). An ungated measurement is a skipped check with its value and a null threshold. Checks stay open: tools add keys such as subject (the file a per-file check is about; pixel_reduce), files (the files it names; palette_tool build), failing (the files or frames over the gate), profile (the lint profile), detail (extra figures such as loop_seam's seam and adjacent_median) and note (autotile_build).",
+      "type": "object",
+      "required": ["id", "status"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "status": {"enum": ["pass", "fail", "warn", "needs-visual-review", "skipped"]},
+        "value": true,
+        "threshold": true
+      }
+    },
+    "qaEnvelope": {
+      "description": "Every QA JSON states its method, what it does not prove, and the sha256 of every input and output it judged. A pass envelope cannot contain a failed check. createdAt is optional so QA files can stay byte-deterministic. Envelopes stay open: a tool adds its own top-level figures beside the envelope keys (for example palette_tool's palette, fit, totals, locked_inputs and luts, pixel_qa's frames and palette, autotile_build's metrics, parallax_build's seams, sweep and layers).",
+      "type": "object",
+      "required": ["status", "method", "notProven", "checks", "inputs", "outputs", "tool"],
+      "properties": {
+        "status": {"$ref": "#/$defs/qaStatus"},
+        "method": {"type": "string", "minLength": 1},
+        "notProven": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/qaCheck"}},
+        "inputs": {"type": "array", "items": {"$ref": "#/$defs/fileRef"}},
+        "outputs": {"type": "array", "items": {"$ref": "#/$defs/fileRef"}},
+        "tool": {"$ref": "#/$defs/toolInfo"},
+        "createdAt": {"$ref": "#/$defs/timestamp"}
+      },
+      "if": {"properties": {"status": {"const": "pass"}}, "required": ["status"]},
+      "then": {"properties": {"checks": {"items": {"properties": {"status": {"not": {"const": "fail"}}}}}}}
+    },
+    "artSource": {
+      "description": "Where the art came from. Record a separate boolean placeholder for stand-in art.",
+      "enum": ["host_image", "api", "code", "existing", "video", "mixed"]
+    },
+    "provenance": {
+      "description": "How an output was produced: the tool, its version, the parameters and the hashed inputs.",
+      "type": "object",
+      "required": ["tool", "version", "params", "inputs"],
+      "properties": {
+        "tool": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "params": {"type": "object"},
+        "inputs": {"type": "array", "items": {"$ref": "#/$defs/fileRef"}},
+        "renderer": {"$ref": "#/$defs/toolInfo"}
+      }
+    },
+    "point2": {
+      "description": "A finite [x, y] coordinate.",
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "size2": {
+      "description": "A [width, height] in whole pixels.",
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1},
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "box": {
+      "description": "Half-open pixel box [x0, y0, x1, y1) in the PIL convention: x1 and y1 are exclusive.",
+      "type": "array",
+      "items": {"type": "number"},
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "rectXYWH": {
+      "description": "Rectangle [x, y, width, height] with its top-left corner at (x, y).",
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number", "minimum": 0}, {"type": "number", "minimum": 0}],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "padding4": {
+      "description": "Padding [left, top, right, bottom] in whole pixels.",
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0},
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "polygon": {
+      "description": "A closed polygon as at least three [x, y] vertices; the last vertex joins the first.",
+      "type": "array",
+      "items": {"$ref": "#/$defs/point2"},
+      "minItems": 3
+    },
+    "hexColor": {
+      "description": "#RRGGBB, or #RRGGBBAA where AA 00 marks an erasing palette entry.",
+      "type": "string",
+      "pattern": "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$"
+    },
+    "rgb": {
+      "description": "An [r, g, b] colour with 8-bit channels.",
+      "type": "array",
+      "items": {"type": "integer", "minimum": 0, "maximum": 255},
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "color": {
+      "description": "A colour as a hex string or an [r, g, b] triple.",
+      "anyOf": [{"$ref": "#/$defs/hexColor"}, {"$ref": "#/$defs/rgb"}]
+    },
+    "keyColor": {
+      "description": "A chroma-key colour: a declared key name or an explicit colour.",
+      "anyOf": [{"enum": ["magenta", "green", "blue"]}, {"$ref": "#/$defs/color"}]
+    },
+    "eventName": {
+      "description": "Gameplay event names shared by clips, selections and runtimes; anything else uses the custom: prefix.",
+      "anyOf": [
+        {"enum": ["in", "tell", "hit", "active_end", "cancel", "chain", "impact", "hold", "end", "sfx", "step_l", "step_r"]},
+        {"type": "string", "pattern": "^custom:\\S+$"}
+      ]
+    },
+    "fpsValue": {
+      "description": "Frame rate as a positive number or an exact rational string such as 24000/1001.",
+      "anyOf": [
+        {"type": "number", "exclusiveMinimum": 0},
+        {"type": "string", "pattern": "^[1-9][0-9]*/[1-9][0-9]*$"}
+      ]
+    },
+    "durationsMs": {
+      "description": "Per-frame durations in whole milliseconds (forge_core.frame_durations sums exactly to the clip length).",
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1},
+      "minItems": 1
+    },
+    "loopPolicy": {
+      "description": "cycle repeats from the first frame, pingpong mirrors without duplicating end frames, oneshot plays once and holds.",
+      "enum": ["cycle", "pingpong", "oneshot"]
+    },
+    "sampling": {
+      "description": "Runtime texture sampling: nearest for pixel art, linear for painted art.",
+      "enum": ["nearest", "linear"]
+    },
+    "shadow": {
+      "description": "Ground shadow ellipse in source pixels, centred on the root.",
+      "type": "object",
+      "required": ["rx", "ry"],
+      "properties": {
+        "rx": {"type": "number", "minimum": 0},
+        "ry": {"type": "number", "minimum": 0},
+        "opacity": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "seamReport": {
+      "description": "forge_core.seam_report of a loop, for QA envelopes of loop tools: seam is the premultiplied RGBA mean absolute difference (0-255) of the wrap (last -> first) and adjacent_* describe the steps between neighbours. seam_over_median and seam_over_p95 near 1 mean a seamless loop, well above 1 a pop at the wrap, near 0 a held duplicate frame; denominators are floored at 1e-6, so a static clip with a pop gives a very large ratio. Measure the decoded runtime file, inside the motion mask for scene loops; pass/fail thresholds belong to the adopting tool.",
+      "type": "object",
+      "required": ["seam", "adjacent_median", "adjacent_p95", "seam_over_median", "seam_over_p95"],
+      "properties": {
+        "frames": {"type": "integer", "minimum": 2},
+        "seam": {"type": "number", "minimum": 0},
+        "adjacent_median": {"type": "number", "minimum": 0},
+        "adjacent_p95": {"type": "number", "minimum": 0},
+        "adjacent_max": {"type": "number", "minimum": 0},
+        "seam_over_median": {"type": "number", "minimum": 0},
+        "seam_over_p95": {"type": "number", "minimum": 0},
+        "method": {"type": "string", "minLength": 1}
+      }
+    },
+    "edgeSeam": {
+      "description": "forge_core.edge_seam_report of one join or wrap: the one seam metric of every tool that judges edges (per D9: platform-strip joins, terrain wraps and Wang joins, parallax repeat seams). The common seamReport of the premultiplied RGBA steps (0-255) across the join (seam) and of the interior steps near it (adjacent_*), plus seam_ratio, near_median and a verdict. seam_ratio is the larger of seam / adjacent_max and the worst few-row window of the join over the worst window of the interior steps near it: about 1 or less looks like the art, well above 1 is a seam; method states the windows. Verdicts (snake_case): continuous (the join steps like the art around it), seam (a visible jump), duplicate_edge (a join much flatter than its neighbourhood: a repeated edge, a one-pixel stutter that edge equality would pass), flat (no measurable steps near the join, so there is nothing to compare) and too_small (fewer than two columns or rows to compare; the numbers may then be absent). A statistic, never a seamlessness proof; pass/fail gates belong to the adopting tool.",
+      "type": "object",
+      "required": ["verdict"],
+      "properties": {
+        "verdict": {"enum": ["continuous", "seam", "duplicate_edge", "flat", "too_small"]},
+        "seam_ratio": {"type": "number", "minimum": 0},
+        "near_median": {"type": "number", "minimum": 0}
+      },
+      "if": {"properties": {"verdict": {"const": "too_small"}}, "required": ["verdict"]},
+      "else": {"allOf": [{"$ref": "#/$defs/seamReport"}], "required": ["seam_ratio", "near_median"]}
+    },
+    "cropBoxes": {
+      "description": "forge-crop-boxes/v1 (DOC-18): the one form of measured crop boxes in sheet pixels for every tool. Each item is a half-open integer box [x0, y0, x1, y1) inside the sheet with an optional id. extract_prop_pack writes it as auto-boxes.json (with source, display_name and anchor_px in box pixels) and reads it with --boxes-file, where every item needs an id (the prop label) and may also carry footprint, solid, contact, occlusion_class and occupant_policy as in a prop pack item; assemble_frames --crop-boxes reads it with the id optional. Readers also accept the legacy forms: a bare list of boxes (assemble_frames) and {props: [{label, source_box}]} (extract_prop_pack).",
+      "type": "object",
+      "required": ["items"],
+      "properties": {
+        "schema": {"const": "forge-crop-boxes/v1"},
+        "source": {"$ref": "#/$defs/fileRef"},
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["box"],
+            "properties": {
+              "id": {"type": "string", "minLength": 1, "pattern": "\\S"},
+              "box": {"type": "array", "items": {"type": "integer", "minimum": 0}, "minItems": 4, "maxItems": 4},
+              "display_name": {"type": "string", "minLength": 1},
+              "anchor_px": {"description": "The prop's anchor in box pixels.", "$ref": "#/$defs/point2"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

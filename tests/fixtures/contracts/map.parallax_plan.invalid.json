@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"why": "unknown pivot", "set": "/camera/pivot", "value": "middle"},
+    {"why": "viewport is mandatory", "remove": "/viewport"},
+    {"why": "no layers", "set": "/layers", "value": []},
+    {"why": "zero zoom", "set": "/camera/zoom", "value": [0, 1]},
+    {
+      "why": "aspect policies are fixed",
+      "set": "/aspect_policy",
+      "value": "stretch",
+      "error": "'stretch' is not one of"
+    }
+  ]
+}

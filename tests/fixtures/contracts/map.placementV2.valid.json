@@ -1,0 +1,9 @@
+{
+  "id": "tree-01",
+  "image": "props/tree/prop.png",
+  "x": 420,
+  "y": 512,
+  "anchor": "manifest",
+  "sortY": 512,
+  "layer": "props"
+}

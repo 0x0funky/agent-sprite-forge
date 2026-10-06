@@ -1,0 +1,15 @@
+{
+  "id": "tree-12",
+  "prop": "tree",
+  "x": 312,
+  "y": 341,
+  "scale": 1,
+  "anchor_px": [16, 39],
+  "footprint": {"shape": "ellipse", "width": 10, "depth": 6},
+  "solid": true,
+  "contact": "ground",
+  "sortY": 341,
+  "occlusion": "canopy",
+  "occluder": {"alphaThreshold": 16, "source": "props/tree/prop.png"},
+  "animatedParts": []
+}

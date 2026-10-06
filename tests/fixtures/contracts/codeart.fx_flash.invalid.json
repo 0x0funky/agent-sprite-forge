@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "why": "at most 16 rays",
+      "set": "/rays",
+      "value": 32,
+      "error": "32 is greater than the maximum of 16"
+    },
+    {
+      "why": "presets refuse unknown parameters",
+      "set": "/glow",
+      "value": true,
+      "error": "Additional properties are not allowed"
+    },
+    {
+      "why": "atMs is impact or a time",
+      "set": "/atMs",
+      "value": "hit",
+      "error": "is not valid under any"
+    }
+  ]
+}

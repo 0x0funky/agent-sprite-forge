@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "audio presence is mandatory", "remove": "/audioStreams"},
+    {"why": "QA states what it does not prove", "remove": "/notProven"},
+    {"why": "no frames", "set": "/frames", "value": 0},
+    {
+      "why": "native alpha is a yes or no",
+      "set": "/hasAlpha",
+      "value": "maybe",
+      "error": "'maybe' is not of type 'boolean'"
+    }
+  ]
+}

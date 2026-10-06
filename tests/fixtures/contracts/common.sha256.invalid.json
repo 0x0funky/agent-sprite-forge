@@ -1,0 +1,9 @@
+{
+  "cases": [
+    {"why": "too short", "document": "ABC123"},
+    {
+      "why": "uppercase hex",
+      "document": "2D711642B726B04401627CA9FBAC32F5C8530FB1903CC4DB02258717921A4881"
+    }
+  ]
+}

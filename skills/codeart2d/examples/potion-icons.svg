@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="32" viewBox="0 0 128 32" data-codeart="icons">
+  <!-- Four flat potion icons, 32x32 units each, coloured only through palette classes
+       (c-NAME, see palette.json). Outlines are filled shapes drawn under the fills, so the
+       art stays inside the pixel profile when rendered with crispEdges. -->
+  <defs>
+    <g id="cork">
+      <rect class="c-outline" x="0" y="0" width="12" height="7" rx="1.5"/>
+      <rect class="c-cork" x="1.5" y="1.5" width="9" height="4" rx="1"/>
+      <rect class="c-cork-dark" x="1.5" y="4" width="9" height="1.5"/>
+    </g>
+  </defs>
+  <g id="round-flask">
+    <circle class="c-outline" cx="16" cy="20" r="11"/>
+    <rect class="c-outline" x="11" y="5" width="10" height="9" rx="1"/>
+    <circle class="c-glass" cx="16" cy="20" r="9.5"/>
+    <rect class="c-glass" x="12.5" y="7" width="7" height="8"/>
+    <path class="c-liquid" d="M 6.553 19 A 9.5 9.5 0 1 0 25.447 19 Z"/>
+    <path class="c-liquid-dark" d="M 8.634 26 A 9.5 9.5 0 0 0 23.366 26 Z"/>
+    <ellipse class="c-liquid-light" cx="11" cy="22" rx="1.5" ry="2.5"/>
+    <ellipse class="c-shine" cx="11" cy="15" rx="1.2" ry="2.2" transform="rotate(35 11 15)"/>
+    <use href="#cork" x="10" y="0.5"/>
+  </g>
+  <g id="tall-vial" transform="translate(32 0)">
+    <rect class="c-outline" x="10" y="4" width="12" height="26" rx="6"/>
+    <rect class="c-glass" x="11.5" y="6" width="9" height="22.5" rx="4.5"/>
+    <path class="c-liquid" d="M 11.5 14 H 20.5 V 24 A 4.5 4.5 0 0 1 11.5 24 Z"/>
+    <path class="c-liquid-dark" d="M 11.5 24 A 4.5 4.5 0 0 0 20.5 24 Z"/>
+    <circle class="c-liquid-light" cx="14" cy="18.5" r="1.2"/>
+    <circle class="c-liquid-light" cx="17.5" cy="21.5" r="0.9"/>
+    <rect class="c-shine" x="13" y="7.5" width="1.5" height="5"/>
+    <use href="#cork" x="10" y="0.5"/>
+  </g>
+  <g id="square-bottle" transform="translate(64 0)">
+    <rect class="c-outline" x="11" y="4" width="10" height="7"/>
+    <rect class="c-outline" x="5" y="9" width="22" height="21" rx="3"/>
+    <rect class="c-glass" x="12.5" y="6" width="7" height="5"/>
+    <rect class="c-glass" x="6.5" y="10.5" width="19" height="18" rx="2"/>
+    <path class="c-liquid" d="M 6.5 16 H 25.5 V 26.5 Q 25.5 28.5 23.5 28.5 H 8.5 Q 6.5 28.5 6.5 26.5 Z"/>
+    <path class="c-liquid-dark" d="M 21 16 H 25.5 V 26.5 Q 25.5 28.5 23.5 28.5 H 21 Z"/>
+    <rect class="c-liquid-light" x="9" y="18" width="2" height="6" rx="1"/>
+    <rect class="c-shine" x="9" y="12" width="2" height="2.5"/>
+    <use href="#cork" x="10" y="0.5"/>
+  </g>
+  <g id="cone-flask" transform="translate(96 0)">
+    <path class="c-outline" d="M 11 4 H 21 V 12 L 28.5 27.5 Q 29.5 30 26.5 30 H 5.5 Q 2.5 30 3.5 27.5 L 11 12 Z"/>
+    <path class="c-glass" d="M 12.5 6 H 19.5 V 12.4 L 26.6 27.4 Q 27.1 28.5 25.9 28.5 H 6.1 Q 4.9 28.5 5.4 27.4 L 12.5 12.4 Z"/>
+    <path class="c-liquid" d="M 9.3 19 H 22.7 L 26.6 27.4 Q 27.1 28.5 25.9 28.5 H 6.1 Q 4.9 28.5 5.4 27.4 Z"/>
+    <path class="c-liquid-dark" d="M 6.5 25 H 25.5 L 26.6 27.4 Q 27.1 28.5 25.9 28.5 H 6.1 Q 4.9 28.5 5.4 27.4 Z"/>
+    <circle class="c-liquid-light" cx="12" cy="22.5" r="1.3"/>
+    <circle class="c-liquid-light" cx="16" cy="20.8" r="0.8"/>
+    <rect class="c-shine" x="14" y="7.5" width="1.5" height="4"/>
+    <use href="#cork" x="10" y="0.5"/>
+  </g>
+</svg>

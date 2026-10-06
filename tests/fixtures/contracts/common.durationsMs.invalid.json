@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "no frames", "document": []},
+    {"why": "zero duration", "document": [80, 0]},
+    {"why": "fractional ms", "document": [80.5]}
+  ]
+}

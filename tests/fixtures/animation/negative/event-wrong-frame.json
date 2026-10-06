@@ -1,0 +1,14 @@
+{
+  "rule": "events",
+  "why": "an event names the frame shown at its time",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/events/1/frame",
+      "value": 4
+    }
+  ],
+  "alsoFails": []
+}

@@ -1,0 +1,165 @@
+{
+  "schema": "generate2dmap.parallax_validation.v2",
+  "passed": false,
+  "issues": [
+    "sky: Pixel art needs whole screen pixels per source pixel; scale x zoom is 1, 1.5.",
+    "far: Pixel art needs whole screen pixels per source pixel; scale x zoom is 1, 1.5.",
+    "aspect 16:9 (64x36 viewport, expand): sky, far do not cover it.",
+    "aspect 4:3 (64x48 viewport, expand): sky, far do not cover it."
+  ],
+  "warnings": [
+    "far: scroll_factor x zoom is fractional, so the layer moves by sub-pixels; snap its drawn position to whole pixels each frame.",
+    "aspect 19.5:9 (69.3333x32 viewport, expand): sky do not cover it."
+  ],
+  "viewport": [64.0, 32.0],
+  "camera": {"x": [0.0, 128.0], "y": [0.0, 0.0], "zoom": [1.0, 1.5]},
+  "pivot": {"mode": "center", "point": [32.0, 16.0]},
+  "coverage_policy": "auto",
+  "camera_extrema_checked": 4,
+  "layers": [
+    {
+      "id": "sky",
+      "role": "sky",
+      "image": "sky.png",
+      "source_mode": "RGB",
+      "source_sha256": "9754808d2ed6257fd66279eedefa235144db15356b51f4a78eba1d92648706d7",
+      "source_size": [64, 32],
+      "scale": 1.0,
+      "display_size": [64.0, 32.0],
+      "offset": [0.0, 0.0],
+      "anchor_px": [0.0, 0.0],
+      "scroll_factor": [0.0, 0.0],
+      "repeat": [false, false],
+      "repeat_period_world_px": [null, null],
+      "alpha": {
+        "expected": "opaque",
+        "min": 255,
+        "max": 255,
+        "fully_clear_pixels": 0,
+        "partly_transparent_pixels": 0,
+        "fully_opaque_pixels": 2048,
+        "total_pixels": 2048,
+        "nonzero_bbox_px": [0, 0, 64, 32],
+        "allow_empty": false
+      },
+      "require_canvas_coverage": true,
+      "coverage_rule": "sky",
+      "canvas_coverage_passed": true,
+      "opaque_viewport_coverage_verified": true,
+      "extrema": [
+        {
+          "camera": [0.0, 0.0],
+          "zoom": 1.0,
+          "screen_canvas_rect": [0.0, 0.0, 64.0, 32.0],
+          "canvas_coverage_axes": [true, true],
+          "canvas_covers_viewport": true,
+          "canvas_visible": true,
+          "gaps_px": [0.0, 0.0, 0.0, 0.0],
+          "nonzero_alpha_bbox_screen": [0.0, 0.0, 64.0, 32.0]
+        }
+      ],
+      "repeat_seams": [],
+      "pixel_grid": {
+        "screen_px_per_source_px": [1.0, 1.5],
+        "integer_pixels": false,
+        "rest_position_at_camera_0": [[0.0, 0.0], [-16.0, -8.0]],
+        "rest_position_integral": true,
+        "scroll_px_per_camera_px": [[0.0, 0.0], [0.0, 0.0]],
+        "subpixel_scroll": false
+      },
+      "passed": false,
+      "issues": ["Pixel art needs whole screen pixels per source pixel; scale x zoom is 1, 1.5."]
+    },
+    {
+      "id": "far",
+      "role": "far",
+      "image": "far.png",
+      "source_mode": "RGBA",
+      "source_sha256": "aec3b1a46dcfc3599704de454c1a8574534bd21a83c2ddd259738afb5f38f4e6",
+      "source_size": [96, 32],
+      "scale": 1.0,
+      "display_size": [96.0, 32.0],
+      "offset": [0.0, 0.0],
+      "anchor_px": [0.0, 0.0],
+      "scroll_factor": [0.5, 0.0],
+      "repeat": [true, false],
+      "repeat_period_world_px": [96.0, null],
+      "alpha": {
+        "expected": "transparent",
+        "min": 0,
+        "max": 255,
+        "fully_clear_pixels": 1728,
+        "partly_transparent_pixels": 0,
+        "fully_opaque_pixels": 1344,
+        "total_pixels": 3072,
+        "nonzero_bbox_px": [1, 6, 96, 32],
+        "allow_empty": false
+      },
+      "require_canvas_coverage": true,
+      "coverage_rule": "repeated layer",
+      "canvas_coverage_passed": true,
+      "opaque_viewport_coverage_verified": false,
+      "extrema": [
+        {
+          "camera": [0.0, 0.0],
+          "zoom": 1.0,
+          "screen_canvas_rect": [0.0, 0.0, 96.0, 32.0],
+          "canvas_coverage_axes": [true, true],
+          "canvas_covers_viewport": true,
+          "canvas_visible": true,
+          "gaps_px": [0.0, 0.0, 0.0, 0.0],
+          "nonzero_alpha_bbox_screen": [1.0, 6.0, 96.0, 32.0]
+        }
+      ],
+      "repeat_seams": [
+        {
+          "axis": "x",
+          "alpha_mae": 7.96875,
+          "visible_rgb_mae": null,
+          "jointly_visible_pixels": 0,
+          "premultiplied_rgb_mae": 2.2916666666666665,
+          "seamless_verified": false,
+          "seam": 3.7109375,
+          "adjacent_median": 3.7109375,
+          "adjacent_p95": 3.7109375,
+          "adjacent_max": 7.421875,
+          "seam_over_median": 1.0,
+          "seam_over_p95": 1.0,
+          "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first",
+          "frames": 96,
+          "verdict": "continuous"
+        }
+      ],
+      "pixel_grid": {
+        "screen_px_per_source_px": [1.0, 1.5],
+        "integer_pixels": false,
+        "rest_position_at_camera_0": [[0.0, 0.0], [-16.0, -8.0]],
+        "rest_position_integral": true,
+        "scroll_px_per_camera_px": [[0.5, 0.0], [0.75, 0.0]],
+        "subpixel_scroll": true
+      },
+      "passed": false,
+      "issues": ["Pixel art needs whole screen pixels per source pixel; scale x zoom is 1, 1.5."]
+    }
+  ],
+  "aspect_sweep": {
+    "policy": "expand",
+    "aspects": [
+      {
+        "aspect": "16:9",
+        "ratio": 1.7777777777777777,
+        "viewport": [64.0, 36.0],
+        "camera_shift": [-0.0, -2.0],
+        "required": true,
+        "passed": false,
+        "failing_layers": [{"id": "sky", "worst_gap_px": 4.0}, {"id": "far", "worst_gap_px": 4.0}]
+      }
+    ]
+  },
+  "pixel_grid": {"enforced": true, "source": "plan pixel_art"},
+  "transform": "screenTopLeft=pivot+(offset-anchor_px*scale-camera*scroll_factor-pivot)*zoom; screenSize=sourceSize*scale*zoom. camera is the world position at the viewport's top-left at zoom 1. Repeats use an unbounded integer tile lattice.",
+  "limits": [
+    "Coverage checks the rectangular image canvas, not pixels hidden by transparency. Only a fully opaque sky can certify opaque viewport coverage.",
+    "Alpha bounding boxes include empty holes; repeating layers report the seed tile bbox only."
+  ]
+}

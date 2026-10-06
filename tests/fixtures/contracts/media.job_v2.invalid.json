@@ -1,0 +1,27 @@
+{
+  "cases": [
+    {"why": "v2 carries the duplicate-guard fingerprint", "remove": "/fingerprint"},
+    {"why": "a done job records its artifact", "remove": "/artifact"},
+    {"why": "unknown status", "set": "/status", "value": "complete"},
+    {"why": "attempts count from 1", "set": "/receipt/attempt", "value": 0},
+    {"why": "negative estimate", "set": "/estimate/usd", "value": -1},
+    {"why": "unknown route", "set": "/route", "value": "http", "error": "$.route:"},
+    {"why": "the API base is https", "set": "/apiBase", "value": "http://api.openai.com/v1", "error": "$.apiBase:"},
+    {"why": "the ledger block names its reservation", "set": "/ledger", "value": {"projectDir": "game", "status": "reserved"}, "error": "'reservationId' is a required property"},
+    {"why": "the provider error block is closed to unlisted fields", "set": "/error", "value": {"httpStatus": 400, "body": "raw provider text"}, "error": "Additional properties are not allowed"},
+    {"why": "provider usage counts are whole numbers", "set": "/providerUsage", "value": {"input_tokens": 1.5}, "error": "$.providerUsage.input_tokens:"},
+    {"why": "a partial artifact records its size", "set": "/partialArtifact", "value": {"path": ".artifact-0.partial", "sha256": "0dd695321ec44e129b648bc62bc35ee0bcf391cdb125502299309d2316e3addd"}, "error": "'bytes' is a required property"},
+    {"why": "an upload URL is stored as host and hash only", "set": "/uploadUrl", "value": {"host": "uploads.example.com"}, "error": "'sha256' is a required property"},
+    {"why": "estimates are in USD", "set": "/estimate/currency", "value": "EUR", "error": "$.estimate.currency:"},
+    {
+      "why": "adoption sources are symbolic",
+      "set": "/adoption",
+      "value": {
+        "method": "native-run-folder",
+        "source": "C:/codex/x.png",
+        "sourceSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "error": "does not match"
+    }
+  ]
+}

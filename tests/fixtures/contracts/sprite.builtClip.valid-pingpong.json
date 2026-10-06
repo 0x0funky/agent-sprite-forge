@@ -1,0 +1,104 @@
+{
+  "frames": [0, 1, 2, 3, 2, 1],
+  "duration_ms": [100, 100, 100, 100, 100, 100],
+  "loop": true,
+  "total_duration_ms": 600,
+  "nominal_fps": 10.0,
+  "average_fps": 10.0,
+  "loop_policy": "pingpong",
+  "authored_frames": [0, 1, 2, 3],
+  "authored_duration_ms": [100, 100, 100, 100],
+  "timing_source": "ticks",
+  "ticks": [6, 6, 6, 6],
+  "tick_hz": 60,
+  "fps_rational": "10/1",
+  "events_ms": [
+    {"name": "sfx", "at_ms": 100, "at": 1, "position": 1, "at_tick": 6},
+    {"name": "sfx", "at_ms": 500, "at": 1, "position": 5, "at_tick": 30}
+  ],
+  "tick_grid": {
+    "hz": 60,
+    "max_drift_ms": 0.0,
+    "frame_ticks": [6, 6, 6, 6, 6, 6],
+    "zero_tick_positions": [],
+    "even": true,
+    "cycle_ticks": 36.0,
+    "cycle_aligned": true,
+    "method": "cumulative integer-ms frame boundaries rounded half-up to the nearest tick"
+  },
+  "holds": [],
+  "seam": {
+    "frames": 6,
+    "seam": 8.557943,
+    "adjacent_median": 8.557943,
+    "adjacent_p95": 8.557943,
+    "adjacent_max": 8.557943,
+    "seam_over_median": 1.0,
+    "seam_over_p95": 1.0,
+    "method": "premultiplied RGBA mean absolute difference (0-255); seam = last -> first",
+    "adjacent_mean": 8.167318,
+    "wrap_ratio": 1.047828
+  },
+  "preview": {
+    "file": "clips/clip-00.webp",
+    "decoded_frames": [
+      {"index": 0, "start_ms": 0, "duration_ms": 100, "clip_positions": [0]},
+      {"index": 1, "start_ms": 100, "duration_ms": 100, "clip_positions": [1]},
+      {"index": 2, "start_ms": 200, "duration_ms": 100, "clip_positions": [2]},
+      {"index": 3, "start_ms": 300, "duration_ms": 100, "clip_positions": [3]},
+      {"index": 4, "start_ms": 400, "duration_ms": 100, "clip_positions": [4]},
+      {"index": 5, "start_ms": 500, "duration_ms": 100, "clip_positions": [5]}
+    ],
+    "decoded_frame_count": 6,
+    "total_duration_ms": 600,
+    "native_loop_count": 0,
+    "timeline_verified": true,
+    "alpha_and_visible_rgb_exact": true,
+    "hidden_rgb_guaranteed": false,
+    "lossless": true,
+    "file_sha256": "425ee7ac8acfa4411822663b29d3ab63d494755028a841b95aa5a03eb05e2ddf"
+  },
+  "transitions": [
+    {
+      "from_position": 0,
+      "to_position": 1,
+      "premultiplied_rgb_mae": 5.876736,
+      "alpha_mae": 16.601562,
+      "changed_visible_pixels": 400
+    },
+    {
+      "from_position": 1,
+      "to_position": 2,
+      "premultiplied_rgb_mae": 5.46007,
+      "alpha_mae": 13.945312,
+      "changed_visible_pixels": 336
+    },
+    {
+      "from_position": 2,
+      "to_position": 3,
+      "premultiplied_rgb_mae": 5.876736,
+      "alpha_mae": 16.601562,
+      "changed_visible_pixels": 400
+    },
+    {
+      "from_position": 3,
+      "to_position": 4,
+      "premultiplied_rgb_mae": 5.876736,
+      "alpha_mae": 16.601562,
+      "changed_visible_pixels": 400
+    },
+    {
+      "from_position": 4,
+      "to_position": 5,
+      "premultiplied_rgb_mae": 5.46007,
+      "alpha_mae": 13.945312,
+      "changed_visible_pixels": 336
+    }
+  ],
+  "last_to_first": {
+    "applies_to_playback": true,
+    "premultiplied_rgb_mae": 5.876736,
+    "alpha_mae": 16.601562,
+    "changed_visible_pixels": 400
+  }
+}

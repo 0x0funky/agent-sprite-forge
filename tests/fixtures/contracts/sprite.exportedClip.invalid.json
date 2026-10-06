@@ -1,0 +1,33 @@
+{
+  "cases": [
+    {
+      "why": "events carry the authored position",
+      "remove": "/events_ms/0/at",
+      "error": "'at' is a required property"
+    },
+    {
+      "why": "event times are whole ms",
+      "set": "/events_ms/0/at_ms",
+      "value": 80.5,
+      "error": "80.5 is not of type 'integer'"
+    },
+    {
+      "why": "events name the played frame (per D12)",
+      "remove": "/events_ms/0/position",
+      "error": "'position' is a required property"
+    },
+    {"why": "an atlas page index is a whole number", "set": "/page", "value": -1, "error": "-1 is less than the minimum of 0"},
+    {
+      "why": "the loop policy is cycle, pingpong or oneshot",
+      "set": "/loop_policy",
+      "value": "bounce",
+      "error": "'bounce' is not one of"
+    },
+    {
+      "why": "durations are whole ms",
+      "set": "/duration_ms/0",
+      "value": 0,
+      "error": "0 is less than the minimum of 1"
+    }
+  ]
+}

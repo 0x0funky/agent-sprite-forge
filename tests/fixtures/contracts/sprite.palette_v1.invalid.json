@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"why": "palette colours are opaque", "set": "/colors/0/hex", "value": "#1a1c2c80"},
+    {"why": "index above 255", "set": "/transparent_index", "value": 256},
+    {"why": "locked is mandatory", "remove": "/locked"},
+    {"why": "empty palette", "set": "/colors", "value": []},
+    {
+      "why": "the palette name is text",
+      "set": "/name",
+      "value": 5,
+      "error": "5 is not of type 'string'"
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "schema": "codeart2d.codeart_meta.v1",
+  "art_source": "code",
+  "placeholder": false,
+  "disclosure": "code-drawn, no image model",
+  "generator": "svg_render.py",
+  "spec_sha256": "340d68a6b23680033dd6240f8c3fe8af109ed9fa57230191526bb5a04a7bf6bd",
+  "renderer": {"backend": "resvg_py", "name": "resvg-py", "version": "0.5.0", "engine": "resvg 0.48.1", "zoom": 2, "size": [16, 16]},
+  "palette": {"colors": {"skin": "#f0c090", "hair": "#301020"}, "variants": {"alt": {"hair": "#2a8040"}}},
+  "outputs": [
+    {
+      "path": "svg/tile.png",
+      "sha256": "c56b94cad9ae827a0ccd4f1c47a82728108a041a38f5d3c2c98b697769037897",
+      "bytes": 87
+    }
+  ],
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "svg_render doctor probes on this backend, then exact palette lookup on the output",
+    "notProven": ["Readability at game scale needs a visual review."],
+    "checks": [{"id": "off_palette", "status": "pass", "value": 0, "threshold": 0}],
+    "inputs": [
+      {
+        "path": "tile.svg",
+        "sha256": "340d68a6b23680033dd6240f8c3fe8af109ed9fa57230191526bb5a04a7bf6bd"
+      }
+    ],
+    "outputs": [
+      {
+        "path": "svg/tile.png",
+        "sha256": "c56b94cad9ae827a0ccd4f1c47a82728108a041a38f5d3c2c98b697769037897"
+      }
+    ],
+    "tool": {"name": "svg_render.py", "version": "0.4.0"}
+  }
+}

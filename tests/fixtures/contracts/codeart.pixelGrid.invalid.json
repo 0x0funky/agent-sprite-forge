@@ -1,0 +1,8 @@
+{
+  "cases": [
+    {"why": "rows and segments together are ambiguous", "set": "/rows", "value": ["..ll.."], "error": "is valid under each of"},
+    {"why": "segments are a list of rows", "set": "/segments", "value": "2.4l2.", "error": "is not valid under any of the given schemas"},
+    {"why": "a pose object holds rows or segments", "document": {"pixels": ["..ll.."]}, "error": "is not valid under any of the given schemas"},
+    {"why": "a pose alias is not a pose", "document": "rest", "error": "is not valid under any of the given schemas"}
+  ]
+}

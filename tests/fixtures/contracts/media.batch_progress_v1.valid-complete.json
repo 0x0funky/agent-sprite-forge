@@ -1,0 +1,39 @@
+{
+  "schema": "generate2dmedia.batch_progress.v1",
+  "jobsFile": "props.json",
+  "execution": "execute",
+  "workers": 1,
+  "startedAt": "2026-10-05T05:24:32.511Z",
+  "updatedAt": "2026-10-05T05:24:32.606Z",
+  "results": [
+    {
+      "id": "j0",
+      "status": "generated",
+      "outcomeCode": "ok",
+      "jobDir": "out/j0",
+      "artifact": "generated.png",
+      "estimateUsd": null
+    },
+    {
+      "id": "j1",
+      "status": "generated",
+      "outcomeCode": "ok",
+      "jobDir": "out/j1",
+      "artifact": "generated.png",
+      "estimateUsd": null
+    },
+    {
+      "id": "j2",
+      "status": "generated",
+      "outcomeCode": "ok",
+      "jobDir": "out/j2",
+      "artifact": "generated.png",
+      "estimateUsd": null
+    }
+  ],
+  "inFlight": [],
+  "remaining": [],
+  "stopped": false,
+  "stopReason": null,
+  "complete": true
+}

@@ -1,0 +1,100 @@
+{
+  "schema": "generate2dmap.chunk_validation.v1",
+  "tool": {"name": "validate_chunks", "version": "1.0"},
+  "mode": "rows",
+  "start": {"chunk": "hall", "point": null},
+  "unused": [],
+  "placements": [
+    {"id": "hall", "rect": [0, 0, 96, 64]},
+    {"id": "corridor@0,1", "rect": [96, 0, 96, 64]},
+    {"id": "corridor@0,2", "rect": [192, 0, 96, 64]},
+    {"id": "vault", "rect": [288, 0, 96, 64]}
+  ],
+  "unplaced": [],
+  "contacts": [
+    {"a": "corridor@0,1", "side": "E", "b": "corridor@0,2", "start": 0, "end": 64, "b_side": "W"},
+    {"a": "corridor@0,2", "side": "E", "b": "vault", "start": 0, "end": 64, "b_side": "W"},
+    {"a": "hall", "side": "E", "b": "corridor@0,1", "start": 0, "end": 64, "b_side": "W"}
+  ],
+  "sockets": [
+    {
+      "chunk": "hall",
+      "side": "E",
+      "index": 0,
+      "offset": 16.0,
+      "width": 32.0,
+      "material": "floor",
+      "status": "paired",
+      "world_span": [16.0, 48.0],
+      "partner": {"chunk": "corridor@0,1", "side": "W", "index": 0}
+    },
+    {
+      "chunk": "corridor@0,1",
+      "side": "E",
+      "index": 0,
+      "offset": 16.0,
+      "width": 32.0,
+      "material": "floor",
+      "status": "paired",
+      "world_span": [16.0, 48.0],
+      "partner": {"chunk": "corridor@0,2", "side": "W", "index": 0}
+    },
+    {
+      "chunk": "corridor@0,1",
+      "side": "W",
+      "index": 0,
+      "offset": 16.0,
+      "width": 32.0,
+      "material": "floor",
+      "status": "paired",
+      "world_span": [16.0, 48.0],
+      "partner": {"chunk": "hall", "side": "E", "index": 0}
+    }
+  ],
+  "reachability": {
+    "graph": {"reached": ["corridor@0,1", "corridor@0,2", "hall", "vault"], "unreached": []},
+    "grid": {
+      "status": "pass",
+      "cell": 16,
+      "start": {"chunk": "hall", "component_cells": 44},
+      "chunks": {
+        "hall": {"walkable_cells": 10, "reached_cells": 10},
+        "corridor@0,1": {"walkable_cells": 12, "reached_cells": 12},
+        "corridor@0,2": {"walkable_cells": 12, "reached_cells": 12},
+        "vault": {"walkable_cells": 10, "reached_cells": 10}
+      },
+      "problems": [],
+      "warnings": []
+    }
+  },
+  "status": "pass",
+  "qa": {
+    "status": "pass",
+    "method": "validate_chunks: socket spans on placed chunk edges compared exactly (offset, width, material); chunk graph search through paired doors; with walkability grids, 4-connected components joined through doors.",
+    "notProven": [
+      "Doors are matched by span and material only; door art, collision and transitions are not checked.",
+      "Grid reachability uses the declared walkability grids with 4-neighbour moves; side-view jumps, one-way passages and actor size are not modelled (see validate_layout.py for side-view levels).",
+      "A dangling socket may be an intended world exit; the tool cannot tell."
+    ],
+    "checks": [
+      {"id": "socket_bounds", "status": "pass", "value": [], "threshold": null},
+      {"id": "socket_overlap", "status": "pass", "value": [], "threshold": null},
+      {"id": "placement", "status": "pass", "value": [], "threshold": null}
+    ],
+    "inputs": [
+      {
+        "path": "../src/chunks.json",
+        "sha256": "c2687cc28054e7d11318b624039a5953af566b3008acd453f8dce05ec7e25ecf",
+        "bytes": 643
+      }
+    ],
+    "outputs": [
+      {
+        "path": "chunk-debug.png",
+        "sha256": "fabff761176ef78b94074f11c14265d10482e17e1e35b4f23b077cd13878f4e6",
+        "bytes": 1241
+      }
+    ],
+    "tool": {"name": "validate_chunks", "version": "1.0"}
+  }
+}

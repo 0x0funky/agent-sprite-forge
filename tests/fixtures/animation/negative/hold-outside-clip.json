@@ -1,0 +1,14 @@
+{
+  "rule": "impact-hold",
+  "why": "a hold must start inside the clip",
+  "base": "png",
+  "args": [],
+  "ops": [
+    {
+      "op": "set",
+      "path": "/holdMs",
+      "value": 100000
+    }
+  ],
+  "alsoFails": []
+}

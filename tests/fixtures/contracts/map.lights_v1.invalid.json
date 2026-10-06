@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "u above 1", "set": "/lights/0/u", "value": 1.5},
+    {"why": "cookie is mandatory", "remove": "/cookie"},
+    {"why": "zero radius", "set": "/lights/0/radius", "value": 0},
+    {
+      "why": "a flicker frequency is positive",
+      "set": "/lights/0/flicker",
+      "value": {"hz": 0},
+      "error": "is not valid under any"
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "5 hex digits are not a colour", "document": "#12345", "error": "does not match"},
+    {"why": "colour names are not read", "document": "black", "error": "does not match"},
+    {"why": "PixelSpec colours are hex strings, not RGB triples", "document": [26, 28, 44], "error": "is not of type 'string'"}
+  ]
+}

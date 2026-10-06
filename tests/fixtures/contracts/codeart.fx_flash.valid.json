@@ -1,0 +1,10 @@
+{
+  "type": "flash",
+  "ramp": "spark",
+  "origin": [45.5, 41],
+  "radius": 3,
+  "rays": 4,
+  "rayLength": 8,
+  "rotation": 45,
+  "lifeMs": 100
+}

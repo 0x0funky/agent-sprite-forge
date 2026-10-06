@@ -1,0 +1,14 @@
+{
+  "cases": [
+    {"why": "unknown loop policy", "set": "/loop/policy", "value": "reverse"},
+    {"why": "loop is mandatory", "remove": "/loop"},
+    {"why": "crf above 63", "set": "/encode/crf", "value": 70},
+    {"why": "box and polygon together", "set": "/protected/0/box", "value": [0, 0, 1, 1]},
+    {
+      "why": "an explicit scale comes with its offset",
+      "set": "/registration",
+      "value": {"scale": 1.5},
+      "error": "'offset' is a required property"
+    }
+  ]
+}

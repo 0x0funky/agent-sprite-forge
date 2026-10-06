@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"why": "hash is mandatory", "remove": "/sha256"},
+    {"why": "absolute path", "set": "/path", "value": "/abs/frame.png"},
+    {"why": "negative size", "set": "/bytes", "value": -1}
+  ]
+}

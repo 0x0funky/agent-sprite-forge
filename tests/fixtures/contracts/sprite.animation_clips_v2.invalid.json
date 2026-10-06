@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "v2 clips report the tick grid", "remove": "/clips/walk/tick_grid"},
+    {"why": "size is mandatory", "remove": "/frame_size"},
+    {"why": "absolute path", "set": "/frames/0/file", "value": "/abs/frame-00.png"},
+    {
+      "why": "sampling is nearest or linear",
+      "set": "/sampling",
+      "value": "bilinear",
+      "error": "'bilinear' is not one of"
+    }
+  ]
+}

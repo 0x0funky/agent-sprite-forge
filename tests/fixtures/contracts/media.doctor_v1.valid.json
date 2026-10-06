@@ -1,0 +1,15 @@
+{
+  "schema": "generate2dmedia.doctor.v1",
+  "checks": [
+    {"id": "python", "status": "OK", "detail": "3.12.4"},
+    {
+      "id": "ffmpeg",
+      "status": "MISSING",
+      "detail": "not on PATH",
+      "remedy": "Install ffmpeg 6 or newer, then reopen the shell"
+    },
+    {"id": "host-image-tool", "status": "AGENT", "detail": "only the agent knows its own tools"}
+  ],
+  "routes": {"image": ["code", "existing"], "video": []},
+  "proofs": {}
+}

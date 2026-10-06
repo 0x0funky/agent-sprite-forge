@@ -1,0 +1,12 @@
+{
+  "cases": [
+    {"why": "no sources", "set": "/sources", "value": []},
+    {"why": "palette is hash-bound", "remove": "/palette/sha256"},
+    {
+      "why": "locked colours are #rrggbb",
+      "set": "/colors",
+      "value": ["red"],
+      "error": "does not match"
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "id": "clouds",
+  "role": "far",
+  "image": "clouds.png",
+  "alpha": "transparent",
+  "scale": 1,
+  "offset": [0, 0],
+  "anchor_px": [0, 0],
+  "scroll_factor": [0.08, 0],
+  "repeat": [true, false],
+  "require_canvas_coverage": true,
+  "allow_empty": false,
+  "kind": "clouds",
+  "sha256": "cec12c657695247e84b2fb71ae814c8a6152af6ed22f9b9e164b3973e4cca56d"
+}

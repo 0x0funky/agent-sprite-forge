@@ -1,0 +1,34 @@
+{
+  "schema": "generate2dsprite.pipeline_meta.v2",
+  "target": "player",
+  "mode": "player_walk",
+  "background_mode": "native_alpha",
+  "resampler": "lanczos",
+  "rows": 1,
+  "cols": 2,
+  "cell_size": 64,
+  "frames": [
+    {"grid": [0, 0], "trim_offset": [3, 2], "source_rect": [3, 2, 45, 62]},
+    {"grid": [0, 1], "trim_offset": [4, 2], "source_rect": [68, 2, 110, 62]}
+  ],
+  "qc_summary": {"frame_count": 2, "body_scale_mean": 0.62, "output_subject_height_mean": 44.0},
+  "qc_config": {"strict_qc": true},
+  "geometry": {
+    "alpha_geometry_threshold": 16,
+    "connectivity": 8,
+    "anchor_mode": "feet",
+    "scale_strategy": "fit",
+    "pixel_scale": null,
+    "grid_rounding": "nearest",
+    "pad_offset": [0, 0]
+  },
+  "hygiene": {"mode": "both", "floor": 4, "floor_px": 12, "detached_px": 3, "detached_components": 1},
+  "profile_applied": {"name": "fox", "version": 2, "applied": {"cell_size": 64, "fit_scale": 0.85}, "overrides": []},
+  "provenance": {
+    "input_sha256": "566fc07c42bea8ac81ecd163dd130f336114bd30c8a63c8f4b8ec9562f125671",
+    "source_mode": "RGBA",
+    "raw_copy": "raw-sheet.png"
+  },
+  "art_source": "host_image",
+  "placeholder": false
+}

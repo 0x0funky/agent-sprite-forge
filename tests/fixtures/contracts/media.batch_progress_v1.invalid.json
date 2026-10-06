@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "the document id is generate2dmedia.batch_progress.v1", "set": "/schema", "value": "batch_progress_v1", "error": "$.schema:"},
+    {"why": "unknown result status", "set": "/results/1/status", "value": "done", "error": "$.results[1].status:"},
+    {"why": "a generated job names its artifact", "remove": "/results/0/artifact", "error": "'artifact' is a required property"},
+    {"why": "results name their job", "remove": "/results/1/id", "error": "'id' is a required property"},
+    {"why": "a stopped batch says why", "set": "/stopReason", "value": null, "error": "$.stopReason:"},
+    {"why": "a complete batch has nothing left", "set": "/complete", "value": true, "error": "$.remaining:"},
+    {"why": "at least one worker", "set": "/workers", "value": 0, "error": "$.workers:"},
+    {"why": "the jobs file is relative to the progress file (per D25)", "set": "/jobsFile", "value": "D:/games/hero/batches/props.json", "error": "$.jobsFile:"},
+    {"why": "job folders are relative to the progress file (per D25)", "set": "/results/0/jobDir", "value": "D:/games/hero/batches/out/k0", "error": "$.results[0].jobDir:"}
+  ]
+}

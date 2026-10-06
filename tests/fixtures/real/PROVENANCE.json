@@ -1,0 +1,42 @@
+{
+  "policy": "Real art may be used in tests only when listed here with a matching sha256. These images are owner-generated, kept for regression tests only, and are not shipped as assets. Nothing comes from outside this repository.",
+  "fixtures": [
+    {
+      "file": "raw-fox-run-v1.png",
+      "source": "outputs/fresh-agent-20261005/sprite/raw-fox-run-v1.png",
+      "source_note": "Git-ignored outputs/ of the owner's working tree (2026-10-05 sprite cold trial); copied byte for byte.",
+      "sha256": "b9f14eaa9b579f743864c923f192fca890edd506750fcbf5cf0759e0919bf6f8",
+      "size": [
+        1536,
+        1024
+      ],
+      "mode": "RGBA",
+      "generator": "Codex host built-in image_gen, one call with transparent_background=true (model version not verified)",
+      "date": "2026-10-05",
+      "usage": "owner-generated, test-only",
+      "content": "2x4 side-view pixel-style fox run sheet with native alpha (0..254); frame 3's tail crosses its cell line."
+    },
+    {
+      "file": "meadow-prop-pack-crop.png",
+      "source": "src/godot-meadow-prop-pack.png",
+      "source_note": "Tracked README showcase (commit 62bdfd0, 'Add Godot map showcase').",
+      "source_sha256": "bdfdaf6917e44aa5942db0479c2ea5a77f561c5883e417cb1f993d70ad8e8d7d",
+      "crop_box": [
+        0,
+        0,
+        1254,
+        836
+      ],
+      "sha256": "ae33d832572fefcd4bdd5e0f03cccd04f8e8728d6944ee92e072b4ae7ec4f483",
+      "size": [
+        1254,
+        836
+      ],
+      "mode": "RGB",
+      "generator": "Codex host image_gen (README: 'image_gen tileset + prop_pack_3x3'; model version not recorded)",
+      "date": "2026-04-28",
+      "usage": "owner-generated, test-only",
+      "content": "Top two rows (6 of 9 cells, 418 px each) of the 3x3 magenta-key prop sheet. Wheat-grass cell [0, 0, 418, 418]: 2419 magenta-tinted opaque px with the cfed170 map keyer, 111 and 36 with sprite despill radius 1 and 2 (MAP-03)."
+    }
+  ]
+}

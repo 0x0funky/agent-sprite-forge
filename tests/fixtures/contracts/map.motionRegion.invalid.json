@@ -1,0 +1,13 @@
+{
+  "cases": [
+    {"why": "polygon regions need points", "remove": "/points"},
+    {"why": "strength above 1", "set": "/strength", "value": 2},
+    {"why": "feather is mandatory", "remove": "/feather"},
+    {
+      "why": "motions are flow, flicker or sway",
+      "set": "/motion",
+      "value": "spin",
+      "error": "'spin' is not one of"
+    }
+  ]
+}

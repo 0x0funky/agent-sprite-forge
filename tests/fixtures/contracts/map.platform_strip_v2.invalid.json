@@ -1,0 +1,39 @@
+{
+  "cases": [
+    {
+      "why": "v1 manifests have their own id",
+      "set": "/schema",
+      "value": "generate2dmap.platform_strip.v1",
+      "error": "'generate2dmap.platform_strip.v2' was expected"
+    },
+    {
+      "why": "paths are manifest-relative POSIX",
+      "set": "/source/path",
+      "value": "D:/art/strip.png",
+      "error": "does not match"
+    },
+    {
+      "why": "pieces are exact crops",
+      "set": "/processing/resized",
+      "value": true,
+      "error": "False was expected"
+    },
+    {
+      "why": "joins are cap-middle, middle-middle or middle-cap",
+      "set": "/joins/0/join",
+      "value": "cap->cap",
+      "error": "is not one of"
+    },
+    {
+      "why": "join seams use the snake_case verdicts (per D9)",
+      "set": "/joins/0/seam/verdict",
+      "value": "duplicate-edge",
+      "error": "is not one of"
+    },
+    {
+      "why": "every manifest carries its QA envelope",
+      "remove": "/qa",
+      "error": "'qa' is a required property"
+    }
+  ]
+}
