@@ -20,7 +20,7 @@ Run each as one line from the project root. `<skill-dir>` is this skill's folder
 
 | Verb | Flags | Writes |
 |---|---|---|
-| `plan` | `--master` (generate2dsprite.master.v1), `--output-dir` (new), `--actions` (default `idle,walk,run,attack,jump,hurt`), `--views side[,front,back]` with `--view-master VIEW=FILE`, `--finish hd\|pixel` (default the master's), `--target-height`, `--fps`, `--formats png,webm,packed`, `--tiers`, `--duration 6`, `--resolution 720p`, `--max-takes 3`, `--jobs 3`, `--pin-last auto\|on\|off`, `--gen-timeout`, `--style`, `--pronoun`, `--palette`, `--library` | the set folder: `master/<view>/` byte copies, `set_plan.json` |
+| `plan` | `--master` (generate2dsprite.master.v1), `--output-dir` (new), `--actions` (default `idle,walk,run,attack,jump,hurt`), `--views side[,front,back]` with `--view-master VIEW=FILE`, `--finish hd\|pixel` (default the master's), `--target-height`, `--fps`, `--formats png,webm,packed`, `--tiers`, `--duration 6`, `--resolution 720p`, `--max-takes 3`, `--jobs 3`, `--pin-last auto\|on\|off`, `--gen-timeout`, `--style`, `--pronoun`, `--palette`, `--matte-profile`, `--library` | the set folder: `master/<view>/` byte copies, `set_plan.json` |
 | `run` | `--plan`, `--actions`, `--max-takes`, `--jobs`, `--stagger 2`, `--media-cli`, `--timeout` | `actions/<id>/job/`, `actions/<id>/takes/tNN/...`, `set_state.json`, `takes.jsonl` |
 | `review` | `--plan`, `--peer <other set>` | `review/<id>/tNN-sheet.png`, `review/<id>/tNN-final.png`, `review/lineup-NNN.png`, `review/review-NNN.json` |
 | `accept` | `--plan`, `--action`, `--take`, `--window START:END`, `--note` | the acceptance in `set_state.json` |
@@ -84,7 +84,8 @@ agent can read and edit `motion`, `negatives` and `gates` in `set_plan.json` bef
    waits, and a clip saved into `takes/tNN/media/` (any .mp4, .webm, .mov) is adopted on the next
    run, so a host with its own image-to-video tool can feed the set by hand. A clip already in
    that folder is never generated again.
-4. **Key.** `video2dsprite.py process --matte soft --reference job/master.png --key <key>`.
+4. **Key.** `video2dsprite.py process --matte soft --reference job/master.png --key <key>` (plus
+   `--matte-profile` when the plan has one, so every clip of the character is keyed the same way).
 5. **Gates.** `takes/tNN/qc.json` (below).
 6. **Retake.** A failed gate adds its fix clauses (the gatefix map in motion-prompts.md) to the
    action, and the next take carries every clause collected so far, up to `--max-takes` takes per
@@ -162,7 +163,7 @@ All JSON written by the set holds paths relative to the set folder; absolute pat
   `masters` {view: json and png fileRefs, identityRecap, facing, finish, class, size, subjectBox,
   anchor, area, framing}, `generation` {duration, resolution, maxTakes, jobs, pinLastFrame,
   timeoutSeconds}, `finish` {mode, targetHeight, scaleRefAction, palette}, `package` {formats,
-  tiers, fps}, `library` {name, sha256}, `clauses`, `gatefix`, `estimate` {clips, maxClips,
+  tiers, fps}, `matteProfile` (fileRef or null), `library` {name, sha256}, `clauses`, `gatefix`, `estimate` {clips, maxClips,
   maxVideoSeconds}, `actions` [{id, action, view, kind, loopKind, gaitState, prepareAction,
   retimeKind, placement {preset, canvas, scale, root, anchor, subjectBox, margin, padding,
   headroom}, pinLastFrame, lock, airborne, hitTick, returnsToRest, motion, negatives, gates,

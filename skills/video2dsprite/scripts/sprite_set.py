@@ -1199,6 +1199,14 @@ def cmd_plan(args: argparse.Namespace) -> dict:
             target_path = stage / "master" / ("palette" + source.suffix.lower())
             shutil.copyfile(source, target_path)
             palette = forge_core.file_ref(target_path, stage)
+        matte_profile = None
+        if args.matte_profile:   # one keying for every clip of the character (video2dsprite.py --matte-profile)
+            source = Path(args.matte_profile)
+            if not source.is_file():
+                raise ValueError(f"--matte-profile {source.name} does not exist")
+            target_path = stage / "master" / "matte-profile.json"
+            shutil.copyfile(source, target_path)
+            matte_profile = forge_core.file_ref(target_path, stage)
         plan: dict[str, Any] = {
             "schema": PLAN_SCHEMA,
             "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
@@ -1214,6 +1222,7 @@ def cmd_plan(args: argparse.Namespace) -> dict:
             "generation": {"duration": args.duration, "resolution": args.resolution, "maxTakes": args.max_takes,
                            "jobs": args.jobs, "pinLastFrame": args.pin_last, "timeoutSeconds": args.gen_timeout},
             "finish": {"mode": finish, "targetHeight": int(target), "scaleRefAction": ref_id, "palette": palette},
+            "matteProfile": matte_profile,
             "package": {"formats": formats, "tiers": args.tiers, "fps": int(fps) if fps else None},
             "library": {"name": LIBRARY_FILE.name if not args.library else Path(args.library).name,
                         "sha256": library.sha256},
@@ -1729,6 +1738,8 @@ class SetRunner:
         args = ["process", "--video", self.root / record["clip"]["path"], "--output-dir", out, "--matte", "soft",
                 "--reference", job / "master.png", "--key", self.plan["key"], "--frame-counts", "8",
                 "--name", f"{ident}-t{record['take']:02d}"]
+        if self.plan.get("matteProfile"):
+            args += ["--matte-profile", self.root / self.plan["matteProfile"]["path"]]
         summary, warnings = run_tool(SCRIPTS["video2dsprite"], args, label="video2dsprite.py process")
         probe = (forge_core.read_json(out / "pipeline-meta.json").get("probe") or {})
         return {"frames": summary.get("frames"), "fps": probe.get("fps_rational") or "24/1",
@@ -2704,6 +2715,9 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--style", help="the 'keep the exact <style> look' words (default from the finish)")
     pl.add_argument("--pronoun", default="their", help="possessive in the templates: his, her, its, their (default)")
     pl.add_argument("--palette", help="pixel finish: shared palette PNG or JSON for the whole cast")
+    pl.add_argument("--matte-profile",
+                    help="character matte profile (video2dsprite.character_profile.v1) passed to every clip's keying, "
+                         "e.g. to pin despill 'all' when the generator tints the subject with the key")
     pl.add_argument("--library", help="motion-prompts.md to read (default: this skill's references copy)")
     pl.set_defaults(func=cmd_plan)
 

@@ -448,6 +448,34 @@ def test_media_duration_is_whole_seconds(ss, fake, tmp_path):
     assert result.returncode == 1 and "whole seconds" in result.stderr and not (tmp_path / "set").exists()
 
 
+@pytest.mark.ffmpeg
+def test_matte_profile_reaches_every_clip_keying(ss, fake, tmp_path):
+    """plan --matte-profile copies the character profile into the set and run keys every clip with it (live run
+    2026-10-06: a crimson scarf kept auto despill edge-only, the generator's magenta tint stayed in the boots and
+    engine_export refused the package, with no way to change the keying from the set)."""
+    require_ffmpeg()
+    master = write_master(tmp_path / "art", fake, ss)
+    profile = tmp_path / "hero-profile.json"
+    profile.write_text(json.dumps({"schema": "video2dsprite.character_profile.v1", "id": "testhero",
+                                   "matte": {"mode": "soft", "key": "magenta", "erode": 0, "unmix": True,
+                                             "despill": "all"}}), encoding="utf-8")
+    result, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "set", "--actions", "idle",
+                    "--target-height", 48, "--matte-profile", profile)
+    assert result.returncode == 0, result.stderr
+    plan = json.loads((tmp_path / "set" / "set_plan.json").read_text(encoding="utf-8"))
+    assert plan["matteProfile"]["path"] == "master/matte-profile.json"
+    result, _ = cli("run", "--plan", tmp_path / "set" / "set_plan.json", "--stagger", 0, env=fake_env(fake, tmp_path))
+    assert result.returncode == 0, result.stderr + result.stdout
+    report = json.loads((tmp_path / "set" / "actions" / "idle" / "takes" / "t01" / "keyed" / "frames-clean" /
+                         "matte-report.json").read_text(encoding="utf-8"))
+    assert report["despill_applied"] == "all"
+    assert report["profile"]["file"]["sha256"] == plan["matteProfile"]["sha256"]
+    assert_no_absolute_paths(tmp_path / "set")
+    missing, _ = cli("plan", "--master", master, "--output-dir", tmp_path / "set2", "--matte-profile",
+                     tmp_path / "nope.json")
+    assert missing.returncode == 1 and "--matte-profile" in missing.stderr and not (tmp_path / "set2").exists()
+
+
 def test_front_view_uses_its_own_master(ss, fake, tmp_path):
     side = write_master(tmp_path / "side", fake, ss)
     front = write_master(tmp_path / "front", fake, ss, facing="front")
