@@ -335,7 +335,7 @@ class Library:
 def load_library(path: Path = LIBRARY_FILE) -> Library:
     """Parse the fenced ``template``/``negatives``/``clauses``/``gatefix`` blocks of motion-prompts.md."""
     raw = Path(path).read_bytes()
-    text = raw.decode("utf-8-sig")
+    text = raw.decode("utf-8-sig").replace("\r\n", "\n").replace("\r", "\n")   # a CRLF checkout (core.autocrlf)
     templates: dict[str, str] = {}
     negatives: dict[str, str] = {}
     clauses: dict[str, str] = {}

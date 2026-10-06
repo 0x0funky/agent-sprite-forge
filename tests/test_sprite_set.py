@@ -304,6 +304,15 @@ def test_library_covers_every_action_gate_and_clause(ss):
         assert clause in library.clauses
 
 
+def test_library_reads_a_crlf_checkout(ss, tmp_path):
+    """core.autocrlf checks the markdown out with CRLF line endings; the fenced blocks must still parse."""
+    raw = ss.LIBRARY_FILE.read_bytes().replace(b"\r\n", b"\n")
+    (tmp_path / "motion-prompts.md").write_bytes(raw.replace(b"\n", b"\r\n"))
+    crlf, lf = ss.load_library(tmp_path / "motion-prompts.md"), ss.load_library()
+    assert (crlf.templates, crlf.negatives, crlf.clauses, crlf.gatefix) == (lf.templates, lf.negatives, lf.clauses,
+                                                                            lf.gatefix)
+
+
 def test_prompt_shape_fixes_once_and_lint_clean(ss):
     library = ss.load_library()
     plan = {"masters": {"side": {"facing": "left", "identityRecap": "A pixel-art ghost spearman with a wide hat."}},
