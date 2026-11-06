@@ -435,7 +435,7 @@ def test_cli_conventions_after_integration(tmp_path):
     assert baked["variants"] == ["hitflash", "skin-skin-bom"]
     qa = json.loads((tmp_path / "var" / "variants-qa.json").read_text(encoding="utf-8"))
     assert qa["tool"] == {"name": "palette_tool", "version": fc.FORGE_PACKAGE_VERSION} == {
-        "name": "palette_tool", "version": "0.4.0"}
+        "name": "palette_tool", "version": "0.5.0"}
     check_file_refs(qa, tmp_path / "var")
     (tmp_path / "broken.json").write_text("{broken", encoding="utf-8")
     assert fails("variants", "--palette", tmp_path / "palette.json", "--input", frames, "--skin-map",

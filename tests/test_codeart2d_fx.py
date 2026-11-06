@@ -324,7 +324,7 @@ def test_example_outputs_validate_against_the_contracts(tmp_path):
     assert meta["qa"]["status"] == "pass" and meta["generator"] == "codeart2d/fx_build.py"
     report = read_json(output / "fx-report.json")
     assert_valid_contract(report, "codeart", "fx_report_v1", skill="codeart2d")
-    assert report["qa"]["tool"] == {"name": "codeart2d/fx_build.py", "version": "0.4.0"}  # D29
+    assert report["qa"]["tool"] == {"name": "codeart2d/fx_build.py", "version": "0.5.0"}  # D29
     built = read_json(output / "compiled-clips" / "animation-clips.json")
     assert_valid_contract(built, "sprite", "animation_clips_v2", skill="codeart2d")
     assert any(event["name"] == "hit" for event in built["clips"]["slash"]["events_ms"])  # D11: hits reach events_ms

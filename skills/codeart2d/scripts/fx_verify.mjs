@@ -20,7 +20,7 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
-export const TOOL = { name: 'codeart2d/fx_verify.mjs', version: '0.4.0' };  // the package version (D29)
+export const TOOL = { name: 'codeart2d/fx_verify.mjs', version: '0.5.0' };  // the package version (D29)
 export const FX_SCHEMA = 'codeart2d.fx.v1';
 const TICK_MS = 1000 / 60;
 const DEFAULTS = { width: 1280, height: 720, scale: 3, maxFullscreenTicks: 10, minStroke: 1, maxReach: 300,

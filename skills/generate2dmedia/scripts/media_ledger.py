@@ -31,7 +31,7 @@ import uuid
 
 # The package release this skill ships with (D29). generate2dmedia is stdlib-only and vendors no
 # forge_core, so it carries the same constant as forge_core.FORGE_PACKAGE_VERSION (a test keeps them equal).
-FORGE_PACKAGE_VERSION = "0.4.0"
+FORGE_PACKAGE_VERSION = "0.5.0"
 LEDGER_API_VERSION = "1"
 STATUSES = ("reserved", "done", "failed", "unknown", "not_sent")
 FINAL_STATUSES = STATUSES[1:]

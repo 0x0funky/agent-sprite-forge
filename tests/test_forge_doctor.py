@@ -597,9 +597,9 @@ def test_one_package_version_and_clean_internal_errors(cold, monkeypatch, capsys
     from forge_testutils import load_shared
 
     assert forge_doctor.FORGE_PACKAGE_VERSION == media_ledger.FORGE_PACKAGE_VERSION \
-        == load_shared("forge_core").FORGE_PACKAGE_VERSION == "0.4.0"
+        == load_shared("forge_core").FORGE_PACKAGE_VERSION == "0.5.0"
     report = forge_doctor.diagnose(project_dir=cold, run_versions=False, console_encoding="utf-8")
-    assert report["tool"] == {"name": "forge_doctor", "version": "0.4.0"}
+    assert report["tool"] == {"name": "forge_doctor", "version": "0.5.0"}
 
     def broken(**kwargs):
         raise RuntimeError("unexpected state")

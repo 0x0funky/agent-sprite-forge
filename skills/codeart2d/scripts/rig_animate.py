@@ -81,7 +81,7 @@ def missing_modules_message() -> str | None:
 
 
 TOOL = "codeart2d/rig_animate.py"
-TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.4.0"  # D29: the package version
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.5.0"  # D29: the package version
 RASTER_BACKENDS = ("resvg_py", "resvg_js_cli", "chrome")  # codeart_core.RASTER_BACKENDS, for --help without numpy
 RIG_ANIM_SCHEMA = "codeart2d.rig_anim.v1"
 RIG_ANIM_ALIASES = ("codeart.rig_anim.v1",)  # spelling of the design prototype

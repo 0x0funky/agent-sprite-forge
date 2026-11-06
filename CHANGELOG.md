@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased — the hibit style
+## 0.5.0 — 2026-11-07 — the hibit style
 
-Not yet tagged; tagging and publishing are the owner's.
+Plugin version `0.5.0`; QA envelopes record `tool.version` 0.5.0. Everything from 0.4.0 carries over unchanged.
 
 ### Added
 

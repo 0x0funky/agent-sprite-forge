@@ -157,7 +157,7 @@ def test_parallax_outputs_validate_and_are_deterministic(backdrop):
     assert_valid_contract(json.loads((EXAMPLES / "parallax-gen.json").read_text(encoding="utf-8")), "codeart",
                           "parallax_spec_v1", skill=SKILL)
     qa = json.loads((a / "parallax-qa.json").read_text(encoding="utf-8"))
-    assert qa["tool"] == {"name": "parallax_build", "version": "0.4.0"}  # D29
+    assert qa["tool"] == {"name": "parallax_build", "version": "0.5.0"}  # D29
 
 
 def test_parallax_pixel_art_layers_use_only_spec_colours(backdrop):
@@ -336,7 +336,7 @@ def test_ambient_outputs_validate(harbour):
     assert_valid_contract(document, "codeart", "ambient_loop_v1", skill=SKILL)
     assert_valid_contract(json.loads((EXAMPLES / "plate-effects.json").read_text(encoding="utf-8")), "codeart",
                           "plate_effects_v1", skill=SKILL)
-    assert document["provenance"]["version"] == "0.4.0"  # D29
+    assert document["provenance"]["version"] == "0.5.0"  # D29
     assert document["art_source"] == "mixed" and document["plate_art_source"] == "existing"
     assert not (out / "codeart-meta.json").exists()
     qa = json.loads((out / "ambient-qa.json").read_text(encoding="utf-8"))

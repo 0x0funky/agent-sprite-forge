@@ -188,7 +188,7 @@ def test_slime_example_builds_four_frames_in_three_variants(tmp_path, capsys):
     assert meta["art_source"] == "code" and meta["disclosure"] == core.DISCLOSURE
     assert meta["spec_sha256"] == RENDER.forge_core.sha256_file(SLIME)
     qa = meta["qa"]
-    assert qa["status"] == "pass" and qa["tool"] == {"name": "render_pixelspec.py", "version": "0.4.0"}
+    assert qa["status"] == "pass" and qa["tool"] == {"name": "render_pixelspec.py", "version": "0.5.0"}
     checks = {check["id"]: check for check in qa["checks"]}
     assert checks["partial_alpha"]["value"] == 0 and checks["off_palette"]["value"] == 0
     assert checks["outline_gaps"]["value"] == 0 and checks["l_corners"]["value"] <= 10
@@ -725,7 +725,7 @@ def test_pixel_qa_writes_a_review_sheet_and_a_qa_envelope(tmp_path, capsys):
     assert summary["status"] == "pass" and summary["review"] == str(review.resolve())
     data = read_json(report)
     assert_valid_contract(data, "common", "qaEnvelope", skill="codeart2d")
-    assert data["tool"] == {"name": "pixel_qa.py", "version": "0.4.0"}
+    assert data["tool"] == {"name": "pixel_qa.py", "version": "0.5.0"}
     assert [item["path"] for item in data["inputs"]] == [
         "../art/frames/rest.png", "../art/frames/squash.png", "../art/frames/stretch.png",
         ref_path(SLIME, report.parent)]

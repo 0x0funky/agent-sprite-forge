@@ -132,7 +132,7 @@ def test_plugin_manifests():
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
     assert plugin["name"] == "agent-sprite-forge"
-    assert plugin["version"] == "0.4.0"
+    assert plugin["version"] == "0.5.0"
     entry = next(p for p in market["plugins"] if p["name"] == plugin["name"])
     assert entry["source"] == "./"
     assert entry.get("version", plugin["version"]) == plugin["version"]

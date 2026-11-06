@@ -1741,7 +1741,7 @@ class IntegrationConventionTests(unittest.TestCase):
                                               "single", "--output-dir", str(root / "out"))
         self.assertEqual(meta["qa"]["tool"], {"name": "generate2dsprite.py process",
                                               "version": MODULE.forge_core.FORGE_PACKAGE_VERSION})
-        self.assertEqual(MODULE.forge_core.FORGE_PACKAGE_VERSION, "0.4.0")
+        self.assertEqual(MODULE.forge_core.FORGE_PACKAGE_VERSION, "0.5.0")
 
     def test_binary_key_fringe_warns_until_despilled(self) -> None:
         """Review (sprite B01): the QA gated only opaque key pixels, so a binary key that left a magenta

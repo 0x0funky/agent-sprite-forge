@@ -851,7 +851,7 @@ def test_unexpected_errors_are_one_scrubbed_line(inputs, monkeypatch, capsys):
     err = capsys.readouterr().err
     assert code == 1 and "Traceback" not in err
     assert err.strip() == "error: internal error (RuntimeError: transport crashed with [redacted]); nothing was retried"
-    assert media.TOOL == "generate_media/0.4.0" == "generate_media/" + ledger_mod.FORGE_PACKAGE_VERSION
+    assert media.TOOL == "generate_media/0.5.0" == "generate_media/" + ledger_mod.FORGE_PACKAGE_VERSION
 
 
 class ThreadSafeFake(Fake):

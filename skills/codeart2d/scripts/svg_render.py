@@ -57,7 +57,7 @@ else:
     _MISSING = None
 
 TOOL_NAME = "svg_render.py"
-TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.4.0"  # D29: the package version
+TOOL_VERSION = forge_core.FORGE_PACKAGE_VERSION if _MISSING is None else "0.5.0"  # D29: the package version
 SKILL_DIR = SCRIPTS_DIR.parent
 META_NAME = "codeart-meta.json"
 BASE_VARIANT = "base"

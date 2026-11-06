@@ -511,7 +511,7 @@ def test_report_inputs_list_the_linked_bundles(tmp_path):
     assert run.returncode == 0, run.stderr
     report = json.loads((out / "nav-report.json").read_text(encoding="utf-8"))
     assert [ref["path"] for ref in report["inputs"]] == ["../meadow/map-bundle.json", "../road/map-bundle.json"]
-    assert report["tool"] == {"name": "map_nav.py", "version": "0.4.0"}  # D29: the package version
+    assert report["tool"] == {"name": "map_nav.py", "version": "0.5.0"}  # D29: the package version
 
 
 # --------------------------------------------------------------------------- outputs and CLI

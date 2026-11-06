@@ -134,5 +134,5 @@ test('console lines are ASCII: non-ASCII becomes JSON \\u escapes that decode ba
 });
 
 test('the QA envelope names the package version (D29)', () => {
-  assert.deepEqual(TOOL, { name: 'codeart2d/fx_verify.mjs', version: '0.4.0' });
+  assert.deepEqual(TOOL, { name: 'codeart2d/fx_verify.mjs', version: '0.5.0' });
 });

@@ -67,7 +67,7 @@ import zlib
 TOOL_NAME = "forge_doctor"
 # The package release (D29). The doctor imports no sibling at start-up (it must report a damaged
 # install), so it carries the constant itself; a test keeps it equal to media_ledger's and forge_core's.
-FORGE_PACKAGE_VERSION = "0.4.0"
+FORGE_PACKAGE_VERSION = "0.5.0"
 TOOL_VERSION = FORGE_PACKAGE_VERSION
 DOCTOR_SCHEMA = "generate2dmedia.doctor.v1"
 PROOFS_SCHEMA = "generate2dmedia.route_proofs.v1"

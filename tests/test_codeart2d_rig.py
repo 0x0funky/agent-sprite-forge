@@ -571,7 +571,7 @@ def test_hero_outputs_validate_against_the_contracts(hero_pixel):
     assert built["sampling"] == "nearest" and built["art_source"] == "code"
     report = read_json(output / "rig-report.json")
     assert_valid_contract(report, "codeart", "rig_report_v1", skill="codeart2d")
-    assert report["qa"]["tool"] == {"name": "codeart2d/rig_animate.py", "version": "0.4.0"}  # D29
+    assert report["qa"]["tool"] == {"name": "codeart2d/rig_animate.py", "version": "0.5.0"}  # D29
 
 
 def test_hero_example_validates_against_rig_anim_v1():
