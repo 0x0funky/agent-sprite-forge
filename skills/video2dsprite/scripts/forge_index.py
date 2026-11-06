@@ -9,19 +9,24 @@ every tool's files:
 
   masters  master.json (generate2dsprite.master.v1, master_still.py approve)
   sets     set_plan.json + set_state.json (video2dsprite sprite_set.py): per action its status,
-           takes, chosen take (or usable window), the agent's accept, the package folder and its
-           animation.json reviewStatus, poster and verify result
+           takes, chosen take (or usable window), the agent's accept, and the package of the
+           chosen take (packageTake, packageTag) with its animation.json reviewStatus, poster and
+           verify result. A package of an earlier take (after a retake, or an accept of another
+           take or window) is never reported as the action's package: it is previousPackage.
   fx       fx.json: route A (generate2dsprite.pixelfx.v1, fx_pixelfx.py render) and route B
            (generate2dsprite.hibit_fx.v1, hibit_fx.py pixelize)
   plates   plate.json (generate2dmap.hibit_plate.v1, hibit_plate.py plate)
   maps     map bundles (generate2dmap.map_bundle.v1 / v2, any *.json that declares one)
 
-Every path is POSIX and relative to the scanned folder ("root", absolute). A folder that holds
-one of these documents is not searched further (a set's master copies, takes and packages are
-reported through the set). Hidden folders (staging folders such as .x.stage-1a2b3c4d, .forge,
-.git), __pycache__, node_modules and the *.orphan-N / *.failed-* folders the tools set aside are
-skipped. A document that cannot be read becomes a warning; the scan never writes into <dir>.
---output also writes the index to a new file (never replaced). Stdlib only, read-only.
+Every path is POSIX and relative to the scanned folder ("root", absolute) and stays inside it:
+a document path that leads outside (a '..' or a link) is left out with a warning. A folder that
+holds one of these documents is not searched further (a set's master copies, takes and packages
+are reported through the set). Hidden folders (staging folders such as .x.stage-1a2b3c4d,
+.forge, .git), __pycache__, node_modules and the *.orphan-N / *.failed-* folders the tools set
+aside are skipped. A set is read holding its set_state.lock (the lock sprite_set.py writes
+under) when that file exists, waiting up to 10 s; the lock file is never created. A document
+that cannot be read becomes a warning; the scan never writes into <dir>. --output also writes
+the index to a new file (never replaced). Stdlib only, read-only.
 
 Exit codes: 0 indexed (warnings included); 1 error (error: ... on stderr); 2 usage.
 
@@ -36,6 +41,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
@@ -55,6 +61,9 @@ SET_ASIDE = re.compile(r"\.orphan-\d+$|\.failed-[A-Za-z0-9_.:-]+$")
 MAP_SNIFF_BYTES = 4096
 MAX_MAP_BYTES = 16 << 20
 QA_STATUSES = ("pass", "fail", "warn", "needs-visual-review")
+LOCK_FILE = "set_state.lock"   # sprite_set.py's lock (forge_core.file_lock: byte 0, msvcrt or flock)
+LOCK_WAIT_S = 10.0
+READ_RETRY_S = 1.0   # a Windows read can meet a file in the middle of its atomic replace
 
 
 class IndexError_(ValueError):
@@ -71,7 +80,16 @@ def _ascii(text: object) -> str:
 
 
 def _read(path: Path) -> Any:
-    return json.loads(path.read_text(encoding="utf-8-sig"))
+    deadline = time.monotonic() + READ_RETRY_S
+    while True:
+        try:
+            data = path.read_bytes()
+            break
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
+    return json.loads(data.decode("utf-8-sig"))
 
 
 def _rel(path: Path, root: Path) -> str:
@@ -82,17 +100,95 @@ def _rel(path: Path, root: Path) -> str:
     return text
 
 
-def _inside(folder: Path, value: Any) -> Path | None:
-    """``folder / value`` for a relative POSIX path from a document, else None."""
+def _within(path: Path, root: Path) -> bool:
+    candidate, base = os.path.normcase(str(path)), os.path.normcase(str(root))
+    return candidate == base or candidate.startswith(base.rstrip(os.sep) + os.sep)
+
+
+def _inside(folder: Path, value: Any, root: Path, warnings: list[str]) -> Path | None:
+    """``folder / value`` for a relative POSIX path from a document, resolved, else None.
+
+    A path that resolves outside the scanned folder ``root`` (``..`` segments, a link that leaves it) is
+    left out with a warning, so no index entry points outside root. A host still checks containment.
+    """
     if not isinstance(value, str) or not value or value.startswith("/") or "\\" in value \
             or re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", value):
         return None
-    return folder / value
+    try:
+        path = (folder / value).resolve()
+    except (OSError, RuntimeError):   # a link loop or an unreadable link
+        path = None
+    if path is None or not _within(path, root):
+        warnings.append(_ascii(f"{_rel(folder, root)}: {value[:120]} leads outside the scanned folder; left out"))
+        return None
+    return path
 
 
-def _existing(folder: Path, value: Any, root: Path) -> str | None:
-    path = _inside(folder, value)
+def _existing(folder: Path, value: Any, root: Path, warnings: list[str]) -> str | None:
+    path = _inside(folder, value, root, warnings)
     return _rel(path, root) if path is not None and path.exists() else None
+
+
+# --------------------------------------------------------------------------- the set lock (read side)
+
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(handle: Any) -> bool:
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(handle: Any) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _try_lock(handle: Any) -> bool:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(handle: Any) -> None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def set_lock(folder: Path, root: Path, warnings: list[str], wait: float | None = None) -> Iterator[bool]:
+    """Hold the set's set_state.lock while the set is read, when the file exists (it is never created).
+
+    The same OS lock as sprite_set.py's forge_core.file_lock (byte 0 of the lock file, msvcrt on Windows,
+    flock elsewhere), so a scan never reads set_state.json or a package while a run, review, accept or
+    retake writes them, and never holds them open while a writer replaces them. After ``wait`` seconds
+    (default LOCK_WAIT_S) the set is read without the lock and a warning says so. Yields whether the lock
+    is held.
+    """
+    wait = LOCK_WAIT_S if wait is None else wait
+    try:
+        handle = open(folder / LOCK_FILE, "rb")
+    except OSError:   # no lock file (a set that never ran) or an unreadable one
+        yield False
+        return
+    with handle:
+        deadline = time.monotonic() + max(0.0, float(wait))
+        locked = _try_lock(handle)
+        while not locked and time.monotonic() < deadline:
+            time.sleep(0.05)
+            locked = _try_lock(handle)
+        if not locked:
+            warnings.append(_ascii(f"{_rel(folder / LOCK_FILE, root)}: held by another process for {wait:g} s; "
+                                   "the set was read without it"))
+        try:
+            yield locked
+        finally:
+            if locked:
+                _unlock(handle)
 
 
 def _qa_status(document: dict) -> str:
@@ -116,20 +212,20 @@ def walk(root: Path) -> Iterator[tuple[Path, list[str]]]:
 
 # --------------------------------------------------------------------------- entries
 
-def master_entry(folder: Path, root: Path, document: dict) -> dict:
+def master_entry(folder: Path, root: Path, document: dict, warnings: list[str]) -> dict:
     files = document.get("files") if isinstance(document.get("files"), dict) else {}
     master = (files.get("master") or {}).get("path")
     cutout = (files.get("cutout") or {}).get("path")
     return {"id": _rel(folder, root), "name": str(document.get("name") or folder.name),
             "path": _rel(folder, root), "metadata": _rel(folder / "master.json", root),
-            "image": _existing(folder, master, root) or _rel(folder / "master.png", root),
-            "cutout": _existing(folder, cutout, root), "class": str(document.get("class") or ""),
+            "image": _existing(folder, master, root, warnings) or _rel(folder / "master.png", root),
+            "cutout": _existing(folder, cutout, root, warnings), "class": str(document.get("class") or ""),
             "finish": str(document.get("finish") or ""), "facing": str(document.get("facing") or ""),
             "route": document.get("route") if isinstance(document.get("route"), str) else None,
             "status": "approved"}
 
 
-def _manifest_facts(package: Path | None, root: Path) -> dict:
+def _manifest_facts(package: Path | None, root: Path, warnings: list[str]) -> dict:
     facts = {"manifest": None, "poster": None, "reviewStatus": None}
     if package is None or not (package / "animation.json").is_file():
         return facts
@@ -140,7 +236,7 @@ def _manifest_facts(package: Path | None, root: Path) -> dict:
             facts["reviewStatus"] = manifest.get("reviewStatus") if isinstance(manifest.get("reviewStatus"), str) \
                 else None
             poster = (manifest.get("poster") or {}).get("file") if isinstance(manifest.get("poster"), dict) else None
-            facts["poster"] = _existing(package, poster, root)
+            facts["poster"] = _existing(package, poster, root, warnings)
     return facts
 
 
@@ -149,7 +245,7 @@ def _window(value: Any) -> list[int] | None:
         all(isinstance(item, int) and not isinstance(item, bool) for item in value) else None
 
 
-def _take_package(folder: Path, state: dict, chosen: dict | None) -> Path | None:
+def _take_package(folder: Path, root: Path, state: dict, chosen: dict | None, warnings: list[str]) -> Path | None:
     """The chosen take's package folder from its stages (package-r2 first), when output names none."""
     if not chosen:
         return None
@@ -158,53 +254,81 @@ def _take_package(folder: Path, state: dict, chosen: dict | None) -> Path | None
         if isinstance(record, dict) and record.get("take") == chosen.get("take"):
             stages = record.get("stages") if isinstance(record.get("stages"), dict) else {}
             for name in ("package-r2" + tag, "package" + tag):
-                path = _inside(folder, (stages.get(name) or {}).get("dir") if isinstance(stages.get(name), dict)
-                               else None)
+                stage = stages.get(name)
+                if not isinstance(stage, dict) or not stage.get("dir"):
+                    continue
+                path = _inside(folder, stage.get("dir"), root, warnings)
                 if path is not None and path.is_dir():
                     return path
     return None
 
 
+def _same_take(output: dict | None, chosen: dict | None) -> bool:
+    """True when the output sprite_set.py recorded is the package of the chosen take and window (tag)."""
+    return bool(output and chosen and output.get("take") == chosen.get("take")
+                and str(output.get("tag") or "") == str(chosen.get("tag") or ""))
+
+
+def _read_state(folder: Path, root: Path, warnings: list[str]) -> dict:
+    state_path = folder / "set_state.json"
+    if not state_path.is_file():
+        return {}
+    try:
+        loaded = _read(state_path)
+    except (OSError, ValueError) as error:
+        warnings.append(_ascii(f"{_rel(state_path, root)}: unreadable ({type(error).__name__})"))
+        return {}
+    if isinstance(loaded, dict) and loaded.get("schema") == STATE_SCHEMA:
+        return loaded
+    warnings.append(_ascii(f"{_rel(state_path, root)}: not a {STATE_SCHEMA} document"))
+    return {}
+
+
+def action_entry(folder: Path, root: Path, entry: dict, st: dict, warnings: list[str]) -> dict:
+    """One planned action: its state, and the package only when it holds the chosen take and window."""
+    ident = str(entry["id"])
+    chosen = st.get("chosen") if isinstance(st.get("chosen"), dict) else None
+    accepted = st.get("accepted") if isinstance(st.get("accepted"), dict) else None
+    output = st.get("output") if isinstance(st.get("output"), dict) else None
+    recorded = _inside(folder, output.get("package"), root, warnings) if output and output.get("package") else None
+    recorded = recorded if recorded is not None and recorded.is_dir() else None
+    package = previous = None
+    if recorded is not None and _same_take(output, chosen):
+        package = recorded
+    else:
+        previous = recorded   # a retake, or an accept of another take or window, left this package behind
+        package = _take_package(folder, root, st, chosen, warnings)   # the chosen take packaged, output not saved
+    facts = _manifest_facts(package, root, warnings)
+    return {
+        "id": ident, "action": str(entry.get("action") or ident), "view": str(entry.get("view") or "side"),
+        "kind": entry.get("kind") if entry.get("kind") in ("loop", "oneshot") else "loop",
+        "status": str(st.get("status") or "planned"),
+        "takes": len(st.get("takes") or []) if isinstance(st.get("takes"), list) else 0,
+        "chosen": None if chosen is None else {"take": chosen.get("take"), "window": _window(chosen.get("window")),
+                                               "tag": str(chosen.get("tag") or "")},
+        "accepted": None if accepted is None else {"take": accepted.get("take"),
+                                                   "window": _window(accepted.get("window")),
+                                                   "at": accepted.get("at")},
+        "package": _rel(package, root) if package is not None else None,
+        "packageTake": chosen.get("take") if package is not None and chosen else None,
+        "packageTag": str(chosen.get("tag") or "") if package is not None and chosen else None,
+        **facts,
+        "verify": output.get("verify") if package is not None and package == recorded
+        and isinstance(output.get("verify"), str) else None,
+        "previousPackage": _rel(previous, root) if previous is not None and previous != package else None,
+    }
+
+
 def set_entry(folder: Path, root: Path, plan: dict, warnings: list[str]) -> dict:
     state_path = folder / "set_state.json"
-    state: dict = {}
-    if state_path.is_file():
-        try:
-            loaded = _read(state_path)
-        except (OSError, ValueError) as error:
-            warnings.append(_ascii(f"{_rel(state_path, root)}: unreadable ({type(error).__name__})"))
-        else:
-            if isinstance(loaded, dict) and loaded.get("schema") == STATE_SCHEMA:
-                state = loaded
-            else:
-                warnings.append(_ascii(f"{_rel(state_path, root)}: not a {STATE_SCHEMA} document"))
-    actions = []
     planned = [entry for entry in plan.get("actions") or [] if isinstance(entry, dict) and entry.get("id")]
-    for entry in planned:
-        ident = str(entry["id"])
-        st = (state.get("actions") or {}).get(ident) if isinstance(state.get("actions"), dict) else None
-        st = st if isinstance(st, dict) else {}
-        chosen = st.get("chosen") if isinstance(st.get("chosen"), dict) else None
-        accepted = st.get("accepted") if isinstance(st.get("accepted"), dict) else None
-        output = st.get("output") if isinstance(st.get("output"), dict) else None
-        package = _inside(folder, output.get("package")) if output else None
-        if package is None or not package.is_dir():
-            package = _take_package(folder, st, chosen)
-        facts = _manifest_facts(package, root)
-        actions.append({
-            "id": ident, "action": str(entry.get("action") or ident), "view": str(entry.get("view") or "side"),
-            "kind": entry.get("kind") if entry.get("kind") in ("loop", "oneshot") else "loop",
-            "status": str(st.get("status") or "planned"),
-            "takes": len(st.get("takes") or []) if isinstance(st.get("takes"), list) else 0,
-            "chosen": None if chosen is None else {"take": chosen.get("take"), "window": _window(chosen.get("window")),
-                                                   "tag": str(chosen.get("tag") or "")},
-            "accepted": None if accepted is None else {"take": accepted.get("take"),
-                                                       "window": _window(accepted.get("window")),
-                                                       "at": accepted.get("at")},
-            "package": _rel(package, root) if package is not None and package.is_dir() else None,
-            **facts,
-            "verify": output.get("verify") if output and isinstance(output.get("verify"), str) else None,
-        })
+    with set_lock(folder, root, warnings):   # set_state.json and the packages as one consistent moment
+        state = _read_state(folder, root, warnings)
+        states = state.get("actions") if isinstance(state.get("actions"), dict) else {}
+        actions = []
+        for entry in planned:
+            st = states.get(str(entry["id"]))
+            actions.append(action_entry(folder, root, entry, st if isinstance(st, dict) else {}, warnings))
     statuses = {item["status"] for item in actions}
     if not state:
         status = "planned"
@@ -217,8 +341,8 @@ def set_entry(folder: Path, root: Path, plan: dict, warnings: list[str]) -> dict
     finish = plan.get("finish") if isinstance(plan.get("finish"), dict) else {}
     masters = plan.get("masters") if isinstance(plan.get("masters"), dict) else {}
     first = masters.get("side") or next(iter(masters.values()), None) if masters else None
-    master_png = _existing(folder, ((first or {}).get("png") or {}).get("path"), root) if isinstance(first, dict) \
-        else None
+    master_png = _existing(folder, ((first or {}).get("png") or {}).get("path"), root, warnings) \
+        if isinstance(first, dict) else None
     return {"id": _rel(folder, root), "name": str(plan.get("name") or folder.name), "path": _rel(folder, root),
             "plan": _rel(folder / "set_plan.json", root),
             "state": _rel(state_path, root) if state else None, "class": str(plan.get("class") or ""),
@@ -227,7 +351,7 @@ def set_entry(folder: Path, root: Path, plan: dict, warnings: list[str]) -> dict
             "master": master_png, "status": status, "actions": actions}
 
 
-def fx_entry(folder: Path, root: Path, document: dict) -> dict:
+def fx_entry(folder: Path, root: Path, document: dict, warnings: list[str]) -> dict:
     route, route_name = FX_SCHEMAS[document["schema"]]
     effect = document.get("effect") if isinstance(document.get("effect"), dict) else {}
     frames = effect.get("frames") if isinstance(effect.get("frames"), int) else 0
@@ -247,17 +371,18 @@ def fx_entry(folder: Path, root: Path, document: dict) -> dict:
             "frameMs": frame_ms, "loop": effect.get("loop") if isinstance(effect.get("loop"), bool) else None,
             "anchor": (effect.get("anchor") if route == "B" else (document.get("engine") or {}).get("pivot")),
             "sheet": _rel(folder / "sheet.png", root),
-            "sheetJson": _existing(folder, "sheet.json", root),
+            "sheetJson": _existing(folder, "sheet.json", root, warnings),
             "preview": _rel(folder / preview, root) if preview else None,
-            "credits": _existing(folder, "CREDITS.txt", root), "status": _qa_status(document)}
+            "credits": _existing(folder, "CREDITS.txt", root, warnings), "status": _qa_status(document)}
 
 
-def plate_entry(folder: Path, root: Path, document: dict) -> dict:
+def plate_entry(folder: Path, root: Path, document: dict, warnings: list[str]) -> dict:
     size = document.get("size") if isinstance(document.get("size"), list) and len(document["size"]) == 2 else [1, 1]
     preview = next(iter(sorted(folder.glob("plate-x*.png"))), None)
     return {"id": _rel(folder, root), "name": folder.name, "path": _rel(folder, root),
             "metadata": _rel(folder / "plate.json", root), "image": _rel(folder / "plate.png", root),
-            "preview": _rel(preview, root) if preview else None, "palette": _existing(folder, "palette.json", root),
+            "preview": _rel(preview, root) if preview else None,
+            "palette": _existing(folder, "palette.json", root, warnings),
             "size": size, "colors": document.get("colors") if isinstance(document.get("colors"), int) else 1,
             "status": _qa_status(document)}
 
@@ -312,13 +437,13 @@ def scan(directory: str | os.PathLike) -> dict:
             index["sets"].append(set_entry(folder, root, plan, warnings))
         master = documents.get("master.json")
         if master is not None and master.get("schema") == MASTER_SCHEMA:
-            index["masters"].append(master_entry(folder, root, master))
+            index["masters"].append(master_entry(folder, root, master, warnings))
         fx = documents.get("fx.json")
         if fx is not None and fx.get("schema") in FX_SCHEMAS:
-            index["fx"].append(fx_entry(folder, root, fx))
+            index["fx"].append(fx_entry(folder, root, fx, warnings))
         plate = documents.get("plate.json")
         if plate is not None and plate.get("schema") == PLATE_SCHEMA:
-            index["plates"].append(plate_entry(folder, root, plate))
+            index["plates"].append(plate_entry(folder, root, plate, warnings))
         for name in names:
             if not name.endswith(".json") or name in DOCUMENTS or name == "set_state.json":
                 continue

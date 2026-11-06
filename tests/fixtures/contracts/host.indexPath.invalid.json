@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "document": "../outside/x.png",
+      "why": "a leading '..' leaves the scanned root"
+    },
+    {
+      "document": "pip-set/../../x.png",
+      "why": "a '..' segment inside the path can leave the root too"
+    },
+    {
+      "document": "pip-set/..",
+      "why": "a trailing '..' segment"
+    },
+    {
+      "document": "/art/pip",
+      "why": "no leading slash (common relPath)"
+    },
+    {
+      "document": "C:/art/pip",
+      "why": "no drive letter (common relPath)"
+    }
+  ]
+}

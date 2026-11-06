@@ -302,6 +302,15 @@ def log_lines(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()] if path.is_file() else []
 
 
+def index_action(root: Path, ident: str) -> dict:
+    """forge_index.py scan of ``root`` (the host's view, contract-checked) and one action of its only set."""
+    result = run_cli([SCRIPTS / "forge_index.py", "scan", root])
+    assert result.returncode == 0, result.stderr
+    index = json.loads(result.stdout)
+    assert_valid_contract(index, "host", "asset_index_v1")
+    return next(item for item in index["sets"][0]["actions"] if item["id"] == ident)
+
+
 def assert_no_absolute_paths(folder: Path) -> None:
     for path in folder.rglob("*"):
         if path.suffix in (".json", ".jsonl") and path.is_file():
@@ -761,10 +770,16 @@ def test_set_flow_retake_resume_review_accept_retake_report(ss, fake, tmp_path):
     # a semantic retake: the next run makes take 3 with the new clause and keeps every earlier fix
     result, summary = cli("retake", "--plan", plan_path, "--action", "attack", "--fix", "weapon-shape")
     assert result.returncode == 0 and summary["round"] == 2 and summary["fixes"] == ["weapon-shape"]
+    attack = index_action(tmp_path / "set", "attack")   # the take 2 package no longer stands for attack
+    assert attack["package"] is None and attack["reviewStatus"] is None
+    assert attack["previousPackage"] == "actions/attack/takes/t02/package"
     result, summary = cli("run", "--plan", plan_path, "--stagger", 0, env=env)
     assert result.returncode == 0, result.stderr
     assert summary["actions"]["attack"] == {"status": "done", "takes": 3, "chosen": 3, "accepted": False,
                                             "package": "actions/attack/takes/t03/package", "message": None}
+    attack = index_action(tmp_path / "set", "attack")
+    assert (attack["package"], attack["packageTake"], attack["previousPackage"]) == (
+        "actions/attack/takes/t03/package", 3, None)
     assert summary["actions"]["idle"]["accepted"] is True and len(log_lines(tmp_path / "fake-media-calls")) == 5
     third = (tmp_path / "set" / "actions" / "attack" / "takes" / "t03" / "prompt.txt").read_text("utf-8")
     assert "never doubling, no second blade" in third and "never faces the camera" in third
@@ -952,3 +967,62 @@ def test_master_json_shapes_and_path_scrubbing(ss, tmp_path):
     scrubbed = ss._scrub({"a": r"C:\Users\me\clip.mp4", "b": "error: D:/x/y/frames-clean is empty",
                           "c": ["/tmp/z.png", "24/1", "rel/path.png"], "_private": 1})
     assert scrubbed == {"a": "clip.mp4", "b": "error: frames-clean is empty", "c": ["z.png", "24/1", "rel/path.png"]}
+
+
+HAMMER = r'''
+"""A host while sprite_set.py saves set_state.json: "scan" indexes the set in a loop (forge_index.scan, which
+reads under set_state.lock); "read" reads set_state.json naively, without the lock, about 400 times a second."""
+import json, sys, time
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+import forge_index
+mode, root, stop = sys.argv[2], Path(sys.argv[3]), Path(sys.argv[4])
+count = retries = 0
+problems = []
+print("ready", flush=True)
+deadline = time.monotonic() + 120
+while not stop.exists() and time.monotonic() < deadline:
+    if mode == "scan":
+        index = forge_index.scan(root)
+        problems += [line for line in index["warnings"] if "set_state" in line]
+    else:
+        try:
+            json.loads((root / "set_state.json").read_bytes())
+        except PermissionError:   # opened inside the replace: a careful host retries
+            retries += 1
+        time.sleep(0.0025)
+    count += 1
+print(json.dumps({"mode": mode, "count": count, "retries": retries, "problems": problems[:5]}), flush=True)
+'''
+
+
+def test_a_host_indexing_in_a_loop_never_breaks_a_runs_saves(ss, fake, tmp_path):
+    """Readers on Windows hold set_state.json open, and a rename onto an open file fails (WinError 5). A host that
+    scans on every file event must never abort a long run's save: scans read under set_state.lock, and the save's
+    atomic replace waits for naive readers that hold the file without the lock."""
+    master = write_master(tmp_path / "art", fake, ss)
+    cli("plan", "--master", master, "--output-dir", tmp_path / "set", "--actions", "idle,walk", "--formats", "png")
+    runner = ss.SetRunner(tmp_path / "set")
+    runner.save()
+    script, stop = tmp_path / "hammer.py", tmp_path / "stop"
+    script.write_text(HAMMER, encoding="utf-8")
+    hammers = [subprocess.Popen([sys.executable, str(script), str(SCRIPTS), mode, str(tmp_path / "set"), str(stop)],
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+               for mode in ("scan", "read", "read")]
+    try:
+        for hammer in hammers:
+            assert hammer.stdout.readline().strip() == "ready"
+        for number in range(150):
+            runner.astate("idle")["message"] = f"save {number}"
+            runner.astate("walk")["takes"] = [{"take": 1, "round": 1, "status": "open", "n": number}]
+            runner.save()   # raised PermissionError (WinError 5) on Windows before the fix
+    finally:
+        stop.write_text("stop", encoding="utf-8")
+        outputs = [hammer.communicate(timeout=60) for hammer in hammers]
+    for (out, err), hammer in zip(outputs, hammers):
+        assert hammer.returncode == 0, err
+        report = json.loads(out.strip().splitlines()[-1])
+        assert report["count"] > 0 and report["problems"] == [], report
+    state = json.loads((tmp_path / "set" / "set_state.json").read_text(encoding="utf-8"))
+    assert state["actions"]["idle"]["message"] == "save 149" and state["actions"]["walk"]["takes"][0]["n"] == 149
+    assert not list((tmp_path / "set").glob(".set_state.json.*.tmp"))

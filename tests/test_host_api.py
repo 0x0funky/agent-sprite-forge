@@ -333,6 +333,121 @@ def test_scan_of_an_unrun_set_and_an_empty_folder(tmp_path):
     assert [blank[key] for key in ("masters", "sets", "fx", "plates", "maps", "warnings")] == [[]] * 6
 
 
+def scan_of(root: Path) -> dict:
+    result = run_cli([FORGE_INDEX, "scan", root])
+    assert result.returncode == 0, result.stderr
+    index = json.loads(result.stdout)
+    assert_valid_contract(index, "host", "asset_index_v1")
+    return index
+
+
+def edit_state(set_folder: Path, ident: str, **changes) -> dict:
+    path = set_folder / "set_state.json"
+    state = json.loads(path.read_text(encoding="utf-8"))
+    state["actions"][ident].update(changes)
+    path.write_text(json.dumps(state), encoding="utf-8")
+    return state
+
+
+def action_of(index: dict, ident: str) -> dict:
+    return next(item for item in index["sets"][0]["actions"] if item["id"] == ident)
+
+
+PACKAGE_KEYS = ("package", "packageTake", "packageTag", "manifest", "poster", "reviewStatus", "verify")
+
+
+def test_scan_reports_only_the_package_of_the_chosen_take(art):
+    """accept, then retake: the accepted package of the rejected take is never the action's package (a host would
+    import a rejected take as an accepted clip); an accept of another window waits for its own package."""
+    set_folder = art / "pip-set"
+    idle = action_of(scan_of(art), "idle")
+    assert (idle["package"], idle["packageTake"], idle["packageTag"], idle["reviewStatus"], idle["previousPackage"]) \
+        == ("pip-set/actions/idle/takes/t01/package", 1, "", "accepted", None)
+    # sprite_set.py retake: chosen and accepted cleared, a new round; output still names the take 1 package
+    state = edit_state(set_folder, "idle", chosen=None, accepted=None, status="pending", round=2, agentRevision=2)
+    assert state["actions"]["idle"]["output"]["take"] == 1
+    index = scan_of(art)
+    idle = action_of(index, "idle")
+    assert {key: idle[key] for key in PACKAGE_KEYS} == dict.fromkeys(PACKAGE_KEYS)
+    assert idle["previousPackage"] == "pip-set/actions/idle/takes/t01/package" and idle["status"] == "pending"
+    assert index["sets"][0]["status"] == "incomplete"
+    # an accept of a window of take 1: the whole-take package is not that window's
+    window = {"take": 1, "window": [0, 8], "tag": "-w0-8", "reason": "accepted by the agent"}
+    state = edit_state(set_folder, "idle", chosen=window, status="chosen",
+                       accepted={"take": 1, "window": [0, 8], "at": "2026-11-07T10:00:00.000Z"})
+    idle = action_of(scan_of(art), "idle")
+    assert idle["package"] is None and idle["previousPackage"] == "pip-set/actions/idle/takes/t01/package"
+    # the run packaged the window and has not saved its output yet: the window's package is found by its stage
+    takes = state["actions"]["idle"]["takes"]
+    takes[0].setdefault("stages", {})["package-w0-8"] = {"dir": "actions/idle/takes/t01/package-w0-8"}
+    edit_state(set_folder, "idle", takes=takes)
+    (set_folder / "actions/idle/takes/t01/package-w0-8").mkdir()
+    (set_folder / "actions/idle/takes/t01/package-w0-8/animation.json").write_text(
+        json.dumps({"reviewStatus": "accepted"}), encoding="utf-8")
+    idle = action_of(scan_of(art), "idle")
+    assert (idle["package"], idle["packageTake"], idle["packageTag"], idle["reviewStatus"], idle["verify"]) == (
+        "pip-set/actions/idle/takes/t01/package-w0-8", 1, "-w0-8", "accepted", None)
+    assert idle["previousPackage"] == "pip-set/actions/idle/takes/t01/package"
+
+
+def test_scan_never_points_outside_the_scanned_folder(art, tmp_path):
+    outside = tmp_path / "outside" / "package"
+    outside.mkdir(parents=True)
+    (outside / "animation.json").write_text(json.dumps({"reviewStatus": "accepted"}), encoding="utf-8")
+    (tmp_path / "outside" / "x.png").write_bytes(b"png")
+    edit_state(art / "pip-set", "idle", output={"take": 1, "tag": "", "package": "../../outside/package",
+                                                "manifest": "../../outside/package/animation.json", "verify": "pass"})
+    master = art / "pip" / "master" / "master.json"
+    document = json.loads(master.read_text(encoding="utf-8"))
+    document["files"]["master"]["path"] = "../../../outside/x.png"
+    master.write_text(json.dumps(document), encoding="utf-8")
+    index = scan_of(art)
+    idle = action_of(index, "idle")
+    assert idle["package"] == "pip-set/actions/idle/takes/t01/package"   # found by the chosen take's stage
+    assert idle["previousPackage"] is None and idle["verify"] is None
+    assert index["masters"][0]["image"] == "pip/master/master.png"
+    left_out = [line for line in index["warnings"] if "leads outside the scanned folder" in line]
+    assert len(left_out) == 2 and any("../../outside/package" in line for line in left_out)
+    for item in [index["masters"][0]] + index["sets"][0]["actions"]:
+        for key, value in item.items():
+            assert not (isinstance(value, str) and ".." in value.split("/")), (key, value)
+
+
+def test_scan_reads_a_set_under_its_lock_and_never_creates_one(art, monkeypatch):
+    lock = art / "pip-set" / "set_state.lock"
+    assert not lock.exists()
+    scan_of(art)
+    assert not lock.exists()   # a scan only takes a lock that exists
+    lock.write_bytes(b"")
+    script = ("import sys, time; sys.path.insert(0, sys.argv[1]); import forge_core\n"
+              "with forge_core.file_lock(sys.argv[2]):\n    print('held', flush=True); time.sleep(float(sys.argv[3]))")
+    holder = subprocess.Popen([sys.executable, "-c", script, str(REPO_ROOT / "shared"), str(lock), "1.5"],
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        started = time.monotonic()
+        index = scan_of(art)   # waits for the writer, then reads
+        assert time.monotonic() - started > 0.5
+        assert index["warnings"] == ["broken/fx.json: unreadable (JSONDecodeError)"]
+    finally:
+        holder.wait(timeout=30)
+        holder.stdout.close()
+    module = load_shared("forge_index", fresh=True)
+    monkeypatch.setattr(module, "LOCK_WAIT_S", 0.2)
+    holder = subprocess.Popen([sys.executable, "-c", script, str(REPO_ROOT / "shared"), str(lock), "4"],
+                              stdout=subprocess.PIPE, text=True)
+    try:
+        assert holder.stdout.readline().strip() == "held"
+        started = time.monotonic()
+        index = module.scan(art)   # a lock held too long: read without it, and say so
+        assert time.monotonic() - started < 3
+        assert any("set_state.lock: held by another process" in line for line in index["warnings"])
+        assert index["sets"][0]["status"] == "complete"
+    finally:
+        holder.wait(timeout=30)
+        holder.stdout.close()
+
+
 def test_every_vendored_forge_index_is_the_canonical(tmp_path):
     canonical = (REPO_ROOT / "shared" / "forge_index.py").read_bytes().replace(b"\r\n", b"\n")
     entry = next(item for item in json.loads((REPO_ROOT / "shared" / "VENDORED.json").read_text(encoding="utf-8"))[

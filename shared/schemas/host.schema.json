@@ -5,7 +5,7 @@
   "description": "What a host (such as Agent Game Forge) reads from the Forge without knowing every tool's files: the asset index of forge_index.py scan and the progress lines a tool appends to its --progress-file. Version 1; objects stay open.",
   "$defs": {
     "asset_index_v1": {
-      "description": "forge_index.py scan <dir>: everything the Forge made under one folder. root is the scanned folder (absolute, POSIX); every other path is relative to it. masters come from master.json; sets from set_plan.json and set_state.json, per action with its status, take count, chosen take or window, the agent's accept, the package folder, its animation.json and poster, the package's reviewStatus and the verify result; fx from fx.json, route A (pixelfx) or B (the image route); plates from plate.json; maps from map bundles (generate2dmap.map_bundle.v1 or v2). warnings name documents that could not be read.",
+      "description": "forge_index.py scan <dir>: everything the Forge made under one folder. root is the scanned folder (absolute, POSIX); every other path is relative to it and stays inside it (indexPath: no '..' segment; a document path that leads outside is left out with a warning). masters come from master.json; sets from set_plan.json and set_state.json (read under the set's set_state.lock), per action with its status, take count, chosen take or window, the agent's accept, and the package of the chosen take (packageTake, packageTag) with its animation.json, poster, the package's reviewStatus and the verify result. When the recorded package holds another take or window than the chosen one (after a retake, or an accept of another take or window) package, packageTake, packageTag, manifest, poster, reviewStatus and verify are null and that package is previousPackage: never import it as the action's clip. fx come from fx.json, route A (pixelfx) or B (the image route); plates from plate.json; maps from map bundles (generate2dmap.map_bundle.v1 or v2). warnings name documents that could not be read, paths left out and a set lock that stayed held.",
       "type": "object",
       "required": ["schema", "tool", "createdAt", "root", "masters", "sets", "fx", "plates", "maps", "warnings"],
       "properties": {
@@ -37,18 +37,18 @@
                 "minLength": 1
               },
               "path": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "metadata": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "image": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "cutout": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -88,15 +88,15 @@
                 "minLength": 1
               },
               "path": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "plan": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "state": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -115,7 +115,7 @@
               "master": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -129,7 +129,7 @@
                 "type": "array",
                 "items": {
                   "type": "object",
-                  "required": ["id", "action", "view", "kind", "status", "takes", "chosen", "accepted", "package", "manifest", "reviewStatus"],
+                  "required": ["id", "action", "view", "kind", "status", "takes", "chosen", "accepted", "package", "packageTake", "packageTag", "manifest", "reviewStatus", "previousPackage"],
                   "properties": {
                     "id": {
                       "type": "string",
@@ -236,17 +236,31 @@
                     "package": {
                       "anyOf": [
                         {
-                          "$ref": "common.schema.json#/$defs/relPath"
+                          "$ref": "#/$defs/indexPath"
                         },
                         {
                           "type": "null"
                         }
                       ]
                     },
+                    "packageTake": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "packageTag": {
+                      "type": ["string", "null"]
+                    },
                     "manifest": {
                       "anyOf": [
                         {
-                          "$ref": "common.schema.json#/$defs/relPath"
+                          "$ref": "#/$defs/indexPath"
                         },
                         {
                           "type": "null"
@@ -256,7 +270,7 @@
                     "poster": {
                       "anyOf": [
                         {
-                          "$ref": "common.schema.json#/$defs/relPath"
+                          "$ref": "#/$defs/indexPath"
                         },
                         {
                           "type": "null"
@@ -268,6 +282,56 @@
                     },
                     "verify": {
                       "type": ["string", "null"]
+                    },
+                    "previousPackage": {
+                      "anyOf": [
+                        {
+                          "$ref": "#/$defs/indexPath"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "if": {
+                    "properties": {
+                      "package": {
+                        "type": "string"
+                      }
+                    },
+                    "required": ["package"]
+                  },
+                  "then": {
+                    "properties": {
+                      "packageTake": {
+                        "type": "integer"
+                      },
+                      "packageTag": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "else": {
+                    "properties": {
+                      "packageTake": {
+                        "type": "null"
+                      },
+                      "packageTag": {
+                        "type": "null"
+                      },
+                      "manifest": {
+                        "type": "null"
+                      },
+                      "poster": {
+                        "type": "null"
+                      },
+                      "reviewStatus": {
+                        "type": "null"
+                      },
+                      "verify": {
+                        "type": "null"
+                      }
                     }
                   }
                 }
@@ -290,10 +354,10 @@
                 "minLength": 1
               },
               "path": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "metadata": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "route": {
                 "enum": ["A", "B"]
@@ -318,12 +382,12 @@
                 "type": ["boolean", "null"]
               },
               "sheet": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "sheetJson": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -333,7 +397,7 @@
               "preview": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -343,7 +407,7 @@
               "credits": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -371,18 +435,18 @@
                 "minLength": 1
               },
               "path": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "metadata": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "image": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "preview": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -392,7 +456,7 @@
               "palette": {
                 "anyOf": [
                   {
-                    "$ref": "common.schema.json#/$defs/relPath"
+                    "$ref": "#/$defs/indexPath"
                   },
                   {
                     "type": "null"
@@ -427,7 +491,7 @@
                 "minLength": 1
               },
               "path": {
-                "$ref": "common.schema.json#/$defs/relPath"
+                "$ref": "#/$defs/indexPath"
               },
               "schemaVersion": {
                 "enum": ["generate2dmap.map_bundle.v1", "generate2dmap.map_bundle.v2"]
@@ -488,6 +552,17 @@
         "message": {
           "type": ["string", "null"]
         }
+      }
+    },
+    "indexPath": {
+      "description": "A path in the asset index: a common relPath relative to the index root that never leaves it (no '..' segment). forge_index.py resolves every document path and leaves out one that leads outside root (a '..' or a link); a host still checks containment before it reads a file.",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/relPath"
+        }
+      ],
+      "not": {
+        "pattern": "(^|/)\\.\\.(/|$)"
       }
     }
   }

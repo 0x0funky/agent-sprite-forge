@@ -2777,6 +2777,16 @@ class SetRunner:
         progress("done", len(order), len(order), f"set {summary['status']}")
         return summary, code
 
+    def current_package(self, ident: str) -> str | None:
+        """The action's package folder when it holds the chosen take and window; None after a retake or an accept
+        of another take (output then names the earlier package, which no longer stands for the action)."""
+        st = self.astate(ident)
+        output, chosen = st.get("output") or {}, st.get("chosen") or {}
+        if output.get("package") and chosen and output.get("take") == chosen.get("take") \
+                and output.get("tag", "") == chosen.get("tag", ""):
+            return output["package"]
+        return None
+
     def summary(self, order: Sequence[str], generated: int) -> tuple[dict, int]:
         actions = {}
         for ident in order:
@@ -2784,7 +2794,7 @@ class SetRunner:
             actions[ident] = {"status": st["status"], "takes": len(st["takes"]),
                               "chosen": (st.get("chosen") or {}).get("take"),
                               "accepted": bool(st.get("accepted")),
-                              "package": (st.get("output") or {}).get("package"),
+                              "package": self.current_package(ident),
                               "message": st.get("message")}
         statuses = {item["status"] for item in actions.values()}
         if statuses <= {"done"}:

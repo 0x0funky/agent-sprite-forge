@@ -32,7 +32,7 @@
       "finish": "hd",
       "targetHeight": 48,
       "master": "pip-set/master/side/master.png",
-      "status": "complete",
+      "status": "incomplete",
       "actions": [
         {
           "id": "idle",
@@ -52,10 +52,13 @@
             "at": "2026-11-06T21:22:58.809Z"
           },
           "package": "pip-set/actions/idle/takes/t01/package",
+          "packageTake": 1,
+          "packageTag": "",
           "manifest": "pip-set/actions/idle/takes/t01/package/animation.json",
           "poster": "pip-set/actions/idle/takes/t01/package/idle-poster.png",
           "reviewStatus": "accepted",
-          "verify": "pass"
+          "verify": "pass",
+          "previousPackage": null
         },
         {
           "id": "walk",
@@ -71,29 +74,31 @@
           },
           "accepted": null,
           "package": "pip-set/actions/walk/takes/t01/package",
+          "packageTake": 1,
+          "packageTag": "",
           "manifest": "pip-set/actions/walk/takes/t01/package/animation.json",
           "poster": "pip-set/actions/walk/takes/t01/package/walk-poster.png",
           "reviewStatus": "needs-visual-review",
-          "verify": "pass"
+          "verify": "pass",
+          "previousPackage": null
         },
         {
           "id": "attack",
           "action": "attack",
           "view": "side",
           "kind": "oneshot",
-          "status": "done",
-          "takes": 3,
-          "chosen": {
-            "take": 3,
-            "window": null,
-            "tag": ""
-          },
+          "status": "pending",
+          "takes": 2,
+          "chosen": null,
           "accepted": null,
-          "package": "pip-set/actions/attack/takes/t03/package",
-          "manifest": "pip-set/actions/attack/takes/t03/package/animation.json",
-          "poster": "pip-set/actions/attack/takes/t03/package/attack-poster.png",
-          "reviewStatus": "needs-visual-review",
-          "verify": "pass"
+          "package": null,
+          "packageTake": null,
+          "packageTag": null,
+          "manifest": null,
+          "poster": null,
+          "reviewStatus": null,
+          "verify": null,
+          "previousPackage": "pip-set/actions/attack/takes/t02/package"
         }
       ]
     }

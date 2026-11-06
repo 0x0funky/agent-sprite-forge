@@ -18,6 +18,26 @@
       "set": "/masters/0/path",
       "value": "C:/art/pip",
       "why": "paths are relative to root"
+    },
+    {
+      "set": "/sets/0/actions/0/package",
+      "value": "../outside/package",
+      "why": "index paths never leave the scanned root",
+      "error": "package: '../outside/package' is not valid under any of the given schemas"
+    },
+    {
+      "set": "/sets/0/actions/2/reviewStatus",
+      "value": "accepted",
+      "why": "a reviewStatus belongs to the package of the chosen take; an action without one has none"
+    },
+    {
+      "set": "/sets/0/actions/0/packageTake",
+      "value": null,
+      "why": "a reported package names the take it holds"
+    },
+    {
+      "remove": "/sets/0/actions/0/previousPackage",
+      "why": "every action states whether an earlier package was left behind"
     }
   ]
 }
