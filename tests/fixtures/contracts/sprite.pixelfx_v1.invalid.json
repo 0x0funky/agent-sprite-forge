@@ -11,13 +11,68 @@
       "why": "alpha is binary or keep"
     },
     {
-      "set": "/qa/checks/3/status",
-      "value": "info",
-      "why": "info is not a QA check status (measurements are skipped)"
-    },
-    {
       "remove": "/credits",
       "why": "the credits file travels with the frames"
+    },
+    {
+      "set": "/qa/checks/3/status",
+      "value": "informational",
+      "why": "a check status outside the common enum (0.5.0's info is the only legacy addition)"
+    },
+    {
+      "set": "/qa",
+      "value": {
+        "status": "pass",
+        "method": "fx_pixelfx v1: pixelfx tools/render.mjs --sheet --no-actor --bg none (the effect alone on transparency), sliced by its Aseprite JSON, optional binary alpha and nearest-colour snap (luminance-weighted RGB), re-packed",
+        "notProven": [
+          "That the effect reads at the game's scale and against its backgrounds (look at preview.gif and in the game).",
+          "Timing against the character's action (pivot and hit frames are the effect's own; place it in the game).",
+          "That the license notice reaches the player-facing credits: CREDITS.txt must ship with the frames."
+        ],
+        "checks": [
+          {
+            "id": "frames",
+            "status": "fail",
+            "value": 3,
+            "threshold": 4
+          },
+          {
+            "id": "colours",
+            "status": "info",
+            "value": 12,
+            "threshold": null
+          }
+        ],
+        "inputs": [
+          {
+            "path": "../palette.json",
+            "sha256": "5e9fc23d7f321ec7b73fac70678ed00e8627ae7a2d41761f5445dad0a222f7f5",
+            "bytes": 246
+          }
+        ],
+        "outputs": [
+          {
+            "path": "frames/star-fall_000.png",
+            "sha256": "1d55832242f9ef3884b928acb57de1cafdc39e1ce99cb3d5102c484a7dedf005",
+            "bytes": 82
+          },
+          {
+            "path": "frames/star-fall_001.png",
+            "sha256": "6cc4e877820c7f642978be930be7f6203a6b173ad0aee4e239469e002b51bd86",
+            "bytes": 82
+          },
+          {
+            "path": "frames/star-fall_002.png",
+            "sha256": "1bf9521ec3af539bad54c67d4df784d8ed6482c52daf7d58fc5cea30dcea5e2e",
+            "bytes": 82
+          }
+        ],
+        "tool": {
+          "name": "fx_pixelfx",
+          "version": "0.5.0"
+        }
+      },
+      "why": "a 0.5.0 envelope with info checks still cannot pass with a failed check"
     }
   ]
 }

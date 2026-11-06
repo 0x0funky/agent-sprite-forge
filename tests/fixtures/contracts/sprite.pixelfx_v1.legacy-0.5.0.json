@@ -1,0 +1,119 @@
+{
+  "schema": "generate2dsprite.pixelfx.v1",
+  "tool": {
+    "name": "fx_pixelfx",
+    "version": "0.4.0"
+  },
+  "artSource": "code-drawn by pixelfx (third-party code-driven pixel-art effects, MIT)",
+  "pixelfx": {
+    "repository": "https://github.com/patch-gg/pixelfx",
+    "remote": "https://github.com/patch-gg/pixelfx.git",
+    "commit": "a84159688af3ca37a4be05a0d422b94451b2e24e",
+    "dirty": false,
+    "version": "0.3.0",
+    "license": "MIT",
+    "copyright": [
+      "Copyright (c) 2026 Patch",
+      "Copyright (c) 2026 Hugo Duprez"
+    ]
+  },
+  "credits": "CREDITS.txt (pixelfx LICENSE and NOTICE.md; ship it with the frames)",
+  "effect": {
+    "id": "spawn/coin-drop",
+    "name": "Coin drop",
+    "loop": false,
+    "fps": 30.0,
+    "frames": 91,
+    "frameSize": [
+      160,
+      88
+    ],
+    "pivot": [
+      80,
+      78
+    ],
+    "act": null
+  },
+  "options": {},
+  "seed": 3,
+  "actor": false,
+  "recolour": {
+    "ramp": null,
+    "snap": null
+  },
+  "alpha": "keep",
+  "engine": {
+    "sampling": "nearest",
+    "pixelArt": true,
+    "pivot": [
+      80,
+      78
+    ],
+    "note": "pivot is the effect's origin in frame px (pixelfx meta.origin): place it on the caster's hand, the target or the floor point the effect is drawn around"
+  },
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "fx_pixelfx v1: pixelfx tools/render.mjs --sheet --no-actor --bg none (the effect alone on transparency), sliced by its Aseprite JSON, optional binary alpha and nearest-colour snap (luminance-weighted RGB), re-packed",
+    "notProven": [
+      "That the effect reads at the game's scale and against its backgrounds (look at preview.gif and in the game).",
+      "Timing against the character's action (pivot and hit frames are the effect's own; place it in the game).",
+      "That the license notice reaches the player-facing credits: CREDITS.txt must ship with the frames."
+    ],
+    "checks": [
+      {
+        "id": "frames",
+        "status": "pass",
+        "value": 91,
+        "threshold": 91
+      },
+      {
+        "id": "not-empty",
+        "status": "pass",
+        "value": 4472,
+        "threshold": 1
+      },
+      {
+        "id": "edge-contact",
+        "status": "pass",
+        "value": [],
+        "threshold": [],
+        "note": "frames with visible pixels on the canvas border (a cut glow shows as a box)"
+      },
+      {
+        "id": "colours",
+        "status": "info",
+        "value": 10514,
+        "threshold": null
+      },
+      {
+        "id": "alpha-levels",
+        "status": "info",
+        "value": 235,
+        "threshold": null,
+        "note": "2 = binary alpha; more = soft glow edges (draw with alpha blending or use --alpha binary)"
+      }
+    ],
+    "inputs": [],
+    "outputs": [
+      {
+        "path": "frames/coin-drop_000.png",
+        "sha256": "db86e54f0533865ea1af759c20fce5a57d6408439834b9527f860cb757ff691c",
+        "bytes": 4742
+      },
+      {
+        "path": "frames/coin-drop_001.png",
+        "sha256": "6c10f1a4ba8a3731db87b413edb843d874f7758c91c58965182b3984492672c6",
+        "bytes": 4085
+      },
+      {
+        "path": "frames/coin-drop_002.png",
+        "sha256": "c5cfd7785e4be51afbf5b6b0fb3d6f960a655e1f31f1740484e043826d61e033",
+        "bytes": 3960
+      }
+    ],
+    "tool": {
+      "name": "fx_pixelfx",
+      "version": "0.4.0"
+    }
+  }
+}

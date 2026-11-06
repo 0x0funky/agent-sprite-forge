@@ -2721,7 +2721,96 @@
           }
         },
         "qa": {
-          "$ref": "common.schema.json#/$defs/qaEnvelope"
+          "description": "The QA envelope. 0.5.0 wrote the share of lone pixels it measures as checks with status info, which the common qaCheck does not allow; such documents stay valid through the second branch (the common envelope with info as one more check status). Writers after 0.5.0 record these measurements as skipped checks with their value and a null threshold.",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/qaEnvelope"
+            },
+            {
+              "type": "object",
+              "required": ["status", "method", "notProven", "checks", "inputs", "outputs", "tool"],
+              "properties": {
+                "status": {
+                  "$ref": "common.schema.json#/$defs/qaStatus"
+                },
+                "method": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "notProven": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "checks": {
+                  "type": "array",
+                  "items": {
+                    "anyOf": [
+                      {
+                        "$ref": "common.schema.json#/$defs/qaCheck"
+                      },
+                      {
+                        "type": "object",
+                        "required": ["id", "status"],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "status": {
+                            "const": "info"
+                          }
+                        }
+                      }
+                    ]
+                  }
+                },
+                "inputs": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "common.schema.json#/$defs/fileRef"
+                  }
+                },
+                "outputs": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "common.schema.json#/$defs/fileRef"
+                  }
+                },
+                "tool": {
+                  "$ref": "common.schema.json#/$defs/toolInfo"
+                },
+                "createdAt": {
+                  "$ref": "common.schema.json#/$defs/timestamp"
+                }
+              },
+              "if": {
+                "properties": {
+                  "status": {
+                    "const": "pass"
+                  }
+                },
+                "required": ["status"]
+              },
+              "then": {
+                "properties": {
+                  "checks": {
+                    "items": {
+                      "properties": {
+                        "status": {
+                          "not": {
+                            "const": "fail"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ]
         }
       }
     }
