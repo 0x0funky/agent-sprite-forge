@@ -859,22 +859,44 @@ def test_provider_errors_stop_the_action_for_this_run_only(ss, fake, tmp_path):
     assert len(log_lines(tmp_path / "fake-media-calls")) == 2   # two tries per run, then the run moves on
 
 
-FAILING_FINISHER = 'import sys\nprint("error: the finisher crashed on purpose", file=sys.stderr)\nraise SystemExit(1)\n'
+PARTLY_FAILING_FINISHER = r'''
+"""The fake finisher, except that it crashes for the action named by FAKE_BREAK_ACTION."""
+import os
+import runpy
+import sys
+from pathlib import Path
+
+out = Path(sys.argv[sys.argv.index("--output-dir") + 1])
+if out.parent.parent.parent.name == os.environ["FAKE_BREAK_ACTION"]:
+    print("error: the finisher crashed on purpose", file=sys.stderr)
+    raise SystemExit(1)
+sys.argv[0] = os.environ["FAKE_REAL_FINISHER"]
+runpy.run_path(os.environ["FAKE_REAL_FINISHER"], run_name="__main__")
+'''
 
 
 @pytest.mark.ffmpeg
 def test_accept_before_packaging_puts_the_verdict_into_the_new_package(ss, fake, tmp_path):
-    """An accept recorded before the take is packaged reaches the package through engine_export package --review:
-    animation.json says accepted from the start, bound to the selection the package is cut by."""
+    """A run that packages some actions and fails another exits 4 (published, status fail). An accept recorded
+    before the failed take is packaged reaches its package through engine_export package --review: animation.json
+    says accepted from the start, bound to the selection the package is cut by. A retake afterwards takes that
+    package away from the action in the host's index."""
     require_ffmpeg()
     master = write_master(tmp_path / "art", fake, ss)
     plan_path = tmp_path / "set" / "set_plan.json"
-    cli("plan", "--master", master, "--output-dir", tmp_path / "set", "--actions", "idle", "--target-height", 48)
+    cli("plan", "--master", master, "--output-dir", tmp_path / "set", "--actions", "idle,walk", "--target-height", 48)
     broken = tmp_path / "broken_finisher.py"
-    broken.write_text(FAILING_FINISHER, encoding="utf-8")
-    result, summary = cli("run", "--plan", plan_path, "--stagger", 0,
-                          env=fake_env(fake, tmp_path, FORGE_FINISH_FRAMES=broken))
-    assert result.returncode == 1 and summary["actions"]["idle"]["status"] == "post-error"
+    broken.write_text(PARTLY_FAILING_FINISHER, encoding="utf-8")
+    progress_file = tmp_path / "progress.jsonl"
+    result, summary = cli("run", "--plan", plan_path, "--stagger", 0, "--progress-file", progress_file,
+                          env=fake_env(fake, tmp_path, FORGE_FINISH_FRAMES=broken, FAKE_BREAK_ACTION="idle",
+                                       FAKE_REAL_FINISHER=fake["finisher"]))
+    assert result.returncode == 4, result.stderr   # walk is packaged, idle is not: published with status fail
+    assert len(result.stdout.strip().splitlines()) == 1 and summary["status"] == "incomplete"
+    assert summary["actions"]["idle"]["status"] == "post-error" and summary["actions"]["idle"]["package"] is None
+    assert summary["actions"]["walk"]["status"] == "done" and summary["actions"]["walk"]["package"]
+    assert "error: the set is incomplete: idle post-error" in result.stderr and "(packaged: walk)" in result.stderr
+    assert log_lines(progress_file)[-1]["stage"] == "done"
     assert cli("review", "--plan", plan_path)[0].returncode == 0
     result, summary = cli("accept", "--plan", plan_path, "--action", "idle", "--take", 1)
     assert result.returncode == 0 and summary["reviewStatus"] is None and "run sprite_set.py run" in summary["next"]
@@ -891,6 +913,36 @@ def test_accept_before_packaging_puts_the_verdict_into_the_new_package(ss, fake,
     assert accepted["reviewStatus"] == "accepted" and accepted["package"] == summary["actions"]["idle"]["package"]
     assert (tmp_path / "set" / accepted["verdict"]["path"]).is_file()
     assert_valid_contract(state, "video", "sprite_set_state_v1")
+    idle = index_action(tmp_path / "set", "idle")
+    assert (idle["package"], idle["packageTake"], idle["reviewStatus"]) == (
+        "actions/idle/takes/t01/package", 1, "accepted")
+    # accepted, then retaken: the accepted package of the rejected take must not reach a host as the idle clip
+    result, _ = cli("retake", "--plan", plan_path, "--action", "idle", "--fix", "never-turn")
+    assert result.returncode == 0, result.stderr
+    idle = index_action(tmp_path / "set", "idle")
+    assert idle["package"] is None and idle["reviewStatus"] is None and idle["accepted"] is None
+    assert idle["previousPackage"] == "actions/idle/takes/t01/package"
+
+
+def test_run_exit_codes_tell_a_partly_packaged_set_from_a_failed_one(ss, fake, tmp_path):
+    master = write_master(tmp_path / "art", fake, ss)
+    cli("plan", "--master", master, "--output-dir", tmp_path / "set", "--actions", "idle,walk", "--formats", "png")
+    runner = ss.SetRunner(tmp_path / "set")
+    cases = {("done", "done"): ("complete", 0), ("done", "done-warn"): ("complete-with-warnings", 0),
+             ("done", "post-error"): ("incomplete", 4), ("done-warn", "failed"): ("incomplete", 4),
+             ("failed", "post-error"): ("incomplete", 1), ("error", "pending"): ("incomplete", 1),
+             ("done", "no-route"): ("waiting-for-clips", 3)}
+    for (idle, walk), expected in cases.items():
+        runner.astate("idle")["status"], runner.astate("walk")["status"] = idle, walk
+        summary, code = runner.summary(["idle", "walk"], 0)
+        assert (summary["status"], code) == expected, (idle, walk)
+    assert ss.forge_core.EXIT_PUBLISHED_FAIL == 4
+    # the summary names a package only while it holds the chosen take and window
+    runner.astate("idle").update(chosen={"take": 2, "tag": "", "window": None},
+                                 output={"take": 1, "tag": "", "package": "actions/idle/takes/t01/package"})
+    assert runner.summary(["idle"], 0)[0]["actions"]["idle"]["package"] is None
+    runner.astate("idle")["chosen"] = {"take": 1, "tag": "", "window": None}
+    assert runner.summary(["idle"], 0)[0]["actions"]["idle"]["package"] == "actions/idle/takes/t01/package"
 
 
 def test_a_run_never_loses_an_accept_or_retake_made_while_it_works(ss, fake, tmp_path):

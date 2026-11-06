@@ -22,15 +22,16 @@
   report   One JSON with every action's route, takes, QC numbers, loop or timing and output
            files.
 
-set_state.json is shared by run, review, accept and retake: each reads, changes and writes
-it under a lock on set_state.lock, and a long run merges the agent's decisions (accept,
-retake, review) from disk before every save, so an accept or retake made while a run works
-is never lost. run takes --progress-file (or FORGE_PROGRESS_FILE): one JSON line per stage
-for a host; stdout keeps its one summary line.
+set_state.json is shared by run, review, accept, retake and report: every read and write
+happens under a lock on set_state.lock (forge_index.py scan takes it too), and a long run
+merges the agent's decisions (accept, retake, review) from disk before every save, so an
+accept or retake made while a run works is never lost. run takes --progress-file (or
+FORGE_PROGRESS_FILE): one JSON line per stage for a host; stdout keeps its one summary line.
 
-Exit codes: 0 done; 1 refused input or failed step (error: ... on stderr); 2 usage; 3 the
-run waits for a clip because no generation route exists (drop the clip into the take's
-media folder named in the summary and run again).
+Exit codes: 0 done; 1 refused input or failed step, nothing usable (error: ... on stderr);
+2 usage; 3 the run waits for a clip because no generation route exists (drop the clip into
+the take's media folder named in the summary and run again); 4 run left the set incomplete
+but packaged at least one action (the summary names each action's status and package).
 """
 from __future__ import annotations
 
@@ -2803,6 +2804,8 @@ class SetRunner:
             status, code = "waiting-for-clips", EXIT_NO_ROUTE
         elif statuses <= {"done", "done-warn"}:
             status, code = "complete-with-warnings", 0
+        elif statuses & {"done", "done-warn"}:   # some actions are packaged: published, but the set failed
+            status, code = "incomplete", forge_core.EXIT_PUBLISHED_FAIL
         else:
             status, code = "incomplete", 1
         summary = {"output": str(self.root), "plan": str(self.plan_path), "state": str(self.state_path),
@@ -3433,7 +3436,13 @@ def _run(argv: Sequence[str] | None = None) -> int:
         if code:
             failing = [f"{ident} {item['status']}" + (f" ({item['message']})" if item.get("message") else "")
                        for ident, item in summary["actions"].items() if item["status"] not in ("done", "done-warn")]
-            raise ValueError("the set is incomplete: " + "; ".join(failing))
+            message = "the set is incomplete: " + "; ".join(failing)
+            if code == forge_core.EXIT_PUBLISHED_FAIL:   # the packaged actions are usable; the summary names them
+                packaged = [ident for ident, item in summary["actions"].items()
+                            if item["status"] in ("done", "done-warn")]
+                print(_ascii(f"error: {message} (packaged: {', '.join(packaged)})"), file=sys.stderr)
+                return code
+            raise ValueError(message)
         return 0
     print(json.dumps(args.func(args), ensure_ascii=True))
     return 0
@@ -3441,7 +3450,9 @@ def _run(argv: Sequence[str] | None = None) -> int:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """Usage errors exit 2; refused input or a failed step prints error: ... and exits 1; exit 3 means the run
-    waits for a clip because no generation route exists (D26, D27; forge_core.run_cli)."""
+    waits for a clip because no generation route exists; a run that packaged some actions but left others
+    failed prints its summary and error: ... and exits 4 (forge_core.EXIT_PUBLISHED_FAIL; D26, D27;
+    forge_core.run_cli)."""
     return forge_core.run_cli(_run, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (ToolFailure,))
 
 
