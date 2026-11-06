@@ -619,7 +619,7 @@ approve             gates, retakes, soft     --auto-oneshot          pixel, colo
 
 ## 工具
 
-在專案根目錄用 `python "<skill-dir>/scripts/<tool>.py" ...` 執行。每個工具都有 `--help`、輸出到新的資料夾（絕不覆蓋）、印出一行 JSON，失敗時 exit 1。路由表在各 SKILL.md 裡。
+在專案根目錄用 `python "<skill-dir>/scripts/<tool>.py" ...` 執行。每個工具都有 `--help`、輸出到新的資料夾（絕不覆蓋）、印出一行 JSON，失敗時 exit 1（已發布、但 QA 未通過的結果供檢查時 exit 4；沒有可用的生成路由時 exit 3）。路由表在各 SKILL.md 裡。
 
 | Skill | 工具 | 功能 |
 | --- | --- | --- |

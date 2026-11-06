@@ -28,9 +28,11 @@ Run each as one line from the project root. `<skill-dir>` is this skill's folder
 | `report` | `--plan`, `--output` | `reports/report-NNN.json` |
 
 Every verb prints one ASCII JSON line. Errors print `error: ...` and exit 1; usage errors exit 2;
-`run` exits 3 when it waits for a clip because no generation route exists. `run` exits 1 when an
-action is still incomplete (failed, retake pending, post-processing error) after printing its
-summary line.
+`run` exits 3 when it waits for a clip because no generation route exists. When an action is
+still incomplete (failed, retake pending, post-processing error) after the summary line, `run`
+prints `error: the set is incomplete: ...` and exits 4 if at least one other action was packaged
+(`done` or `done-warn`: its package is usable; the line names them), else 1. The summary's
+`package` is the package of the chosen take only (null after a retake or an accept of another take).
 
 `run --progress-file <jsonl>` (or `FORGE_PROGRESS_FILE`) appends one JSON line per stage for a host
 (`progress_line_v1` in `references/schemas/host.schema.json`): `start`, `job` per
@@ -38,8 +40,10 @@ action, `generate` with done/total per batch of clips, `evaluate` per take, `pos
 `finish`, `package` and `verify`, then `done` (or `error`). The child tools do not inherit the
 variable, so the file holds the run's stages only; stdout keeps its one summary line.
 
-`set_state.json` is shared. `run`, `review`, `accept` and `retake` read, change and write it under
-a lock on `set_state.lock` (forge_core.file_lock, across processes). `accept` and `retake` bump the
+`set_state.json` is shared. `run`, `review`, `accept`, `retake` and `report` read, change and write
+it under a lock on `set_state.lock` (forge_core.file_lock, across processes); `forge_index.py scan`
+takes the same lock to read a set, and on Windows a save waits (up to 2 s) for any other reader
+that holds the file open instead of failing. `accept` and `retake` bump the
 action's `agentRevision`; a `run` that read the state earlier adopts their decisions (accepted,
 round, chosen, status, fixes, per-take review verdicts, the latest review) before its next save,
 so an accept or a retake made while a run works is never lost.

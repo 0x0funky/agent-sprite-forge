@@ -619,7 +619,7 @@ In Codex, `codeart2d` and `generate2dmedia` are explicit-only: the sprite, video
 
 ## Tools
 
-Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`. Every tool has `--help`, writes a new output folder (it never replaces one), prints one JSON line and exits 1 on failure. The SKILL.md files hold the routing tables.
+Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`. Every tool has `--help`, writes a new output folder (it never replaces one), prints one JSON line and exits 1 on failure (4 when it published a result whose QA failed, for inspection; 3 when a generation has no route). The SKILL.md files hold the routing tables.
 
 | Skill | Tool | What it does |
 | --- | --- | --- |

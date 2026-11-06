@@ -61,7 +61,7 @@ Every call, paid or local, is a line in `<project>/.forge/ledger.jsonl` with its
 | Codex made an image that is not in the project | `cli_media.py adopt --codex-thread <thread-id> --output-dir <new>` |
 | Many jobs | `generate_media.py batch` or `cli_media.py batch` |
 | Verify a local route ahead of time (optional) | `forge_doctor.py --verify-route <route> --execute` (one quota call) |
-| List everything the Forge made under a folder (for a host) | `forge_index.py scan <dir>`: one `forge.asset_index.v1` JSON line (`references/schemas/host.schema.json`) |
+| List everything the Forge made under a folder (for a host) | `forge_index.py scan <dir>`: one `forge.asset_index.v1` JSON line (`references/schemas/host.schema.json`); an action's package is the chosen take's, an earlier one is `previousPackage` |
 
 ## Host notes
 
