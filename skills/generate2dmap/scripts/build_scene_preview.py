@@ -1736,7 +1736,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="Seconds allowed for --verify (default 120).")
     parser.add_argument("--strict", action="store_true",
                         help="Warnings and failed --verify checks become errors; nothing is published. Without "
-                             "it a failed --verify publishes the report with status fail and exits 1.")
+                             "it a failed --verify publishes the report with status fail and exits 4.")
     return parser
 
 
@@ -1888,12 +1888,12 @@ def _main(argv: list[str] | None = None) -> int:
     if summary["status"] == "fail":
         print(f"error: the preview was published with status fail ({', '.join(summary['failed'])}); "
               f"see {forge_core.ascii_text(summary['metadata'])}", file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL
     return 0
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Exit 0 (pass or warn), 1 (a published report with status fail, D26; or nothing published), 2 (usage)."""
+    """Exit 0 (pass or warn), 1 (nothing published), 2 (usage), 4 (a published report with status fail)."""
     return forge_core.run_cli(_main, argv)
 
 

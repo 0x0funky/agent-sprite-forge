@@ -5,7 +5,7 @@ Pieces are exact source crops: no trim, resize, bbox fit or anchor guess. QC che
 collision band, measures the art's top surface in every collision column against the declared
 surface, and measures every join with a normalised seam ratio. The output directory must be new;
 work is staged beside it and published only after QC, so a failed run leaves nothing behind. A QA
-status of fail is still published for inspection and exits 1 (D26); --strict-qc publishes nothing.
+status of fail is still published for inspection and exits 4; --strict-qc publishes nothing (exit 1).
 """
 
 from __future__ import annotations
@@ -480,10 +480,10 @@ def _cli(argv: list[str] | None = None) -> int:
                "status": payload["qa"]["status"],
                "qc": {key: payload["qc"][key] for key in ("passed", "structural_passed", "issues", "warnings")}}
     print(json.dumps(summary, ensure_ascii=True))
-    if payload["qa"]["status"] == "fail":  # D26: the report is published, and a failed QA status still exits 1
+    if payload["qa"]["status"] == "fail":  # the report is published, and a failed QA status exits 4
         failed = [check["id"] for check in payload["qa"]["checks"] if check["status"] == "fail"]
         print(f"error: published with QA status fail: {', '.join(failed)}", file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL
     return 0
 
 

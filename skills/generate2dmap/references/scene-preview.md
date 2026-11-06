@@ -9,7 +9,7 @@ python "<skill-dir>/scripts/build_scene_preview.py" --bundle map/map_bundle.json
 python "<skill-dir>/scripts/build_scene_preview.py" --bundle map/map_bundle.json --prop-pack assets/props/prop-pack.json --output-dir map/qa/preview-2 --verify --strict
 ```
 
-The output folder must be new; the build is staged and published only after its checks pass. Success prints one JSON line with `status`, `output_dir`, `preview`, `metadata`, `bytes`, `verify`, `warnings` and `failed` (the ids of failed checks). Exit codes: 0 when the published report passes or warns; 1 when it was published with status `fail` (a failed `--verify` without `--strict`), or when nothing was published (one `error: ...` line, nothing left behind); 2 on a usage error.
+The output folder must be new; the build is staged and published only after its checks pass. Success prints one JSON line with `status`, `output_dir`, `preview`, `metadata`, `bytes`, `verify`, `warnings` and `failed` (the ids of failed checks). Exit codes: 0 when the published report passes or warns; 4 when it was published with status `fail` (a failed `--verify` without `--strict`); 1 when nothing was published (one `error: ...` line, nothing left behind); 2 on a usage error.
 
 ## What the page reads
 
@@ -80,7 +80,7 @@ const world = createMapRuntime(bundle, navGrid.runtimeInputs); // {tileSolids, m
 
 - Always enforced: the page is at most `--max-bytes` (default 16,000,000), is ASCII, has one inline script holding the runtime, and nothing in it can load from outside (no URLs, no loading tags or attributes, no fetch or workers; data is escaped JSON and allow-listed base64 images). The bundle's collision must read through forge_nav.
 - Warnings (fail with `--strict`): objects without art, image layers of another size than the world, tiles past the world, duplicate object ids or prop labels, entrance spawns missing from the map.
-- `--verify` opens the page in headless Chromium through node and the playwright npm package (install it in the project, or point `NODE_PATH` at its `node_modules`, and run `npx playwright install chromium`). It checks for page errors and network requests, that every image loads, that the keyboard moves the actor wherever the first step is free, the route check and a Y-sort pixel probe, then writes `scene-snapshot.json`, `preview-screen.png` and `preview-debug.png`. Without node, playwright or Chromium it prints `verify: SKIPPED (...)` and the build still succeeds. Failed browser checks publish with `status: "fail"` and exit 1 unless `--strict` (then nothing is published).
+- `--verify` opens the page in headless Chromium through node and the playwright npm package (install it in the project, or point `NODE_PATH` at its `node_modules`, and run `npx playwright install chromium`). It checks for page errors and network requests, that every image loads, that the keyboard moves the actor wherever the first step is free, the route check and a Y-sort pixel probe, then writes `scene-snapshot.json`, `preview-screen.png` and `preview-debug.png`. Without node, playwright or Chromium it prints `verify: SKIPPED (...)` and the build still succeeds. Failed browser checks publish with `status: "fail"` and exit 4 unless `--strict` (then nothing is published).
 
 ## What the preview proves
 

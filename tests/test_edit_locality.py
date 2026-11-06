@@ -95,7 +95,7 @@ def test_edit_in_the_protected_band_fails(plates, tmp_path, capsys):
     out = tmp_path / "check"
     code, summary, _ = run_main(["--before", plates["before"], "--after", plates["band"], "--output-dir", out,
                                  "--protect-band", BAND, "--edit-box", EDIT_BOX], capsys)
-    assert code == 1 and summary["status"] == "fail" and BAND_ID in summary["failed"]
+    assert code == 4 and summary["status"] == "fail" and BAND_ID in summary["failed"]
     _, checks = checks_of(out)
     band = checks[BAND_ID]["value"]
     assert band["changedPx"] > 0 and band["largestComponentPx"] >= band["minComponentPx"]
@@ -132,7 +132,7 @@ def test_downscaled_variant_passes_through_a_stretch(plates, tmp_path, capsys):
     path = save(tmp_path / "small-band.png", np.asarray(band_edit))
     code, summary, _ = run_main(["--before", plates["before"], "--after", path, "--output-dir", tmp_path / "c2",
                                  "--resize", "stretch", "--protect-band", BAND], capsys)
-    assert code == 1 and summary["failed"] == [BAND_ID]
+    assert code == 4 and summary["failed"] == [BAND_ID]
 
 
 def test_cover_crop_through_a_conform_file_or_resize_cover(plates, tmp_path, capsys):
@@ -157,7 +157,7 @@ def test_cover_crop_through_a_conform_file_or_resize_cover(plates, tmp_path, cap
     code, summary, _ = run_main(["--before", plates["before"], "--after", tmp_path / "cover-band.png",
                                  "--output-dir", tmp_path / "c3", "--conform", conform, "--protect-band", BAND],
                                 capsys)
-    assert code == 1 and summary["failed"] == [BAND_ID]
+    assert code == 4 and summary["failed"] == [BAND_ID]
 
 
 def test_upscaled_variant_is_compared_in_master_space(plates, tmp_path, capsys):
@@ -193,7 +193,7 @@ def test_bad_conform_files_are_errors(plates, tmp_path, capsys):
 def test_global_relighting_fails_on_mean_difference(plates, tmp_path, capsys):
     code, summary, _ = run_main(["--before", plates["before"], "--after", plates["dark"], "--output-dir",
                                  tmp_path / "c", "--protect-band", BAND, "--edit-box", EDIT_BOX], capsys)
-    assert code == 1 and set(summary["failed"]) == {BAND_ID, "outside the edit unchanged"}
+    assert code == 4 and set(summary["failed"]) == {BAND_ID, "outside the edit unchanged"}
     _, checks = checks_of(tmp_path / "c")
     band = checks[BAND_ID]["value"]
     assert band["changedPx"] == 0 and band["mae"] > 3.0  # no pixel moved 24 levels, the whole band moved ~9
@@ -205,7 +205,7 @@ def test_unrelated_change_outside_the_edit_fails(plates, tmp_path, capsys):
     path = save(tmp_path / "lamp.png", pixels)
     code, summary, _ = run_main(["--before", plates["before"], "--after", path, "--output-dir", tmp_path / "c",
                                  "--protect-band", BAND, "--edit-box", EDIT_BOX], capsys)
-    assert code == 1 and summary["failed"] == ["outside the edit unchanged"]
+    assert code == 4 and summary["failed"] == ["outside the edit unchanged"]
     _, checks = checks_of(tmp_path / "c")
     outside = checks["outside the edit unchanged"]["value"]
     assert outside["changedFraction"] < 0.002  # too small for the fraction rule; the component rule catches it
@@ -229,7 +229,7 @@ def test_exact_mode_fails_on_one_changed_byte(plates, tmp_path, capsys):
                      "--protect-band", BAND], capsys)[0] == 0
     code, summary, _ = run_main(["--before", plates["before"], "--after", path, "--output-dir", tmp_path / "exact",
                                  "--protect-band", BAND, "--exact"], capsys)
-    assert code == 1 and summary["failed"] == [BAND_ID]
+    assert code == 4 and summary["failed"] == [BAND_ID]
     _, checks = checks_of(tmp_path / "exact")
     assert checks[BAND_ID]["value"]["changedPx"] == 1 and checks[BAND_ID]["threshold"] == {"exact": True,
                                                                                          "changedPx": 0}
@@ -258,7 +258,7 @@ def test_stage_regions_that_apply_to_edits_are_protected(plates, tmp_path, capsy
                {"id": "rail", "box": [0.0, 0.0, 0.2, 0.1], "appliesTo": ["walk"]}]
     code, summary, _ = run_main(["--before", plates["before"], "--after", landmark, "--output-dir", tmp_path / "c",
                                  "--stage", stage_file(tmp_path, regions)], capsys)
-    assert code == 1 and summary["failed"] == ["protected stage:landmark unchanged"]
+    assert code == 4 and summary["failed"] == ["protected stage:landmark unchanged"]
     report, checks = checks_of(tmp_path / "c")
     assert "protected stage:rail unchanged" not in checks  # walk-only regions are not edit-protected
     assert report["regions"][0]["uv"] == [0.62, 0.16, 0.74, 0.34] and report["inputs"][-1]["path"] == "../stage.json"
@@ -268,7 +268,7 @@ def test_protect_ground_uses_the_stage_polygons_and_band(plates, tmp_path, capsy
     stage = stage_file(tmp_path, [])
     code, summary, _ = run_main(["--before", plates["before"], "--after", plates["band"], "--output-dir",
                                  tmp_path / "c", "--stage", stage, "--protect-ground"], capsys)
-    assert code == 1
+    assert code == 4
     assert set(summary["failed"]) == {"protected ground[0] unchanged", "protected playableBand unchanged"}
     code, _, err = run_main(["--before", plates["before"], "--after", plates["band"], "--output-dir", tmp_path / "d",
                              "--protect-ground"], capsys)
@@ -284,7 +284,7 @@ def test_nothing_to_check_is_an_error(plates, tmp_path, capsys):
 def test_outputs_are_deterministic(plates, tmp_path, capsys):
     for name in ("a", "b"):
         assert run_main(["--before", plates["before"], "--after", plates["band"], "--output-dir", tmp_path / name,
-                         "--protect-band", BAND, "--edit-box", EDIT_BOX], capsys)[0] == 1
+                         "--protect-band", BAND, "--edit-box", EDIT_BOX], capsys)[0] == 4
     for name in ("locality-qa.json", "locality-diff.png"):
         assert (tmp_path / "a" / name).read_bytes() == (tmp_path / "b" / name).read_bytes(), name
 
@@ -314,4 +314,4 @@ def test_strict_failure_publishes_nothing(plates, tmp_path):
     assert sorted(path.name for path in tmp_path.iterdir()) == ["band.png", "before.png", "dark.png", "local.png"]
     kept = run_cli([SCRIPT, "--before", plates["before"], "--after", plates["band"], "--output-dir",
                     tmp_path / "kept", "--protect-band", BAND])
-    assert kept.returncode == 1 and json.loads(kept.stdout)["status"] == "fail" and kept.stdout.isascii()
+    assert kept.returncode == 4 and json.loads(kept.stdout)["status"] == "fail" and kept.stdout.isascii()

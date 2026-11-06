@@ -892,7 +892,7 @@ def _run(argv: Sequence[str] | None = None) -> int:
         print(forge_core.ascii_text(f"error: {rig.describe_error(exc)}"), file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
-    return rig.published_fail_status(summary)  # D26: a published fail report exits 1
+    return rig.published_fail_status(summary)  # a published fail report exits 4
 
 
 def main(argv: Sequence[str] | None = None) -> int:

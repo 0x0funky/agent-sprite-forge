@@ -93,7 +93,7 @@ def test_strict_qc_failure_publishes_nothing(tmp_path):
     # Without --strict-qc the frames are published for inspection, and the failed QA still exits 1 (D26)
     loose = tmp_path / "loose"
     result = run_fx(write_spec(tmp_path / "case", escaping), loose)
-    assert result.returncode == 1, result.stderr
+    assert result.returncode == 4, result.stderr
     summary = json.loads(result.stdout)
     assert summary["qa"] == "fail" and summary["failed_checks"] == ["margins"]
     assert result.stderr.startswith("error: published with QA status fail: margins (see ") and result.stderr.isascii()

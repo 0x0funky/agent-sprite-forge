@@ -71,4 +71,4 @@ Run these from the project root:
     python "<skill-dir>/scripts/scale_frames.py" --sheet raw/burst-sheet.png --rows 2 --cols 2 --scale-from neutral --target-body-px 48 --resampler box --emit-clips --clip-name burst --ticks 4 --output-dir out/burst-game
     python "<skill-dir>/scripts/build_animation_clips.py" --manifest out/burst-game/clips.json --output-dir out/burst-clips
 
-`sheet_qc.py` publishes its report either way and exits 1 when a check fails; read `sheet-qc.json` before deciding. Regenerate a sheet whose part is cut or merged with a neighbour, and give it a smaller motion envelope. In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.
+`sheet_qc.py` publishes its report either way and exits 4 when a check fails (1 with `--strict`, which publishes nothing); read `sheet-qc.json` before deciding. Regenerate a sheet whose part is cut or merged with a neighbour, and give it a smaller motion envelope. In Claude Code, `<skill-dir>` is `${CLAUDE_SKILL_DIR}`.

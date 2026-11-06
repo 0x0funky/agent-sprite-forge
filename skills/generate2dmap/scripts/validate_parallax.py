@@ -501,11 +501,14 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     for message in errors:
         print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
     print(json.dumps({**result, "report": str(report.resolve()) if report else None}, ensure_ascii=True))
-    return 0 if result["passed"] and not errors else 1
+    if errors or (not result["passed"] and not report):
+        return 1
+    return 0 if result["passed"] else forge_core.EXIT_PUBLISHED_FAIL  # a failed plan whose --report was written
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """The CLI under forge_core.run_cli (D26, D27): a failed plan exits 1 with its result printed, usage
+    """The CLI under forge_core.run_cli (D26, D27): a failed plan exits 4 when its --report was written, else 1
+    with its result printed, usage
     errors exit 2, and no traceback reaches the user."""
     return forge_core.run_cli(_cli, argv)
 

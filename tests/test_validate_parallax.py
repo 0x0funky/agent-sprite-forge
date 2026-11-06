@@ -255,7 +255,7 @@ class ForkParallaxTests(unittest.TestCase):
         # Reports never replace a file (Appendix D), so the second run needs its own report path.
         command[-1] = str(self.root / "report-2.json")
         run = run_cli(command, cwd=SCRIPT.parent)
-        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.returncode, 4)  # the failing report was written
         self.assertFalse(json.loads(run.stdout)["passed"])
         self.assertFalse(json.loads((self.root / "report-2.json").read_text())["passed"])
         self.assertTrue(json.loads((self.root / "report.json").read_text())["passed"])
@@ -696,7 +696,7 @@ class ParallaxCliTests(unittest.TestCase):
         self.assertEqual((result["passed"], result["report"]), (False, None))
         self.assertFalse((self.root / "qa.json").exists())
         run = parallax_cli("--spec", self.root / "plan.json", "--report", self.root / "qa.json")
-        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.returncode, 4)  # without --strict the failing report is written
         self.assertFalse(json.loads((self.root / "qa.json").read_text(encoding="utf-8"))["passed"])
 
     def test_cli_options_reach_the_validator(self):

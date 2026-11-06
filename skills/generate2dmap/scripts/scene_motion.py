@@ -30,7 +30,7 @@ percentile adjacent step (fail above --max-seam-ratio), motion energy and mean
 mask opacity (warn when motion is invisible), the leak ring just outside the
 mask, protected-core and per-region stability (motionless regions are judged as
 stills), the poster swap, frame count, GOP alignment and MP4 timestamps.
-Writes loop-qa.json and seam-diff.png; exits 1 when the status is fail.
+Writes loop-qa.json and seam-diff.png; exits 4 when the published status is fail.
 """
 
 from __future__ import annotations
@@ -939,13 +939,13 @@ def _main(argv: Sequence[str] | None = None) -> int:
     if args.verb == "build" and summary["qa_status"] == "fail":  # D26: kept by --allow-seam-fail, still a failure
         print(f"error: the loop was published with status fail for review (--allow-seam-fail); see "
               f"{forge_core.ascii_text(summary['metadata'])}", file=sys.stderr)
-        return 1
-    return 1 if args.verb == "qa" and summary["status"] == "fail" else 0
+        return forge_core.EXIT_PUBLISHED_FAIL
+    return forge_core.EXIT_PUBLISHED_FAIL if args.verb == "qa" and summary["status"] == "fail" else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
-    printed as one error: line, D27), 2 (usage)."""
+    """The CLI: exit 0 (pass or warn), 1 (an error printed as one error: line, D27; nothing published),
+    2 (usage), 4 (a published report with status fail, forge_core.EXIT_PUBLISHED_FAIL)."""
     return forge_core.run_cli(_main, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (forge_av.ForgeAVError,))
 
 

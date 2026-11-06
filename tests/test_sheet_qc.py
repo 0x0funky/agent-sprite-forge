@@ -107,7 +107,7 @@ def run_ok(*args) -> dict:
     result = run_cli([SCRIPT, *map(str, args)])
     assert result.stdout.isascii()
     summary = json.loads(result.stdout)
-    assert result.returncode == (1 if summary["status"] == "fail" else 0), result.stderr
+    assert result.returncode == (4 if summary["status"] == "fail" else 0), result.stderr
     assert Path(summary["metadata"]).is_file()
     return summary
 
@@ -168,7 +168,7 @@ def test_exit_codes_follow_d26_and_d27(tmp_path):
     assert usage.returncode == 2 and usage.stderr.startswith("usage:") and "error: argument --rows" in usage.stderr
     assert not (tmp_path / "u").exists()
     failed = run_cli([SCRIPT, "spill", "--input", sheet, "--rows", "1", "--cols", "2", "--output-dir", tmp_path / "f"])
-    assert failed.returncode == 1 and json.loads(failed.stdout)["status"] == "fail"
+    assert failed.returncode == 4 and json.loads(failed.stdout)["status"] == "fail"
     assert (tmp_path / "f" / "sheet-qc.json").is_file() and failed.stderr == ""
     (tmp_path / "clean").mkdir()
     clean, _ = tail_sheet(tmp_path / "clean", spill_px=0)
@@ -310,7 +310,7 @@ def test_fox_spill_runs_within_1_5_s(tmp_path):
     start = time.perf_counter()
     status = sq.main(["spill", "--input", str(fox), "--rows", "2", "--cols", "4", "--output-dir", str(tmp_path / "t")])
     elapsed = time.perf_counter() - start
-    assert status == 1 and (tmp_path / "t" / "sheet-qc.json").is_file()  # the fox fails spill QC (D26: exit 1)
+    assert status == 4 and (tmp_path / "t" / "sheet-qc.json").is_file()  # the fox fails spill QC (published: exit 4)
     assert elapsed <= 1.5, f"spill took {elapsed:.2f} s"
 
 

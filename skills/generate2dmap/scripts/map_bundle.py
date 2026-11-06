@@ -1586,7 +1586,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
     if bundle.errors:
         note = f"; report: {report_path}" if report_path else ""
         print(forge_core.ascii_text(f"error: map bundle has {len(bundle.errors)} error(s){note}"), file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL if report_path else 1   # a published failing report exits 4
     print(json.dumps({"status": "warn" if bundle.warnings else "pass", "bundle": str(bundle.path),
                       "id": forge_core.ascii_text(bundle.id), "version": bundle.version,
                       "errors": 0, "warnings": len(bundle.warnings),
@@ -1629,9 +1629,11 @@ def build_parser() -> argparse.ArgumentParser:
     verbs = parser.add_subparsers(dest="verb", required=True)
     validate = verbs.add_parser("validate", help="check the contract, files, sha256 and cross-field rules",
                                 description="Check a map bundle: JSON Schema, files and sha256, cross-field rules. "
-                                            "Exit 1 on any error; warnings go to stderr.")
+                                            "Exit 1 on any error (4 when the --report was written); warnings go to "
+                                            "stderr.")
     validate.add_argument("--bundle", required=True, type=Path, help="map bundle JSON")
-    validate.add_argument("--report", type=Path, help="also write the QA report JSON here (must not exist)")
+    validate.add_argument("--report", type=Path, help="also write the QA report JSON here (must not exist); a bundle "
+                                                        "with errors then exits 4")
     validate.add_argument("--require-sha256", action="store_true", help="every referenced file must record its sha256")
     validate.set_defaults(func=cmd_validate)
     hasher = verbs.add_parser("hash", help="write a copy with the sha256 of every referenced file",
@@ -1650,7 +1652,8 @@ def _run(argv: list[str] | None = None) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """The CLI under forge_core.run_cli (D26, D27): usage errors exit 2, expected errors print
-    'error: <message>' and exit 1, anything else 'error: internal error (<Type>: <message>)'."""
+    'error: <message>' and exit 1, a bundle with errors exits 4 when its --report was written (1 without one),
+    anything else 'error: internal error (<Type>: <message>)'."""
     return forge_core.run_cli(_run, argv)
 
 

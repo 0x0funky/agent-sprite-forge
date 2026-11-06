@@ -911,8 +911,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """The CLI: exit 0 (pass or warn), 1 (a published report with status fail, D26; or an error,
-    printed as one error: line, D27), 2 (usage)."""
+    """The CLI: exit 0 (pass or warn), 1 (an error printed as one error: line, D27; nothing published),
+    2 (usage), 4 (a published report with status fail, forge_core.EXIT_PUBLISHED_FAIL)."""
     return forge_core.run_cli(_main, argv, expected=forge_core.CLI_EXPECTED_ERRORS + (forge_av.ForgeAVError,))
 
 

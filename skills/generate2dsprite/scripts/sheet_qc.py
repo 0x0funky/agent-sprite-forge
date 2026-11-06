@@ -18,9 +18,9 @@ Run from the project root, for example:
   python "<skill-dir>/scripts/sheet_qc.py" spill --input raw/run-sheet.png --rows 2 --cols 4 --output-dir qc/run-spill
   python "<skill-dir>/scripts/sheet_qc.py" frames --sheet raw/run-sheet.png --rows 2 --cols 4 --cycle run --game-pixel 8 --output-dir qc/run-frames
 
-The report is published even when a check fails; the run then exits 1 (D26:
-a published report whose status is fail exits 1; pass and warn exit 0). With
---strict a failed check exits 1 and publishes nothing. Usage errors exit 2
+The report is published even when a check fails; the run then exits 4
+(forge_core.EXIT_PUBLISHED_FAIL: a published report whose status is fail; pass
+and warn exit 0). With --strict a failed check exits 1 and publishes nothing. Usage errors exit 2
 (argparse); other errors print one "error: ..." line and exit 1.
 """
 
@@ -1135,7 +1135,7 @@ def build_parser() -> argparse.ArgumentParser:
         sub.add_argument("--alpha-threshold", type=_alpha, default=SOLID_THRESHOLD,
                          help="solid pixels have alpha above this (default 127, i.e. >= 128)")
         sub.add_argument("--strict", action="store_true",
-                         help="publish nothing when a check fails (a failing report exits 1 either way)")
+                         help="publish nothing and exit 1 when a check fails (without it a failing report is published and exits 4)")
 
     spill = commands.add_parser("spill", help="cross-cell spill on the raw sheet, before slicing",
                                 description="Cross-cell spill, sheet-edge cuts, empty cells, boundary band, safe frame "
@@ -1203,12 +1203,12 @@ def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     summary = args.handler(args)
     print(json.dumps(summary, ensure_ascii=True))
-    return 1 if summary["status"] == "fail" else 0  # D26: a published failing report exits 1
+    return forge_core.EXIT_PUBLISHED_FAIL if summary["status"] == "fail" else 0  # a published failing report exits 4
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """CLI entry (D26, D27): usage errors exit 2 (argparse); a published report whose status is fail
-    exits 1; every other failure prints one ``error: ...`` line and exits 1."""
+    exits 4; every other failure prints one ``error: ...`` line and exits 1."""
     return forge_core.run_cli(_run, argv)
 
 

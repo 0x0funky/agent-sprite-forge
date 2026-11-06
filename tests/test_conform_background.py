@@ -185,7 +185,7 @@ class ConformTests(unittest.TestCase):
         self.assertFalse((self.root / "strict").exists())
         self.assertEqual([path.name for path in self.root.iterdir() if path.name.startswith(".")], [])
         run = conform_cli(*common, "--output-dir", self.root / "lenient")
-        self.assertEqual(run.returncode, 1, run.stderr)  # D26: published, and the failed QA still exits 1
+        self.assertEqual(run.returncode, 4, run.stderr)  # published, and the failed QA exits 4
         self.assertIn("published a failed QA report", run.stderr)
         self.assertNotIn("Traceback", run.stderr)
         summary = json.loads(run.stdout)
@@ -209,7 +209,7 @@ class ValidateCropsTests(unittest.TestCase):
         run = conform_cli("validate-crops", "--input", self.plate, "--subject", "crest=560,40,720,200",
                           "--subject", "sign=10,500,90,560", "--subject", "hero=600,400,680,560",
                           "--min-margin", "4", "--output-dir", out)
-        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.returncode, 4)
         summary = json.loads(run.stdout)
         self.assertEqual((summary["status"], summary["cut"]),
                          ("fail", ["crop 19.5:9 focus 0.5,0.5", "crop 4:3 focus 0.5,0.5"]))
@@ -237,7 +237,7 @@ class ValidateCropsTests(unittest.TestCase):
         folder.mkdir()
         run = run_cli([SCRIPT, "validate-crops", "--input", self.plate, "--subject", "crest=560,40,720,200",
                        "--output-dir", folder / "crops"], "utf-8")
-        self.assertEqual(run.returncode, 1, run.stdout)
+        self.assertEqual(run.returncode, 4, run.stdout)
         self.assertIn("error: validate-crops published a failed QA report", run.stderr)
         self.assertTrue(run.stderr.isascii(), run.stderr)
         self.assertTrue(run.stdout.isascii(), run.stdout)
@@ -248,7 +248,7 @@ class ValidateCropsTests(unittest.TestCase):
         run = conform_cli("validate-crops", "--input", self.plate, "--aspects", "16:9", "--zoom", "1.12",
                           "--focus", "0,0.5", "--focus", "1,0.5", "--subject", "centre=600,300,680,380",
                           "--subject", "edge=1200,300,1270,380", "--output-dir", out)
-        self.assertEqual(run.returncode, 1)
+        self.assertEqual(run.returncode, 4)
         report = json.loads((out / "crops-qa.json").read_text(encoding="utf-8"))
         left, right = report["checks"]
         self.assertEqual(left["value"]["window"][0], 0.0)

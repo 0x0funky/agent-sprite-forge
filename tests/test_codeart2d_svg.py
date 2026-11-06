@@ -111,7 +111,7 @@ def test_render_strict_qc_failure_publishes_nothing(tmp_path, capsys):
     code, stdout, stderr = svg_cli(capsys, "render", "--svg", svg, "--palette", palette, "--output-dir",
                                    tmp_path / "loose", "--crisp", "--backend", "resvg_py")
     summary = summary_of(stdout)
-    assert code == 1 and summary["qa"] == "fail" and summary["failed_checks"] == ["off_palette"]
+    assert code == 4 and summary["qa"] == "fail" and summary["failed_checks"] == ["off_palette"]
     assert stderr.startswith("error: published with QA status fail: off_palette (see ") and stderr.isascii()
     assert (tmp_path / "loose" / "codeart-meta.json").is_file()
 

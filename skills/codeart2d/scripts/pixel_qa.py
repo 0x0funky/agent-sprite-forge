@@ -22,8 +22,9 @@ variants. Checks, each valued at the worst frame:
 outputs) plus per-frame metrics. --review writes a contact sheet: every frame at each
 --scales factor (integer nearest only) on each --bg, an --onion row (previous frame red,
 next blue, --anchor magenta), palette swatches and the per-frame metrics.
-A failed check exits 1: without --strict the report and review sheet are still written (so
-the failure can be inspected), with --strict neither file is written. Warnings never fail.
+A failed check exits 4 when the report or review sheet was written (without --strict, so
+the failure can be inspected) and 1 when nothing was written (--strict, or neither file
+asked for). Warnings never fail.
 """
 
 from __future__ import annotations
@@ -328,7 +329,7 @@ def run(args: argparse.Namespace) -> dict:
     summary = {"status": status, "frames": len(frames), "failed": [check["id"] for check in failed],
                "warned": warned, "report": str(Path(args.report).resolve()) if args.report else None,
                "review": str(Path(args.review).resolve()) if args.review else None}
-    if failed:  # D26: a failed QA exits 1 although its report is written; main() prints this line
+    if failed:  # a failed QA exits 4 when its report is written (1 when nothing is); main() prints this line
         summary["error"] = (f"QA failed: {', '.join(check['id'] for check in failed)}"
                             + (" (report written)" if args.report else "") + "; --strict writes nothing on failure")
     return summary
@@ -408,9 +409,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     message = summary.pop("error", None)
     print(json.dumps(summary, ensure_ascii=True))
-    if message:  # D26: a failed check exits 1 although the report and review sheet are written
+    if message:  # a failed check: exit 4 when the report or review sheet was written, else 1
         print(f"error: {forge_core.ascii_text(message)}", file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL if summary.get("report") or summary.get("review") else 1
     return 0
 
 

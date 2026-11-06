@@ -14,7 +14,8 @@ ask it for "pixel art"). This tool makes the pixels:
 It writes a new --output-dir with plate.png (native size, default 480x270, opaque), plate-x<k>.png (a nearest
 preview, default x4), palette.json (generate2dsprite.palette.v1), shade-maps.json (per colour the in-palette
 colour one step darker and one step lighter, so a game can light and flash without new colours) and
-plate.json (crop, palette, QA). Success prints one ASCII JSON line; errors print "error: ..." and exit 1.
+plate.json (crop, palette, QA). Success prints one ASCII JSON line; errors print "error: ..." and exit 1; a plate published with QA status
+fail exits 4.
 Draw the plate with nearest sampling at whole-number zoom (480x270 x4 = 1920x1080).
 """
 from __future__ import annotations
@@ -111,7 +112,7 @@ def plate_qa(idx: np.ndarray, size: tuple[int, int], colors: int, reduction: flo
         {"id": "opaque", "status": "pass" if bool((idx >= 0).all()) else "fail",
          "value": int((idx < 0).sum()), "threshold": 0},
         {"id": "colours", "status": "pass" if used <= colors else "fail", "value": used, "threshold": colors},
-        {"id": "lone-pixels", "status": "info", "value": round(float(lone.mean()), 5), "threshold": None,
+        {"id": "lone-pixels", "status": "skipped", "value": round(float(lone.mean()), 5), "threshold": None,
          "note": "share of plate pixels with no 4-neighbour of their colour (kept features: lights, stars, eyes)"},
         {"id": "reduction", "status": "pass" if reduction >= MIN_REDUCTION else "warn", "value": round(reduction, 3),
          "threshold": MIN_REDUCTION, "note": "painting px per plate px; under 2x the majority has little to vote"},
@@ -221,7 +222,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     for warning in summary.pop("_warnings"):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
-    return 1 if summary["status"] == "fail" else 0
+    return forge_core.EXIT_PUBLISHED_FAIL if summary["status"] == "fail" else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

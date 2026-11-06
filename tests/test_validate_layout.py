@@ -314,7 +314,7 @@ class ValidateLayoutTests(unittest.TestCase):
         document = level()
         document["props"][1]["thickness"] = 3
         lenient = self.cli(document, "--output-dir", self.root / "lenient")
-        self.assertEqual(lenient.returncode, 1)
+        self.assertEqual(lenient.returncode, 4)
         self.assertTrue((self.root / "lenient" / "layout-debug.png").is_file())  # a failed check is still reported
         strict = self.cli(document, "--output-dir", self.root / "strict", "--strict-qc")
         self.assertEqual(strict.returncode, 1)

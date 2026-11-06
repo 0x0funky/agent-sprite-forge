@@ -1983,10 +1983,10 @@ def _run(argv: list[str] | None = None) -> int:
         print("error: " + forge_core.ascii_text(str(exc)), file=sys.stderr)
         return 1
     print(json.dumps(summary))
-    if summary["status"] == "fail":  # D26: published for inspection, and the failed QA still exits 1
+    if summary["status"] == "fail":  # published for inspection: the failed QA exits 4 (forge_core.EXIT_PUBLISHED_FAIL)
         print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
                                     f"(see {summary['qa']})"), file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL
     return 0
 
 

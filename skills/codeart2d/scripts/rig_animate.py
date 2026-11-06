@@ -2322,13 +2322,13 @@ def _run(argv: Sequence[str] | None = None) -> int:
 
 
 def published_fail_status(summary: dict) -> int:
-    """D26: an output published with QA status fail (no --strict-qc) still exits 1, with one error line that
-    names the failed checks and the report; pass and warn exit 0. fx_build uses it too."""
+    """An output published with QA status fail (no --strict-qc) exits 4 (forge_core.EXIT_PUBLISHED_FAIL), with
+    one error line that names the failed checks and the report; pass and warn exit 0. fx_build uses it too."""
     if summary.get("qa") != "fail":
         return 0
     print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
                                 f"(see {summary['report']})"), file=sys.stderr)
-    return 1
+    return forge_core.EXIT_PUBLISHED_FAIL
 
 
 def main(argv: Sequence[str] | None = None) -> int:

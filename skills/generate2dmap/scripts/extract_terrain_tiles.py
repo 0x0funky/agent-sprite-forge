@@ -7,7 +7,7 @@ and material numbers are written only when given. QC checks contrast, variant si
 border frames and shape coverage; --edge-policy seamless adds a wrap-aware resize and normalised
 wrap and Wang seam checks. The output directory must be new: work is staged beside it and
 published only after QC, so a failed run leaves nothing behind. A QA status of fail is still
-published for inspection and exits 1 (D26); --strict-qc publishes nothing instead.
+published for inspection and exits 4; --strict-qc publishes nothing instead (exit 1).
 """
 
 from __future__ import annotations
@@ -927,10 +927,10 @@ def _cli(argv: list[str] | None = None) -> int:
                "status": payload["qa"]["status"],
                "qc": {"passed": payload["qc"]["passed"], "warnings": payload["qc"]["warnings"]}}
     print(json.dumps(summary, ensure_ascii=True))
-    if payload["qa"]["status"] == "fail":  # D26: the report is published, and a failed QA status still exits 1
+    if payload["qa"]["status"] == "fail":  # the report is published, and a failed QA status exits 4
         failed = [check["id"] for check in payload["qa"]["checks"] if check["status"] == "fail"] or ["qc"]
         print(f"error: published with QA status fail: {', '.join(failed)}", file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL
     return 0
 
 

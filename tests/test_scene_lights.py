@@ -192,7 +192,7 @@ def test_stage_ground_and_water_reject_reflections(plate_path, tmp_path, capsys)
 def test_expect_mismatch_fails_and_strict_publishes_nothing(plate_path, tmp_path, capsys):
     code, summary, _ = run_main(["extract", "--plate", plate_path, "--output-dir", tmp_path / "l", "--expect", "4"],
                                 capsys)
-    assert code == 1 and summary["failed"] == ["lights found"] and (tmp_path / "l" / "lights.json").exists()
+    assert code == 4 and summary["failed"] == ["lights found"] and (tmp_path / "l" / "lights.json").exists()
     code, summary, err = run_main(["extract", "--plate", plate_path, "--output-dir", tmp_path / "s", "--expect", "4",
                                    "--strict"], capsys)
     assert code == 1 and summary is None and "strict check failed (lights found)" in err
@@ -334,7 +334,7 @@ def test_atmosphere_values_fail_or_warn(tmp_path, capsys, change, check_id, stat
     out = tmp_path / "qa"
     code, summary, _ = run_main(["atmosphere", "--atmosphere", write_json(tmp_path / "a.json", document),
                                  "--output-dir", out], capsys)
-    assert summary["status"] == status and code == (1 if status == "fail" else 0)
+    assert summary["status"] == status and code == (4 if status == "fail" else 0)
     report = json.loads((out / "atmosphere-qa.json").read_text(encoding="utf-8"))
     checks = {item["id"]: item for item in report["checks"]}
     assert checks[check_id]["status"] == status

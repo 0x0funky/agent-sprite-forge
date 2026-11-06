@@ -15,7 +15,7 @@ render  Compiles the SVG with the palette (literal-hex class rules; a variant ap
         shape-rendering="crispEdges" when it has none, the art renders at 1 unit = 1 px,
         and --zoom N adds <name>@Nx.png by integer nearest upscaling; QA then requires
         0 partial-alpha and 0 off-palette pixels, and --strict-qc publishes nothing
-        otherwise (without it a failing render is published and exits 1). Without
+        otherwise (without it a failing render is published and exits 4). Without
         --palette, the palette is the #hex colours the SVG writes.
         Variants: all (default: every palette variant, or the base palette), base, or names.
 lint    Lists constructs that render differently across resvg and Chrome, one
@@ -460,7 +460,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         if args.command == "render":
             summary = cmd_render(args)
-            failure = None if summary["qa"] != "fail" else (  # D26: published without --strict-qc, still exit 1
+            failure = None if summary["qa"] != "fail" else (  # published without --strict-qc: exit 4
                 f"published with QA status fail: {', '.join(summary['failed_checks'])} (see {summary['metadata']})")
         elif args.command == "lint":
             summary, failure = cmd_lint(args)
@@ -481,7 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(json.dumps(summary, ensure_ascii=True))
     if failure:
         print(f"error: {forge_core.ascii_text(failure)}", file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL if args.command == "render" else 1
     return 0
 
 

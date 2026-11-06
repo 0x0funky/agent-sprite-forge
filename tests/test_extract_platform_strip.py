@@ -826,15 +826,15 @@ class CliTests(StripCase):
         self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(sorted(p.name for p in self.root.iterdir()), ["strip.json", "strip.png"])
 
-    def test_a_published_fail_report_exits_1(self):
-        """D26 (review r2, finding 9): without --strict-qc a failing QA envelope is still published for inspection,
-        and the run exits 1 with 'error: published with QA status fail: <ids>'."""
+    def test_a_published_fail_report_exits_4(self):
+        """Exit 4 (D26 used 1; review r2, finding 9): without --strict-qc a failing QA envelope is still published for inspection,
+        and the run exits 4 with 'error: published with QA status fail: <ids>'."""
         pixels = np.zeros((8, 24, 4), np.uint8)
         pixels[0:] = (110, 80, 60, 255)  # art rises 2 px above the declared surface
         pixels[0, 0] = 0
         self.write(pixels, three_pieces(8, 8, 2, 4))
         result = run_cli(self.argv("kit"), "cp1252")
-        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(result.returncode, 4, result.stdout)
         self.assertEqual(result.stderr.strip().splitlines()[-1], "error: published with QA status fail: surface_rise_px")
         self.assertEqual(json.loads(result.stdout)["status"], "fail")
         report = json.loads((self.root / "kit" / "platform-strip.json").read_text(encoding="utf-8"))

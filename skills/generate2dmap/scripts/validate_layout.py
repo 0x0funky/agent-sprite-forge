@@ -865,7 +865,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     summary.update(output_dir=str(final.resolve()), report=str((final / "layout-report.json").resolve()),
                    metadata=str((final / "layout-report.json").resolve()),
                    debug=str((final / "layout-debug.png").resolve()))
-    return summary, 1 if failed else 0
+    return summary, forge_core.EXIT_PUBLISHED_FAIL if failed else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -200,7 +200,7 @@ def test_slot_on_water_fails(tmp_path, capsys):
     stage_path = write_stage(tmp_path / "scene", stage)
     out = tmp_path / "qa"
     code, summary, _ = run_main(STAGE, ["--stage", stage_path, "--output-dir", out], capsys)
-    assert code == 1 and summary["status"] == "fail"
+    assert code == 4 and summary["status"] == "fail"
     checks = checks_by_id(json.loads((out / "stage-qa.json").read_text(encoding="utf-8")))
     assert checks["slots stay off water"]["status"] == "fail"
     assert checks["slots stay off water"]["value"] == [{"slot": "H1", "uv": [0.52, 0.67]}]
@@ -216,11 +216,11 @@ def test_walk_protected_region_is_not_standable_but_motion_only_is(tmp_path, cap
     stage["protectedRegions"][1]["appliesTo"] = ["walk"]
     stage_path = write_stage(tmp_path / "b", stage)
     code, summary, _ = run_main(STAGE, ["--stage", stage_path, "--output-dir", tmp_path / "qa-b"], capsys)
-    assert code == 1 and "slots avoid walk-protected regions" in summary["failed"]
+    assert code == 4 and "slots avoid walk-protected regions" in summary["failed"]
     del stage["protectedRegions"][1]["appliesTo"]  # no appliesTo: protected from everything
     stage_path = write_stage(tmp_path / "c", stage)
     code, summary, _ = run_main(STAGE, ["--stage", stage_path, "--output-dir", tmp_path / "qa-c"], capsys)
-    assert code == 1 and "slots avoid walk-protected regions" in summary["failed"]
+    assert code == 4 and "slots avoid walk-protected regions" in summary["failed"]
 
 
 def test_static_rules_fail_with_their_check(tmp_path, capsys):
@@ -237,7 +237,7 @@ def test_static_rules_fail_with_their_check(tmp_path, capsys):
         stage_path = write_stage(tmp_path / f"s{index}", stage)
         code, summary, _ = run_main(STAGE, ["--stage", stage_path, "--output-dir", tmp_path / f"q{index}",
                                             "--aspects", "16:9"], capsys)
-        assert code == 1 and check_id in summary["failed"], (check_id, summary["failed"])
+        assert code == 4 and check_id in summary["failed"], (check_id, summary["failed"])
 
 
 def test_reviewed_aspect_range_that_crops_the_ground_fails(tmp_path, capsys):
@@ -248,7 +248,7 @@ def test_reviewed_aspect_range_that_crops_the_ground_fails(tmp_path, capsys):
     stage_path = write_stage(tmp_path / "scene", stage)
     out = tmp_path / "qa"
     code, summary, _ = run_main(STAGE, ["--stage", stage_path, "--output-dir", out, "--ui-profile", "none"], capsys)
-    assert code == 1
+    assert code == 4
     assert summary["failed"] == ["layout solves at both ends of reviewedAspectRange"]
     ends = checks_by_id(json.loads((out / "stage-qa.json").read_text(encoding="utf-8")))[
         "layout solves at both ends of reviewedAspectRange"]["value"]
@@ -288,7 +288,7 @@ def test_contain_fit_letterboxes_and_places_feet(tmp_path, capsys):
 def test_plate_of_another_size_fails(tmp_path, capsys):
     stage_path = write_stage(tmp_path / "scene", make_stage(), plate_size=(640, 360))
     code, summary, _ = run_main(STAGE, ["--stage", stage_path, "--output-dir", tmp_path / "qa"], capsys)
-    assert code == 1 and summary["failed"] == ["plate matches sourceSize"]
+    assert code == 4 and summary["failed"] == ["plate matches sourceSize"]
 
 
 def test_missing_plate_validates_geometry_only(tmp_path, capsys):
@@ -458,7 +458,7 @@ def test_inconsistent_plan_fails_and_strict_publishes_nothing(tmp_path, capsys):
     stage["slots"]["enemy"][0] = [0.12, 0.45]  # off the ground
     stage_path = write_stage(tmp_path / "plan", stage, plate=False)
     code, summary, _ = run_main(GUIDE, ["--stage", stage_path, "--output-dir", tmp_path / "g"], capsys)
-    assert code == 1 and "slots stand on ground" in summary["failed"]
+    assert code == 4 and "slots stand on ground" in summary["failed"]
     assert (tmp_path / "g" / "guide.png").exists()
     code, summary, err = run_main(GUIDE, ["--stage", stage_path, "--output-dir", tmp_path / "strict", "--strict"],
                                   capsys)
@@ -534,5 +534,5 @@ def test_strict_failure_publishes_nothing(tmp_path):
     assert result.returncode == 1 and "strict check failed" in result.stderr and result.stdout == ""
     assert not out.exists() and sorted(path.name for path in tmp_path.iterdir()) == ["scene"]
     line = run_cli([STAGE_SCRIPT, "--stage", stage_path, "--output-dir", tmp_path / "loose"])
-    assert line.returncode == 1 and json.loads(line.stdout)["status"] == "fail"  # without --strict: report kept
+    assert line.returncode == 4 and json.loads(line.stdout)["status"] == "fail"  # without --strict: report kept
     assert line.stdout.isascii() and len(line.stdout.strip().splitlines()) == 1

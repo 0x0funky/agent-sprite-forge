@@ -959,14 +959,14 @@ class CliTests(TerrainCase):
         self.assertEqual(Path(summary["manifest"]), (self.root / "tiles" / "terrain-bundle.json").absolute())
         self.assertTrue(summary["qc"]["passed"])
 
-    def test_a_published_fail_report_exits_1(self):
-        """D26 (review r2, finding 9): without --strict-qc a failing QA envelope is still published for inspection,
-        and the run exits 1 with 'error: published with QA status fail: <ids>'; --strict-qc publishes nothing."""
+    def test_a_published_fail_report_exits_4(self):
+        """Exit 4 (D26 used 1; review r2, finding 9): without --strict-qc a failing QA envelope is still published for inspection,
+        and the run exits 4 with 'error: published with QA status fail: <ids>'; --strict-qc publishes nothing."""
         Image.new("RGBA", (64, 32), (80, 160, 60, 255)).save(self.root / "flat.png")  # contrast 0, equal variants
         common = ["--input", self.root / "flat.png", "--rows", "2", "--cols", "4", "--terrain-row", "grass=0",
                   "--terrain-row", "dirt=1"]
         result = run_cli([SCRIPT, *common, "--output-dir", self.root / "flat"], "cp1252")
-        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(result.returncode, 4, result.stdout)
         self.assertEqual(result.stderr.strip().splitlines()[-1],
                          "error: published with QA status fail: contrast, variant_difference")
         self.assertEqual(json.loads(result.stdout)["status"], "fail")

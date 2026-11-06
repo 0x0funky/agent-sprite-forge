@@ -86,7 +86,7 @@ def test_parallax_strict_qc_failure_publishes_nothing(tmp_path):
     # Without --strict-qc the layers are published for inspection, and the failed QA still exits 1 (D26)
     result = parallax(spec_path, tmp_path / "bg")
     summary = json.loads(result.stdout)
-    assert result.returncode == 1 and summary["status"] == "fail" and "loop_step:ramp" in summary["failed_checks"]
+    assert result.returncode == 4 and summary["status"] == "fail" and "loop_step:ramp" in summary["failed_checks"]
     assert result.stderr.startswith("error: published with QA status fail: ") and "loop_step:ramp" in result.stderr
     assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
     qa = json.loads((tmp_path / "bg" / "parallax-qa.json").read_text(encoding="utf-8"))
@@ -278,7 +278,7 @@ def test_ambient_strict_qc_failure_publishes_nothing(tmp_path):
     # Without --strict-qc the loop is published for inspection, and the failed QA still exits 1 (D26)
     result = ambient(tmp_path / "flat.png", EXAMPLES / "plate-effects.json", tmp_path / "loose")
     summary = json.loads(result.stdout)
-    assert result.returncode == 1 and summary["status"] == "fail" and summary["failed_checks"] == ["motion_present"]
+    assert result.returncode == 4 and summary["status"] == "fail" and summary["failed_checks"] == ["motion_present"]
     assert result.stderr.startswith("error: published with QA status fail: motion_present (see ")
     assert result.stderr.isascii() and len(result.stderr.strip().splitlines()) == 1
     assert json.loads((tmp_path / "loose" / "ambient-qa.json").read_text(encoding="utf-8"))["status"] == "fail"

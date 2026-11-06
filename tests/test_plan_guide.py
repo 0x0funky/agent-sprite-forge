@@ -195,7 +195,7 @@ def test_requested_schema_additions_accept_every_b03_producer(tmp_path):
     make_magenta_sheet(2, 2, 64, spill_px=6).save(sheet)
     spill = run_cli([script_path(SKILL, "sheet_qc"), "spill", "--input", sheet, "--rows", "2", "--cols", "2", "--output-dir",
                      tmp_path / "spill"])
-    assert spill.returncode == 1 and json.loads(spill.stdout)["status"] == "fail", spill.stderr  # D26: spill found
+    assert spill.returncode == 4 and json.loads(spill.stdout)["status"] == "fail", spill.stderr  # published, spill found
     spill_report = json.loads((tmp_path / "spill" / "sheet-qc.json").read_text(encoding="utf-8"))
     assert_requested_contract(spill_report, "sheet_qc_v1")
     if spill_report.get("cells"):  # the typed cells replacement of section 5.2 is the integrated rule
@@ -204,7 +204,7 @@ def test_requested_schema_additions_accept_every_b03_producer(tmp_path):
         assert any("cells" in error.json_path for error in requested_validator("sheet_qc_v1").iter_errors(broken))
     frames = run_cli([script_path(SKILL, "sheet_qc"), "frames", "--sheet", sheet, "--rows", "2", "--cols", "2", "--cycle", "walk",
                       "--output-dir", tmp_path / "frames"])
-    assert frames.returncode == (1 if json.loads(frames.stdout)["status"] == "fail" else 0), frames.stderr
+    assert frames.returncode == (4 if json.loads(frames.stdout)["status"] == "fail" else 0), frames.stderr
     assert_requested_contract(json.loads((tmp_path / "frames" / "sheet-qc.json").read_text(encoding="utf-8")),
                               "sheet_qc_v1")
     scaled = run_cli([script_path(SKILL, "scale_frames"), "--sheet", sheet, "--rows", "2", "--cols", "2",

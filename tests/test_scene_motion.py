@@ -51,9 +51,9 @@ def motion_main(*arguments):
 
 
 def published_status(status, output, stderr):
-    """D26: a build published with status fail (kept by --allow-seam-fail) exits 1; pass and warn exit 0."""
+    """D26: a build published with status fail (kept by --allow-seam-fail) exits 4; pass and warn exit 0."""
     report = json.loads((Path(output) / "scene-motion.json").read_text(encoding="utf-8"))
-    expected = 1 if report["qa"]["status"] == "fail" else 0
+    expected = 4 if report["qa"]["status"] == "fail" else 0
     assert status == expected, f"exit {status}, published status {report['qa']['status']}: {stderr}"
     if expected:
         assert "published with status fail" in stderr, stderr
@@ -267,7 +267,7 @@ class BuildTests(unittest.TestCase):
         output = self.root / "single-gop"
         status, _stdout, stderr = motion_main(*build_args(self.scene, output, "--ladder", "off",
                                                           "--allow-seam-fail"))
-        self.assertEqual(status, 1, stderr)  # D26: published for review with status fail, so exit 1
+        self.assertEqual(status, 4, stderr)  # published for review with status fail, so exit 4
         self.assertIn("allow-seam-fail", stderr)
         report = published_status(status, output, stderr)
         self.assertEqual(report["qa"]["status"], "fail")
@@ -275,7 +275,7 @@ class BuildTests(unittest.TestCase):
         qa_dir = self.root / "single-gop-qa"
         status, stdout, _stderr = motion_main("qa", "--report", output / "scene-motion.json", "--plate",
                                               self.scene / "plate.png", "--output-dir", qa_dir)
-        self.assertEqual(status, 1)
+        self.assertEqual(status, 4)  # loop-qa.json is published with status fail
         summary = json.loads(stdout)
         self.assertEqual(summary["status"], "fail")
         self.assertGreater(summary["decoded_seam_over_p95"], 1.0)
@@ -456,7 +456,7 @@ class DecodedQATests(unittest.TestCase):
         status, summary, checks, _document = self.qa(self.moving_frames(), "poster", "--poster",
                                                      self.root / "poster.png")
         self.assertEqual(checks["poster_swap"]["status"], "fail")
-        self.assertEqual((status, summary["status"]), (1, "fail"))
+        self.assertEqual((status, summary["status"]), (4, "fail"))
 
 
 class ReferenceDocTests(unittest.TestCase):

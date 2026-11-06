@@ -17,11 +17,11 @@ validate-crops: for each screen aspect (default 16:9, 19.5:9 and 4:3) the
 window a cover-cropping runtime shows, placed by --focus (repeatable) and
 shrunk by --zoom for a plate pan, must keep every subject box inside with
 --min-margin pixels to spare. It writes crops-qa.json and crops-overlay.png
-and exits 1 when a subject is cut.
+and exits 4 when a subject is cut.
 
 Both verbs write into a new --output-dir that is published only when
 complete; with --strict a failed subject check publishes nothing. A published
-report whose QA status is fail still exits 1 (D26): conform with a cut subject,
+report whose QA status is fail exits 4 (forge_core.EXIT_PUBLISHED_FAIL): conform with a cut subject,
 validate-crops with a cut window.
 """
 
@@ -437,10 +437,10 @@ def _cli(argv: Sequence[str] | None = None) -> int:
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
     status = summary["qa_status"] if args.verb == "conform" else summary["status"]
-    if status == "fail":  # D26: the report is published, and the failed check still exits 1
+    if status == "fail":  # the report is published, and the failed check exits 4
         report = summary.get("metadata") or summary["report"]
         print(forge_core.ascii_text(f"error: {args.verb} published a failed QA report: {report}"), file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL
     return 0
 
 

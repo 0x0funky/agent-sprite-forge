@@ -79,9 +79,9 @@ def report_checks(output: Path) -> dict:
 
 
 def published_with_failed(result, check_id: str) -> bool:
-    """D26: without --strict-qc a failing run is published (the summary line names the failed checks) and exits
-    1 with one ASCII 'error: published with QA status fail: ...' line."""
-    assert result.returncode == 1, result.stderr
+    """Without --strict-qc a failing run is published (the summary line names the failed checks) and exits
+    4 with one ASCII 'error: published with QA status fail: ...' line."""
+    assert result.returncode == 4, result.stderr
     summary = json.loads(result.stdout)
     assert summary["qa"] == "fail" and check_id in summary["failed_checks"], summary
     assert result.stderr.startswith("error: published with QA status fail: ") and check_id in result.stderr

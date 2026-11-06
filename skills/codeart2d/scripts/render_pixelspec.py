@@ -28,7 +28,7 @@ needs visible and transparent pixels in every frame); an empty frame anywhere el
 an error. Code art goes to build_animation_clips, never to generate2dsprite.py process.
 With --strict-qc nothing is published unless every frame has 0 partial-alpha and
 0 off-palette pixels and, with an outline, 0 outline gaps and at most 10 L-corners.
-Without it a failing result is still published for inspection, and the tool exits 1.
+Without it a failing result is still published for inspection, and the tool exits 4.
 Walk and run clips (by clip or state name) also get half_cycle_duplicates: frame i vs
 i+n/2 with silhouette IoU >= 0.95 warns (QA status warn, still published, exit 0)
 unless --allow-duplicate-half-cycle records that the leg colours carry the stride.
@@ -672,7 +672,7 @@ def run(args: argparse.Namespace) -> dict:
         _warn(f"{len(dropped)} frame(s) render no pixel and were not written: {', '.join(dropped[:6])}")
     if gait is not None and gait["status"] == "warn":
         _warn(f"half_cycle_duplicates: {'; '.join(gait['failing'][:4])}: {gait['note']}")
-    return summary  # a QA status fail (published because --strict-qc was not given) exits 1 in main (D26)
+    return summary  # a QA status fail (published because --strict-qc was not given) exits 4 in main
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -743,10 +743,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: internal error ({type(error).__name__}: {forge_core.ascii_text(str(error))})", file=sys.stderr)
         return 1
     print(json.dumps(summary, ensure_ascii=True))
-    if summary["qa"] == "fail":  # D26: published because --strict-qc was not given; the failed QA still exits 1
+    if summary["qa"] == "fail":  # published because --strict-qc was not given: the failed QA exits 4
         print(forge_core.ascii_text(f"error: published with QA status fail: {', '.join(summary['failed_checks'])} "
                                     f"(see {summary['metadata']})"), file=sys.stderr)
-        return 1
+        return forge_core.EXIT_PUBLISHED_FAIL
     return 0
 
 

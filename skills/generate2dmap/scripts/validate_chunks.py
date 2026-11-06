@@ -908,7 +908,7 @@ def run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                    metadata=str((final / "chunk-report.json").resolve()))
     if report["placements"]:
         summary["debug"] = str((final / "chunk-debug.png").resolve())
-    return summary, 1 if failed else 0
+    return summary, forge_core.EXIT_PUBLISHED_FAIL if failed else 0
 
 
 def build_parser() -> argparse.ArgumentParser:

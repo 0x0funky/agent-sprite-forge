@@ -486,7 +486,7 @@ def test_missing_file_or_sha_mismatch_fails(tmp_path):
     bundle = mb.load_bundle(path)
     assert [p.code for p in bundle.errors] == ["sha256"] and "layers/ground.csv" in bundle.errors[0].message
     result = run_cli([TOOL, "validate", "--bundle", path, "--report", tmp_path / "report.json"])
-    assert result.returncode == 1 and "sha256 mismatch" in result.stderr
+    assert result.returncode == 4 and "sha256 mismatch" in result.stderr
     report = json.loads((tmp_path / "report.json").read_text(encoding="utf-8"))  # the failing report is kept
     assert report["status"] == "fail" and {c["id"]: c["status"] for c in report["checks"]}["sha256"] == "fail"
     assert_valid_contract(report, "common", "qaEnvelope", skill=SKILL)

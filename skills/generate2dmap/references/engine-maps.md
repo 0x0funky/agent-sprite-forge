@@ -9,7 +9,7 @@ python "<skill-dir>/scripts/validate_chunks.py" --chunks maps/dungeon/room-chunk
 python "<skill-dir>/scripts/validate_layout.py" --layout maps/levee/layout.json --output-dir maps/levee/qa/layout-v1
 ```
 
-Every tool prints one ASCII JSON line with its status and paths, prints `error: ...` on stderr and exits 1 on failure (2 on a usage error), and refuses an existing `--output-dir`. The exporters publish nothing when the read-back QA fails; `--strict-qc` also refuses their warnings (things outside the world, rounded LDtk positions). The validators print only the summary without `--output-dir`; with it they publish the report and debug image even for a failing level (exit 1), unless `--strict-qc` is given. JSON inputs are read as UTF-8 with an optional BOM; NaN, Infinity and duplicate keys are refused.
+Every tool prints one ASCII JSON line with its status and paths, prints `error: ...` on stderr and exits 1 on failure (2 on a usage error), and refuses an existing `--output-dir`. The exporters publish nothing when the read-back QA fails; `--strict-qc` also refuses their warnings (things outside the world, rounded LDtk positions). The validators print only the summary without `--output-dir`; with it they publish the report and debug image even for a failing level (exit 4), unless `--strict-qc` is given (exit 1, nothing published). JSON inputs are read as UTF-8 with an optional BOM; NaN, Infinity and duplicate keys are refused.
 
 ## What is verified
 

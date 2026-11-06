@@ -113,7 +113,7 @@ def test_unreachable_door_fails(tmp_path):
     assert not [p for p in tmp_path.iterdir() if p.name.startswith(".")]  # no stage left behind
 
     run = run_cli([TOOL, "check", "--bundle", path, "--output-dir", out, "--publish-on-fail"])
-    assert run.returncode == 1 and json.loads(run.stdout)["status"] == "fail"
+    assert run.returncode == 4 and json.loads(run.stdout)["status"] == "fail"
     report = json.loads((out / "nav-report.json").read_text(encoding="utf-8"))
     assert {c["id"]: c for c in report["checks"]}["targets_reachable"]["value"]["unreachable"] == ["door-bell",
                                                                                                     "cellar-door"]

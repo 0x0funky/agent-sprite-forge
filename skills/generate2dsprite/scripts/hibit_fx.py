@@ -19,7 +19,7 @@ Hibit games take their effects from one of two routes; `fx_pixelfx.py check` say
 
 The anchor is the point the game places on the target: --anchor bottom (ground effects: impacts, dust, poofs on
 the floor) or center (sparks, projectiles, pickups). Success prints one ASCII JSON line; errors print
-"error: ..." and exit 1.
+"error: ..." and exit 1; FX published with QA status fail exit 4.
 """
 from __future__ import annotations
 
@@ -258,7 +258,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     for warning in summary.pop("_warnings", []):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
-    return 1 if summary["status"] == "fail" else 0
+    return forge_core.EXIT_PUBLISHED_FAIL if summary["status"] == "fail" else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:

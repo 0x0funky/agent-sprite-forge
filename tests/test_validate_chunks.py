@@ -285,7 +285,7 @@ class ValidateChunksTests(unittest.TestCase):
         document = two_by_two()
         document["chunks"][1]["sockets"]["W"][0]["width"] = 24
         lenient = self.cli(document, "--output-dir", self.root / "lenient")
-        self.assertEqual(lenient.returncode, 1)
+        self.assertEqual(lenient.returncode, 4)
         self.assertTrue((self.root / "lenient" / "chunk-report.json").is_file())  # a failed check is still reported
         strict = self.cli(document, "--output-dir", self.root / "strict", "--strict-qc")
         self.assertEqual(strict.returncode, 1)

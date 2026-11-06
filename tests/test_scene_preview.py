@@ -242,8 +242,8 @@ class CliConventionTests(PreviewCase):
         self.assertIn("error:", result.stderr)
         self.assertNothingPublished(self.root / "out")
 
-    def test_a_failed_verify_publishes_the_report_and_exits_1(self):
-        """D26: a published report whose status is fail exits 1 (the browser run is simulated)."""
+    def test_a_failed_verify_publishes_the_report_and_exits_4(self):
+        """A published report whose status is fail exits 4 (the browser run is simulated)."""
         bundle = make_scene(self.root / "map")
         out = self.root / "out"
         failed = ({"status": "fail", "reason": "simulated"}, [{"id": "browser-routes", "status": "fail",
@@ -252,7 +252,7 @@ class CliConventionTests(PreviewCase):
         with mock.patch.object(PREVIEW, "run_verify", return_value=failed), contextlib.redirect_stdout(stdout), \
                 contextlib.redirect_stderr(stderr):
             code = PREVIEW.main(["--bundle", str(bundle), "--output-dir", str(out), "--verify"])
-        self.assertEqual(code, 1)
+        self.assertEqual(code, 4)
         summary = json.loads(stdout.getvalue())
         self.assertEqual((summary["status"], summary["verify"], summary["failed"]), ("fail", "fail", ["browser-routes"]))
         self.assertIn("published with status fail (browser-routes)", stderr.getvalue())

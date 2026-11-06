@@ -539,7 +539,7 @@ def cmd_check(args: argparse.Namespace) -> int:
                "targets": len(result.targets), "unreachable": sum(not t.reachable for t in result.targets),
                "thinGaps": len(result.grid.thin_gaps)}
     print(json.dumps(summary))
-    return 1 if failed else 0
+    return forge_core.EXIT_PUBLISHED_FAIL if failed else 0  # published for inspection (--publish-on-fail)
 
 
 def _pairs(text: str, count: int) -> tuple[float, ...]:
@@ -580,7 +580,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument("--link", action="append", default=[], type=Path,
                        help="another map's bundle, to check portal links and arrivals in both directions (repeatable)")
     check.add_argument("--publish-on-fail", action="store_true",
-                       help="publish the outputs even when a check fails (still exits 1)")
+                       help="publish the outputs even when a check fails (then exits 4)")
     check.add_argument("--debug-scale", type=int, default=1, choices=range(1, 9), metavar="N",
                        help="integer upscale of nav-debug.png (1-8, default 1)")
     check.set_defaults(func=cmd_check)

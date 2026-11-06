@@ -127,7 +127,7 @@ def test_render_pixelspec_strict_qc_failure_publishes_nothing(tmp_path, capsys):
     # Without --strict-qc the same spec publishes and records the failure, and the failed QA exits 1 (D26).
     code, stdout, stderr = render(capsys, "--spec", path, "--output-dir", tmp_path / "loose")
     summary = summary_of(stdout)
-    assert code == 1 and summary["qa"] == "fail" and summary["failed_checks"] == ["partial_alpha"]
+    assert code == 4 and summary["qa"] == "fail" and summary["failed_checks"] == ["partial_alpha"]
     assert stderr.startswith("error: published with QA status fail: partial_alpha (see ") and stderr.isascii()
     meta = read_json(tmp_path / "loose" / "codeart-meta.json")
     assert meta["qa"]["status"] == "fail"
@@ -707,7 +707,7 @@ def test_pixel_qa_strict_fails_on_off_palette_pixels_and_writes_nothing(tmp_path
     # Without --strict the report is written, and the failed QA still exits 1 (D26).
     code, stdout, stderr = pixel_qa(capsys, "--input", *frames, "--palette", SLIME, "--variant", "blue",
                                     "--report", report)
-    assert code == 1 and summary_of(stdout)["failed"] == ["off_palette"]
+    assert code == 4 and summary_of(stdout)["failed"] == ["off_palette"]
     assert stderr.startswith("error: QA failed: off_palette (report written)") and "--strict" in stderr
     assert read_json(report)["status"] == "fail"
 

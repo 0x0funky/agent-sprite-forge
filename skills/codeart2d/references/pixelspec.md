@@ -148,7 +148,7 @@ out/slime-v1/
   (against that variant's palette) and, with an outline, outline gaps 0 and at most 10
   L-corners per frame. The QA envelope in `codeart-meta.json` records the worst frame per
   check and per-frame numbers. With `--strict-qc` a failed check publishes nothing;
-  without it the frames are published for inspection and the script still exits 1 after
+  without it the frames are published for inspection and the script exits 4 after
   its summary line (`error: published with QA status fail: <check ids> ...`).
 - **Publication.** Everything is written to a stage folder beside the output, checked,
   then published in one step. An existing output folder is refused; any failure,

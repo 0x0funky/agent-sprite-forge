@@ -28,7 +28,8 @@ dark backgrounds or additive blending.
 
 pixelfx's stand-in character is never drawn (its --no-actor), and the Patch Pixel font in its gallery (not
 MIT) is never used. The frames are code-drawn art by pixelfx: say so when you show or ship them. Success
-prints one ASCII JSON line; errors print "error: ..." and exit 1.
+prints one ASCII JSON line; errors print "error: ..." and exit 1; a render published with QA status fail
+exits 4.
 """
 from __future__ import annotations
 
@@ -296,8 +297,9 @@ def frame_checks(frames: Sequence[np.ndarray], expected: int, palette: np.ndarra
         {"id": "not-empty", "status": "pass" if max(opaque) > 0 else "fail", "value": max(opaque), "threshold": 1},
         {"id": "edge-contact", "status": "warn" if any(edge) else "pass", "value": [i for i, hit in enumerate(edge) if hit],
          "threshold": [], "note": "frames with visible pixels on the canvas border (a cut glow shows as a box)"},
-        {"id": "colours", "status": "info", "value": int(len(used)), "threshold": None},
-        {"id": "alpha-levels", "status": "info", "value": int(len(alpha)), "threshold": None,
+        {"id": "colours", "status": "skipped", "value": int(len(used)), "threshold": None,
+         "note": "distinct colours over every frame (a measurement, not a gate)"},
+        {"id": "alpha-levels", "status": "skipped", "value": int(len(alpha)), "threshold": None,
          "note": "2 = binary alpha (the default); more = --alpha keep: soft, near-black glow edges"},
     ]
     if palette is not None:
@@ -460,7 +462,7 @@ def _cli(argv: Sequence[str] | None = None) -> int:
     for warning in summary.pop("_warnings", []):
         print(f"warning: {forge_core.ascii_text(warning)}", file=sys.stderr)
     print(json.dumps(summary, ensure_ascii=True))
-    return 1 if summary.get("status") == "fail" else 0
+    return forge_core.EXIT_PUBLISHED_FAIL if summary.get("status") == "fail" else 0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
