@@ -73,7 +73,7 @@ REVIEW_SCHEMA = "video2dsprite.sprite_set_review.v1"
 REPORT_SCHEMA = "video2dsprite.sprite_set_report.v1"
 STANDIN_SCHEMA = "video2dsprite.finish_standin.v1"
 PLAN_FILE, STATE_FILE, TAKES_FILE = "set_plan.json", "set_state.json", "takes.jsonl"
-LOCK_FILE = "set_state.lock"                 # forge_core.file_lock around every set_state.json read-modify-write
+LOCK_FILE = "set_state.lock"                 # forge_core.file_lock around every set_state.json read and write
 REVIEW_VERDICT_SCHEMA = "video2dsprite.review_verdict.v1"
 LIBRARY_FILE = HERE.parent / "references" / "motion-prompts.md"
 
@@ -1770,7 +1770,7 @@ class SetRunner:
         self.plan_sha = forge_core.sha256_file(self.plan_path)
         self.state_path = self.root / STATE_FILE
         self.lock_path = self.root / LOCK_FILE
-        state = self._read_state()   # writers replace the file atomically; review, accept and retake hold the lock
+        state = self._read_state()   # under the set lock, like every read and write of set_state.json
         if state is not None:
             self.state = state
         else:
@@ -1788,15 +1788,19 @@ class SetRunner:
         return forge_core.manifest_path(path, self.root)
 
     def _read_state(self) -> dict | None:
+        """set_state.json read under the set lock (re-entrant, so a caller may hold it already): a reader never
+        holds the file open while a writer replaces it (on Windows that replace would fail)."""
         if not self.state_path.is_file():
             return None
-        state = forge_core.read_json(self.state_path)
+        with forge_core.file_lock(self.lock_path):
+            state = forge_core.read_json(self.state_path)
         if not isinstance(state, dict) or state.get("schema") != STATE_SCHEMA:
             raise ValueError(f"{STATE_FILE} is not a {STATE_SCHEMA} document")
         return state
 
     def reload(self) -> None:
-        """Read set_state.json again (call it holding the set lock before a read-modify-write)."""
+        """Read set_state.json again (it reads under the set lock; hold the lock yourself around a whole
+        read-modify-write)."""
         state = self._read_state()
         if state is not None:
             self.state = state

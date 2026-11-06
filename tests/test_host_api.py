@@ -111,6 +111,37 @@ def test_file_lock_is_exclusive_across_threads_and_processes_and_reentrant(tmp_p
         holder.stdout.close()
 
 
+def test_write_json_waits_for_a_reader_that_holds_the_target_open(tmp_path):
+    """On Windows a rename onto a file another handle holds open fails (WinError 5); write_json(no_clobber=False)
+    waits for the reader instead of failing a run's save. Elsewhere the rename never fails, which this also checks."""
+    target = tmp_path / "set_state.json"
+    fc.write_json(target, {"n": 0}, no_clobber=False)
+    released = threading.Event()
+
+    def reader() -> None:
+        with open(target, "rb"):
+            released.wait(timeout=10)
+
+    worker = threading.Thread(target=reader)
+    worker.start()
+    try:
+        time.sleep(0.1)
+        threading.Timer(0.4, released.set).start()   # the reader lets go within the 2 s replace window
+        fc.write_json(target, {"n": 1}, no_clobber=False)
+    finally:
+        released.set()
+        worker.join(timeout=10)
+    assert json.loads(target.read_text(encoding="utf-8")) == {"n": 1}
+    assert [path.name for path in tmp_path.iterdir()] == ["set_state.json"]   # no staged .tmp left behind
+    assert fc.json_bytes({"n": 1}) == target.read_bytes()
+    if os.name == "nt":   # a reader that never lets go still fails, after the retry window, with the OS error
+        with open(target, "rb"):
+            started = time.monotonic()
+            with pytest.raises(PermissionError):
+                fc.replace_file(fc._create_unique(tmp_path, ".x.", ".tmp"), target, retry_s=0.3)
+            assert 0.25 <= time.monotonic() - started < 3
+
+
 def test_exit_4_means_published_with_status_fail():
     assert fc.EXIT_PUBLISHED_FAIL == 4
     assert fc.run_cli(lambda: fc.EXIT_PUBLISHED_FAIL) == 4   # run_cli passes the status through

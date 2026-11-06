@@ -25,7 +25,10 @@ The host API (unreleased, after 0.5.0) adds, again without changing a 1.x name:
 * ``Progress``: one JSON line per stage change appended to a host's progress file
   (``--progress-file`` or ``FORGE_PROGRESS_FILE``); stdout keeps its one summary line.
 * ``file_lock``: an exclusive lock on a sidecar lock file, across threads and
-  processes (sprite_set.py holds it around every set_state.json read-modify-write).
+  processes (sprite_set.py holds it around every set_state.json read and write).
+* ``replace_file`` and ``json_bytes``: write_json's atomic replace now waits (up to
+  ``REPLACE_RETRY_S``) for a Windows reader that holds the target open, instead of
+  failing with WinError 5; json_bytes gives the exact bytes write_json writes.
 
 This file is vendored byte-for-byte into each skill's ``scripts/`` directory as
 listed in ``shared/VENDORED.json``. Edit only ``shared/forge_core.py``, then run
@@ -95,6 +98,7 @@ CLI_EXPECTED_ERRORS: tuple[type[BaseException], ...] = (OSError, ValueError, Ima
 EXIT_PUBLISHED_FAIL = 4  # the output WAS published (for diagnosis) and its status is fail; see run_cli
 PROGRESS_ENV = "FORGE_PROGRESS_FILE"
 LOCK_TIMEOUT_S = 120.0
+REPLACE_RETRY_S = 2.0  # write_json(no_clobber=False) waits this long for Windows readers holding the target open
 
 _CHUNK = 1 << 20
 
@@ -498,16 +502,45 @@ def _json_default(value: Any) -> Any:
     raise TypeError(f"Object of type {type(value).__name__} is not JSON serializable{hint}")
 
 
+def json_bytes(data: Any) -> bytes:
+    """The exact bytes write_json writes for ``data`` (so a caller can hash a document before it lands)."""
+    return (json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False, default=_json_default)
+            + "\n").encode("utf-8")
+
+
+def replace_file(source: str | os.PathLike, target: str | os.PathLike, *,
+                 retry_s: float = REPLACE_RETRY_S) -> None:
+    """os.replace ``source`` onto ``target``, retrying a Windows sharing violation for up to ``retry_s`` seconds.
+
+    On Windows a rename onto a file fails with PermissionError (WinError 5 or 32) while any process
+    holds that file open (an ordinary ``open()`` does not share delete access), for example a host
+    that indexes a folder while a tool rewrites its state. Such readers hold the file for
+    milliseconds, so the replace is retried with a short backoff before the error is raised.
+    Elsewhere, and for every other error, this is os.replace.
+    """
+    deadline = time.monotonic() + max(0.0, float(retry_s))
+    delay = 0.002
+    while True:
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if os.name != "nt" or time.monotonic() >= deadline:
+                raise
+        time.sleep(delay)
+        delay = min(delay * 2, 0.025)   # many short tries: a busy reader leaves short gaps
+
+
 def write_json(path: str | os.PathLike, data: Any, *, no_clobber: bool = True) -> None:
     """Write UTF-8 JSON (indent 2, ``ensure_ascii=False``, trailing newline).
 
     numpy scalars and arrays are converted; NaN and infinity are refused so the
     file stays valid for strict JSON readers such as browsers. With
     ``no_clobber`` an existing file raises FileExistsError; otherwise the file
-    is replaced atomically.
+    is replaced atomically (replace_file: a reader holding it open on Windows
+    is waited for, up to REPLACE_RETRY_S seconds).
     """
-    payload = (json.dumps(data, indent=2, ensure_ascii=False, allow_nan=False, default=_json_default)
-               + "\n").encode("utf-8")
+    payload = json_bytes(data)
     path = Path(path)
     if no_clobber:
         with open(path, "xb") as stream:
@@ -521,7 +554,7 @@ def write_json(path: str | os.PathLike, data: Any, *, no_clobber: bool = True) -
     temporary = _create_unique(path.parent, f".{path.name}.", ".tmp")
     try:
         temporary.write_bytes(payload)
-        os.replace(temporary, path)
+        replace_file(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
