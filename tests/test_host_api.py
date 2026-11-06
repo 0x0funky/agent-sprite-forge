@@ -1,7 +1,8 @@
 """The host API (CONTRACTS section 10 of Agent Game Forge): progress files, the set_state lock primitive, exit 4 for
 a published failing result, engine_export.py review, forge_index.py scan and the ledger's published job folder.
 
-Offline and deterministic; ffmpeg is not needed (packages are PNG-only).
+Offline and deterministic; only the interrupted-review test needs ffmpeg (a WebM to verify); the other packages are
+PNG-only.
 """
 from __future__ import annotations
 
@@ -20,7 +21,7 @@ import pytest
 from PIL import Image
 
 from forge_testutils import (
-    FIXTURES_DIR, REPO_ROOT, SKILLS_DIR, assert_valid_contract, load_shared, run_cli,
+    FIXTURES_DIR, REPO_ROOT, SKILLS_DIR, assert_valid_contract, load_shared, require_ffmpeg, run_cli,
 )
 
 fc = load_shared("forge_core")
@@ -212,6 +213,55 @@ def test_review_records_a_verdict_in_place_and_keeps_every_binding(package, tmp_
     assert again.returncode == 0 and json.loads(again.stdout)["changed"] is False
     checked = run_cli([VIDEO / "validate_animation.py", folder, "--require-review"])
     assert checked.returncode == 0, checked.stderr + checked.stdout
+
+
+@pytest.mark.ffmpeg
+def test_an_interrupted_review_converges_on_a_retry(tmp_path):
+    """A review interrupted between its writes (a crash, or a reader holding a file on Windows) leaves a mixed
+    package; recording the same verdict again finishes the job: verify-qa.json is bound to the final
+    animation.json, the review is recorded once, and validate_animation --require-verify passes again."""
+    require_ffmpeg()
+    frames = make_frames(tmp_path / "clean")
+    folder = tmp_path / "pkg"
+    made = run_cli([ENGINE_EXPORT, "package", "--clean-dir", frames, "--output-dir", folder, "--fps", "12",
+                    "--name", "idle", "--formats", "png,webm"])
+    assert made.returncode == 0, made.stderr
+    verified = run_cli([ENGINE_EXPORT, "verify", "--package", folder])
+    assert verified.returncode == 0, verified.stderr
+    names = ("provenance.json", "animation-qa.json", "animation.json", "verify-qa.json")
+    before = {name: (folder / name).read_bytes() for name in names}
+    good = verdict(tmp_path / "verdict.json",
+                   json.loads(before["provenance.json"])["inputDigest"])
+    first = run_cli([ENGINE_EXPORT, "review", "--package", folder, "--review", good])
+    assert first.returncode == 0, first.stderr
+    after = {name: (folder / name).read_bytes() for name in names}
+
+    def require_verify() -> None:
+        checked = run_cli([VIDEO / "validate_animation.py", folder, "--require-review", "--require-verify"])
+        assert checked.returncode == 0, checked.stderr + checked.stdout
+
+    require_verify()
+    # 1. stopped after animation.json: verify-qa.json still bound to the manifest before the review
+    (folder / "verify-qa.json").write_bytes(before["verify-qa.json"])
+    assert run_cli([VIDEO / "validate_animation.py", folder, "--require-verify"]).returncode != 0
+    retry = run_cli([ENGINE_EXPORT, "review", "--package", folder, "--review", good])
+    assert retry.returncode == 0, retry.stderr
+    assert json.loads(retry.stdout)["changed"] is True and json.loads(retry.stdout)["verify"]
+    require_verify()
+    again = run_cli([ENGINE_EXPORT, "review", "--package", folder, "--review", good])
+    assert json.loads(again.stdout)["changed"] is False   # nothing left to do
+    # 2. stopped after provenance.json: the manifest, its QA and the report are the ones before the review
+    for name in ("animation-qa.json", "animation.json", "verify-qa.json"):
+        (folder / name).write_bytes(before[name])
+    (folder / "provenance.json").write_bytes(after["provenance.json"])
+    retry = run_cli([ENGINE_EXPORT, "review", "--package", folder, "--review", good])
+    assert retry.returncode == 0 and json.loads(retry.stdout)["changed"] is True, retry.stderr
+    require_verify()
+    provenance = json.loads((folder / "provenance.json").read_text(encoding="utf-8"))
+    assert len(provenance["reviewHistory"]) == 1   # the retry is not a second review
+    manifest = json.loads((folder / "animation.json").read_text(encoding="utf-8"))
+    assert [item["sha256"] for item in manifest["qa"]["inputs"]].count(fc.sha256_file(good)) == 1
+    assert json.loads((folder / "animation-qa.json").read_text(encoding="utf-8")) == manifest["qa"]
 
 
 def test_review_refuses_stale_and_failing_verdicts_and_a_changed_package(package, tmp_path):

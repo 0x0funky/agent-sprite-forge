@@ -1882,8 +1882,50 @@ REVIEW_NOTE = ("review verdict recorded in place by engine_export.py review: ani
 
 
 def _replace_json(path: Path, data: Any) -> None:
-    """Rewrite one package document atomically (staged beside it, then os.replace)."""
+    """Rewrite one package document atomically (staged beside it, then forge_core.replace_file)."""
     forge_core.write_json(path, data, no_clobber=False)
+
+
+def _verify_describes_media(package_dir: Path, report: Mapping) -> bool:
+    """True when every file a verify report judged besides animation.json (poster, atlas, encoded files) still
+    has the sha256 the report recorded, so its decode results describe the package's media as they are."""
+    refs = [item for item in list(report.get("inputs") or []) + list(report.get("outputs") or [])
+            if isinstance(item, dict) and item.get("path") != MANIFEST_FILE]
+    if not refs:
+        return False
+    for item in refs:
+        path = package_dir / str(item.get("path", ""))
+        if not path.is_file() or forge_core.sha256_file(path) != item.get("sha256"):
+            return False
+    return True
+
+
+def _rebind_verify(package_dir: Path, manifest_path: Path, previous_sha: str | None) -> tuple[str | None, bool]:
+    """Bind verify-qa.json to the current animation.json after review rewrote the manifest.
+
+    The report is re-bound when it was bound to ``previous_sha`` (the manifest this review replaced) or,
+    when that is unknown (a retry after an interrupted review), when every media file it judged is
+    unchanged. Returns (report path or None, whether it was rewritten); a report about other media
+    is left alone (None).
+    """
+    verify_path = package_dir / VERIFY_FILE
+    if not verify_path.is_file():
+        return None, False
+    report = _read_object(verify_path, VERIFY_FILE)
+    new_ref = _file_ref(manifest_path)
+    bound = report.get("manifestSha256")
+    if bound == new_ref["sha256"]:
+        return str(verify_path.resolve()), False
+    if not ((previous_sha and bound == previous_sha) or _verify_describes_media(package_dir, report)):
+        return None, False
+    report = dict(report)
+    report["inputs"] = [new_ref if item.get("path") == MANIFEST_FILE else item for item in report.get("inputs", [])]
+    report["manifestSha256"] = new_ref["sha256"]
+    report["manifestUpdates"] = list(report.get("manifestUpdates") or []) + [
+        {"at": forge_core.utc_timestamp(), "previousSha256": bound, "sha256": new_ref["sha256"],
+         "reason": REVIEW_NOTE}]
+    _replace_json(verify_path, report)
+    return str(verify_path.resolve()), True
 
 
 def record_review(package_dir: Path, verdict_path: Path) -> dict:
@@ -1893,10 +1935,12 @@ def record_review(package_dir: Path, verdict_path: Path) -> dict:
     package's inputDigest (provenance.json) or the sha256 of the selection it was cut
     by; ``fail_regenerate`` and stale verdicts are refused as in ``package --review``.
     Every media file (poster, atlas, webm, packed, tiers) must still match its manifest
-    sha256. animation.json (reviewStatus, qa), animation-qa.json and provenance.json are
-    rewritten together; a verify-qa.json is re-bound to the new animation.json (its
-    decode results are about the unchanged media files) and says so in manifestUpdates.
-    Recording the same verdict again changes nothing. Returns the summary line.
+    sha256. provenance.json, animation-qa.json and animation.json (reviewStatus, qa) are
+    rewritten in that order; a verify-qa.json is then re-bound to the new animation.json
+    (its decode results are about the unchanged media files) and says so in
+    manifestUpdates. Recording the same verdict again rewrites nothing, except a
+    verify-qa.json still bound to an older manifest (a review interrupted after
+    animation.json), so a retry always converges. Returns the summary line.
     """
     package_dir = Path(package_dir)
     manifest_path = package_dir / MANIFEST_FILE
@@ -1924,44 +1968,45 @@ def record_review(package_dir: Path, verdict_path: Path) -> dict:
                "manifest": str(manifest_path.resolve()), "reviewStatus": review["status"],
                "boundTo": review["boundTo"]}
     if previous and previous.get("sha256") == review["sha256"] and manifest.get("reviewStatus") == review["status"]:
-        return {**summary, "status": manifest["qa"]["status"], "changed": False}
+        # provenance.json and animation-qa.json are written before animation.json, so only verify-qa.json can lag
+        verify, rebound = _rebind_verify(package_dir, manifest_path, None)
+        if verify:
+            summary["verify"] = verify
+        return {**summary, "status": manifest["qa"]["status"], "changed": rebound}
     ref = _input_ref(Path(verdict_path), "review")
-    old_sha = previous.get("sha256") if previous else None
+    history = [item for item in provenance.get("reviewHistory") or [] if isinstance(item, dict)]
+    # every verdict this package recorded, including one an interrupted review wrote into provenance.json only
+    verdicts = {item.get("sha256") for item in history} | ({previous.get("sha256")} if previous else set())
+    verdicts.discard(None)
     qa = dict(manifest["qa"])
     checks = [dict(check) for check in qa.get("checks", []) if check.get("id") != "review_verdict"]
     checks.append({"id": "review_verdict", "status": "pass" if review["status"] == "accepted" else "warn",
                    "value": review["status"], "threshold": "accepted"})
     qa["checks"] = checks
     qa["status"] = _qa_status(checks)
-    qa["inputs"] = [item for item in qa.get("inputs", []) if not (old_sha and item.get("sha256") == old_sha)] + \
-        [{k: v for k, v in ref.items() if k != "role"}]
+    qa["inputs"] = [item for item in qa.get("inputs", []) if item.get("sha256") not in verdicts
+                    and item.get("sha256") != ref["sha256"]] + [{k: v for k, v in ref.items() if k != "role"}]
     provenance = dict(provenance)
     provenance["inputs"] = [item for item in provenance.get("inputs", []) if item.get("role") != "review"] + [ref]
     provenance["review"] = dict(review)
-    history = list(provenance.get("reviewHistory") or [])
-    history.append({"at": forge_core.utc_timestamp(), "tool": f"{TOOL_NAME} review", "status": review["status"],
-                    "sha256": review["sha256"], "previousStatus": manifest.get("reviewStatus")})
+    last = history[-1] if history else {}
+    if not (last.get("sha256") == review["sha256"] and last.get("status") == review["status"]
+            and last.get("previousStatus") == manifest.get("reviewStatus")):   # not the retry of an interrupted review
+        history.append({"at": forge_core.utc_timestamp(), "tool": f"{TOOL_NAME} review", "status": review["status"],
+                        "sha256": review["sha256"], "previousStatus": manifest.get("reviewStatus")})
     provenance["reviewHistory"] = history
     old_manifest_sha = forge_core.sha256_file(manifest_path)
     manifest = dict(manifest)
     manifest["reviewStatus"] = review["status"]
     manifest["qa"] = qa
-    verify_path = package_dir / VERIFY_FILE
-    report = _read_object(verify_path, VERIFY_FILE) if verify_path.is_file() else None
+    # animation.json is written last: until it says the new reviewStatus, a retry redoes every step
     _replace_json(package_dir / PROVENANCE_FILE, provenance)
     if qa_doc is not None:
         _replace_json(qa_file, qa)
     _replace_json(manifest_path, manifest)
-    if report is not None and report.get("manifestSha256") == old_manifest_sha:
-        new_ref = _file_ref(manifest_path)
-        report = dict(report)
-        report["inputs"] = [new_ref if item.get("path") == MANIFEST_FILE else item for item in report.get("inputs", [])]
-        report["manifestSha256"] = new_ref["sha256"]
-        report["manifestUpdates"] = list(report.get("manifestUpdates") or []) + [
-            {"at": forge_core.utc_timestamp(), "previousSha256": old_manifest_sha, "sha256": new_ref["sha256"],
-             "reason": REVIEW_NOTE}]
-        _replace_json(verify_path, report)
-        summary["verify"] = str(verify_path.resolve())
+    verify, _ = _rebind_verify(package_dir, manifest_path, old_manifest_sha)
+    if verify:
+        summary["verify"] = verify
     return {**summary, "status": qa["status"], "changed": True}
 
 

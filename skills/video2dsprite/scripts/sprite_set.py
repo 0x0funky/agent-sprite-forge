@@ -1740,6 +1740,18 @@ _CLIP_SUFFIXES = (".mp4", ".webm", ".mov", ".m4v")
 _LAST_FRAME_WORDS = re.compile(r"last[-_ ]?frame|unrecognized arguments", re.I)
 
 
+def verify_lags(package: Path) -> bool:
+    """True when the package's verify-qa.json is bound to another animation.json than the one it holds."""
+    report = package / "verify-qa.json"
+    if not report.is_file():
+        return False
+    try:
+        bound = forge_core.read_json(report).get("manifestSha256")
+    except (OSError, ValueError, AttributeError):
+        return False
+    return bound != forge_core.sha256_file(package / "animation.json")
+
+
 def _find_clip(media: Path) -> Path | None:
     """A clip already in the take's media folder (generated earlier, or dropped in by the user or host)."""
     if not media.is_dir():
@@ -2624,10 +2636,12 @@ class SetRunner:
             return None
         package = self.root / output["package"]
         manifest = forge_core.read_json(package / "animation.json")
-        if manifest.get("reviewStatus") == "accepted":   # packaged with --review, or recorded before
-            accepted.setdefault("reviewStatus", "accepted")
+        if manifest.get("reviewStatus") == "accepted" and not verify_lags(package):
+            accepted.setdefault("reviewStatus", "accepted")   # packaged with --review, or recorded before
             accepted.setdefault("package", output["package"])
             return "accepted"
+        # not recorded yet, or a review interrupted after animation.json (verify-qa.json still bound to the
+        # manifest before it): engine_export.py review records it, or re-binds verify-qa.json on a retry
         record = self.take(ident, output["take"])
         provenance = forge_core.read_json(package / "provenance.json")
         path = self.write_verdict(ident, record, output.get("tag", ""), str(provenance.get("inputDigest")))
