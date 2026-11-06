@@ -739,7 +739,7 @@ def test_cli_qc_failure_publishes_nothing(tmp_path, monkeypatch, capsys):
     E.package(options(clean, pkg, allow_key_residue=True))
     failing = {"status": "fail", "checks": [{"id": "packedAlpha.alpha_mae", "status": "fail", "value": 9.0,
                                              "threshold": 3.5}], "transports": {}}
-    monkeypatch.setattr(E, "verify_package", lambda folder: failing)
+    monkeypatch.setattr(E, "verify_package", lambda folder, progress=None: failing)
     assert E.main(["verify", "--package", str(pkg)]) == 1
     assert "packedAlpha.alpha_mae 9.0 (limit 3.5)" in capsys.readouterr().err
     assert not (pkg / "verify-qa.json").exists() and not list(pkg.glob(".verify-qa*"))

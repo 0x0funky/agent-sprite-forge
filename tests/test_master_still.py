@@ -16,7 +16,7 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from forge_testutils import assert_cli_help, load_script, run_cli, script_path
+from forge_testutils import assert_cli_help, assert_valid_contract, load_script, run_cli, script_path
 
 SKILL = "generate2dsprite"
 SCRIPT = script_path(SKILL, "master_still")
@@ -400,7 +400,7 @@ def test_generate_reports_partial_and_total_failure(tmp_path, assets):
     assert summary["takes"][1]["error"] == "fake provider refused the request"
     result = run_cli([SCRIPT, "generate", *map(str, spec_args(assets)), "--output-dir", str(tmp_path / "fail")],
                      env=media_env(assets, FAKE_MEDIA_FAIL="take-01"))
-    assert result.returncode == 1 and json.loads(result.stdout)["status"] == "fail"
+    assert result.returncode == 4 and json.loads(result.stdout)["status"] == "fail"  # published, status fail
     assert "error: every take failed (take 1: fake provider refused the request)" in result.stderr
     assert json.loads((tmp_path / "fail" / "run.json").read_text(encoding="utf-8"))["status"] == "fail"
 
@@ -560,6 +560,30 @@ def test_approve_writes_master_v1_from_a_generate_take(approved, generated, asse
     spec = json.loads((folder / "spec.json").read_text(encoding="utf-8"))
     assert spec["recap"] == doc["identity_recap"] and spec["facing"] == "left"
     assert approved.summary["framing"]["subject_height_px"] == 788 and approved.summary["route"] == "codex-cli"
+    assert_valid_contract(doc, "sprite", "master_v1")   # the master.json contract (sprite.schema.json)
+
+
+def test_generate_reports_progress_to_a_host_file(tmp_path, assets):
+    """--progress-file: one JSON line per stage (prompt, take N of M, contact, publish, done); stdout keeps its one
+    summary line. FORGE_PROGRESS_FILE is the fallback, and the media CLI child never inherits it."""
+    progress = tmp_path / "progress.jsonl"
+    summary, _ = run_json(["generate", *spec_args(assets), "--takes", "2", "--output-dir", tmp_path / "gen",
+                           "--progress-file", progress], env=media_env(assets))
+    lines = [json.loads(line) for line in progress.read_text(encoding="utf-8").splitlines()]
+    for line in lines:
+        assert_valid_contract(line, "host", "progress_line_v1")
+    stages = [line["stage"] for line in lines]
+    assert stages[0] == "prompt" and stages[-1] == "done" and "contact" in stages and lines[-1]["message"] == "generate ok"
+    assert [(line["done"], line["total"]) for line in lines if line["stage"] == "take"] == [(0, 2), (1, 2), (1, 2), (2, 2)]
+    assert {line["tool"] for line in lines} == {"master_still"} and summary["status"] == "ok"
+    env_file = tmp_path / "env-progress.jsonl"
+    run_json(["generate", *spec_args(assets), "--output-dir", tmp_path / "gen2"],
+             env=media_env(assets, FORGE_PROGRESS_FILE=str(env_file)))
+    assert [json.loads(line)["stage"] for line in env_file.read_text(encoding="utf-8").splitlines()][-1] == "done"
+    failed = run_cli([SCRIPT, "generate", *map(str, spec_args(assets)), "--output-dir", str(tmp_path / "fail"),
+                      "--progress-file", str(tmp_path / "fail.jsonl")], env=media_env(assets, FAKE_MEDIA_FAIL="take-01"))
+    assert failed.returncode == 4   # published with every take failed
+    assert json.loads((tmp_path / "fail.jsonl").read_text(encoding="utf-8").splitlines()[-1])["message"] == "generate fail"
 
 
 def test_approve_an_external_still_with_a_spec(tmp_path, assets):

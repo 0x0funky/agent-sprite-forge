@@ -25,7 +25,7 @@ python "<skill-dir>/scripts/master_still.py" approve --run art/master/fox-prompt
 python "<skill-dir>/scripts/master_still.py" edit --master art/master/fox --change "repaint the face to match the SECOND image" --extra-reference art/refs/fox-face.png --extra-role "her portrait: it shows her real face" --output-dir art/master/fox-edit2
 ```
 
-Every command writes a new `--output-dir`: it refuses an existing one, stages its work beside it and publishes only a finished folder. It prints one ASCII JSON line. Errors print `error: ...` and exit 1; usage errors exit 2; `generate` and `edit` exit 3 when no route exists.
+Every command writes a new `--output-dir`: it refuses an existing one, stages its work beside it and publishes only a finished folder. It prints one ASCII JSON line. Errors print `error: ...` and exit 1; usage errors exit 2; `generate` and `edit` exit 3 when no route exists and 4 when every take failed. `generate` and `edit` take `--progress-file <jsonl>` (or `FORGE_PROGRESS_FILE`): one JSON line per stage (`prompt`, `take` N of M, `contact`, `publish`, `done` or `error`) for a host; stdout keeps its one line.
 
 ## The spec
 
@@ -90,7 +90,7 @@ python "<generate2dmedia>/scripts/route_media.py" image --prompt-file <run>/prom
 ```
 
 - The last JSON line of its stdout decides the take. `{"status": "ok", "route": ..., "artifact": path, ...}` keeps the artifact; an artifact outside the take folder is copied into it. Exit 3 (or `"status": "no-route"`) stops the run: the output keeps the prompt, the summary says `"status": "no-route", "fallback": "codeart2d"` and the command exits 3. Any other failure is recorded for that take.
-- The run is `ok` when every take succeeded and `partial` when some did (both exit 0). It is `fail` when none did: the folder is still published for diagnosis, and the command prints `error: every take failed (...)` and exits 1.
+- The run is `ok` when every take succeeded and `partial` when some did (both exit 0). It is `fail` when none did: the folder is still published for diagnosis, and the command prints `error: every take failed (...)` and exits 4.
 - Takes run one after another. The media CLI's stderr (estimates, warnings) is echoed live with a `[take N]` prefix; anything shaped like an API key or bearer token is replaced by `[redacted]` there and in `run.json`. `takes.png` shows two or more good takes side by side.
 - `--route` is passed through. `--media-arg=--flag` passes any other argument (write it with `=`). `--timeout` stops one take (default 1800 s).
 - `route_media.py` is found beside this skill (`../generate2dmedia/scripts/route_media.py`). `--media-cli PATH` overrides it, and `FORGE_ROUTE_MEDIA_FAKE=<script.py>` substitutes a fake for tests. A fake is recorded in `run.json` (`media.cli_source`) and is printed as a warning; `approve` also warns, so a fake take is never mistaken for a real generation.

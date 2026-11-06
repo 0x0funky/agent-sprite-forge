@@ -205,7 +205,7 @@ the first set whose role is `--reference-role` (default hero):
 The PNG shows every rest frame on one ground line twice: at x1 with labels, and at x3 as
 a nearest review zoom. A dotted line marks the reference height. The report goes to
 `<out>.json` (`video2dsprite.lineup.v1`, with a QA envelope). A failed rule still writes
-both files; it prints `error: lineup rule failed: ...` and exits 1.
+both files; it prints `error: lineup rule failed: ...` and exits 4.
 
 ## Outputs
 

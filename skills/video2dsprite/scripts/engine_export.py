@@ -15,7 +15,13 @@ Verbs (``python engine_export.py <verb> --help``):
   (retime --ticks rows, held frames) are expanded into repeated frames for video transports.
 * ``verify`` decodes every encoded file completely, compares it with the lossless atlas
   and publishes verify-qa.json beside the manifest; nothing is written when a gate fails.
+* ``review`` records a review verdict in an existing package without re-encoding:
+  animation.json reviewStatus, its QA, animation-qa.json and provenance.json change
+  together, verify-qa.json is re-bound, and the media files must be unchanged.
 * ``doctor`` prints the functional ffmpeg capabilities as one JSON line.
+
+``package`` and ``verify`` take ``--progress-file`` (or FORGE_PROGRESS_FILE): one JSON line
+per stage for a host (forge_core.Progress); stdout keeps its one summary line.
 
 Geometry stays in source units: sourceSize, sourceAnchor and sourceRect never change with
 the media size, tier or frame rate. Timing is whole milliseconds (durationsMs) played by an
@@ -1203,7 +1209,11 @@ def _encoded(result: Mapping, path: Path, alpha: str, expected: int, **extra: An
     return record
 
 
-def encode(transport: Transport, stage: Path) -> dict:
+def _no_progress(*_args: Any, **_kwargs: Any) -> None:
+    """The progress reporter of library calls that pass none (forge_core.Progress has the same signature)."""
+
+
+def encode(transport: Transport, stage: Path, progress: Any = _no_progress) -> dict:
     """Encode the requested video transports into ``stage`` and return their manifest records.
 
     package() always calls it (a PNG-only package gets ``{}``). Loops get one closed GOP per
@@ -1214,18 +1224,25 @@ def encode(transport: Transport, stage: Path) -> dict:
     timeline, name = transport.timeline, transport.name
     count, fps = len(timeline.indices), rational(timeline.rate)
     keyint = count if transport.loop else None
+    total = len([f for f in ("webm", "packed") if f in transport.formats]) + len(transport.tiers)
+    done = 0
     if "webm" in transport.formats:
+        progress("encode", done, total, "webm (VP9 alpha)")
         path = stage / f"{name}.webm"
         result = forge_av.encode_vp9_alpha([transport.even[i] for i in timeline.indices], path, fps,
                                            crf=transport.crf_webm, keyint=keyint)
         files["webm"] = _encoded(result, path, "on", count, requiresAlphaPlaybackVerification=True)
+        done += 1
     if "packed" in transport.formats:
+        progress("encode", done, total, "packed-alpha mp4")
         path = stage / f"{name}-packed.mp4"
         result = forge_av.encode_packed_alpha([transport.content[i] for i in timeline.indices], path, fps,
                                               crf=transport.crf_packed, keyint=keyint)
         files["packedAlpha"] = _encoded(result, path, "off", count, closedGop=True)
+        done += 1
     records = []
     for tier in transport.tiers:
+        progress("encode", done, total, f"tier {tier.get('tier')}")
         frames = tier_frames(transport.content, timeline.indices, tier)
         path = stage / tier["file"]
         result = forge_av.encode_packed_alpha(frames, path, tier["fps"], crf=transport.crf_packed,
@@ -1233,8 +1250,11 @@ def encode(transport: Transport, stage: Path) -> dict:
                                               max_fps=Fraction(tier["maxFps"]))
         planned = {k: v for k, v in tier.items() if k not in ("file", "fps", "frameCount", "durationMs")}
         records.append({**planned, **_encoded(result, path, "off", len(frames), closedGop=True)})
+        done += 1
     if records:
         files["mobilePackedAlpha"] = records
+    if total:
+        progress("encode", done, total, "encoded and fully decoded")
     return files
 
 
@@ -1361,16 +1381,20 @@ def _atlas(prepared: Sequence[Image.Image], stage: Path, name: str) -> tuple[lis
     return pages, (width, height)
 
 
-def package(args: argparse.Namespace) -> dict:
+def package(args: argparse.Namespace, progress: Any = None) -> dict:
     """Package frames into a new output directory and return its animation.json 3.0 manifest.
 
     ``args`` is the ``package`` namespace of this CLI or of video2dsprite.py, whose cfed170
     namespace lacks the 3.0 options (they take their defaults). Strict QA (key residue, stale
-    selection or review, decode checks) raises before anything is published.
+    selection or review, decode checks) raises before anything is published. ``progress``
+    (a forge_core.Progress; default ``args.progress``, else none) hears the stages: load,
+    residue, encode, publish.
     """
+    progress = progress or getattr(args, "progress", None) or _no_progress
     opts = PackageOptions.from_args(args)
     source, output = opts.clean_dir, opts.out_dir
     paths = list_frames(source)
+    progress("load", 0, len(paths), "frames, selection, registration and review")
     if not paths:
         raise ValueError("no PNG frames in clean-dir")
     if source.resolve() == output.resolve():
@@ -1402,10 +1426,12 @@ def package(args: argparse.Namespace) -> dict:
                                                 registration=opts.registration)
 
     images = _load_unique(paths, timeline.indices)
+    progress("load", len(paths), len(paths), "frames, selection, registration and review")
     frame_size = next(iter(images.values())).size
     size, anchor = _geometry_inputs(opts, frame_size, registration)
     sequence = [images[i] for i in timeline.indices]
     prepared, geometry = prepare(sequence, size, anchor, opts.max_side, opts.crop_union, resampler=opts.resampler)
+    progress("residue", None, None, f"key-residue gate on {len(sequence)} frames (key from {key_source})")
     diagnostics = analyze(sequence, float(timeline.rate), clip.loop_policy != "oneshot", key=key)
     residue = diagnostics.get("keyResidue")
     checks = residue_checks(residue, opts.allow_key_residue)
@@ -1435,7 +1461,7 @@ def package(args: argparse.Namespace) -> dict:
         pages, cell = _atlas(prepared, stage, opts.name)
         transport = Transport(opts.name, timeline, even, content, loop, opts.video_formats, tiers,
                               opts.crf_webm, opts.crf_packed)
-        files = encode(transport, stage)
+        files = encode(transport, stage, progress)
         checks += [{"id": f"full_decode_{record['file']}", "status": "pass", "value": record["frameCount"],
                     "threshold": record["frameCount"]}
                    for record in [files.get("webm"), files.get("packedAlpha"), *files.get("mobilePackedAlpha", [])]
@@ -1472,6 +1498,7 @@ def package(args: argparse.Namespace) -> dict:
         forge_core.write_json(stage / PROVENANCE_FILE, provenance)
         forge_core.write_json(stage / QA_FILE, qa)
         forge_core.write_json(stage / MANIFEST_FILE, manifest)
+        progress("publish", None, None, f"animation.json, QA {qa['status']}, review {manifest['reviewStatus']}")
     return manifest
 
 
@@ -1769,12 +1796,12 @@ def _container_checks(path: Path, label: str, *, codec: str, size: Sequence[int]
     return checks
 
 
-def verify_package(package_dir: Path) -> dict:
+def verify_package(package_dir: Path, progress: Any = _no_progress) -> dict:
     """Decode every encoded transport of a package fully and judge it against the atlas.
 
     Returns a qaEnvelope (``video2dsprite.verify.v1``) bound by sha256 to animation.json, the
     atlas and poster (inputs) and the encoded files (outputs). Gate failures give status fail;
-    unusable packages raise ValueError.
+    unusable packages raise ValueError. ``progress`` hears one ``decode`` stage per transport.
     """
     manifest_path = package_dir / MANIFEST_FILE
     manifest = _read_object(manifest_path, "animation.json")
@@ -1798,7 +1825,8 @@ def verify_package(package_dir: Path) -> dict:
         fps = manifest_fps(manifest)
         duration = float(Fraction(count) / fps * 1000)
         loop = manifest.get("loop") is True
-        for role, record in encoded:
+        for number, (role, record) in enumerate(encoded):
+            progress("decode", number, len(encoded), f"{role} {record['file']}")
             path = package_dir / record["file"]
             if role == "webm":
                 frames_ref, frame_count, expected_ms = reference, count, duration
@@ -1825,6 +1853,7 @@ def verify_package(package_dir: Path) -> dict:
             result = evaluate_transport(frames_ref, decoded, loop=loop, label=role)
             transports[role] = {"file": record["file"], **result["metrics"]}
             checks += container + result["checks"]
+        progress("decode", len(encoded), len(encoded), "every transport decoded and compared with the atlas")
     status = "fail" if any(c["status"] == "fail" for c in checks) else \
         ("warn" if any(c["status"] == "warn" for c in checks) else "pass")
     manifest_ref = _file_ref(manifest_path)
@@ -1843,6 +1872,97 @@ def verify_package(package_dir: Path) -> dict:
         "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
         "manifestSha256": manifest_ref["sha256"], "transports": transports, "thresholds": dict(VERIFY_LIMITS),
     }
+
+
+# --------------------------------------------------------------------------- review (in place)
+
+REVIEW_NOTE = ("review verdict recorded in place by engine_export.py review: animation.json reviewStatus, the "
+               "QA review_verdict check and status, provenance.json; every packaged media file was re-hashed "
+               "unchanged, so this decode report still describes them")
+
+
+def _replace_json(path: Path, data: Any) -> None:
+    """Rewrite one package document atomically (staged beside it, then os.replace)."""
+    forge_core.write_json(path, data, no_clobber=False)
+
+
+def record_review(package_dir: Path, verdict_path: Path) -> dict:
+    """Record a review_verdict.v1 in an existing package without re-encoding anything.
+
+    The verdict must bind to what the package holds: its ``reviewedSha256`` is the
+    package's inputDigest (provenance.json) or the sha256 of the selection it was cut
+    by; ``fail_regenerate`` and stale verdicts are refused as in ``package --review``.
+    Every media file (poster, atlas, webm, packed, tiers) must still match its manifest
+    sha256. animation.json (reviewStatus, qa), animation-qa.json and provenance.json are
+    rewritten together; a verify-qa.json is re-bound to the new animation.json (its
+    decode results are about the unchanged media files) and says so in manifestUpdates.
+    Recording the same verdict again changes nothing. Returns the summary line.
+    """
+    package_dir = Path(package_dir)
+    manifest_path = package_dir / MANIFEST_FILE
+    manifest = _read_object(manifest_path, "animation.json")
+    if manifest.get("schemaVersion") != SCHEMA_VERSION:
+        raise ValueError(f"review records a verdict in an animation.json {SCHEMA_VERSION} package; repackage this one")
+    provenance = _read_object(package_dir / PROVENANCE_FILE, "provenance.json")
+    qa_file = package_dir / QA_FILE
+    qa_doc = _read_object(qa_file, "animation-qa.json") if qa_file.is_file() else None
+    stale = [record.get("file") for _, record in package_media(manifest)
+             if not (package_dir / str(record.get("file", ""))).is_file()
+             or forge_core.sha256_file(package_dir / str(record["file"])) != record.get("sha256")]
+    if stale:
+        raise ValueError(f"the package changed since it was made ({', '.join(map(str, stale[:6]))}); repackage it")
+    digest_value = provenance.get("inputDigest")
+    if not isinstance(digest_value, str) or not _SHA256.fullmatch(digest_value):
+        raise ValueError("provenance.json has no inputDigest to bind a review to")
+    bindings = {"inputDigest": digest_value}
+    selection = provenance.get("selection") if isinstance(provenance.get("selection"), dict) else None
+    if selection and isinstance(selection.get("sha256"), str):
+        bindings = {"selection": selection["sha256"], **bindings}
+    review = load_review(Path(verdict_path), bindings)
+    previous = provenance.get("review") if isinstance(provenance.get("review"), dict) else None
+    summary = {"output": str(package_dir.resolve()), "metadata": str(manifest_path.resolve()),
+               "manifest": str(manifest_path.resolve()), "reviewStatus": review["status"],
+               "boundTo": review["boundTo"]}
+    if previous and previous.get("sha256") == review["sha256"] and manifest.get("reviewStatus") == review["status"]:
+        return {**summary, "status": manifest["qa"]["status"], "changed": False}
+    ref = _input_ref(Path(verdict_path), "review")
+    old_sha = previous.get("sha256") if previous else None
+    qa = dict(manifest["qa"])
+    checks = [dict(check) for check in qa.get("checks", []) if check.get("id") != "review_verdict"]
+    checks.append({"id": "review_verdict", "status": "pass" if review["status"] == "accepted" else "warn",
+                   "value": review["status"], "threshold": "accepted"})
+    qa["checks"] = checks
+    qa["status"] = _qa_status(checks)
+    qa["inputs"] = [item for item in qa.get("inputs", []) if not (old_sha and item.get("sha256") == old_sha)] + \
+        [{k: v for k, v in ref.items() if k != "role"}]
+    provenance = dict(provenance)
+    provenance["inputs"] = [item for item in provenance.get("inputs", []) if item.get("role") != "review"] + [ref]
+    provenance["review"] = dict(review)
+    history = list(provenance.get("reviewHistory") or [])
+    history.append({"at": forge_core.utc_timestamp(), "tool": f"{TOOL_NAME} review", "status": review["status"],
+                    "sha256": review["sha256"], "previousStatus": manifest.get("reviewStatus")})
+    provenance["reviewHistory"] = history
+    old_manifest_sha = forge_core.sha256_file(manifest_path)
+    manifest = dict(manifest)
+    manifest["reviewStatus"] = review["status"]
+    manifest["qa"] = qa
+    verify_path = package_dir / VERIFY_FILE
+    report = _read_object(verify_path, VERIFY_FILE) if verify_path.is_file() else None
+    _replace_json(package_dir / PROVENANCE_FILE, provenance)
+    if qa_doc is not None:
+        _replace_json(qa_file, qa)
+    _replace_json(manifest_path, manifest)
+    if report is not None and report.get("manifestSha256") == old_manifest_sha:
+        new_ref = _file_ref(manifest_path)
+        report = dict(report)
+        report["inputs"] = [new_ref if item.get("path") == MANIFEST_FILE else item for item in report.get("inputs", [])]
+        report["manifestSha256"] = new_ref["sha256"]
+        report["manifestUpdates"] = list(report.get("manifestUpdates") or []) + [
+            {"at": forge_core.utc_timestamp(), "previousSha256": old_manifest_sha, "sha256": new_ref["sha256"],
+             "reason": REVIEW_NOTE}]
+        _replace_json(verify_path, report)
+        summary["verify"] = str(verify_path.resolve())
+    return {**summary, "status": qa["status"], "changed": True}
 
 
 # --------------------------------------------------------------------------- CLI
@@ -1893,9 +2013,18 @@ def add_package_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--crf-packed", type=int, default=18, help="H.264 quality, lower is better (default 18)")
 
 
+def add_progress_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--progress-file", help=f"append one JSON line per stage to this file for a host (default: "
+                                                f"${forge_core.PROGRESS_ENV}, else none); stdout is unchanged")
+
+
 def add_verify_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--package", required=True, help="package directory holding animation.json")
     parser.add_argument("--report", help=f"report path; must not exist (default <package>/{VERIFY_FILE})")
+
+
+def _progress(args: argparse.Namespace) -> Any:
+    return getattr(args, "progress", None) or _no_progress
 
 
 def cmd_package(args: argparse.Namespace) -> int:
@@ -1911,6 +2040,7 @@ def cmd_package(args: argparse.Namespace) -> int:
                "inputDigest": provenance["inputDigest"]}
     if "tickExpansion" in manifest:
         summary["tickExpansion"] = manifest["tickExpansion"]["rate"]
+    _progress(args)("done", None, None, f"package QA {summary['status']}, review {summary['reviewStatus']}")
     print(json.dumps(summary, ensure_ascii=True))
     return 0
 
@@ -1921,7 +2051,7 @@ def cmd_verify(args: argparse.Namespace) -> int:
     report_path = Path(args.report) if args.report else package_dir / VERIFY_FILE
     if os.path.lexists(report_path):
         raise ValueError(f"report already exists: {report_path.name}; verify writes a new file")
-    report = verify_package(package_dir)
+    report = verify_package(package_dir, _progress(args))
     failed = [c for c in report["checks"] if c["status"] == "fail"]
     if failed:
         details = "; ".join(f"{c['id']} {c['value']} (limit {c['threshold']})" for c in failed[:8])
@@ -1933,9 +2063,16 @@ def cmd_verify(args: argparse.Namespace) -> int:
     finally:
         stage.unlink(missing_ok=True)
     written = str(report_path.resolve())
+    _progress(args)("done", None, None, f"verify {report['status']}")
     print(json.dumps({"output": written, "metadata": written, "report": written,
                       "manifest": str((package_dir / MANIFEST_FILE).resolve()), "status": report["status"],
                       "checks": len(report["checks"]), "transports": sorted(report["transports"])}, ensure_ascii=True))
+    return 0
+
+
+def cmd_review(args: argparse.Namespace) -> int:
+    """``review``: record a review verdict in an existing package (no re-encode); one JSON line."""
+    print(json.dumps(record_review(Path(args.package), Path(args.review)), ensure_ascii=True))
     return 0
 
 
@@ -1952,12 +2089,22 @@ def build_parser() -> argparse.ArgumentParser:
                         description="Package clean RGBA frames: PNG poster and atlas, optional WebM, packed MP4 and "
                                     "mobile tiers, animation.json 3.0, animation-qa.json and provenance.json.")
     add_package_arguments(pk)
+    add_progress_argument(pk)
     pk.set_defaults(func=cmd_package)
     vf = sub.add_parser("verify", help="decode every encoded file and compare it with the atlas",
                         description="Decode the WebM, packed MP4 and tier files completely, compare them with the "
                                     f"PNG atlas and write {VERIFY_FILE}; nothing is written when a gate fails.")
     add_verify_arguments(vf)
+    add_progress_argument(vf)
     vf.set_defaults(func=cmd_verify)
+    rv = sub.add_parser("review", help="record a review verdict in an existing package (no re-encode)",
+                        description="Record a review_verdict.v1 bound to the package's inputDigest or selection: "
+                                    "animation.json reviewStatus, the QA review check, animation-qa.json and "
+                                    f"provenance.json are rewritten together and {VERIFY_FILE} is re-bound; the "
+                                    "media files must be unchanged. fail_regenerate and stale verdicts are refused.")
+    rv.add_argument("--package", required=True, help="package directory holding animation.json")
+    rv.add_argument("--review", required=True, help="review_verdict.v1 JSON (status accepted or accept_with_mask)")
+    rv.set_defaults(func=cmd_review)
     dr = sub.add_parser("doctor", help="print functional ffmpeg capabilities as JSON")
     dr.set_defaults(func=cmd_doctor)
     return parser
@@ -1965,7 +2112,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    return int(args.func(args))
+    args.progress = forge_core.Progress("engine_export", getattr(args, "progress_file", None)) \
+        if args.command in ("package", "verify") else None
+    try:
+        return int(args.func(args))
+    except BaseException as error:
+        if args.progress is not None:
+            args.progress("error", None, None, str(error) or type(error).__name__)
+        raise
 
 
 def main(argv: Sequence[str] | None = None) -> int:

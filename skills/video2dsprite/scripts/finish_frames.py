@@ -48,7 +48,9 @@ hibit write a new --output-dir (frames/, frames-<k>x/, review-contact.png, finis
 in pixel and hibit mode, palette.json); palette build and lineup write new files. Nothing is ever
 replaced, and a failed run publishes nothing. Success prints one ASCII JSON line; errors
 print "error: ..." and exit 1 (a lineup whose rules fail still writes its report, then
-exits 1); usage errors exit 2. Library use: finish_clip(), build_cast_palette(), lineup().
+exits 4); usage errors exit 2. hd, pixel and hibit take --progress-file (or
+FORGE_PROGRESS_FILE): one JSON line per stage for a host. Library use: finish_clip(),
+build_cast_palette(), lineup().
 """
 from __future__ import annotations
 
@@ -990,11 +992,16 @@ class _Pass:
     plain: dict[float, list[np.ndarray]] | None = None   # hibit: the majority without hysteresis (flicker QA)
 
 
+def _no_progress(*_args: Any, **_kwargs: Any) -> None:
+    """The progress reporter of library calls that pass none (forge_core.Progress has the same signature)."""
+
+
 def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray, dict[str, Any]],
                  source_size: tuple[int, int], anchor_src: Sequence[float], grids: Sequence[Grid], crisp: bool,
-                 seed_frame: int | None, hibit: HibitSpec | None = None) -> _Pass:
+                 seed_frame: int | None, hibit: HibitSpec | None = None, progress: Any = _no_progress) -> _Pass:
     """Every display size is derived from the source frame, never from another size. ``seed_frame`` (cycles:
-    the last frame, pingpong: frame 1) seeds the crisp or hibit hysteresis of frame 0."""
+    the last frame, pingpong: frame 1) seeds the crisp or hibit hysteresis of frame 0. ``progress`` hears one
+    ``downscale`` stage per frame."""
     small: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
     cleaned: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
     crisp_frames: dict[float, list[np.ndarray]] | None = {grid.factor: [] for grid in grids} \
@@ -1035,6 +1042,7 @@ def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray,
         del pixels
     sources: list[dict[str, Any]] = []
     for index, path in enumerate(files):
+        progress("downscale", index, len(files), None)
         pixels, info = load(index)
         sources.append({"sourceFile": path.name, "sourceSha256": info["sha256"]})
         visible = _bbox(pixels[..., 3] > 0)
@@ -1061,6 +1069,7 @@ def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray,
                 frame[frame[..., 3] == 0] = 0
                 crisp_frames[grid.factor].append(frame)
         del pixels
+    progress("downscale", len(files), len(files), None)
     return _Pass(small, cleaned, crisp_frames, hygiene, sources, plain)
 
 
@@ -1121,7 +1130,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 contrast: float | None = None, saturation: float | None = None, outline: str | None = None,
                 canvas: Any = None, canvas_anchor: Any = None, colour_lock: Any = None,
                 lock_strength: float = 1.0, shade_gap: float | None = None,
-                coverage: float | None = None) -> dict[str, Any]:
+                coverage: float | None = None, progress: Any = _no_progress) -> dict[str, Any]:
     """Finish one registered clip into ``out_dir`` (new; staged, published only after QA).
 
     ``mode`` is ``hd`` (default), ``pixel`` or ``hibit``. Exactly one of ``target_height`` (output px of
@@ -1135,7 +1144,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     (default: a colour taken from the image), a #RRGGBB colour, selective, dark or none. Hibit only:
     ``coverage`` (a cell less covered is transparent, default 0.45). ``canvas`` (WxH) and
     ``canvas_anchor`` (X,Y) put every frame on a fixed cell. ``colour_lock`` (hd and pixel: a keyed
-    master image or "rest") locks the design colours (colour_lock.py).
+    master image or "rest") locks the design colours (colour_lock.py). ``progress`` (a forge_core.Progress)
+    hears the stages: load, palette (hibit), downscale (per frame), colour-lock, quantize, qa, publish.
     Returns the summary the CLI prints (paths, scale, palette colours, QA).
     """
     if mode not in MODES:
@@ -1215,6 +1225,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     if os.path.lexists(final):
         raise FileExistsError(errno.EEXIST, "Refusing to replace existing output", str(final))
 
+    progress("load", None, len(files), f"{mode} finish of {len(files)} registered frames")
     rest_pixels, rest_info = _load(files[rest_frame])
     if (rest_pixels[..., 3] == 255).all():
         raise FinishError(f"{files[rest_frame].name} has no transparency: key the clip (video2dsprite.py process or "
@@ -1259,6 +1270,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     spec: HibitSpec | None = None
     outline_index: int | None = None
     if hibit:   # the palette comes first: the hibit downscale indexes the source pixels against it
+        progress("palette", None, None, "the character palette from the source pixels" if palette is None
+                 else "the given palette")
         pal, palette_path, palette_base, built = hibit_character_palette(
             palette, colors, outline, int(seed), hibit_samples(files, rest_frame, rest, seed=int(seed)))
         body_colours, body_indices, outline_index = hibit_layout(pal)
@@ -1266,7 +1279,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     sizes: list[dict[str, Any]] = []
     for attempt in range(3):
         grids = [full_grid(source_size, anchor_src, plan.scale * factor, factor) for factor in factors]
-        passed = _source_pass(files, rest_frame, rest, source_size, anchor_src, grids, crisp, seed_frame, spec)
+        passed = _source_pass(files, rest_frame, rest, source_size, anchor_src, grids, crisp, seed_frame, spec,
+                              progress)
         # Crop each size to the union of its visible pixels (plus the outline) plus 1 px, or place it on the
         # canvas; the anchor moves with the crop (and to the outline's bottom edge for the feet anchor).
         sizes, retry = [], None
@@ -1315,6 +1329,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     # The colour lock (hd: the cleaned frames; pixel: the colours that get quantized).
     lock_doc = None
     if lock_master is not None:
+        progress("colour-lock", None, None, "design colours held on the master's")
         lock_doc = {"strength": float(lock_strength), "method": colour_lock_module.METHOD, "sizes": {}}
         for entry in sizes:
             factor = entry["factor"]
@@ -1364,6 +1379,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         raise FinishError(f"the {mode} finish needs a palette with a transparent index (at most 255 colours)")
 
     count = len(files)
+    if mode in PALETTED:
+        progress("quantize", None, None, f"{len(pal)} palette colours, hysteresis, cleanup and outline")
     outputs: dict[float, list[np.ndarray]] = {}
     size_qa: dict[float, dict[str, Any]] = {}
     shades = outline_shades(pal) if pal is not None and outline_px and outline == "selective" else None
@@ -1418,6 +1435,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         size_qa[factor]["emptyFrames"] = [index for index, frame in enumerate(outputs[factor])
                                           if not (frame[..., 3] > CONTOUR).any()]
 
+    progress("qa", None, None, None)
     base = outputs[1.0]
     nominal = plan.target_height + 2 * outline_px
     measured = measure_body(base[rest_frame][..., 3], OUTPUT_MIN_RUN)
@@ -1474,6 +1492,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         not_proven.append("that every locked colour belongs to the master's design part it matched (look at the "
                           "frames: the lock only moves chroma toward colours found at the same body height)")
 
+    progress("publish", None, None, None)
     with forge_core.staged_output(final) as stage:
         written: list[Path] = []
         records: list[dict[str, Any]] = []
@@ -2075,6 +2094,9 @@ def _common_finish_args(parser: argparse.ArgumentParser) -> None:
                         help="keyed master still (RGBA PNG), or 'rest' for the rest frame: lock the design colours "
                              "to it in OKLab (chroma only, lightness kept; colour_lock.py)")
     parser.add_argument("--lock-strength", type=float, default=1.0, help="colour-lock strength 0..1 (default 1)")
+    parser.add_argument("--progress-file",
+                        help=f"append one JSON line per stage to this file for a host (default: "
+                             f"${forge_core.PROGRESS_ENV}, else none); stdout is unchanged")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -2198,6 +2220,8 @@ def build_parser() -> argparse.ArgumentParser:
 def cmd_finish(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     pixel = args.mode == "pixel"
     paletted = args.mode in PALETTED
+    progress = forge_core.Progress(TOOL_NAME, args.progress_file)
+    args.progress = progress
     summary = finish_clip(
         args.frames, args.output_dir, mode=args.mode, target_height=args.target_height, scale_ref=args.scale_ref,
         palette=getattr(args, "palette", None) if paletted else None, rest_frame=args.rest_frame, anchor=args.anchor,
@@ -2210,7 +2234,8 @@ def cmd_finish(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         saturation=args.saturation if pixel else None, outline=args.outline if paletted else None,
         canvas=args.canvas, canvas_anchor=args.canvas_anchor, colour_lock=args.colour_lock,
         lock_strength=args.lock_strength, shade_gap=args.shade_gap if pixel else None,
-        coverage=args.coverage if args.mode == "hibit" else None)
+        coverage=args.coverage if args.mode == "hibit" else None, progress=progress)
+    progress("done", None, None, f"finish QA {summary['status']}")
     return summary, 0
 
 
@@ -2225,7 +2250,7 @@ def cmd_lineup(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             print(forge_core.ascii_text(f"error: lineup rule failed: {item['set']} ({item['role']}) is "
                                         f"{item['ratio']:g}x the reference by {item['metric']}, rule "
                                         f"{item['role']}:{item['rule']}; see {summary['metadata']}"), file=sys.stderr)
-        return summary, 1
+        return summary, forge_core.EXIT_PUBLISHED_FAIL
     return summary, 0
 
 
@@ -2235,15 +2260,27 @@ def _run(argv: Sequence[str] | None = None) -> int:
         summary, status = args.func(args)
     except FileExistsError as error:
         if not getattr(error, "filename", None):
+            _progress_error(args, error)
             raise
+        _progress_error(args, error)
         raise FinishError(f"output already exists, choose a new path: {error.filename}") from None
+    except BaseException as error:
+        _progress_error(args, error)
+        raise
     print(json.dumps(summary, ensure_ascii=True))
     return status
 
 
+def _progress_error(args: argparse.Namespace, error: BaseException) -> None:
+    progress = getattr(args, "progress", None)
+    if progress is not None:
+        progress("error", None, None, str(error) or type(error).__name__)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
-    """Usage errors exit 2; refused input, failed QA and failed lineup rules exit 1 with ``error: ...``;
-    anything unexpected prints ``error: internal error (...)`` (D26, D27; forge_core.run_cli)."""
+    """Usage errors exit 2; refused input and failed QA exit 1 with ``error: ...`` (nothing published); a lineup
+    whose rules fail writes its report and exits 4 (forge_core.EXIT_PUBLISHED_FAIL); anything unexpected prints
+    ``error: internal error (...)`` (D26, D27; forge_core.run_cli)."""
     return forge_core.run_cli(_run, argv)
 
 

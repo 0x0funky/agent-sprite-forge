@@ -21,9 +21,9 @@ Run each as one line from the project root. `<skill-dir>` is this skill's folder
 | Verb | Flags | Writes |
 |---|---|---|
 | `plan` | `--master` (generate2dsprite.master.v1), `--output-dir` (new), `--actions` (default `idle,walk,run,attack,jump,hurt`), `--views side[,front,back]` with `--view-master VIEW=FILE`, `--finish hd\|pixel` (default the master's), `--target-height`, `--fps` (fractions allowed: `12.5`, `25/2`) or `--frame-ms 80`, `--formats png,webm,packed`, `--tiers`, `--duration 6`, `--resolution 720p`, `--max-takes 3`, `--jobs 3`, `--pin-last auto\|on\|off`, `--gen-timeout`, `--style`, `--pronoun`, `--palette` or `--colors N` (pixel), `--outline selective\|dark\|none` (pixel), `--canvas WxH`, `--canvas-anchor X,Y`, `--no-colour-lock`, `--oneshot-timing auto\|source`, `--oneshot-ms attack=700,...`, `--matte-profile`, `--library` | the set folder: `master/<view>/` byte copies, `set_plan.json` |
-| `run` | `--plan`, `--actions`, `--max-takes`, `--jobs`, `--stagger 2`, `--media-cli`, `--timeout` | `actions/<id>/job/`, `actions/<id>/takes/tNN/...`, `set_state.json`, `takes.jsonl` |
+| `run` | `--plan`, `--actions`, `--max-takes`, `--jobs`, `--stagger 2`, `--media-cli`, `--timeout`, `--progress-file <jsonl>` | `actions/<id>/job/`, `actions/<id>/takes/tNN/...`, `set_state.json`, `takes.jsonl` |
 | `review` | `--plan`, `--peer <other set>` | `review/<id>/tNN-sheet.png`, `review/<id>/tNN-final.png`, `review/lineup-NNN.png`, `review/review-NNN.json` |
-| `accept` | `--plan`, `--action`, `--take`, `--window START:END`, `--note` | the acceptance in `set_state.json` |
+| `accept` | `--plan`, `--action`, `--take`, `--window START:END`, `--note` | the acceptance in `set_state.json`; `takes/tNN/review-verdict-NNN.json` and, for a packaged take, the verdict in its package |
 | `retake` | `--plan`, `--action`, `--fix <clause id or text>` (repeatable) | a new round and the fix in `set_state.json`, a `retake-requested` line in `takes.jsonl` |
 | `report` | `--plan`, `--output` | `reports/report-NNN.json` |
 
@@ -31,6 +31,18 @@ Every verb prints one ASCII JSON line. Errors print `error: ...` and exit 1; usa
 `run` exits 3 when it waits for a clip because no generation route exists. `run` exits 1 when an
 action is still incomplete (failed, retake pending, post-processing error) after printing its
 summary line.
+
+`run --progress-file <jsonl>` (or `FORGE_PROGRESS_FILE`) appends one JSON line per stage for a host
+(`progress_line_v1` in `references/schemas/host.schema.json`): `start`, `job` per
+action, `generate` with done/total per batch of clips, `evaluate` per take, `post` per action with
+`finish`, `package` and `verify`, then `done` (or `error`). The child tools do not inherit the
+variable, so the file holds the run's stages only; stdout keeps its one summary line.
+
+`set_state.json` is shared. `run`, `review`, `accept` and `retake` read, change and write it under
+a lock on `set_state.lock` (forge_core.file_lock, across processes). `accept` and `retake` bump the
+action's `agentRevision`; a `run` that read the state earlier adopts their decisions (accepted,
+round, chosen, status, fixes, per-take review verdicts, the latest review) before its next save,
+so an accept or a retake made while a run works is never lost.
 
 ## The master
 
@@ -196,7 +208,13 @@ look at every sheet (Read in Claude Code, view_image in Codex) and then:
 
 - `accept --action X --take N` records the approval (refused unless the latest review lists that
   take's sheet unchanged). Accepting another take, or a failed take with `--window START:END`,
-  makes it the chosen take; the next `run` finishes and packages it.
+  makes it the chosen take; the next `run` finishes and packages it. The verdict reaches the
+  package either way: a take that is already packaged gets a `review_verdict.v1` bound to the
+  package's inputDigest, recorded in place by `engine_export.py review` (animation.json
+  `reviewStatus: accepted`, the QA `review_verdict` check, animation-qa.json and provenance.json
+  rewritten together, verify-qa.json re-bound, no re-encode); a take packaged later gets one bound
+  to its selection file, passed to `engine_export.py package --review`. The summary line's
+  `reviewStatus` says which happened (null: the next `run` does it).
 - `retake --action X --fix <id>` rejects the action semantically: a new round starts with the
   clause (an id from the library, such as `weapon-shape`, `no-text`, `no-flares`,
   `keep-colours`, or free text) and the next `run` generates a new take.
@@ -225,8 +243,9 @@ All JSON written by the set holds paths relative to the set folder; absolute pat
   failures, reasons, usableWindow, usableFrames, frames, motion, badFrames, gates}, failures,
   reasons, fixNext, stages {keyed, registered[-wA-B], motion, timed, finished, selection, package,
   package-r2, verify: each {dir, seconds, ...tool summary}}}], chosen {take, window, tag, reason},
-  accepted {take, window, note, at, review, sheet}, output {take, tag, package, manifest, verify},
-  message}}.
+  accepted {take, window, note, at, review, sheet, verdict, reviewStatus, package}, output {take,
+  tag, package, manifest, verify}, message, agentRevision}}. Contracts: `sprite_set_plan_v1` and
+  `sprite_set_state_v1` in `references/schemas/video.schema.json`.
 - `takes.jsonl` (`video2dsprite.sprite_set_take.v1`, append-only): one line per decided take
   (kept, rejected, error), per best-window choice and per retake request, with failures, reasons
   with frame numbers, badFrames per gate, usableWindow, the fixes used and the fixes added next.

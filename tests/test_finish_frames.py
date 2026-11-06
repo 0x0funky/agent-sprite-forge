@@ -352,7 +352,7 @@ def test_lineup_checks_the_cast_size_rules(clips, tmp_path):
 
     result = run_cli([SCRIPT, "lineup", "--sets", cast["hero"], cast["brute"], f"boss={cast['mob']}",
                       "--out", tmp_path / "bad.png"], "cp1252")
-    assert result.returncode == 1
+    assert result.returncode == 4  # the line-up and its report are published with status fail
     assert "error: lineup rule failed: brute (mob)" in result.stderr and "rule boss:~2" in result.stderr
     line = json.loads(result.stdout)
     assert line["status"] == "fail" and {item["set"] for item in line["failed"]} == {"brute", "mob"}

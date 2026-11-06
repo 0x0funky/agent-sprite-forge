@@ -14,10 +14,19 @@
            set_state.json and takes.jsonl, so running it again resumes where it stopped.
   review   Contact sheet per action and take, a cast line-up and review.json, for the host
            agent to LOOK at before it accepts anything.
-  accept   Record the agent's semantic approval of one take.
+  accept   Record the agent's semantic approval of one take; when that take is already
+           packaged, the review verdict is written into the package (engine_export.py
+           review: animation.json reviewStatus "accepted"), else the next run packages it
+           with --review.
   retake   Record a semantic rejection with a prompt fix; the next run makes a new take.
   report   One JSON with every action's route, takes, QC numbers, loop or timing and output
            files.
+
+set_state.json is shared by run, review, accept and retake: each reads, changes and writes
+it under a lock on set_state.lock, and a long run merges the agent's decisions (accept,
+retake, review) from disk before every save, so an accept or retake made while a run works
+is never lost. run takes --progress-file (or FORGE_PROGRESS_FILE): one JSON line per stage
+for a host; stdout keeps its one summary line.
 
 Exit codes: 0 done; 1 refused input or failed step (error: ... on stderr); 2 usage; 3 the
 run waits for a clip because no generation route exists (drop the clip into the take's
@@ -27,6 +36,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import contextlib
 import json
 import math
 import os
@@ -63,6 +73,8 @@ REVIEW_SCHEMA = "video2dsprite.sprite_set_review.v1"
 REPORT_SCHEMA = "video2dsprite.sprite_set_report.v1"
 STANDIN_SCHEMA = "video2dsprite.finish_standin.v1"
 PLAN_FILE, STATE_FILE, TAKES_FILE = "set_plan.json", "set_state.json", "takes.jsonl"
+LOCK_FILE = "set_state.lock"                 # forge_core.file_lock around every set_state.json read-modify-write
+REVIEW_VERDICT_SCHEMA = "video2dsprite.review_verdict.v1"
 LIBRARY_FILE = HERE.parent / "references" / "motion-prompts.md"
 
 SCRIPTS = {name: HERE / f"{name}.py" for name in
@@ -347,7 +359,12 @@ class ToolFailure(RuntimeError):
 
 
 def _child_env() -> dict[str, str]:
-    return {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
+    """The child tools' environment; FORGE_PROGRESS_FILE is removed (the run reports their stages itself)."""
+    return {**forge_core.child_env_without_progress(), "PYTHONIOENCODING": "utf-8", "PYTHONDONTWRITEBYTECODE": "1"}
+
+
+def _no_progress(*_args: Any, **_kwargs: Any) -> None:
+    """The progress reporter of a runner without a host (forge_core.Progress has the same signature)."""
 
 
 def run_tool(script: Path, args: Sequence[Any], *, timeout: float = TOOL_TIMEOUT,
@@ -1752,10 +1769,9 @@ class SetRunner:
         self.entries = {entry["id"]: entry for entry in plan["actions"]}
         self.plan_sha = forge_core.sha256_file(self.plan_path)
         self.state_path = self.root / STATE_FILE
-        if self.state_path.is_file():
-            state = forge_core.read_json(self.state_path)
-            if not isinstance(state, dict) or state.get("schema") != STATE_SCHEMA:
-                raise ValueError(f"{STATE_FILE} is not a {STATE_SCHEMA} document")
+        self.lock_path = self.root / LOCK_FILE
+        state = self._read_state()   # writers replace the file atomically; review, accept and retake hold the lock
+        if state is not None:
             self.state = state
         else:
             self.state = {"schema": STATE_SCHEMA, "tool": {"name": TOOL_NAME, "version": TOOL_VERSION},
@@ -1764,15 +1780,77 @@ class SetRunner:
         self.notes: list[str] = []
         self.media_argv: list[str] | None = None
         self.media_name = ""
+        self.progress: Any = _no_progress
 
     # ----------------------------------------------------------------- bookkeeping
 
     def rel(self, path: Path | str) -> str:
         return forge_core.manifest_path(path, self.root)
 
+    def _read_state(self) -> dict | None:
+        if not self.state_path.is_file():
+            return None
+        state = forge_core.read_json(self.state_path)
+        if not isinstance(state, dict) or state.get("schema") != STATE_SCHEMA:
+            raise ValueError(f"{STATE_FILE} is not a {STATE_SCHEMA} document")
+        return state
+
+    def reload(self) -> None:
+        """Read set_state.json again (call it holding the set lock before a read-modify-write)."""
+        state = self._read_state()
+        if state is not None:
+            self.state = state
+
     def save(self) -> None:
-        self.state["updatedAt"] = _now()
-        forge_core.write_json(self.state_path, _scrub(self.state), no_clobber=False)
+        """Write set_state.json under the set lock, after merging the agent's decisions made on disk since this
+        copy was read (merge_disk), so a concurrent accept, retake or review is never overwritten."""
+        with forge_core.file_lock(self.lock_path):
+            self.merge_disk()
+            self.state["updatedAt"] = _now()
+            forge_core.write_json(self.state_path, _scrub(self.state), no_clobber=False)
+
+    def merge_disk(self) -> None:
+        """Adopt what review, accept and retake wrote to set_state.json since this runner read it.
+
+        Those verbs are the agent's: they run under the lock and bump an action's agentRevision. When the
+        file's agentRevision of an action is ahead of this copy, the file's accepted, round, chosen, status and
+        message win, its fixes are added to ours and its per-take review verdicts are copied; the newer
+        review record wins too. Everything else (takes, stages, outputs) is this runner's own work and kept.
+        """
+        try:
+            disk = self._read_state()
+        except ValueError:
+            return
+        if disk is None:
+            return
+        theirs_review, ours_review = disk.get("review"), self.state.get("review")
+        if isinstance(theirs_review, dict) and (not isinstance(ours_review, dict)
+                                                or str(theirs_review.get("at", "")) > str(ours_review.get("at", ""))):
+            self.state["review"] = theirs_review
+        for ident, theirs in (disk.get("actions") or {}).items():
+            if ident not in self.entries or not isinstance(theirs, dict):
+                continue
+            ours = self.state["actions"].get(ident)
+            if ours is None:
+                self.state["actions"][ident] = theirs
+                continue
+            if int(theirs.get("agentRevision", 0)) <= int(ours.get("agentRevision", 0)):
+                continue
+            ours["agentRevision"] = int(theirs.get("agentRevision", 0))
+            ours["accepted"] = theirs.get("accepted")
+            known = {(fix.get("id"), fix.get("text")) for fix in ours.get("fixes", [])}
+            ours["fixes"] = list(ours.get("fixes", [])) + [fix for fix in theirs.get("fixes", [])
+                                                           if (fix.get("id"), fix.get("text")) not in known]
+            if int(theirs.get("round", 1)) != int(ours.get("round", 1)) or theirs.get("chosen") != ours.get("chosen"):
+                ours["round"] = int(theirs.get("round", 1))
+                ours["chosen"] = theirs.get("chosen")
+                ours["status"], ours["message"] = theirs.get("status"), theirs.get("message")
+            verdicts = {record.get("take"): record["review"] for record in theirs.get("takes", [])
+                        if isinstance(record, dict) and "review" in record}
+            for record in ours.get("takes", []):
+                if record.get("take") in verdicts:
+                    record["review"] = verdicts[record["take"]]
+            self.notes.append(f"{ident}: took the agent's accept or retake made during this run")
 
     def astate(self, ident: str) -> dict:
         if ident not in self.entries:
@@ -2251,9 +2329,13 @@ class SetRunner:
                 if self.needs_timed(ident, record, ""):
                     self.stage(record, "timed", lambda out: self.run_timed(ident, record, out, ""))
                 record.update(status="kept", failures=[], reasons=[])
-                st["chosen"] = {"take": record["take"], "reason": "first take that passed every gate",
-                                "window": None, "tag": ""}
-                st["status"], st["message"] = "chosen", None
+                if record["round"] == st["round"]:
+                    st["chosen"] = {"take": record["take"], "reason": "first take that passed every gate",
+                                    "window": None, "tag": ""}
+                    st["status"], st["message"] = "chosen", None
+                else:   # a retake asked for a new round while this take was made: it is kept, never chosen
+                    self.notes.append(f"{ident}: take {record['take']} passed, but a retake started round "
+                                      f"{st['round']} meanwhile; it was not chosen")
             else:
                 record.update(status="rejected", failures=list(qc["failures"]), reasons=list(qc["reasons"]))
         except (ToolFailure, ValueError) as failure:
@@ -2465,7 +2547,16 @@ class SetRunner:
             args += ["--tiers", package["tiers"]]
         if crf:
             args += ["--crf-webm", crf[0], "--crf-packed", crf[1]]
+        accepted = self.accepted_for(ident, record["take"], tag)
+        verdict = None
+        if accepted is not None:   # accepted before packaging: the package carries the verdict from the start
+            verdict = self.write_verdict(ident, record, tag,
+                                         forge_core.sha256_file(self.root / selection["selection"]))
+            args += ["--review", verdict]
         summary, warnings = run_tool(SCRIPTS["engine_export"], args, label="engine_export.py package")
+        if verdict is not None:
+            accepted.update(verdict=forge_core.file_ref(verdict, self.root), reviewStatus=summary.get("reviewStatus"),
+                            package=self.rel(out))
         manifest = forge_core.read_json(out / "animation.json")
         files = {"manifest": self.rel(out / "animation.json"), "qa": self.rel(out / "animation-qa.json"),
                  "provenance": self.rel(out / "provenance.json"),
@@ -2487,8 +2578,70 @@ class SetRunner:
         return {"status": summary.get("status"), "report": self.rel(package / "verify-qa.json"),
                 "transports": summary.get("transports")}
 
+    # ----------------------------------------------------------------- the agent's verdict in the package
+
+    def accepted_for(self, ident: str, take: int, tag: str) -> dict | None:
+        """The action's accept record when it accepts exactly this take and window (tag), else None."""
+        st = self.astate(ident)
+        accepted, chosen = st.get("accepted"), st.get("chosen") or {}
+        if (isinstance(accepted, dict) and accepted.get("take") == take and chosen.get("take") == take
+                and chosen.get("tag", "") == tag):
+            return accepted
+        return None
+
+    def write_verdict(self, ident: str, record: dict, tag: str, reviewed_sha256: str) -> Path:
+        """A new review_verdict.v1 (status accepted) in the take folder, bound to ``reviewed_sha256`` (the
+        selection the package is cut by, or a package's inputDigest), with the reviewed sheet as evidence."""
+        accepted = self.astate(ident)["accepted"]
+        folder = self.root / record["dir"]
+        evidence = []
+        sheet = accepted.get("sheet") or {}
+        if sheet.get("path") and (self.root / sheet["path"]).is_file():
+            evidence.append({"path": forge_core.manifest_path(self.root / sheet["path"], folder),
+                             "sha256": sheet.get("sha256")})
+        document = {"schema": REVIEW_VERDICT_SCHEMA, "status": "accepted", "issues": [], "evidence": evidence,
+                    "reviewedSha256": reviewed_sha256, "reviewer": "agent (sprite_set.py accept)",
+                    "note": accepted.get("note") or "", "acceptedAt": accepted.get("at")}
+        path = _next_numbered(folder, f"review-verdict{tag}", ".json")
+        _write_new_json(path, _scrub(document))
+        return path
+
+    def apply_accepted(self, ident: str) -> str | None:
+        """Write the accept into the action's package when it holds the accepted take: a verdict bound to the
+        package's inputDigest, recorded by engine_export.py review (animation.json reviewStatus accepted, QA and
+        provenance re-bound, no re-encode). Returns the package's reviewStatus, or None when no package of the
+        accepted take exists yet (the run then packages it with --review)."""
+        st = self.astate(ident)
+        output = st.get("output") or {}
+        accepted = self.accepted_for(ident, output.get("take"), output.get("tag", "")) if output.get("package") \
+            else None
+        if accepted is None:
+            return None
+        package = self.root / output["package"]
+        manifest = forge_core.read_json(package / "animation.json")
+        if manifest.get("reviewStatus") == "accepted":   # packaged with --review, or recorded before
+            accepted.setdefault("reviewStatus", "accepted")
+            accepted.setdefault("package", output["package"])
+            return "accepted"
+        record = self.take(ident, output["take"])
+        provenance = forge_core.read_json(package / "provenance.json")
+        path = self.write_verdict(ident, record, output.get("tag", ""), str(provenance.get("inputDigest")))
+        summary, _ = run_tool(SCRIPTS["engine_export"], ["review", "--package", package, "--review", path],
+                              label="engine_export.py review")
+        accepted["verdict"] = forge_core.file_ref(path, self.root)
+        accepted["reviewStatus"] = summary.get("reviewStatus")
+        accepted["package"] = output["package"]
+        stage = next((record["stages"][name] for name in ("package-r2" + output.get("tag", ""),
+                                                          "package" + output.get("tag", ""))
+                      if name in record.get("stages", {}) and record["stages"][name].get("dir") == output["package"]),
+                     None)
+        if stage is not None:
+            stage["reviewStatus"] = summary.get("reviewStatus")
+        return summary.get("reviewStatus")
+
     def post_process(self, ident: str) -> None:
-        """Finish, rebind, package and verify the chosen take (or its usable window)."""
+        """Finish, rebind, package and verify the chosen take (or its usable window); an accept of that take is
+        written into its package."""
         st = self.astate(ident)
         chosen = st.get("chosen")
         if not chosen:
@@ -2496,24 +2649,29 @@ class SetRunner:
         output = st.get("output") or {}
         if (st["status"] in ("done", "done-warn") and output.get("take") == chosen["take"]
                 and output.get("tag") == chosen.get("tag", "")):
+            self.review_into_package(ident)
             return
         record = self.take(ident, chosen["take"])
         tag, window = chosen.get("tag", ""), chosen.get("window")
+        label = f"{ident} t{record['take']:02d}{tag}"
         try:
             if "keyed" not in record.get("stages", {}):
                 raise ValueError(f"take {record['take']} was never keyed; run review only on evaluated takes")
             if not record.get("qc"):
                 self.run_qc(ident, record)
             self.cut(ident, record, tag, window)
+            self.progress("finish", None, None, f"{label}: finish_frames.py {self.plan['finish']['mode']}")
             self.stage(record, "finished" + tag, lambda out: self.run_finish(ident, record, out, tag))
             self.stage(record, "selection" + tag, lambda out: self.run_rebind(ident, record, out, tag))
             package_stage = "package" + tag
+            self.progress("package", None, None, f"{label}: engine_export.py package")
             self.stage(record, package_stage, lambda out: self.run_package(ident, record, out, tag, None))
             verify_key = "verify" + tag
             video = set(self.plan["package"]["formats"]) & {"webm", "packed"} or self.plan["package"].get("tiers")
             if not video:
                 record["stages"][verify_key] = {"status": "skipped", "reason": "png-only package: nothing to decode"}
             elif not record["stages"].get(verify_key):
+                self.progress("verify", None, None, f"{label}: engine_export.py verify")
                 try:
                     record["stages"][verify_key] = self.verify(record, package_stage)
                 except ToolFailure as first:
@@ -2535,7 +2693,23 @@ class SetRunner:
         except (ToolFailure, ValueError) as failure:
             st["status"] = "post-error"
             st["message"] = _ascii(str(failure))[:500]
-        self.save()
+        self.save()   # merges an accept made while this action was packaged
+        if st["status"] in ("done", "done-warn"):
+            self.review_into_package(ident)
+
+    def review_into_package(self, ident: str) -> None:
+        """apply_accepted under the set lock, for a run: an accept recorded after (or while) the package was made
+        still reaches animation.json. A failure is a note, never a lost package."""
+        with forge_core.file_lock(self.lock_path):
+            self.merge_disk()
+            try:
+                status = self.apply_accepted(ident)
+            except (ToolFailure, ValueError) as failure:
+                self.notes.append(_ascii(f"{ident}: the accept could not be written into the package "
+                                         f"({str(failure)[:200]}); run sprite_set.py accept again"))
+                return
+            if status is not None:
+                self.save()
 
     # ----------------------------------------------------------------- the whole run
 
@@ -2549,7 +2723,10 @@ class SetRunner:
         self.save()
         self.resolve_media(media_cli)
         order = self.order(only)
-        for ident in order:
+        progress = self.progress
+        progress("start", 0, len(order), f"run {self.state['runs']}: {', '.join(order)}")
+        for number, ident in enumerate(order):
+            progress("job", number, len(order), f"{ident}: registration job and i2v input")
             self.ensure_job(ident)
         errors: dict[str, int] = {}
         generated = 0
@@ -2562,14 +2739,18 @@ class SetRunner:
             pending = [ident for ident in batch if records[ident]["status"] in ("open", "no-route")]
             results: dict[str, dict] = {}
             if pending:
+                progress("generate", 0, len(pending),
+                         ", ".join(f"{ident} t{records[ident]['take']:02d}" for ident in pending))
                 with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, min(jobs, len(pending)))) as pool:
                     futures = {}
                     for number, ident in enumerate(pending):
                         if number and stagger > 0 and jobs > 1:
                             time.sleep(stagger)
                         futures[ident] = pool.submit(self.generate, ident, records[ident], timeout)
-                    for ident, future in futures.items():
+                    for number, (ident, future) in enumerate(futures.items(), 1):
                         results[ident] = future.result()
+                        progress("generate", number, len(pending),
+                                 f"{ident} t{records[ident]['take']:02d}: {results[ident]['status']}")
             for ident in batch:
                 record = records[ident]
                 if ident in results:
@@ -2582,10 +2763,15 @@ class SetRunner:
                         continue
                     generated += 0 if results[ident].get("adopted") else 1
                 if record["status"] == "generated":
+                    progress("evaluate", None, None, f"{ident} t{record['take']:02d}: key, QC gates, register, cut")
                     self.evaluate(ident, record, max_takes)
-        for ident in order:
+                    progress("evaluate", None, None, f"{ident} t{record['take']:02d}: {record['status']}")
+        for number, ident in enumerate(order):
+            progress("post", number, len(order), f"{ident}: finish, package, verify")
             self.post_process(ident)
-        return self.summary(order, generated)
+        summary, code = self.summary(order, generated)
+        progress("done", len(order), len(order), f"set {summary['status']}")
+        return summary, code
 
     def summary(self, order: Sequence[str], generated: int) -> tuple[dict, int]:
         actions = {}
@@ -2854,8 +3040,10 @@ def cmd_review(args: argparse.Namespace) -> dict:
     }
     path = _next_numbered(folder, "review", ".json")
     _write_new_json(path, _scrub(document))
-    runner.state["review"] = {"latest": runner.rel(path), "at": _now()}
-    runner.save()
+    with forge_core.file_lock(runner.lock_path):   # a fresh read: a run may have saved while the sheets were drawn
+        runner.reload()
+        runner.state["review"] = {"latest": runner.rel(path), "at": _now()}
+        runner.save()
     return {"output": str(folder.resolve()), "metadata": str(path.resolve()), "review": str(path.resolve()),
             "sheets": [str((runner.root / item["sheet"]["path"]).resolve()) for item in sheets],
             "finals": [str((runner.root / item["final"]["path"]).resolve()) for item in sheets if item["final"]],
@@ -2874,8 +3062,24 @@ def _parse_window(text: str | None) -> list[int] | None:
     return [int(match.group(1)), int(match.group(2))]
 
 
+@contextlib.contextmanager
+def locked_runner(plan: Any):
+    """A SetRunner read fresh under the set lock, held until the block ends (the agent's verbs: every
+    read-modify-write of set_state.json happens inside one lock, so a concurrent run merges it, never loses it)."""
+    path = Path(plan)
+    plan_path = path / PLAN_FILE if path.is_dir() else path
+    if not plan_path.is_file():
+        raise ValueError(f"no {PLAN_FILE} at {plan_path.as_posix()}")
+    with forge_core.file_lock(plan_path.resolve().parent / LOCK_FILE):
+        yield SetRunner(plan_path)
+
+
 def cmd_accept(args: argparse.Namespace) -> dict:
-    runner = SetRunner(Path(args.plan))
+    with locked_runner(args.plan) as runner:
+        return _accept(runner, args)
+
+
+def _accept(runner: SetRunner, args: argparse.Namespace) -> dict:
     st = runner.astate(args.action)
     record = runner.take(args.action, args.take)
     if "keyed" not in record.get("stages", {}):
@@ -2910,17 +3114,38 @@ def cmd_accept(args: argparse.Namespace) -> dict:
         st["chosen"] = {"take": args.take, "window": window, "tag": tag,
                         "reason": "accepted by the agent after looking at the review"}
         st["status"], st["message"] = "chosen", None
+    previous = st.get("accepted") or {}
     st["accepted"] = {"take": args.take, "window": window, "note": args.note or "", "at": _now(), "review": latest,
                       "sheet": sheet["sheet"]}
+    if previous.get("take") == args.take and previous.get("window") == window:   # the same take accepted again
+        st["accepted"].update({key: previous[key] for key in ("verdict", "reviewStatus", "package") if key in previous})
+    st["agentRevision"] = int(st.get("agentRevision", 0)) + 1
+    review_error = None
+    try:
+        review_status = runner.apply_accepted(args.action)   # the package of this take, when it exists already
+    except (ToolFailure, ValueError) as failure:   # the accept still counts; the next run retries the package
+        review_status, review_error = None, _ascii(str(failure))[:300]
+        print(f"warning: the accept is recorded, but its package could not be updated: {review_error}",
+              file=sys.stderr)
     runner.save()
     done = st["status"] in ("done", "done-warn")
-    return {"output": str(runner.root), "metadata": str(runner.state_path), "action": args.action, "take": args.take,
-            "accepted": True, "window": window, "status": st["status"],
-            "next": None if done else "run sprite_set.py run to finish and package the accepted take"}
+    package = (st.get("output") or {}).get("package") if review_status else None
+    summary = {"output": str(runner.root), "metadata": str(runner.state_path), "action": args.action,
+               "take": args.take, "accepted": True, "window": window, "status": st["status"],
+               "reviewStatus": review_status, "package": str((runner.root / package).resolve()) if package else None,
+               "next": None if done and review_status else "run sprite_set.py run to finish and package the accepted "
+                                                           "take (the package records the verdict)"}
+    if review_error:
+        summary["reviewError"] = review_error
+    return summary
 
 
 def cmd_retake(args: argparse.Namespace) -> dict:
-    runner = SetRunner(Path(args.plan))
+    with locked_runner(args.plan) as runner:
+        return _retake(runner, args)
+
+
+def _retake(runner: SetRunner, args: argparse.Namespace) -> dict:
     st = runner.astate(args.action)
     fixes = []
     for value in args.fix:
@@ -2947,6 +3172,7 @@ def cmd_retake(args: argparse.Namespace) -> dict:
             st["fixes"].append({**fix, "source": "agent", "round": st["round"]})
             known.add(fix["text"].lower())
     st.update(chosen=None, accepted=None, status="pending", message=None)
+    st["agentRevision"] = int(st.get("agentRevision", 0)) + 1
     with open(runner.root / TAKES_FILE, "a", encoding="utf-8", newline="\n") as stream:
         stream.write(json.dumps(_scrub({"schema": TAKE_SCHEMA, "at": _now(), "action": args.action,
                                         "take": chosen["take"] if chosen else None, "round": st["round"],
@@ -3061,6 +3287,7 @@ def _seconds(low: float, high: float) -> Callable[[str], float]:
 
 def cmd_run(args: argparse.Namespace) -> tuple[dict, int]:
     runner = SetRunner(Path(args.plan))
+    runner.progress = args.progress
     generation = runner.plan["generation"]
     only = [item.strip() for item in args.actions.split(",") if item.strip()] if args.actions else None
     return runner.run(only, max_takes=args.max_takes or int(generation["maxTakes"]),
@@ -3142,6 +3369,10 @@ def build_parser() -> argparse.ArgumentParser:
     rn.add_argument("--media-cli", help="media CLI script to call instead of generate2dmedia/scripts/route_media.py "
                                         "(same arguments and JSON line)")
     rn.add_argument("--timeout", type=_seconds(30, 7200), help="override the plan's generation timeout")
+    rn.add_argument("--progress-file",
+                    help=f"append one JSON line per stage (start, job, generate N of M, evaluate, post, finish, "
+                         f"package, verify, done) to this file for a host (default: ${forge_core.PROGRESS_ENV}, "
+                         "else none); stdout is unchanged")
 
     rv = sub.add_parser("review", help="contact sheets per take, finished strips, a cast line-up and review.json",
                         description="Write the review images; the agent must look at every one before accept.")
@@ -3174,7 +3405,12 @@ def build_parser() -> argparse.ArgumentParser:
 def _run(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "run":
-        summary, code = cmd_run(args)
+        args.progress = forge_core.Progress(TOOL_NAME, args.progress_file)
+        try:
+            summary, code = cmd_run(args)
+        except BaseException as error:
+            args.progress("error", None, None, str(error) or type(error).__name__)
+            raise
         print(json.dumps(summary, ensure_ascii=True))
         if code == EXIT_NO_ROUTE:
             print(_ascii("error: no generation route; the summary names the media folders that wait for a clip"),
