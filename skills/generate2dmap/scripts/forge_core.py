@@ -18,6 +18,15 @@ behaviour:
   ``merge_rects``.
 * Sheets and seams: ``ownership_slice`` (D14) and ``edge_seam_report`` (D9).
 
+The host API (unreleased, after 0.5.0) adds, again without changing a 1.x name:
+
+* ``EXIT_PUBLISHED_FAIL`` (4): the exit status of a CLI that published its output
+  with status ``fail`` (D26 used 1 for this; 1 now always means nothing usable).
+* ``Progress``: one JSON line per stage change appended to a host's progress file
+  (``--progress-file`` or ``FORGE_PROGRESS_FILE``); stdout keeps its one summary line.
+* ``file_lock``: an exclusive lock on a sidecar lock file, across threads and
+  processes (sprite_set.py holds it around every set_state.json read-modify-write).
+
 This file is vendored byte-for-byte into each skill's ``scripts/`` directory as
 listed in ``shared/VENDORED.json``. Edit only ``shared/forge_core.py``, then run
 ``python tools/vendor_sync.py --write`` and ``--check``. Inside a skill, import
@@ -58,6 +67,8 @@ import re
 import secrets
 import shutil
 import sys
+import threading
+import time
 from datetime import datetime, timezone
 from fractions import Fraction
 from pathlib import Path
@@ -81,6 +92,9 @@ EDGE_SEAM_VERDICTS = ("continuous", "seam", "duplicate_edge", "flat", "too_small
 EDGE_SEAM_DEFECTS = ("seam", "duplicate_edge")  # the verdicts a seam gate fails; flat and too_small are not seams
 EDGE_SEAM_NOMINAL_RATIO = 1.25  # verdict gate when the caller sets none (B11's NOMINAL_SEAM_RATIO)
 CLI_EXPECTED_ERRORS: tuple[type[BaseException], ...] = (OSError, ValueError, Image.DecompressionBombError)
+EXIT_PUBLISHED_FAIL = 4  # the output WAS published (for diagnosis) and its status is fail; see run_cli
+PROGRESS_ENV = "FORGE_PROGRESS_FILE"
+LOCK_TIMEOUT_S = 120.0
 
 _CHUNK = 1 << 20
 
@@ -166,8 +180,10 @@ def run_cli(main: Callable[..., Any], argv: Sequence[str] | None = None, *,
     pyo3_runtime.PanicException a Rust extension raises when it panics; Ctrl+C
     prints ``error: interrupted`` and returns 130. Messages go to stderr as
     ASCII, and tracebacks never reach the user unless ``FORGE_DEBUG=1``, which
-    re-raises for developers. A CLI whose published report has status ``fail``
-    returns 1 from ``main`` itself (D26).
+    re-raises for developers. A CLI whose output was published with status
+    ``fail`` returns ``EXIT_PUBLISHED_FAIL`` (4) from ``main`` itself: the
+    folder or report exists and says why (D26 returned 1 here). Exit 1 means
+    nothing usable was published; exit 3 is a missing generation route.
 
     Use: ``if __name__ == "__main__": raise SystemExit(forge_core.run_cli(main))``.
     """
@@ -205,6 +221,137 @@ def utc_timestamp(moment: datetime | None = None) -> str:
         moment = moment.astimezone(timezone.utc)
     return (f"{moment.year:04d}-{moment.month:02d}-{moment.day:02d}T{moment.hour:02d}:{moment.minute:02d}:"
             f"{moment.second:02d}.{moment.microsecond // 1000:03d}Z")
+
+
+# --------------------------------------------------------------------------- host API: progress and locks
+
+class Progress:
+    """Stage changes for a host: one JSON line each, appended to a progress file.
+
+    The file comes from ``path`` (a tool's ``--progress-file``), else from the
+    ``FORGE_PROGRESS_FILE`` environment variable; without either the reporter does
+    nothing. Each call appends ``{"t", "tool", "stage", "done", "total", "message"}``
+    (forge.progress.v1, host.schema.json: ``t`` an RFC 3339 UTC time, ``done`` and
+    ``total`` counts or null, ``message`` short ASCII-safe text or null) and flushes
+    it, so a host can tail the file while the tool runs. A call that repeats the last
+    line is skipped. Progress never touches stdout (the one summary line stays the
+    only stdout line) and never fails a run: when the file cannot be written, one
+    ``warning:`` line goes to stderr and the reporter turns itself off. Thread-safe.
+    """
+
+    def __init__(self, tool: str, path: str | os.PathLike | None = None):
+        raw = str(path).strip() if path is not None else os.environ.get(PROGRESS_ENV, "").strip()
+        self.tool = str(tool)
+        self.path: Path | None = Path(raw) if raw else None
+        self._last: tuple | None = None
+        self._lock = threading.Lock()
+
+    @property
+    def enabled(self) -> bool:
+        return self.path is not None
+
+    def __call__(self, stage: str, done: int | None = None, total: int | None = None,
+                 message: str | None = None) -> None:
+        if self.path is None:
+            return
+        key = (stage, done, total, message)
+        with self._lock:
+            if key == self._last or self.path is None:
+                return
+            self._last = key
+            line = {"t": utc_timestamp(), "tool": self.tool, "stage": str(stage),
+                    "done": None if done is None else int(done), "total": None if total is None else int(total),
+                    "message": None if message is None else ascii_text(str(message))[:300]}
+            try:
+                self.path.parent.mkdir(parents=True, exist_ok=True)
+                with open(self.path, "a", encoding="utf-8", newline="\n") as stream:
+                    stream.write(json.dumps(line, ensure_ascii=True, allow_nan=False) + "\n")
+                    stream.flush()
+            except (OSError, ValueError) as error:
+                print(ascii_text(f"warning: the progress file {self.path.name} cannot be written "
+                                 f"({type(error).__name__}); progress is off for this run"), file=sys.stderr)
+                self.path = None
+
+
+def child_env_without_progress(env: dict[str, str] | None = None) -> dict[str, str]:
+    """A copy of ``env`` (default os.environ) without FORGE_PROGRESS_FILE: a tool that runs other forge
+    CLIs reports their stages itself, so one progress file holds one tool's stream."""
+    return {key: value for key, value in (os.environ if env is None else env).items() if key != PROGRESS_ENV}
+
+
+_LOCK_GUARD = threading.Lock()
+_LOCKS: dict[str, threading.Lock] = {}
+_HELD = threading.local()
+
+if os.name == "nt":
+    import msvcrt
+
+    def _try_lock(handle: Any) -> bool:
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(handle: Any) -> None:
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _try_lock(handle: Any) -> bool:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            return False
+        return True
+
+    def _unlock(handle: Any) -> None:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextlib.contextmanager
+def file_lock(path: str | os.PathLike, *, timeout: float = LOCK_TIMEOUT_S) -> Iterator[None]:
+    """Hold an exclusive lock on the lock file ``path`` (created when missing, never deleted).
+
+    Threads of this process queue on a per-path lock and other processes on an OS lock of
+    the file's first byte (msvcrt on Windows, flock elsewhere), polled until ``timeout``
+    seconds, then TimeoutError. Re-entrant within one thread, so a helper that locks can
+    call another that locks the same file. Guard a read-modify-write of a shared JSON
+    file with it: read, change and write inside one ``with``.
+    """
+    key = os.path.normcase(os.path.abspath(os.fspath(path)))
+    held = getattr(_HELD, "keys", None)
+    if held is None:
+        held = _HELD.keys = {}
+    if held.get(key):
+        held[key] += 1
+        try:
+            yield
+        finally:
+            held[key] -= 1
+        return
+    with _LOCK_GUARD:
+        thread_lock = _LOCKS.setdefault(key, threading.Lock())
+    deadline = time.monotonic() + max(0.0, float(timeout))
+    if not thread_lock.acquire(timeout=max(0.0, float(timeout))):
+        raise TimeoutError(f"{Path(key).name} stayed locked for {timeout:g} s")
+    try:
+        Path(key).parent.mkdir(parents=True, exist_ok=True)
+        with open(key, "a+b") as handle:
+            while not _try_lock(handle):
+                if time.monotonic() >= deadline:
+                    raise TimeoutError(f"{Path(key).name} is locked by another process (waited {timeout:g} s)")
+                time.sleep(0.05)
+            held[key] = 1
+            try:
+                yield
+            finally:
+                held.pop(key, None)
+                _unlock(handle)
+    finally:
+        thread_lock.release()
 
 
 # --------------------------------------------------------------------------- hashing, paths and JSON
