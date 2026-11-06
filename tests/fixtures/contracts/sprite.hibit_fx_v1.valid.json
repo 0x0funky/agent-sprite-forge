@@ -1,0 +1,136 @@
+{
+  "schema": "generate2dsprite.hibit_fx.v1",
+  "tool": {
+    "name": "hibit_fx",
+    "version": "0.5.0"
+  },
+  "route": "image",
+  "hibit": "forge.hibit.v1",
+  "artSource": "image generation (an FX sheet from route_media.py), made pixel art by the hibit finish",
+  "effect": {
+    "name": "burst",
+    "frames": 4,
+    "frameSize": [
+      42,
+      35
+    ],
+    "frameMs": 80.0,
+    "loop": false,
+    "anchor": [
+      21.0,
+      34
+    ],
+    "anchorAt": "bottom"
+  },
+  "scale": {
+    "targetPx": 40.0,
+    "axis": "w",
+    "crop": [
+      30,
+      40,
+      223,
+      201
+    ],
+    "scale": 0.20725388601036268,
+    "reduction": 4.825,
+    "size": [
+      42,
+      35
+    ]
+  },
+  "palette": {
+    "colors": [
+      "#f7c248",
+      "#fdf004",
+      "#fbdba2"
+    ],
+    "given": false,
+    "coverage": 0.4
+  },
+  "engine": {
+    "sampling": "nearest",
+    "pixelArt": true
+  },
+  "warnings": [],
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "hibit_fx v1 (forge_hibit): union crop of every frame (alpha >= 128) and one scale; every source pixel indexed to its nearest palette colour (luminance-weighted RGB) and every output pixel the colour covering most of its cell (forge_hibit.mode_downsample, a majority vote, never a blend); forge_hibit.clean_isolated with islands kept (sparkles); binary alpha; 1 px transparent border",
+    "notProven": [
+      "That the effect reads at the game's scale and timing (look at preview.gif, then in the game).",
+      "That the frames were registered with one scale and one offset (process --scale-strategy registered); frames centred one by one jump around.",
+      "Smoothness: an image-generated 2x2 sheet has 4 frames; pixelfx effects have 16-90."
+    ],
+    "checks": [
+      {
+        "id": "frames",
+        "status": "pass",
+        "value": 4,
+        "threshold": null
+      },
+      {
+        "id": "palette-fit",
+        "status": "pass",
+        "value": 0,
+        "threshold": 0
+      },
+      {
+        "id": "alpha-binary",
+        "status": "pass",
+        "value": [
+          0,
+          255
+        ],
+        "threshold": [
+          0,
+          255
+        ]
+      },
+      {
+        "id": "empty-frames",
+        "status": "pass",
+        "value": [],
+        "threshold": []
+      },
+      {
+        "id": "reduction",
+        "status": "pass",
+        "value": 4.825,
+        "threshold": 3.0,
+        "note": "source px per output px; the majority vote wants about 4x or more"
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../burst/sheet-1.png",
+        "sha256": "7e7e1a2a813ae25c995217af3443f15f9c8ab1c1e5e9ee8a266c526fe2995675",
+        "bytes": 588
+      },
+      {
+        "path": "../burst/sheet-2.png",
+        "sha256": "4cc32289a3570e7a4465116f2ef238ae98af7430cef02ca90ba75c88f2bbdbfb",
+        "bytes": 781
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/burst_000.png",
+        "sha256": "0f5e13378acb7f4abe874c0f9744c2c2f83bb6a05a72f034099d6c9f024ba0c5",
+        "bytes": 181
+      },
+      {
+        "path": "frames/burst_001.png",
+        "sha256": "df17cf7e7d10732ef74d64dcba61110408c1ee021aadd2fcd774fc380b949b58",
+        "bytes": 217
+      },
+      {
+        "path": "frames/burst_002.png",
+        "sha256": "eede6abac810d6b00c529b8620e8bf14413306e9499e7d25aedf96479ec5146d",
+        "bytes": 236
+      }
+    ],
+    "tool": {
+      "name": "hibit_fx",
+      "version": "0.5.0"
+    }
+  }
+}

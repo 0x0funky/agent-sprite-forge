@@ -1198,6 +1198,427 @@
           }
         }
       }
+    },
+    "master_v1": {
+      "description": "master.json (master_still.py approve): the one approved master still of a character, the record every motion step reads (video2dsprite sprite_set.py plan copies it into the set). files.master is the opaque padded still on the flat key and files.cutout its keyed RGBA; framing is the class framing on the square canvas; transform maps source pixels to master pixels (master = scale * source + offset); references are the identity (FIRST) and style (SECOND) images the generation attached; route names what made the still. Objects stay open.",
+      "type": "object",
+      "required": ["schema", "tool", "created", "name", "identity_recap", "facing", "finish", "class", "framing", "key", "files", "references", "transform", "route"],
+      "properties": {
+        "schema": {
+          "const": "generate2dsprite.master.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "created": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "name": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+        },
+        "subject": {
+          "type": "string"
+        },
+        "identity_recap": {
+          "type": "string",
+          "minLength": 1
+        },
+        "facing": {
+          "enum": ["left", "right", "front", "back", "none"]
+        },
+        "view": {
+          "type": "string"
+        },
+        "finish": {
+          "enum": ["hd", "pixel", "hibit"]
+        },
+        "class": {
+          "enum": ["hero", "mob", "boss", "prop"]
+        },
+        "framing": {
+          "type": "object",
+          "required": ["canvas", "subject_height_px", "top_margin_px"],
+          "properties": {
+            "canvas": {
+              "$ref": "common.schema.json#/$defs/size2"
+            },
+            "subject_height_px": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "top_margin_px": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "subject_bbox": {
+              "$ref": "common.schema.json#/$defs/box"
+            },
+            "anchor": {
+              "$ref": "common.schema.json#/$defs/point2"
+            }
+          }
+        },
+        "key": {
+          "type": "string",
+          "pattern": "^#[0-9A-F]{6}$"
+        },
+        "files": {
+          "type": "object",
+          "required": ["master", "cutout", "source", "spec"],
+          "properties": {
+            "master": {
+              "$ref": "common.schema.json#/$defs/fileRef"
+            },
+            "cutout": {
+              "$ref": "common.schema.json#/$defs/fileRef"
+            },
+            "source": {
+              "$ref": "common.schema.json#/$defs/fileRef"
+            },
+            "spec": {
+              "$ref": "common.schema.json#/$defs/fileRef"
+            },
+            "prompt": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/fileRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "references": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "path"],
+            "properties": {
+              "role": {
+                "enum": ["identity", "style"]
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "sha256": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/sha256"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "bytes": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "what": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "transform": {
+          "type": "object",
+          "required": ["scale", "offset"],
+          "properties": {
+            "scale": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "offset": {
+              "$ref": "common.schema.json#/$defs/point2"
+            }
+          }
+        },
+        "route": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provenance": {
+          "type": "object"
+        },
+        "matte": {
+          "type": "object"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pixelfx_v1": {
+      "description": "fx.json of FX route A (fx_pixelfx.py render): one effect rendered by the user's own pixelfx checkout (a third-party MIT project, never vendored) with its provenance (repository, commit, version, license, copyright lines), the effect's meta (id, frames, fps, frame size, pivot), the options, the recolour (ramp, snap palette), the alpha mode, engine hints and a QA envelope. The frames are code-drawn by pixelfx and CREDITS.txt ships beside them; actor is always false (pixelfx's stand-in character is never drawn).",
+      "type": "object",
+      "required": ["schema", "tool", "artSource", "pixelfx", "credits", "effect", "options", "actor", "recolour", "alpha", "engine", "qa"],
+      "properties": {
+        "schema": {
+          "const": "generate2dsprite.pixelfx.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "artSource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pixelfx": {
+          "type": "object",
+          "required": ["repository", "license"],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "remote": {
+              "type": ["string", "null"]
+            },
+            "commit": {
+              "type": ["string", "null"]
+            },
+            "dirty": {
+              "type": ["boolean", "null"]
+            },
+            "version": {
+              "type": ["string", "null"]
+            },
+            "license": {
+              "type": ["string", "null"]
+            },
+            "copyright": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "credits": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effect": {
+          "type": "object",
+          "required": ["id", "fps", "frames", "frameSize"],
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]*/[a-z0-9][a-z0-9-]*$"
+            },
+            "name": {
+              "type": ["string", "null"]
+            },
+            "loop": {
+              "type": ["boolean", "null"]
+            },
+            "fps": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "frames": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "frameSize": {
+              "$ref": "common.schema.json#/$defs/size2"
+            }
+          }
+        },
+        "options": {
+          "type": "object"
+        },
+        "seed": {
+          "type": ["integer", "null"]
+        },
+        "actor": {
+          "const": false
+        },
+        "recolour": {
+          "type": "object",
+          "required": ["ramp", "snap"],
+          "properties": {
+            "ramp": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "$ref": "common.schema.json#/$defs/hexColor"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "snap": {
+              "anyOf": [
+                {
+                  "allOf": [
+                    {
+                      "$ref": "common.schema.json#/$defs/fileRef"
+                    }
+                  ],
+                  "type": "object",
+                  "properties": {
+                    "colors": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "alpha": {
+          "enum": ["binary", "keep"]
+        },
+        "engine": {
+          "type": "object",
+          "required": ["sampling", "pixelArt"],
+          "properties": {
+            "sampling": {
+              "const": "nearest"
+            },
+            "pixelArt": {
+              "const": true
+            }
+          }
+        },
+        "qa": {
+          "$ref": "common.schema.json#/$defs/qaEnvelope"
+        }
+      }
+    },
+    "hibit_fx_v1": {
+      "description": "fx.json of FX route B (hibit_fx.py pixelize): an image-generated FX sheet, registered with one scale and one offset (generate2dsprite.py process --scale-strategy registered), made hibit pixel art: the effect (name, frames, frame size, frameMs, loop, anchor and what it is placed by), the scale (target px along an axis, the union crop, the reduction), the palette (given or learned) and a QA envelope.",
+      "type": "object",
+      "required": ["schema", "tool", "route", "hibit", "artSource", "effect", "scale", "palette", "engine", "qa"],
+      "properties": {
+        "schema": {
+          "const": "generate2dsprite.hibit_fx.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "route": {
+          "const": "image"
+        },
+        "hibit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "artSource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "effect": {
+          "type": "object",
+          "required": ["name", "frames", "frameSize", "frameMs", "loop", "anchor"],
+          "properties": {
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "frames": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "frameSize": {
+              "$ref": "common.schema.json#/$defs/size2"
+            },
+            "frameMs": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "loop": {
+              "type": "boolean"
+            },
+            "anchor": {
+              "$ref": "common.schema.json#/$defs/point2"
+            },
+            "anchorAt": {
+              "enum": ["center", "bottom"]
+            }
+          }
+        },
+        "scale": {
+          "type": "object",
+          "required": ["targetPx", "axis", "scale"],
+          "properties": {
+            "targetPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "axis": {
+              "enum": ["w", "h"]
+            },
+            "scale": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "reduction": {
+              "type": "number"
+            },
+            "crop": {
+              "$ref": "common.schema.json#/$defs/box"
+            },
+            "size": {
+              "$ref": "common.schema.json#/$defs/size2"
+            }
+          }
+        },
+        "palette": {
+          "type": "object",
+          "required": ["colors", "given"],
+          "properties": {
+            "colors": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "common.schema.json#/$defs/hexColor"
+              }
+            },
+            "given": {
+              "type": "boolean"
+            },
+            "coverage": {
+              "type": "number"
+            }
+          }
+        },
+        "engine": {
+          "type": "object",
+          "required": ["sampling", "pixelArt"],
+          "properties": {
+            "sampling": {
+              "const": "nearest"
+            },
+            "pixelArt": {
+              "const": true
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "qa": {
+          "$ref": "common.schema.json#/$defs/qaEnvelope"
+        }
+      }
     }
   }
 }

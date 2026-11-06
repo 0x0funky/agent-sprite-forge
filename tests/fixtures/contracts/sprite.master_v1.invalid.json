@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "remove": "/files/cutout",
+      "why": "the keyed cutout is part of every master",
+      "error": "'cutout' is a required property"
+    },
+    {
+      "set": "/key",
+      "value": "#ff00ff",
+      "why": "the key is upper-case #RRGGBB"
+    },
+    {
+      "set": "/finish",
+      "value": "painted",
+      "why": "finish is hd, pixel or hibit"
+    },
+    {
+      "set": "/transform/scale",
+      "value": 0,
+      "why": "a master transform scales by more than 0"
+    }
+  ]
+}

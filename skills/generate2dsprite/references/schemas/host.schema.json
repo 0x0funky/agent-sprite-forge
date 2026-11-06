@@ -1,0 +1,494 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/host.schema.json",
+  "title": "Agent Sprite Forge host contracts",
+  "description": "What a host (such as Agent Game Forge) reads from the Forge without knowing every tool's files: the asset index of forge_index.py scan and the progress lines a tool appends to its --progress-file. Version 1; objects stay open.",
+  "$defs": {
+    "asset_index_v1": {
+      "description": "forge_index.py scan <dir>: everything the Forge made under one folder. root is the scanned folder (absolute, POSIX); every other path is relative to it. masters come from master.json; sets from set_plan.json and set_state.json, per action with its status, take count, chosen take or window, the agent's accept, the package folder, its animation.json and poster, the package's reviewStatus and the verify result; fx from fx.json, route A (pixelfx) or B (the image route); plates from plate.json; maps from map bundles (generate2dmap.map_bundle.v1 or v2). warnings name documents that could not be read.",
+      "type": "object",
+      "required": ["schema", "tool", "createdAt", "root", "masters", "sets", "fx", "plates", "maps", "warnings"],
+      "properties": {
+        "schema": {
+          "const": "forge.asset_index.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "root": {
+          "type": "string",
+          "minLength": 1
+        },
+        "masters": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "path", "metadata", "image", "class", "finish", "facing", "status"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "metadata": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "image": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "cutout": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "class": {
+                "type": "string"
+              },
+              "finish": {
+                "type": "string"
+              },
+              "facing": {
+                "type": "string"
+              },
+              "route": {
+                "type": ["string", "null"]
+              },
+              "status": {
+                "const": "approved"
+              }
+            }
+          }
+        },
+        "sets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "path", "plan", "state", "finish", "status", "actions"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "plan": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "state": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "class": {
+                "type": "string"
+              },
+              "finish": {
+                "enum": ["hd", "pixel", "hibit"]
+              },
+              "targetHeight": {
+                "type": ["integer", "null"]
+              },
+              "master": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "enum": ["planned", "complete", "complete-with-warnings", "incomplete"]
+              },
+              "actions": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "action", "view", "kind", "status", "takes", "chosen", "accepted", "package", "manifest", "reviewStatus"],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "action": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "view": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "enum": ["loop", "oneshot"]
+                    },
+                    "status": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "takes": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "chosen": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": ["take"],
+                          "properties": {
+                            "take": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "window": {
+                              "anyOf": [
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "minItems": 2,
+                                  "maxItems": 2
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "tag": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "accepted": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "required": ["take"],
+                          "properties": {
+                            "take": {
+                              "type": "integer",
+                              "minimum": 1
+                            },
+                            "window": {
+                              "anyOf": [
+                                {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "integer",
+                                    "minimum": 0
+                                  },
+                                  "minItems": 2,
+                                  "maxItems": 2
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "at": {
+                              "anyOf": [
+                                {
+                                  "$ref": "common.schema.json#/$defs/timestamp"
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "package": {
+                      "anyOf": [
+                        {
+                          "$ref": "common.schema.json#/$defs/relPath"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "manifest": {
+                      "anyOf": [
+                        {
+                          "$ref": "common.schema.json#/$defs/relPath"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "poster": {
+                      "anyOf": [
+                        {
+                          "$ref": "common.schema.json#/$defs/relPath"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "reviewStatus": {
+                      "type": ["string", "null"]
+                    },
+                    "verify": {
+                      "type": ["string", "null"]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "fx": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "path", "metadata", "route", "routeName", "frames", "frameSize", "sheet", "status"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "metadata": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "route": {
+                "enum": ["A", "B"]
+              },
+              "routeName": {
+                "enum": ["pixelfx", "image"]
+              },
+              "effect": {
+                "type": ["string", "null"]
+              },
+              "frames": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "frameSize": {
+                "$ref": "common.schema.json#/$defs/size2"
+              },
+              "frameMs": {
+                "type": ["number", "null"]
+              },
+              "loop": {
+                "type": ["boolean", "null"]
+              },
+              "sheet": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "sheetJson": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "preview": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "credits": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "status": {
+                "$ref": "common.schema.json#/$defs/qaStatus"
+              }
+            }
+          }
+        },
+        "plates": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "path", "metadata", "image", "size", "colors", "status"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "metadata": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "image": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "preview": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "palette": {
+                "anyOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/relPath"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "size": {
+                "$ref": "common.schema.json#/$defs/size2"
+              },
+              "colors": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "status": {
+                "$ref": "common.schema.json#/$defs/qaStatus"
+              }
+            }
+          }
+        },
+        "maps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name", "path", "schemaVersion"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "path": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "schemaVersion": {
+                "enum": ["generate2dmap.map_bundle.v1", "generate2dmap.map_bundle.v2"]
+              },
+              "world": {
+                "anyOf": [
+                  {
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "layers": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "objects": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "progress_line_v1": {
+      "description": "One line of a --progress-file (forge_core.Progress; FORGE_PROGRESS_FILE when no flag is given): a stage change of one tool run, appended and flushed while it runs, never written to stdout. t is the UTC time; tool the CLI (master_still, sprite_set, finish_frames, engine_export); stage its stage name (start, prompt, take, job, generate, evaluate, post, load, palette, downscale, colour-lock, quantize, qa, finish, package, verify, residue, encode, decode, publish, done, error); done and total are counts within the stage or null; message is short ASCII text or null. The last line of a run is done or error.",
+      "type": "object",
+      "required": ["t", "tool", "stage", "done", "total", "message"],
+      "properties": {
+        "t": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "tool": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "done": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "total": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "message": {
+          "type": ["string", "null"]
+        }
+      }
+    }
+  }
+}

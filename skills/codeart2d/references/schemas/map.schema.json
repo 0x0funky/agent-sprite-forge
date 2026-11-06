@@ -2632,6 +2632,98 @@
           "properties": {"status": {"enum": ["not-requested", "SKIPPED", "pass", "fail"]}}
         }
       }
+    },
+    "hibit_plate_v1": {
+      "description": "plate.json (hibit_plate.py plate): a hi-bit pixel-art background plate made from a flat painting: the source (a fileRef with its size), the native plate size, the cover crop and focus, the palette (dark to light; palette.json and shade-maps.json beside it), the paper-cut smoothing passes, the preview zoom, engine hints (nearest, whole-number zoom) and a QA envelope.",
+      "type": "object",
+      "required": ["schema", "tool", "hibit", "source", "size", "crop", "focus", "colors", "palette", "paletteGiven", "engine", "qa"],
+      "properties": {
+        "schema": {
+          "const": "generate2dmap.hibit_plate.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "hibit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "source": {
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/fileRef"
+            }
+          ],
+          "type": "object",
+          "properties": {
+            "size": {
+              "$ref": "common.schema.json#/$defs/size2"
+            }
+          }
+        },
+        "size": {
+          "$ref": "common.schema.json#/$defs/size2"
+        },
+        "crop": {
+          "$ref": "common.schema.json#/$defs/box"
+        },
+        "focus": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "colors": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "palette": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "common.schema.json#/$defs/hexColor"
+          }
+        },
+        "paletteGiven": {
+          "type": "boolean"
+        },
+        "seed": {
+          "type": "integer"
+        },
+        "smooth": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "previewScale": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "engine": {
+          "type": "object",
+          "required": ["sampling", "pixelArt"],
+          "properties": {
+            "sampling": {
+              "const": "nearest"
+            },
+            "pixelArt": {
+              "const": true
+            }
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "qa": {
+          "$ref": "common.schema.json#/$defs/qaEnvelope"
+        }
+      }
     }
   }
 }

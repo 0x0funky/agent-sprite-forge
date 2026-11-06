@@ -805,6 +805,840 @@
       "type": "object",
       "required": ["schema"],
       "properties": {"schema": {"const": "video2dsprite.validation.v1"}}
+    },
+    "finish_v1": {
+      "description": "finish.json (finish_frames.py hd, pixel or hibit): one finished clip. source names the registered frames it was made from and rest the rest-pose body measured on them; scale (never above 1: finishing never upscales) and scaleSource (target-height or scale-ref) set the one scale of the clip; size and anchor are the finished cell and its anchor, also given as engine.sourceSize and sourceAnchor for engine_export.py package; displaySizes lists every size written (frames/ is 1x); palette is null for hd and the palette fileRef for pixel and hibit, whose own settings and figures sit in pixel and hibit; frames bind every finished frame to its source frame by sha256; qa is the common envelope. Objects stay open.",
+      "type": "object",
+      "required": ["schema", "tool", "mode", "clip", "source", "rest", "scale", "scaleSource", "targetHeight", "size", "anchor", "engine", "displaySizes", "palette", "loopPolicy", "frames", "qa"],
+      "properties": {
+        "schema": {
+          "const": "video2dsprite.finish.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "mode": {
+          "enum": ["hd", "pixel", "hibit"]
+        },
+        "clip": {
+          "type": "string",
+          "minLength": 1
+        },
+        "character": {
+          "type": ["string", "null"]
+        },
+        "role": {
+          "type": ["string", "null"]
+        },
+        "source": {
+          "type": "object",
+          "required": ["frames", "count", "size"],
+          "properties": {
+            "frames": {
+              "$ref": "common.schema.json#/$defs/relPath"
+            },
+            "count": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "size": {
+              "$ref": "common.schema.json#/$defs/size2"
+            },
+            "pattern": {
+              "type": "string"
+            },
+            "registration": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/fileRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          }
+        },
+        "rest": {
+          "type": "object",
+          "required": ["frame", "heightPx"],
+          "properties": {
+            "frame": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "heightPx": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "anchorMode": {
+          "enum": ["feet", "center"]
+        },
+        "scale": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1
+        },
+        "scaleSource": {
+          "type": "string",
+          "minLength": 1
+        },
+        "targetHeight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "size": {
+          "$ref": "common.schema.json#/$defs/size2"
+        },
+        "anchor": {
+          "$ref": "common.schema.json#/$defs/point2"
+        },
+        "canvas": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": ["size", "anchor"],
+              "properties": {
+                "size": {
+                  "$ref": "common.schema.json#/$defs/size2"
+                },
+                "anchor": {
+                  "$ref": "common.schema.json#/$defs/point2"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "engine": {
+          "type": "object",
+          "required": ["sourceSize", "sourceAnchor", "sampling", "pixelArt"],
+          "properties": {
+            "sourceSize": {
+              "$ref": "common.schema.json#/$defs/size2"
+            },
+            "sourceAnchor": {
+              "$ref": "common.schema.json#/$defs/point2"
+            },
+            "sampling": {
+              "enum": ["nearest", "linear"]
+            },
+            "pixelArt": {
+              "type": "boolean"
+            }
+          }
+        },
+        "displaySizes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["label", "dir", "scale", "size", "anchor"],
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "dir": {
+                "type": "string",
+                "minLength": 1
+              },
+              "scale": {
+                "type": "number",
+                "exclusiveMinimum": 0
+              },
+              "size": {
+                "$ref": "common.schema.json#/$defs/size2"
+              },
+              "anchor": {
+                "$ref": "common.schema.json#/$defs/point2"
+              }
+            }
+          }
+        },
+        "palette": {
+          "anyOf": [
+            {
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/fileRef"
+                }
+              ],
+              "type": "object",
+              "required": ["colors"],
+              "properties": {
+                "colors": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "transparentIndex": {
+                  "type": ["integer", "null"]
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pixel": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hibit": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "colourLock": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "indexedSheet": {
+          "anyOf": [
+            {
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "loopPolicy": {
+          "enum": ["cycle", "pingpong", "oneshot"]
+        },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["file", "sha256", "sourceFile", "sourceSha256"],
+            "properties": {
+              "file": {
+                "$ref": "common.schema.json#/$defs/relPath"
+              },
+              "sha256": {
+                "$ref": "common.schema.json#/$defs/sha256"
+              },
+              "sourceFile": {
+                "type": "string",
+                "minLength": 1
+              },
+              "sourceSha256": {
+                "$ref": "common.schema.json#/$defs/sha256"
+              },
+              "opaquePx": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "review": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "$ref": "common.schema.json#/$defs/relPath"
+            },
+            "frames": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          }
+        },
+        "qa": {
+          "$ref": "common.schema.json#/$defs/qaEnvelope"
+        }
+      },
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "hd"
+          }
+        },
+        "required": ["mode"]
+      },
+      "then": {
+        "properties": {
+          "palette": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "palette": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "sprite_set_plan_v1": {
+      "description": "set_plan.json (sprite_set.py plan): one approved master in, the plan of a whole sprite set out: the masters per view (copies in the set, bound by sha256), the generation settings, the finish (hd, pixel or hibit; one scale-reference action) and package settings, the motion-prompt library's clauses and gate fixes, and one entry per action and view (loop or one-shot, canvas placement, last-frame pin, numeric gates, the timing of a one-shot and the motion prompt). run, review, accept and retake read it; set_state.json records the work.",
+      "type": "object",
+      "required": ["schema", "tool", "createdAt", "name", "class", "key", "views", "masters", "generation", "finish", "package", "actions"],
+      "properties": {
+        "schema": {
+          "const": "video2dsprite.sprite_set_plan.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "class": {
+          "type": "string",
+          "minLength": 1
+        },
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "keyRgb": {
+          "$ref": "common.schema.json#/$defs/rgb"
+        },
+        "style": {
+          "type": "string"
+        },
+        "pronoun": {
+          "type": "string"
+        },
+        "views": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["side", "front", "back"]
+          }
+        },
+        "masters": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "enum": ["side", "front", "back"]
+          },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["json", "png", "name", "facing", "size"],
+            "properties": {
+              "json": {
+                "$ref": "common.schema.json#/$defs/fileRef"
+              },
+              "png": {
+                "$ref": "common.schema.json#/$defs/fileRef"
+              },
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "facing": {
+                "type": "string",
+                "minLength": 1
+              },
+              "finish": {
+                "enum": ["hd", "pixel", "hibit"]
+              },
+              "size": {
+                "$ref": "common.schema.json#/$defs/size2"
+              }
+            }
+          }
+        },
+        "generation": {
+          "type": "object",
+          "required": ["duration", "resolution", "maxTakes", "jobs"],
+          "properties": {
+            "duration": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "resolution": {
+              "type": "string",
+              "minLength": 1
+            },
+            "maxTakes": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "jobs": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "pinLastFrame": {
+              "enum": ["auto", "on", "off"]
+            },
+            "timeoutSeconds": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            }
+          }
+        },
+        "finish": {
+          "type": "object",
+          "required": ["mode", "targetHeight"],
+          "properties": {
+            "mode": {
+              "enum": ["hd", "pixel", "hibit"]
+            },
+            "targetHeight": {
+              "type": "integer",
+              "minimum": 8
+            },
+            "scaleRefAction": {
+              "type": ["string", "null"]
+            },
+            "palette": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/fileRef"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "colors": {
+              "type": ["integer", "null"]
+            },
+            "outline": {
+              "type": ["string", "null"]
+            },
+            "canvas": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/size2"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "canvasAnchor": {
+              "anyOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/point2"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "colourLock": {
+              "type": "boolean"
+            }
+          }
+        },
+        "matteProfile": {
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/fileRef"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "package": {
+          "type": "object",
+          "required": ["formats"],
+          "properties": {
+            "formats": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "enum": ["png", "webm", "packed"]
+              }
+            },
+            "tiers": {
+              "type": ["string", "null"]
+            },
+            "fps": {
+              "type": ["number", "null"]
+            },
+            "frameMs": {
+              "type": ["number", "null"]
+            }
+          }
+        },
+        "library": {
+          "type": "object"
+        },
+        "clauses": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "gatefix": {
+          "type": "object"
+        },
+        "actions": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["id", "action", "view", "kind", "placement", "pinLastFrame", "gates", "prompt"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^(?:(?:front|back)-)?[a-z]+$"
+              },
+              "action": {
+                "enum": ["idle", "walk", "run", "attack", "jump", "hurt", "cast", "guard", "victory", "defeat"]
+              },
+              "view": {
+                "enum": ["side", "front", "back"]
+              },
+              "kind": {
+                "enum": ["loop", "oneshot"]
+              },
+              "placement": {
+                "type": "object",
+                "required": ["canvas"],
+                "properties": {
+                  "canvas": {
+                    "$ref": "common.schema.json#/$defs/size2"
+                  }
+                }
+              },
+              "pinLastFrame": {
+                "type": "boolean"
+              },
+              "gates": {
+                "type": "object"
+              },
+              "prompt": {
+                "type": "string",
+                "minLength": 1
+              },
+              "timing": {
+                "type": "object",
+                "required": ["mode"],
+                "properties": {
+                  "mode": {
+                    "enum": ["auto", "source"]
+                  },
+                  "durationMs": {
+                    "type": "integer",
+                    "minimum": 1
+                  }
+                }
+              }
+            }
+          }
+        },
+        "estimate": {
+          "type": "object"
+        }
+      }
+    },
+    "sprite_set_state_v1": {
+      "description": "set_state.json (sprite_set.py): the work of a set, per planned action: its status, the take records (prompt, clip, QC verdict, the stages run), the chosen take or usable window, the agent's accept (the review verdict it wrote into the package and the resulting reviewStatus) and the output package. run, review, accept and retake read and write it under set_state.lock; accept and retake bump the action's agentRevision, so a run working at the same time adopts their decisions before its next save. Takes and stages stay open.",
+      "type": "object",
+      "required": ["schema", "tool", "plan", "createdAt", "runs", "actions"],
+      "properties": {
+        "schema": {
+          "const": "video2dsprite.sprite_set_state.v1"
+        },
+        "tool": {
+          "$ref": "common.schema.json#/$defs/toolInfo"
+        },
+        "plan": {
+          "type": "object",
+          "required": ["path", "sha256"],
+          "properties": {
+            "path": {
+              "$ref": "common.schema.json#/$defs/relPath"
+            },
+            "sha256": {
+              "$ref": "common.schema.json#/$defs/sha256"
+            }
+          }
+        },
+        "createdAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "updatedAt": {
+          "$ref": "common.schema.json#/$defs/timestamp"
+        },
+        "runs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "review": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": ["latest", "at"],
+              "properties": {
+                "latest": {
+                  "$ref": "common.schema.json#/$defs/relPath"
+                },
+                "at": {
+                  "$ref": "common.schema.json#/$defs/timestamp"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "actions": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["status", "round", "fixes", "takes", "chosen", "accepted", "output"],
+            "properties": {
+              "status": {
+                "enum": ["pending", "generating", "no-route", "error", "retake", "chosen", "failed", "done", "done-warn", "post-error"]
+              },
+              "round": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "agentRevision": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "fixes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["id", "text"],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "text": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "source": {
+                      "enum": ["auto", "agent"]
+                    }
+                  }
+                }
+              },
+              "job": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": ["dir", "job", "sha256"],
+                    "properties": {
+                      "dir": {
+                        "$ref": "common.schema.json#/$defs/relPath"
+                      },
+                      "job": {
+                        "$ref": "common.schema.json#/$defs/relPath"
+                      },
+                      "sha256": {
+                        "$ref": "common.schema.json#/$defs/sha256"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "takes": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["take", "round", "dir", "status"],
+                  "properties": {
+                    "take": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "round": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "dir": {
+                      "$ref": "common.schema.json#/$defs/relPath"
+                    },
+                    "status": {
+                      "enum": ["open", "generated", "no-route", "error", "kept", "rejected"]
+                    },
+                    "prompt": {
+                      "$ref": "common.schema.json#/$defs/fileRef"
+                    },
+                    "clip": {
+                      "$ref": "common.schema.json#/$defs/fileRef"
+                    },
+                    "route": {
+                      "type": ["string", "null"]
+                    },
+                    "stages": {
+                      "type": "object"
+                    },
+                    "qc": {
+                      "type": "object"
+                    }
+                  }
+                }
+              },
+              "chosen": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": ["take", "tag"],
+                    "properties": {
+                      "take": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "window": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "tag": {
+                        "type": "string"
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "accepted": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": ["take", "at"],
+                    "properties": {
+                      "take": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "window": {
+                        "anyOf": [
+                          {
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0
+                            },
+                            "minItems": 2,
+                            "maxItems": 2
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      },
+                      "note": {
+                        "type": "string"
+                      },
+                      "at": {
+                        "$ref": "common.schema.json#/$defs/timestamp"
+                      },
+                      "review": {
+                        "$ref": "common.schema.json#/$defs/relPath"
+                      },
+                      "sheet": {
+                        "$ref": "common.schema.json#/$defs/fileRef"
+                      },
+                      "verdict": {
+                        "$ref": "common.schema.json#/$defs/fileRef"
+                      },
+                      "reviewStatus": {
+                        "enum": ["accepted", "accept_with_mask"]
+                      },
+                      "package": {
+                        "$ref": "common.schema.json#/$defs/relPath"
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "output": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "required": ["take", "package", "manifest"],
+                    "properties": {
+                      "take": {
+                        "type": "integer",
+                        "minimum": 1
+                      },
+                      "tag": {
+                        "type": "string"
+                      },
+                      "package": {
+                        "$ref": "common.schema.json#/$defs/relPath"
+                      },
+                      "manifest": {
+                        "$ref": "common.schema.json#/$defs/relPath"
+                      },
+                      "verify": {
+                        "type": ["string", "null"]
+                      }
+                    }
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "message": {
+                "type": ["string", "null"]
+              }
+            }
+          }
+        }
+      }
     }
   }
 }

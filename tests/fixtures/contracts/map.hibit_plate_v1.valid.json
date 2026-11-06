@@ -1,0 +1,125 @@
+{
+  "schema": "generate2dmap.hibit_plate.v1",
+  "tool": {
+    "name": "hibit_plate",
+    "version": "0.5.0"
+  },
+  "hibit": "forge.hibit.v1",
+  "source": {
+    "path": "../painting.png",
+    "sha256": "cb28ba08dc6992495cac6392384a81d23b85bf75cab7350a7bcdb1d9482edda0",
+    "bytes": 1264,
+    "size": [
+      600,
+      300
+    ]
+  },
+  "size": [
+    160,
+    90
+  ],
+  "crop": [
+    34,
+    0,
+    567,
+    300
+  ],
+  "focus": [
+    0.5,
+    0.5
+  ],
+  "colors": 4,
+  "palette": [
+    "#2c5c68",
+    "#78508c",
+    "#b07854",
+    "#e8766a"
+  ],
+  "paletteGiven": false,
+  "seed": 0,
+  "smooth": 1,
+  "previewScale": 4,
+  "engine": {
+    "sampling": "nearest",
+    "pixelArt": true,
+    "note": "draw at whole-number zoom (480x270 x4 = 1920x1080); never filter the plate"
+  },
+  "warnings": [],
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "hibit_plate v1 (forge_hibit, the hi-bit studio recipe): cover crop of the painting to the plate aspect; one palette (k-means++ on luminance-weighted RGB, or a given palette); every source pixel indexed to its nearest palette colour and every plate pixel the colour covering most of its cell (majority, never a blend); forge_hibit.clean_isolated (lone pixels take the 4-neighbour majority unless 90 apart in luminance-weighted RGB); 3x3 majority smoothing passes; opaque; nearest preview only for review",
+    "notProven": [
+      "That the painting reads as the intended scene at the plate size (look at plate-x4.png at gameplay scale).",
+      "That characters and FX read against it: finish the sprites with their own palettes and look at a mock-up.",
+      "Where the walkable ground is: the tool does not find the floor line in the art."
+    ],
+    "checks": [
+      {
+        "id": "size",
+        "status": "pass",
+        "value": [
+          160,
+          90
+        ],
+        "threshold": [
+          160,
+          90
+        ]
+      },
+      {
+        "id": "opaque",
+        "status": "pass",
+        "value": 0,
+        "threshold": 0
+      },
+      {
+        "id": "colours",
+        "status": "pass",
+        "value": 4,
+        "threshold": 6
+      },
+      {
+        "id": "lone-pixels",
+        "status": "skipped",
+        "value": 0.0,
+        "threshold": null,
+        "note": "share of plate pixels with no 4-neighbour of their colour (kept features: lights, stars, eyes)"
+      },
+      {
+        "id": "reduction",
+        "status": "pass",
+        "value": 3.331,
+        "threshold": 2.0,
+        "note": "painting px per plate px; under 2x the majority has little to vote"
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../painting.png",
+        "sha256": "cb28ba08dc6992495cac6392384a81d23b85bf75cab7350a7bcdb1d9482edda0",
+        "bytes": 1264
+      }
+    ],
+    "outputs": [
+      {
+        "path": "plate.png",
+        "sha256": "a64d731b707501d133691e0c517f9f4c75092ea29bb1d51e87c44aed025bc4d9",
+        "bytes": 374
+      },
+      {
+        "path": "plate-x4.png",
+        "sha256": "195513d6a6a48a26c851b916ce518ad61a0920f8e0b846748b748fd9af1b3c38",
+        "bytes": 1830
+      },
+      {
+        "path": "palette.json",
+        "sha256": "68b4e56b8fd7a48acf4d511422fd4b46a3036e7ccc278e5299afde898c880eb7",
+        "bytes": 354
+      }
+    ],
+    "tool": {
+      "name": "hibit_plate",
+      "version": "0.5.0"
+    }
+  }
+}

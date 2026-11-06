@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "set": "/route",
+      "value": "pixelfx",
+      "why": "route B is the image route"
+    },
+    {
+      "remove": "/effect/anchor",
+      "why": "the game places the effect by its anchor"
+    },
+    {
+      "set": "/palette/colors",
+      "value": [],
+      "why": "a palette has at least one colour"
+    }
+  ]
+}

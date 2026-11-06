@@ -109,6 +109,26 @@
         "skills/video2dsprite/scripts/forge_hibit.py",
         "skills/generate2dmap/scripts/forge_hibit.py"
       ]
+    },
+    {
+      "canonical": "shared/forge_index.py",
+      "owner": "host-api (asset index)",
+      "targets": [
+        "skills/generate2dmedia/scripts/forge_index.py",
+        "skills/generate2dsprite/scripts/forge_index.py",
+        "skills/video2dsprite/scripts/forge_index.py",
+        "skills/generate2dmap/scripts/forge_index.py"
+      ]
+    },
+    {
+      "canonical": "shared/schemas/host.schema.json",
+      "owner": "host-api (asset index, progress lines)",
+      "targets": [
+        "skills/generate2dmedia/references/schemas/host.schema.json",
+        "skills/generate2dsprite/references/schemas/host.schema.json",
+        "skills/video2dsprite/references/schemas/host.schema.json",
+        "skills/generate2dmap/references/schemas/host.schema.json"
+      ]
     }
   ]
 }

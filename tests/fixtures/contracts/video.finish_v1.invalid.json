@@ -1,0 +1,19 @@
+{
+  "cases": [
+    {
+      "set": "/scale",
+      "value": 1.5,
+      "why": "finishing never upscales"
+    },
+    {
+      "set": "/mode",
+      "value": "hd",
+      "why": "an hd finish has no palette",
+      "error": "is not of type 'null'"
+    },
+    {
+      "remove": "/frames",
+      "why": "every finished frame is bound to its source"
+    }
+  ]
+}

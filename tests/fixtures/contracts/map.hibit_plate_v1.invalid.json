@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "set": "/focus",
+      "value": [
+        1.5,
+        0.5
+      ],
+      "why": "focus fractions lie in 0..1"
+    },
+    {
+      "set": "/palette",
+      "value": [
+        "red"
+      ],
+      "why": "palette entries are #RRGGBB"
+    },
+    {
+      "remove": "/qa",
+      "why": "every plate carries its QA envelope"
+    }
+  ]
+}

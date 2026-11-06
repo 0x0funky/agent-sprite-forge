@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "set": "/actor",
+      "value": true,
+      "why": "pixelfx's stand-in character is never drawn"
+    },
+    {
+      "set": "/alpha",
+      "value": "soft",
+      "why": "alpha is binary or keep"
+    },
+    {
+      "set": "/qa/checks/3/status",
+      "value": "info",
+      "why": "info is not a QA check status (measurements are skipped)"
+    },
+    {
+      "remove": "/credits",
+      "why": "the credits file travels with the frames"
+    }
+  ]
+}

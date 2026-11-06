@@ -1,0 +1,23 @@
+{
+  "cases": [
+    {
+      "set": "/fx/0/route",
+      "value": "C",
+      "why": "FX come from route A or B"
+    },
+    {
+      "remove": "/sets/0/actions/0/reviewStatus",
+      "why": "every action states its package's review status"
+    },
+    {
+      "set": "/schema",
+      "value": "forge.asset_index.v2",
+      "why": "this contract is version 1"
+    },
+    {
+      "set": "/masters/0/path",
+      "value": "C:/art/pip",
+      "why": "paths are relative to root"
+    }
+  ]
+}

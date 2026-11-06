@@ -1,0 +1,358 @@
+{
+  "schema": "video2dsprite.sprite_set_plan.v1",
+  "tool": {
+    "name": "sprite_set",
+    "version": "0.5.0"
+  },
+  "createdAt": "2026-11-06T21:22:08.853Z",
+  "name": "testhero",
+  "class": "hero",
+  "key": "magenta",
+  "keyRgb": [
+    255,
+    0,
+    255
+  ],
+  "style": "HD hand-drawn 2D game-art",
+  "pronoun": "their",
+  "views": [
+    "side"
+  ],
+  "masters": {
+    "side": {
+      "json": {
+        "path": "master/side/master.json",
+        "sha256": "bb2c58491c0f388aec4c95217dec9e70b80a019e96eae5a77b740d17a036b1cf",
+        "bytes": 657
+      },
+      "png": {
+        "path": "master/side/master.png",
+        "sha256": "af351a5f16695806304875163c029496c001a0ad213ec95488b43d75e748232b",
+        "bytes": 3614
+      },
+      "sourceName": "master.json",
+      "name": "testhero",
+      "identityRecap": "HD 2D hero boy with short brown hair, a blue tunic, dark trousers and a short steel sword held low in his front hand",
+      "facing": "left",
+      "finish": "hd",
+      "class": "hero",
+      "key": "magenta",
+      "size": [
+        128,
+        128
+      ],
+      "subjectBox": [
+        44,
+        23,
+        78,
+        117
+      ],
+      "anchor": [
+        64.0,
+        117.0
+      ],
+      "area": 1958,
+      "framing": {
+        "canvas": [
+          128,
+          128
+        ],
+        "subject_height_px": 94,
+        "top_margin_px": 23
+      }
+    }
+  },
+  "generation": {
+    "duration": 6.0,
+    "resolution": "720p",
+    "maxTakes": 3,
+    "jobs": 2,
+    "pinLastFrame": "auto",
+    "timeoutSeconds": 1200.0
+  },
+  "finish": {
+    "mode": "hd",
+    "targetHeight": 48,
+    "scaleRefAction": "idle",
+    "palette": null,
+    "colors": null,
+    "outline": null,
+    "canvas": null,
+    "canvasAnchor": null,
+    "colourLock": true
+  },
+  "matteProfile": null,
+  "package": {
+    "formats": [
+      "png",
+      "webm",
+      "packed"
+    ],
+    "tiers": null,
+    "fps": null,
+    "frameMs": null
+  },
+  "library": {
+    "name": "motion-prompts.md",
+    "sha256": "d849193e23a04bf5a5b16305b64ada380ee1bd98cdf04b57e24771a1d098c177"
+  },
+  "clauses": {
+    "never-turn": "The character keeps facing {facing} the whole time: never turns around, never shows {pos} back and never faces the camera.",
+    "camera-locked": "Locked camera and constant character size: no zoom, no push-in, no pull-out, no pan; the character is exactly the same size in every frame, before and after the action.",
+    "constant-size": "The character keeps exactly the same size and proportions as the still in every frame; arms, legs and the weapon never grow longer."
+  },
+  "gatefix": {
+    "area": [
+      "constant-size",
+      "camera-locked"
+    ],
+    "feet": [
+      "feet-planted",
+      "in-place"
+    ]
+  },
+  "actions": [
+    {
+      "id": "idle",
+      "action": "idle",
+      "view": "side",
+      "kind": "loop",
+      "loopKind": "idle",
+      "gaitState": null,
+      "prepareAction": "idle",
+      "retimeKind": "idle",
+      "placement": {
+        "preset": "square",
+        "canvas": [
+          128,
+          128
+        ],
+        "scale": 1.0,
+        "root": [
+          64.0,
+          117.0
+        ],
+        "anchor": [
+          64.0,
+          117.0
+        ],
+        "subjectBox": [
+          44.0,
+          23.0,
+          78.0,
+          117.0
+        ],
+        "margin": 8,
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "headroom": 0.1797
+      },
+      "pinLastFrame": true,
+      "lock": "feet",
+      "airborne": false,
+      "hitTick": false,
+      "returnsToRest": true,
+      "motion": "stands in place in {pos} ready stance as a looping game idle animation: slow, clearly visible breathing with the chest a",
+      "negatives": "Nothing appears around the character: no particles, no smoke, no dust, no effects.",
+      "gates": {
+        "area": {
+          "min": 0.72,
+          "max": 1.32,
+          "maxBadShare": 0.1
+        },
+        "feet": {
+          "max": 0.05,
+          "badFrames": 3,
+          "mode": "all"
+        },
+        "identity": {
+          "start": 0.8,
+          "min": 0.5,
+          "badFrames": 2,
+          "severe": 0.3,
+          "severeShare": 0.5,
+          "scales": [
+            0.9,
+            1.0,
+            1.1
+          ]
+        },
+        "colour": {
+          "foreign": 0.02,
+          "badShare": 0.15,
+          "drift": 0.03,
+          "driftShare": 0.4
+        },
+        "timing": {
+          "maxSeconds": 2.0,
+          "maxHoldSeconds": 0.5
+        },
+        "zoom": {
+          "max": 0.08
+        },
+        "turn": {
+          "enabled": true,
+          "margin": 0.08,
+          "run": 3
+        },
+        "edge": {
+          "px": 2
+        },
+        "background": {
+          "tolerance": 48.0,
+          "maxImpure": 0.004,
+          "badFrames": 2
+        },
+        "extra": {
+          "max": 0.015,
+          "badFrames": 2
+        },
+        "motion": {
+          "min": 0.006
+        },
+        "endPose": {
+          "enabled": false,
+          "min": 0.8
+        },
+        "window": {
+          "loopSeconds": 1.0
+        }
+      },
+      "prompt": "The same HD 2D hero boy with short brown hair, a blue tunic, dark trousers and a short steel sword held low in his front hand, facing LEFT the entire time and never turning around, stands in place in ",
+      "lint": []
+    },
+    {
+      "id": "attack",
+      "action": "attack",
+      "view": "side",
+      "kind": "oneshot",
+      "loopKind": null,
+      "gaitState": null,
+      "prepareAction": "attack",
+      "retimeKind": "attack",
+      "placement": {
+        "preset": "wide",
+        "canvas": [
+          228,
+          128
+        ],
+        "scale": 1.0,
+        "root": [
+          127.68,
+          117.0
+        ],
+        "anchor": [
+          64.0,
+          117.0
+        ],
+        "subjectBox": [
+          107.68,
+          23.0,
+          141.68,
+          117.0
+        ],
+        "margin": 8,
+        "padding": [
+          64,
+          0,
+          37,
+          0
+        ],
+        "headroom": 0.1797
+      },
+      "pinLastFrame": true,
+      "lock": "feet",
+      "airborne": false,
+      "hitTick": true,
+      "returnsToRest": true,
+      "motion": "starts in {pos} ready stance, draws back a little (a short wind-up), then performs ONE fast, powerful attack {toward} wi",
+      "negatives": "The weapon stays one single weapon of the same length and shape. Constant character size. No motion trails, no slash effects, no sparks, no effects.",
+      "gates": {
+        "area": {
+          "min": 0.72,
+          "max": 1.32,
+          "maxBadShare": 0.1
+        },
+        "feet": {
+          "max": 0.05,
+          "badFrames": 3,
+          "mode": "all"
+        },
+        "identity": {
+          "start": 0.8,
+          "min": 0.5,
+          "badFrames": 2,
+          "severe": 0.3,
+          "severeShare": 0.5,
+          "scales": [
+            0.9,
+            1.0,
+            1.1
+          ]
+        },
+        "colour": {
+          "foreign": 0.02,
+          "badShare": 0.15,
+          "drift": 0.03,
+          "driftShare": 0.4
+        },
+        "timing": {
+          "maxSeconds": 2.0,
+          "maxHoldSeconds": 0.5
+        },
+        "zoom": {
+          "max": 0.08
+        },
+        "turn": {
+          "enabled": true,
+          "margin": 0.08,
+          "run": 3
+        },
+        "edge": {
+          "px": 2
+        },
+        "background": {
+          "tolerance": 48.0,
+          "maxImpure": 0.004,
+          "badFrames": 2
+        },
+        "extra": {
+          "max": 0.015,
+          "badFrames": 2
+        },
+        "motion": {
+          "min": 0.03
+        },
+        "endPose": {
+          "enabled": true,
+          "min": 0.8
+        },
+        "window": {
+          "loopSeconds": 1.0
+        }
+      },
+      "timing": {
+        "mode": "auto",
+        "durationMs": 700,
+        "keys": {
+          "hit": {
+            "at": 0.4,
+            "holdMs": 80
+          }
+        }
+      },
+      "prompt": "The same HD 2D hero boy with short brown hair, a blue tunic, dark trousers and a short steel sword held low in his front hand, facing LEFT the entire time and never turning around, starts in their rea",
+      "lint": []
+    }
+  ],
+  "estimate": {
+    "clips": 3,
+    "maxClips": 9,
+    "maxVideoSeconds": 54.0,
+    "note": "route_media.py prints and ledgers the real price of every clip"
+  }
+}

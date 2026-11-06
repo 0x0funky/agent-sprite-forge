@@ -1,0 +1,147 @@
+{
+  "schema": "generate2dsprite.pixelfx.v1",
+  "tool": {
+    "name": "fx_pixelfx",
+    "version": "0.5.0"
+  },
+  "artSource": "code-drawn by pixelfx (third-party code-driven pixel-art effects, MIT)",
+  "pixelfx": {
+    "repository": "https://github.com/patch-gg/pixelfx",
+    "remote": null,
+    "commit": null,
+    "dirty": null,
+    "version": "0.3.0",
+    "license": "MIT",
+    "copyright": [
+      "Copyright (c) 2026 Patch",
+      "Copyright (c) 2026 Hugo Duprez"
+    ]
+  },
+  "credits": "CREDITS.txt (pixelfx LICENSE and NOTICE.md; ship it with the frames)",
+  "effect": {
+    "id": "arcane/star-fall",
+    "name": "Test",
+    "loop": false,
+    "fps": 24.0,
+    "frames": 4,
+    "frameSize": [
+      8,
+      6
+    ],
+    "pivot": [
+      4,
+      5
+    ],
+    "act": null
+  },
+  "options": {
+    "palette": [
+      "#1a1030",
+      "#ffd84a",
+      "#fffbe0"
+    ]
+  },
+  "seed": 7,
+  "actor": false,
+  "recolour": {
+    "ramp": [
+      "#1a1030",
+      "#ffd84a",
+      "#fffbe0"
+    ],
+    "snap": {
+      "path": "../palette.json",
+      "sha256": "5e9fc23d7f321ec7b73fac70678ed00e8627ae7a2d41761f5445dad0a222f7f5",
+      "bytes": 246,
+      "colors": 3
+    }
+  },
+  "alpha": "binary",
+  "engine": {
+    "sampling": "nearest",
+    "pixelArt": true,
+    "pivot": [
+      4,
+      5
+    ],
+    "note": "pivot is the effect's origin in frame px (pixelfx meta.origin): place it on the caster's hand, the target or the floor point the effect is drawn around"
+  },
+  "qa": {
+    "status": "needs-visual-review",
+    "method": "fx_pixelfx v1: pixelfx tools/render.mjs --sheet --no-actor --bg none (the effect alone on transparency), sliced by its Aseprite JSON, optional binary alpha and nearest-colour snap (luminance-weighted RGB), re-packed",
+    "notProven": [
+      "That the effect reads at the game's scale and against its backgrounds (look at preview.gif and in the game).",
+      "Timing against the character's action (pivot and hit frames are the effect's own; place it in the game).",
+      "That the license notice reaches the player-facing credits: CREDITS.txt must ship with the frames."
+    ],
+    "checks": [
+      {
+        "id": "frames",
+        "status": "pass",
+        "value": 4,
+        "threshold": 4
+      },
+      {
+        "id": "not-empty",
+        "status": "pass",
+        "value": 4,
+        "threshold": 1
+      },
+      {
+        "id": "edge-contact",
+        "status": "pass",
+        "value": [],
+        "threshold": [],
+        "note": "frames with visible pixels on the canvas border (a cut glow shows as a box)"
+      },
+      {
+        "id": "colours",
+        "status": "skipped",
+        "value": 1,
+        "threshold": null,
+        "note": "distinct colours over every frame (a measurement, not a gate)"
+      },
+      {
+        "id": "alpha-levels",
+        "status": "skipped",
+        "value": 2,
+        "threshold": null,
+        "note": "2 = binary alpha (the default); more = --alpha keep: soft, near-black glow edges"
+      },
+      {
+        "id": "palette-fit",
+        "status": "pass",
+        "value": 0,
+        "threshold": 0
+      }
+    ],
+    "inputs": [
+      {
+        "path": "../palette.json",
+        "sha256": "5e9fc23d7f321ec7b73fac70678ed00e8627ae7a2d41761f5445dad0a222f7f5",
+        "bytes": 246
+      }
+    ],
+    "outputs": [
+      {
+        "path": "frames/star-fall_000.png",
+        "sha256": "1d55832242f9ef3884b928acb57de1cafdc39e1ce99cb3d5102c484a7dedf005",
+        "bytes": 82
+      },
+      {
+        "path": "frames/star-fall_001.png",
+        "sha256": "6cc4e877820c7f642978be930be7f6203a6b173ad0aee4e239469e002b51bd86",
+        "bytes": 82
+      },
+      {
+        "path": "frames/star-fall_002.png",
+        "sha256": "1bf9521ec3af539bad54c67d4df784d8ed6482c52daf7d58fc5cea30dcea5e2e",
+        "bytes": 82
+      }
+    ],
+    "tool": {
+      "name": "fx_pixelfx",
+      "version": "0.5.0"
+    }
+  }
+}

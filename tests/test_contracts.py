@@ -33,7 +33,7 @@ from forge_testutils import (
 
 CONTRACTS_DIR = FIXTURES_DIR / "contracts"
 SCHEMA_BASE = "https://raw.githubusercontent.com/0x0funky/agent-sprite-forge/main/shared/schemas/"
-DOMAINS = ("common", "sprite", "video", "map", "codeart", "media")
+DOMAINS = ("common", "sprite", "video", "map", "codeart", "media", "host")
 SCHEMAS = {domain: json.loads((SHARED_SCHEMAS_DIR / f"{domain}.schema.json").read_text(encoding="utf-8"))
            for domain in DOMAINS}
 CONTRACTS = [(domain, name) for domain in DOMAINS for name in SCHEMAS[domain]["$defs"]]
@@ -43,6 +43,7 @@ DOCUMENT_ID_PREFIXES = {
     "map": ("generate2dmap.",),
     "codeart": ("codeart2d.", "codeart."),  # codeart.pixelspec.v1 is the legacy PixelSpec alias
     "media": ("generate2dmedia.",),
+    "host": ("forge.",),  # what a host reads: forge.asset_index.v1
 }
 REQUIRED_LEGACY = ("video.frame_selection_v2.legacy-v1.json", "video.animation_v3.legacy-2.0.json")
 

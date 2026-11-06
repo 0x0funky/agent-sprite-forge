@@ -1,0 +1,331 @@
+{
+  "schema": "video2dsprite.sprite_set_state.v1",
+  "tool": {
+    "name": "sprite_set",
+    "version": "0.5.0"
+  },
+  "plan": {
+    "path": "set_plan.json",
+    "sha256": "c4e4d9b67542d42da30a1608fd2ac24fbe8f178281ecb5435c8257f920920549"
+  },
+  "createdAt": "2026-11-06T21:22:09.563Z",
+  "runs": 3,
+  "actions": {
+    "idle": {
+      "status": "done",
+      "round": 1,
+      "fixes": [],
+      "job": {
+        "dir": "actions/idle/job",
+        "job": "actions/idle/job/registration_job.json",
+        "sha256": "9c835c41f92f3352e839bd7c534e38d27ed8d11a64dd5e18c0415da3cd09fc4b",
+        "input": "actions/idle/job/input.png",
+        "referenceScale": 1.0,
+        "keyColor": "magenta",
+        "padding": [
+          0,
+          0,
+          0,
+          0
+        ],
+        "warnings": 3
+      },
+      "takes": [
+        {
+          "take": 1,
+          "round": 1,
+          "dir": "actions/idle/takes/t01",
+          "status": "kept",
+          "createdAt": "2026-11-06T21:22:13.910Z",
+          "prompt": {
+            "path": "actions/idle/takes/t01/prompt.txt",
+            "sha256": "88dbaa188370e39be3332d4a8fc31788d9be8c607ed6f2d632ab938f689480d2"
+          },
+          "fixes": [],
+          "stages": {
+            "keyed": {
+              "dir": "actions/idle/takes/t01/keyed"
+            },
+            "registered": {
+              "dir": "actions/idle/takes/t01/registered"
+            },
+            "motion": {
+              "dir": "actions/idle/takes/t01/motion"
+            },
+            "finished": {
+              "dir": "actions/idle/takes/t01/finished"
+            },
+            "selection": {
+              "dir": "actions/idle/takes/t01/selection"
+            },
+            "package": {
+              "dir": "actions/idle/takes/t01/package"
+            },
+            "verify": {
+              "dir": null
+            }
+          },
+          "clip": {
+            "path": "actions/idle/takes/t01/media/clip.mp4",
+            "sha256": "b3e6fb9ddeecad3c4e414d5171e0de56f026cde74a47a381d5ddf1b018ac4eab"
+          },
+          "route": "fake-i2v",
+          "pinnedLastFrame": true,
+          "message": null,
+          "qc": {
+            "file": "actions/idle/takes/t01/qc.json",
+            "status": "pass",
+            "failures": []
+          },
+          "failures": [],
+          "reasons": [],
+          "logged": true
+        }
+      ],
+      "chosen": {
+        "take": 1,
+        "reason": "first take that passed every gate",
+        "window": null,
+        "tag": ""
+      },
+      "accepted": {
+        "take": 1,
+        "window": null,
+        "note": "looked",
+        "at": "2026-11-06T21:22:58.809Z",
+        "review": "review/review-001.json",
+        "sheet": {
+          "path": "review/idle/t01-sheet.png",
+          "sha256": "fce92f890dbfe63016d6f5b63b95c7c7bbc1757a420cbb2aa446ae6d0a13dc41",
+          "bytes": 71903
+        },
+        "verdict": {
+          "path": "actions/idle/takes/t01/review-verdict-001.json",
+          "sha256": "687b7408aedc4163446589db856c22eef802b123f55d80f533e2b5a5e1a4da7d",
+          "bytes": 459
+        },
+        "reviewStatus": "accepted",
+        "package": "actions/idle/takes/t01/package"
+      },
+      "output": {
+        "take": 1,
+        "tag": "",
+        "package": "actions/idle/takes/t01/package",
+        "manifest": "actions/idle/takes/t01/package/animation.json",
+        "verify": "pass"
+      },
+      "message": null,
+      "agentRevision": 1
+    },
+    "attack": {
+      "status": "done",
+      "round": 2,
+      "fixes": [
+        {
+          "id": "never-turn",
+          "text": "The character keeps facing {facing} the whole time: never turns around, never shows {pos} back and never faces the camera.",
+          "source": "auto",
+          "take": 1,
+          "round": 1
+        },
+        {
+          "id": "weapon-shape",
+          "text": "The weapon stays one single weapon of the same length and shape the whole time: never bending, never doubling, no second blade, no ghost blades.",
+          "source": "agent",
+          "round": 2
+        }
+      ],
+      "job": {
+        "dir": "actions/attack/job",
+        "job": "actions/attack/job/registration_job.json",
+        "sha256": "35693170542c18e306598db6f85a4b2bb755b1bd9a27f3f01a680d4d1f4f8592",
+        "input": "actions/attack/job/input.png",
+        "referenceScale": 1.0,
+        "keyColor": "magenta",
+        "padding": [
+          64,
+          0,
+          37,
+          0
+        ],
+        "warnings": 3
+      },
+      "takes": [
+        {
+          "take": 1,
+          "round": 1,
+          "dir": "actions/attack/takes/t01",
+          "status": "rejected",
+          "createdAt": "2026-11-06T21:22:13.969Z",
+          "prompt": {
+            "path": "actions/attack/takes/t01/prompt.txt",
+            "sha256": "80333cbbf220aee99fa796910363d00277520cc613486a5e0402344744a20b5c"
+          },
+          "fixes": [],
+          "stages": {
+            "keyed": {
+              "dir": "actions/attack/takes/t01/keyed"
+            }
+          },
+          "clip": {
+            "path": "actions/attack/takes/t01/media/clip.mp4",
+            "sha256": "a05ddfae386faac99d51eb38554b1609e1e15b2beafca6932bb90997556118ba"
+          },
+          "route": "fake-i2v",
+          "pinnedLastFrame": true,
+          "message": null,
+          "qc": {
+            "file": "actions/attack/takes/t01/qc.json",
+            "status": "fail",
+            "failures": [
+              "turn"
+            ]
+          },
+          "failures": [
+            "turn"
+          ],
+          "reasons": [
+            "turn: turned around in frames 11-25 (the mirrored head matches +0.61 better)"
+          ],
+          "fixNext": [
+            "never-turn"
+          ],
+          "logged": true
+        },
+        {
+          "take": 2,
+          "round": 1,
+          "dir": "actions/attack/takes/t02",
+          "status": "kept",
+          "createdAt": "2026-11-06T21:22:35.272Z",
+          "prompt": {
+            "path": "actions/attack/takes/t02/prompt.txt",
+            "sha256": "377e32453850d2eae93db9e6f75c276cbff4259be2c1e91ed6d63ca3be844af8"
+          },
+          "fixes": [
+            "never-turn"
+          ],
+          "stages": {
+            "keyed": {
+              "dir": "actions/attack/takes/t02/keyed"
+            },
+            "registered": {
+              "dir": "actions/attack/takes/t02/registered"
+            },
+            "motion": {
+              "dir": "actions/attack/takes/t02/motion"
+            },
+            "finished": {
+              "dir": "actions/attack/takes/t02/finished"
+            },
+            "selection": {
+              "dir": "actions/attack/takes/t02/selection"
+            },
+            "package": {
+              "dir": "actions/attack/takes/t02/package"
+            },
+            "verify": {
+              "dir": null
+            }
+          },
+          "clip": {
+            "path": "actions/attack/takes/t02/media/clip.mp4",
+            "sha256": "1ecde590497cab46e1353ac06d1fa5eaccc74137a747d472488c0900f355097a"
+          },
+          "route": "fake-i2v",
+          "pinnedLastFrame": true,
+          "message": null,
+          "qc": {
+            "file": "actions/attack/takes/t02/qc.json",
+            "status": "pass",
+            "failures": []
+          },
+          "failures": [],
+          "reasons": [],
+          "logged": true,
+          "review": {
+            "verdict": "retake",
+            "at": "2026-11-06T21:22:59.743Z",
+            "fixes": [
+              "weapon-shape"
+            ]
+          }
+        },
+        {
+          "take": 3,
+          "round": 2,
+          "dir": "actions/attack/takes/t03",
+          "status": "kept",
+          "createdAt": "2026-11-06T21:23:00.205Z",
+          "prompt": {
+            "path": "actions/attack/takes/t03/prompt.txt",
+            "sha256": "a28f1ade9bb6ef79f56377d34f14f91e4c8f0d3814e2f3a09f5fe0702b757e32"
+          },
+          "fixes": [
+            "never-turn",
+            "weapon-shape"
+          ],
+          "stages": {
+            "keyed": {
+              "dir": "actions/attack/takes/t03/keyed"
+            },
+            "registered": {
+              "dir": "actions/attack/takes/t03/registered"
+            },
+            "motion": {
+              "dir": "actions/attack/takes/t03/motion"
+            },
+            "finished": {
+              "dir": "actions/attack/takes/t03/finished"
+            },
+            "selection": {
+              "dir": "actions/attack/takes/t03/selection"
+            },
+            "package": {
+              "dir": "actions/attack/takes/t03/package"
+            },
+            "verify": {
+              "dir": null
+            }
+          },
+          "clip": {
+            "path": "actions/attack/takes/t03/media/clip.mp4",
+            "sha256": "1ecde590497cab46e1353ac06d1fa5eaccc74137a747d472488c0900f355097a"
+          },
+          "route": "fake-i2v",
+          "pinnedLastFrame": true,
+          "message": null,
+          "qc": {
+            "file": "actions/attack/takes/t03/qc.json",
+            "status": "pass",
+            "failures": []
+          },
+          "failures": [],
+          "reasons": [],
+          "logged": true
+        }
+      ],
+      "chosen": {
+        "take": 3,
+        "reason": "first take that passed every gate",
+        "window": null,
+        "tag": ""
+      },
+      "accepted": null,
+      "output": {
+        "take": 3,
+        "tag": "",
+        "package": "actions/attack/takes/t03/package",
+        "manifest": "actions/attack/takes/t03/package/animation.json",
+        "verify": "pass"
+      },
+      "message": null,
+      "agentRevision": 1
+    }
+  },
+  "review": {
+    "latest": "review/review-001.json",
+    "at": "2026-11-06T21:22:58.315Z"
+  },
+  "updatedAt": "2026-11-06T21:23:11.467Z"
+}

@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "remove": "/done",
+      "why": "every line names done (or null)"
+    },
+    {
+      "set": "/done",
+      "value": -1,
+      "why": "counts are never negative"
+    },
+    {
+      "set": "/t",
+      "value": "yesterday",
+      "why": "t is an RFC 3339 time"
+    }
+  ]
+}

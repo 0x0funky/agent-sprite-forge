@@ -1,0 +1,22 @@
+{
+  "cases": [
+    {
+      "set": "/actions/0/kind",
+      "value": "cycle",
+      "why": "an action is a loop or a one-shot"
+    },
+    {
+      "set": "/views",
+      "value": [
+        "side",
+        "side"
+      ],
+      "why": "a view is planned once"
+    },
+    {
+      "set": "/finish/targetHeight",
+      "value": 4,
+      "why": "a finished body is at least 8 px tall"
+    }
+  ]
+}

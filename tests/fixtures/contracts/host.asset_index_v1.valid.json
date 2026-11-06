@@ -1,0 +1,187 @@
+{
+  "schema": "forge.asset_index.v1",
+  "tool": {
+    "name": "forge_index",
+    "version": "0.5.0"
+  },
+  "createdAt": "2026-11-06T21:35:32.560Z",
+  "root": "D:/games/pip-quest/art",
+  "masters": [
+    {
+      "id": "master",
+      "name": "fox-ranger",
+      "path": "master",
+      "metadata": "master/master.json",
+      "image": "master/master.png",
+      "cutout": "master/master_rgba.png",
+      "class": "hero",
+      "finish": "hd",
+      "facing": "left",
+      "route": "codex-cli",
+      "status": "approved"
+    }
+  ],
+  "sets": [
+    {
+      "id": "pip-set",
+      "name": "testhero",
+      "path": "pip-set",
+      "plan": "pip-set/set_plan.json",
+      "state": "pip-set/set_state.json",
+      "class": "hero",
+      "finish": "hd",
+      "targetHeight": 48,
+      "master": "pip-set/master/side/master.png",
+      "status": "complete",
+      "actions": [
+        {
+          "id": "idle",
+          "action": "idle",
+          "view": "side",
+          "kind": "loop",
+          "status": "done",
+          "takes": 1,
+          "chosen": {
+            "take": 1,
+            "window": null,
+            "tag": ""
+          },
+          "accepted": {
+            "take": 1,
+            "window": null,
+            "at": "2026-11-06T21:22:58.809Z"
+          },
+          "package": "pip-set/actions/idle/takes/t01/package",
+          "manifest": "pip-set/actions/idle/takes/t01/package/animation.json",
+          "poster": "pip-set/actions/idle/takes/t01/package/idle-poster.png",
+          "reviewStatus": "accepted",
+          "verify": "pass"
+        },
+        {
+          "id": "walk",
+          "action": "walk",
+          "view": "side",
+          "kind": "loop",
+          "status": "done",
+          "takes": 1,
+          "chosen": {
+            "take": 1,
+            "window": null,
+            "tag": ""
+          },
+          "accepted": null,
+          "package": "pip-set/actions/walk/takes/t01/package",
+          "manifest": "pip-set/actions/walk/takes/t01/package/animation.json",
+          "poster": "pip-set/actions/walk/takes/t01/package/walk-poster.png",
+          "reviewStatus": "needs-visual-review",
+          "verify": "pass"
+        },
+        {
+          "id": "attack",
+          "action": "attack",
+          "view": "side",
+          "kind": "oneshot",
+          "status": "done",
+          "takes": 3,
+          "chosen": {
+            "take": 3,
+            "window": null,
+            "tag": ""
+          },
+          "accepted": null,
+          "package": "pip-set/actions/attack/takes/t03/package",
+          "manifest": "pip-set/actions/attack/takes/t03/package/animation.json",
+          "poster": "pip-set/actions/attack/takes/t03/package/attack-poster.png",
+          "reviewStatus": "needs-visual-review",
+          "verify": "pass"
+        }
+      ]
+    }
+  ],
+  "fx": [
+    {
+      "id": "fx",
+      "name": "arcane/star-fall",
+      "path": "fx",
+      "metadata": "fx/fx.json",
+      "route": "A",
+      "routeName": "pixelfx",
+      "effect": "arcane/star-fall",
+      "frames": 4,
+      "frameSize": [
+        8,
+        6
+      ],
+      "frameMs": 41.667,
+      "loop": false,
+      "anchor": [
+        4,
+        5
+      ],
+      "sheet": "fx/sheet.png",
+      "sheetJson": "fx/sheet.json",
+      "preview": "fx/preview.gif",
+      "credits": "fx/CREDITS.txt",
+      "status": "needs-visual-review"
+    },
+    {
+      "id": "b-fx",
+      "name": "burst",
+      "path": "b-fx",
+      "metadata": "b-fx/fx.json",
+      "route": "B",
+      "routeName": "image",
+      "effect": "burst",
+      "frames": 4,
+      "frameSize": [
+        42,
+        35
+      ],
+      "frameMs": 80.0,
+      "loop": false,
+      "anchor": [
+        21.0,
+        34
+      ],
+      "sheet": "b-fx/sheet.png",
+      "sheetJson": "b-fx/sheet.json",
+      "preview": "b-fx/preview.gif",
+      "credits": null,
+      "status": "needs-visual-review"
+    }
+  ],
+  "plates": [
+    {
+      "id": "plate",
+      "name": "plate",
+      "path": "plate",
+      "metadata": "plate/plate.json",
+      "image": "plate/plate.png",
+      "preview": "plate/plate-x4.png",
+      "palette": "plate/palette.json",
+      "size": [
+        160,
+        90
+      ],
+      "colors": 4,
+      "status": "needs-visual-review"
+    }
+  ],
+  "maps": [
+    {
+      "id": "maps/forest.map-bundle.json",
+      "name": "forest",
+      "path": "maps/forest.map-bundle.json",
+      "schemaVersion": "generate2dmap.map_bundle.v2",
+      "world": {
+        "width": 960,
+        "height": 540
+      },
+      "layers": 2,
+      "objects": 5
+    }
+  ],
+  "warnings": [
+    "old/set_state.json: unreadable (JSONDecodeError)"
+  ]
+}

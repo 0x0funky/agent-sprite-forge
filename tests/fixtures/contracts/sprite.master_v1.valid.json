@@ -1,0 +1,177 @@
+{
+  "schema": "generate2dsprite.master.v1",
+  "tool": {
+    "name": "master_still",
+    "version": "0.5.0"
+  },
+  "created": "2026-11-06T21:22:01.990Z",
+  "name": "fox-ranger",
+  "subject": "a young fox ranger, full body",
+  "identity_recap": "young fox ranger (slim red fox, dark green hooded cloak, short wooden bow)",
+  "facing": "left",
+  "view": "side view (profile to three-quarter)",
+  "finish": "hd",
+  "class": "hero",
+  "framing": {
+    "canvas": [
+      1024,
+      1024
+    ],
+    "subject_height_px": 788,
+    "top_margin_px": 138,
+    "lead_px": 0,
+    "preset": "hero",
+    "subject_bbox": [
+      362,
+      138,
+      662,
+      926
+    ],
+    "anchor": [
+      497.5,
+      926.0
+    ],
+    "opaque_area_px": 180245,
+    "width_limited": false
+  },
+  "key": "#FF00FF",
+  "files": {
+    "master": {
+      "path": "master.png",
+      "sha256": "7248663308a1bef58495fd39d69fd3edf41f11dd9e6a0981666caec8b7b089f6",
+      "bytes": 322994,
+      "size": [
+        1024,
+        1024
+      ]
+    },
+    "cutout": {
+      "path": "master_rgba.png",
+      "sha256": "2a13dcc92f26ed4fd1ff0eb46bd5e1ee7e23f7a2d191ca4fc5a7e9b20cbc3285",
+      "bytes": 404255,
+      "size": [
+        1024,
+        1024
+      ]
+    },
+    "source": {
+      "path": "source.png",
+      "sha256": "1090b9bd1c5202cf6d42a50e7ec15f10c3d1af81bc4df97e4617c7be0ee6de0e",
+      "bytes": 1678527,
+      "size": [
+        1000,
+        1000
+      ]
+    },
+    "spec": {
+      "path": "spec.json",
+      "sha256": "f519a44d6d33b67b0534b48c16b999fa884aa82b4f8851689d9a9010f08323b7",
+      "bytes": 921
+    },
+    "prompt": {
+      "path": "prompt.txt",
+      "sha256": "c1df144883e4cfbe157c3e196579702acddc9a08bec3956649bd7c7b9da03b1c",
+      "bytes": 1895
+    }
+  },
+  "references": [
+    {
+      "role": "identity",
+      "path": "refs/identity.png",
+      "sha256": "4beff21abd40a8b5392649e6aedc8d6cab15824df8d88e3621d07080a6880417",
+      "bytes": 185
+    },
+    {
+      "role": "style",
+      "path": "refs/peer.png",
+      "sha256": "0cc891ea6a925b98da75febc28bfba4f07100ee78651bb7abfa7739a7bd585f5",
+      "bytes": 185
+    }
+  ],
+  "transform": {
+    "mapping": "master = scale * source + offset (continuous pixel coordinates: pixel i spans [i, i + 1))",
+    "source_size": [
+      1000,
+      1000
+    ],
+    "source_subject_bbox": [
+      330,
+      100,
+      641,
+      921
+    ],
+    "crop_box": [
+      324,
+      94,
+      647,
+      927
+    ],
+    "crop_margin_px": 6,
+    "scale": 0.9598051157125457,
+    "offset": [
+      46.01461632155906,
+      42.01948842874543
+    ],
+    "canvas": [
+      1024,
+      1024
+    ],
+    "resampler": "lanczos",
+    "premultiplied": true,
+    "alpha_floor_px": 1743,
+    "subject_parts": 2,
+    "ignored_parts": 2,
+    "ignored_px": 2,
+    "source_touches": [],
+    "key_rgb": [
+      255,
+      0,
+      255
+    ]
+  },
+  "route": "codex-cli",
+  "provenance": {
+    "command": "generate",
+    "run": "../runs/fox-generate",
+    "take": 2,
+    "source_name": "generated.png",
+    "source_sha256": "1090b9bd1c5202cf6d42a50e7ec15f10c3d1af81bc4df97e4617c7be0ee6de0e",
+    "media": {
+      "status": "ok",
+      "route": "codex-cli"
+    },
+    "media_cli_source": "sibling",
+    "edit": null
+  },
+  "matte": {
+    "requested": "soft",
+    "key_estimate": {
+      "key": [
+        250.0,
+        4.0,
+        249.0
+      ],
+      "source": "border_median",
+      "valid": true,
+      "ring_share": 1.0,
+      "coverage": 0.803469,
+      "distance_from_declared": 8.77
+    },
+    "quality": "soft",
+    "interior_despill": true,
+    "qa": {
+      "opaque_key_px": 0,
+      "outer_ring_spill_fraction": 0.0,
+      "semitransparent_fraction": 0.017078706578050096,
+      "enclosed_key_pockets": 0,
+      "key_hued_px": 0,
+      "visible_px": 196502
+    },
+    "key_choice": {
+      "status": "ok",
+      "overlap_share": 0.0,
+      "rule": "reject a key when more than 0.5% of subject pixels have key dominance >= 40; first acceptable candidate wins"
+    }
+  },
+  "warnings": []
+}

@@ -1,0 +1,18 @@
+{
+  "cases": [
+    {
+      "set": "/actions/idle/status",
+      "value": "finished",
+      "why": "not an action status"
+    },
+    {
+      "set": "/actions/idle/accepted/reviewStatus",
+      "value": "fail_regenerate",
+      "why": "an accept never records a fail_regenerate verdict"
+    },
+    {
+      "remove": "/plan",
+      "why": "the state is bound to its plan by sha256"
+    }
+  ]
+}
