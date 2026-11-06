@@ -52,6 +52,7 @@
 </p>
 
 <p align="center">
+  <a href="#新功能hibit把平塗-ai-圖變成真正的像素畫">Hibit 風格</a> ·
   <a href="#04-新功能大升級">新功能</a> ·
   <a href="#快速開始">快速開始</a> ·
   <a href="#生成路徑與供應商">生成路徑與供應商</a> ·
@@ -59,6 +60,88 @@
   <a href="#地圖">地圖</a> ·
   <a href="#showcase用-agent-sprite-forge-做的遊戲">Showcase</a> ·
   <a href="#工具">工具</a>
+</p>
+
+## 新功能：hibit，把平塗 AI 圖變成真正的像素畫
+
+<p align="center">
+  <img src="./src/hibit/hibit-gameplay.gif" alt="Pip's Star Grove：狐狸法師 Pip 對兩側爬來的岩漿史萊姆施放落星，金幣掉落" width="960" />
+  <br />
+  <em>Pip's Star Grove：完全用 hibit 產出做的單畫面小遊戲。自動駕駛實機遊玩，畫面直接取自遊戲 canvas（原生 480x270，此處 2 倍顯示）。特效：Patch 製作的 <a href="https://github.com/patch-gg/pixelfx">pixelfx</a>（MIT）。</em>
+</p>
+
+不要叫圖像模型畫「像素畫」：它只會畫出假的、大小不一的像素。**hibit** 風格請模型畫乾淨的平塗無線稿圖（每種材質最多 3 個色階、沒有外框線），像素在後製才產生：每個角色從原始像素學一套調色盤，8x8 多數決縮圖（每個像素都是在格子裡佔最多的調色盤顏色，絕不混色），用遲滯（hysteresis）壓閃爍，保留眼睛與高光，二值 alpha，再加一圈顏色取自角色本身的 1 px 描邊。
+
+<table>
+  <tr>
+    <td align="center" width="58%">
+      <img src="./src/hibit/hibit-master-to-pixels.png" alt="Pip 的平塗無線稿原畫、她 idle 的 80 px hibit 後製（4 倍顯示），以及含描邊色的 17 色調色盤" width="520" />
+      <br />
+      <strong>平塗圖進、像素畫出</strong>
+      <br />
+      核可的原畫（Codex）與 idle 的 80 px hibit 後製：從原圖學出 16 色，再加一個描邊色。<code>--outline auto</code> 從角色的主要色相取描邊色（#380500，取自橘色毛髮的深紅褐），不會固定用橘色。
+    </td>
+    <td align="center" width="42%">
+      <img src="./src/hibit/hibit-cast.gif" alt="Pip 的 idle、walk、cast、hurt，以及岩漿史萊姆的 idle、爬行、attack，2 倍、實際時間" width="360" />
+      <br />
+      <strong>整套動作，一個角色一套調色盤</strong>
+      <br />
+      Pip（idle、walk、cast、hurt）與岩漿史萊姆（idle、爬行、attack）：Grok 圖生影片，經 <code>sprite_set.py --finish hibit</code>，12 fps。每個動作都沿用第一個動作的調色盤與描邊色。
+    </td>
+  </tr>
+</table>
+
+### 特效：pixelfx（推薦）或生圖路徑
+
+hibit 特效我們推薦 Patch 製作的 **[pixelfx](https://github.com/patch-gg/pixelfx)**：一套用程式產生的像素特效庫（火焰、魔法、打擊、天氣、道具、UI），風格很搭，而且在你自己的電腦上免費 render。它是獨立的 MIT 專案，請自行 clone（`git clone https://github.com/patch-gg/pixelfx`，需要 Node 18+），skill 會自動找到它。`fx_pixelfx.py check` 決定走哪條路；你指定的路徑優先。
+
+| | A：有裝 pixelfx（推薦） | B：生圖路徑（一定可用） |
+|---|---|---|
+| 每個特效的幀數 | 16-91 幀、30 fps | 4 幀（一張 2x2 sheet） |
+| 成本 | 免費（本機 Node） | 每個特效一張生成圖 |
+| 風格 | pixelfx 自己的風格，可用 `--ramp`、`--snap` 換成遊戲配色 | 你遊戲本身的平塗風格與調色盤 |
+| 標示出處 | 每次 render 都附 `CREDITS.txt`（pixelfx 的 MIT 授權與聲明） | 與其他 sprite 一樣是生圖路徑 |
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./src/hibit/hibit-fx-pixelfx.gif" alt="A 路徑：pixelfx 的落星（換成 Pip 的調色盤）打中史萊姆，接著受擊火花、煙霧 poof 與散落的金幣" width="420" />
+      <br />
+      <strong>A：pixelfx</strong>
+      <br />
+      <code>arcane/star-fall</code>（換成 Pip 的調色盤）、<code>impacts/hit-spark</code>、<code>spawn/poof</code>、<code>spawn/coin-drop</code>。
+    </td>
+    <td align="center" width="50%">
+      <img src="./src/hibit/hibit-fx-imagegen.gif" alt="B 路徑：生圖做的落星打中史萊姆，地面爆發，接著白色煙團與彈跳金幣" width="420" />
+      <br />
+      <strong>B：生圖路徑</strong>
+      <br />
+      Codex 生成 2x2 特效 sheet，經 <code>process</code> 去背對位，再由 <code>hibit_fx.py</code> 這一步轉成像素（星星與金幣用 Pip 的調色盤，火花與煙團各學 6 色）。
+    </td>
+  </tr>
+</table>
+
+自動駕駛完整遊玩 50 秒，同一個 seed：[pixelfx 特效版（MP4）](./src/hibit/pip-star-grove-pixelfx.mp4) · [生圖特效版（MP4）](./src/hibit/pip-star-grove-imagegen.mp4)。
+
+| 實測（2026-11-06） | |
+|---|---:|
+| Pip：調色盤（從原始像素學出） | 16 + 描邊 |
+| 遲滯消除的雜訊閃爍（對比沒有遲滯的同一套多數決）：Pip 的 4 支 / 史萊姆的 3 支 | 32-40% / 10-24% |
+| 自動描邊色：Pip / 岩漿史萊姆 / Forge Bot | #380500 / #380500 / #002131 |
+| 整個遊戲畫面的顏色數：B 路徑 / A 路徑（pixelfx 的光線混色；只有落星做了 snap） | 65 / 約 6,700 |
+| 每個特效的幀數：B 路徑 / A 路徑 | 4 / 16-91 |
+
+新增內容：
+
+- **`master_still.py --finish hibit`**：原畫改畫成平塗無線稿的 cel-shading，這正是 hibit 後製要的輸入。
+- **`finish_frames.py hibit`** 與 **`sprite_set.py plan --finish hibit`**：調色盤、8x8 多數決縮圖、遲滯、孤立像素清理與描邊（`auto`、`#RRGGBB`、`selective`、`dark` 或 `none`）；主角 80 px、12 fps，引擎匯出用 nearest 取樣。
+- **`hibit_plate.py`**（generate2dmap）：480x270 背景（4 倍即 1080p），14 色調色盤、一次紙雕平滑，並附 shade map，不加新顏色也能打光與受擊閃光。
+- **`fx_pixelfx.py`**（`check`、`list`、`render`）負責 A 路徑，**`hibit_fx.py pixelize`** 負責 B 路徑。
+
+<p align="center">
+  <img src="./src/hibit/hibit-outline-auto.png" alt="Forge Bot idle：先前的粗線像素後製，旁邊是 hibit 的 auto、selective 與固定橘色描邊" width="760" />
+  <br />
+  <em>Forge Bot：先前的粗線像素後製，接著是 hibit 的描邊取自圖片（auto）、取自調色盤暗色（selective），以及固定的工作室橘色。</em>
 </p>
 
 ## 0.4 新功能：大升級
@@ -549,8 +632,9 @@ approve             gates, retakes, soft     --auto-oneshot          pixel, colo
 | | `assemble_frames.py` | 無損打包整幀；ownership 切格、循環接縫、環境淡入淡出 |
 | | `palette_tool.py`、`pixel_reduce.py` | OKLab 調色盤、鎖色、變體、不閃爍的 clip 量化；整數像素網格縮減 |
 | | `export_engine.py` | Aseprite JSON、Godot SpriteFrames 與 AnimatedSprite3D（尚未在編輯器驗證匯入） |
+| | `fx_pixelfx.py`、`hibit_fx.py` | hibit 特效：`check` 選 A 路徑（有裝 pixelfx）或 B 路徑；`render` 產生 pixelfx 特效並附出處；`pixelize` 把生圖特效 sheet 轉成 hibit 像素 |
 | video2dsprite | `sprite_set.py` | `plan`、`run`、`review`、`accept`、`retake`、`report`：從一張原畫為每個動作做一支影片，把關、重拍、後製與打包 |
-| | `finish_frames.py`、`colour_lock.py` | HD（預設）或像素後製、共用調色盤、角色身高對照；顏色鎖定到原畫與其量測 |
+| | `finish_frames.py`、`colour_lock.py` | HD（預設）、像素或 hibit 後製、共用調色盤、角色身高對照；顏色鎖定到原畫與其量測 |
 | | `video2dsprite.py` | `key-plan`、`triage`、soft matte `process`/`clean`、`package`、`verify`、`doctor` |
 | | `prepare_i2v_input.py`、`register_clip.py` | 建構式對位：以記錄的轉換放置輸入，再用一次反向轉換拉回，並做 take QC |
 | | `gait_loop.py`、`retime.py`、`animation_review.py` | 量測挑選走路／跑步／idle 循環與步幅；單次動作自動重新計時，以及 tick 上的 impact/hold 計時；分類候選 |
@@ -559,6 +643,7 @@ approve             gates, retakes, soft     --auto-oneshot          pixel, colo
 | generate2dmap | `extract_prop_pack.py` | 有錨點、腳印與 despill 的透明道具（prop_pack.v2） |
 | | `extract_terrain_tiles.py`、`extract_platform_strip.py` | 地形填充、覆蓋層、等角／六角與 Wang 列；平台頂部的表面與接縫 QC |
 | | `compose_layered_preview.py`、`validate_parallax.py`、`conform_background.py` | 依地面線排序的預覽與稽核疊圖；視差覆蓋與接縫；把畫作配合螢幕 |
+| | `hibit_plate.py` | hibit 背景：480x270、一套調色盤、多數決縮圖、紙雕平滑、shade map |
 | | `map_bundle.py`、`map_nav.py` | map_bundle.v2 驗證；由資料推導碰撞、可達性與傳送點 |
 | | `export_tiled.py`、`export_godot.py`、`export_ldtk.py` | Tiled 1.10（重新算繪驗證）、Godot 4.3+ 與 LDtk 1.5.3（僅解析層級） |
 | | `validate_chunks.py`、`validate_layout.py` | 房間區塊接口；橫向捲軸的跳躍、斜坡與平台 |
@@ -585,6 +670,7 @@ approve             gates, retakes, soft     --auto-oneshot          pixel, colo
 | 生圖與生影片（擇一） | OpenAI、Gemini、xAI、BytePlus 或 fal.ai 的 API key（見 [設定 API key](#設定-api-key)），或你自己已登入的 Codex CLI 或 Grok CLI |
 | codeart2d 的 SVG 圖 | `python -m pip install -r requirements-codeart.txt`（resvg-py>=0.5,<0.6），或 resvg-js CLI，或 Chrome/Edge。PixelSpec sprite 不需要額外安裝 |
 | JS runtime、`fx_verify.mjs`、場景預覽檢查 | node 22（選用）；`build_scene_preview.py --verify` 有 playwright 時也會用到 |
+| hibit 特效 A 路徑（選用、推薦） | node 18+ 與你自己 clone 的 [pixelfx](https://github.com/patch-gg/pixelfx)（`git clone https://github.com/patch-gg/pixelfx`，再用 `--pixelfx <dir>` 或 `PIXELFX_DIR`）；沒有的話 hibit 特效走生圖路徑 |
 | 貢獻者 | `python -m pip install -r requirements-dev.txt`，再執行 `python -m pytest -q` 與 `node --test "tests/js/*.test.mjs"` |
 
 ## 建議 prompt
@@ -597,6 +683,10 @@ Use $generate2dsprite to make a master still of a fox ranger for a 2D platformer
 
 ```text
 Use $video2dsprite to turn the approved fox master into idle, run, attack and hurt, pixel finish in 48x64 cells at 80 ms, and export it for Godot and Aseprite.
+```
+
+```text
+Use $generate2dsprite and $video2dsprite with the hibit finish: a fox mage master as flat lineless art, then idle, walk, cast and hurt at 80 px, and a falling-star cast FX in her palette (pixelfx if I have it, else the image route).
 ```
 
 ### Sprite 與特效
@@ -643,6 +733,10 @@ Use $generate2dsprite to create a 2D monster-collecting RPG. You only need to bu
 
 下方的 MIT 授權涵蓋本 repository 的程式碼與文件，不涵蓋你用它生成的東西。圖片或影片模型產生的圖與影片，受該供應商條款約束；程式繪圖則來自你或你的 agent 寫的 spec。請勿描摹或用 prompt 生成你不擁有的角色或真人。商業專案請使用你掌握權利的原創角色或 IP，並確認各供應商的條款。
 
+## 第三方致謝
+
+選用的像素特效路徑（`skills/generate2dsprite/scripts/fx_pixelfx.py`，hibit 風格的 A 路徑，能裝的話我們推薦使用）會執行 Patch 製作的 [pixelfx](https://github.com/patch-gg/pixelfx)。hibit 展示素材裡的 pixelfx 特效出處見 [src/hibit/CREDITS-pixelfx.txt](./src/hibit/CREDITS-pixelfx.txt)。pixelfx 是獨立的 MIT 授權專案，需自行 clone，本 repository 並未內含。pixelfx 本身另外致謝 Hugo Duprez 的 Sprite Fusion 像素特效（MIT）與 rehan-remade 的 Hollow Crown（MIT）。每次 render 都會寫出附 pixelfx 授權與聲明的 `CREDITS.txt`：請和 frames 一起保留，並在遊戲中標示 pixelfx。詳見 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
 ## Repository 結構
 
 ```text
@@ -658,7 +752,7 @@ agent-sprite-forge/
   tools/                 install_skills.py, vendor_sync.py, check_links.py
   tests/                 pytest and node suites, fixtures with provenance
   docs/                  validation records, known limitations, audit
-  src/                   README media (src/v040: the 0.4 showcase)
+  src/                   README media (src/v040: the 0.4 showcase; src/hibit: the hibit showcase)
   CHANGELOG.md
 ```
 

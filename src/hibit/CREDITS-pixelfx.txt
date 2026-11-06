@@ -1,0 +1,44 @@
+These frames were rendered with pixelfx, code-driven pixel-art effects by Patch.
+  https://github.com/patch-gg/pixelfx  (version 0.3.0, commit a84159688af3ca37a4be05a0d422b94451b2e24e)
+  effect arcane/star-fall (Star fall), options {"palette": ["#44174c", "#554890", "#f7c248", "#fdf004", "#fbdba2"]}
+
+pixelfx is MIT licensed. Its license and notice follow; keep them with these frames and credit pixelfx
+in the game's credits. (The Patch Pixel font in pixelfx's gallery is not MIT and was not used.)
+
+----- pixelfx LICENSE -----
+MIT License
+
+Copyright (c) 2026 Patch
+Copyright (c) 2026 Hugo Duprez
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+----- pixelfx NOTICE.md -----
+# Notices
+
+**Hugo Duprez.** `src/core/sim.js` and the effects that say so at the top of their file adapt Sprite Fusion's
+open-source pixel art VFX (https://www.spritefusion.com/pixel-art-vfx), Copyright (c) 2026 Hugo Duprez, MIT License.
+
+**Hollow Crown.** `src/core/act.js` adapts how Hollow Crown plays its skills (poses on 12 fps steps, hit-stops, the springy
+straw target), from
+https://github.com/rehan-remade/hollow-crown, Copyright (c) 2026 rehan-remade, MIT License.
+
+**Patch Pixel.** The font in `gallery/fonts` is Patch's own and is not covered by this repository's MIT license. See
+`gallery/fonts/NOTICE.md`.
+

@@ -71,7 +71,7 @@ DEFAULT_TIMEOUT_S = 1800.0
 ORDINALS = ("FIRST", "SECOND", "THIRD", "FOURTH", "FIFTH", "SIXTH", "SEVENTH", "EIGHTH")
 
 FACINGS = ("left", "right", "front", "back", "none")
-FINISHES = ("hd", "pixel")
+FINISHES = ("hd", "pixel", "hibit")
 PRONOUNS = {"he": "his", "she": "her", "it": "its", "they": "their"}
 MATTES = ("soft", "dominance", "hard")
 KEY_NAMES = {"#FF00FF": "magenta", "#00FF00": "green", "#0000FF": "blue"}
@@ -123,6 +123,17 @@ class Style:
 
 
 STYLES = {
+    # hibit: the image model paints clean flat art; the outline and the pixel grid come from the finish
+    # (forge_hibit: k-means palette, majority downsample, an outline coloured from the image).
+    "hibit": Style(
+        "clean flat cel-shaded 2D game art{for_genre}, painted for pixel conversion: lineless shapes with NO outline "
+        "and no line art, every material in at most 3 flat tones (highlight, base, shadow), cool purple-leaning shadows "
+        "and warm highlights, large crisp angular light and shadow shapes, a bold readable silhouette, no gradients, "
+        "no airbrush, no texture noise, no dithering, no pixel grid",
+        "clean flat lineless cel-shaded style",
+        "lineless flat shapes, at most 3 flat tones per material, cool shadows and warm highlights, crisp angular "
+        "shading shapes, no outlines, no gradients",
+        "flat cel-shaded"),
     "pixel": Style(
         "premium 16-bit pixel art (SNES era){for_genre}, crisp visible chunky pixels, limited palette, strong dark "
         "outline, 3-tone cel shading, no smooth gradients, no blur",
@@ -379,7 +390,7 @@ def normalise_spec(raw: dict[str, Any], *, attach: bool) -> tuple[dict[str, Any]
         raise ValueError(f"class must be one of {', '.join(CLASSES)}; got {klass!r}.")
     finish = str(raw.get("finish") or "hd").strip().lower()
     if finish not in FINISHES:
-        raise ValueError(f"finish must be hd or pixel; got {finish!r}.")
+        raise ValueError(f"finish must be hd, pixel or hibit; got {finish!r}.")
     facing = str(raw.get("facing") or ("none" if klass == "prop" else "right")).strip().lower()
     if facing not in FACINGS:
         raise ValueError(f"facing must be one of {', '.join(FACINGS)}; got {facing!r}.")
@@ -1502,7 +1513,7 @@ def add_spec_arguments(parser: argparse.ArgumentParser, *, with_spec_file: bool 
                                       "three-quarter)')")
     group.add_argument("--class", dest="klass", choices=sorted(CLASSES),
                        help="framing preset: hero, mob, boss or prop (default hero)")
-    group.add_argument("--finish", choices=FINISHES, help="hd (default) or pixel: sets the style line")
+    group.add_argument("--finish", choices=FINISHES, help="hd (default), pixel or hibit (flat lineless art for the hi-bit finish): sets the style line")
     group.add_argument("--key", type=key_arg, help="flat key colour: #RRGGBB, magenta, green or blue (default #FF00FF)")
     group.add_argument("--genre", help="the game, for the style line, e.g. 'a side-scrolling action game' "
                                        "(default: none)")

@@ -30,6 +30,31 @@
   <em>一张原画（本机 Codex CLI 生成）→ 每个动作一段 Grok 图生视频 → 六个动作。每一帧都来自 2026-10-06 的实机运行。</em>
 </p>
 
+## 新功能：hibit，把平涂 AI 图变成真正的像素画
+
+<p align="center">
+  <img src="./src/hibit/hibit-gameplay.gif" alt="Pip's Star Grove：狐狸法师 Pip 对两侧爬来的熔岩史莱姆施放落星，金币掉落" width="960" />
+  <br />
+  <em>Pip's Star Grove：完全用 hibit 产出做的单画面小游戏，自动驾驶实机游玩（原生 480x270，2 倍显示）。特效：Patch 制作的 <a href="https://github.com/patch-gg/pixelfx">pixelfx</a>（MIT）。</em>
+</p>
+
+不要让图像模型画“像素画”。**hibit** 风格让模型画干净的平涂无线稿图，像素在后期才产生：每个角色从原始像素学一套调色板，8x8 多数决缩图（绝不混色），迟滞（hysteresis）压闪烁，保留眼睛，二值 alpha，再加一圈颜色取自角色本身的 1 px 描边（`--outline auto`，不会固定用橙色）。
+
+<p align="center">
+  <img src="./src/hibit/hibit-master-to-pixels.png" alt="Pip 的平涂原画、80 px hibit 后期（4 倍显示）与 17 色调色板" width="520" />
+  <img src="./src/hibit/hibit-cast.gif" alt="Pip 与熔岩史莱姆的各个动作，2 倍、真实时间" width="360" />
+</p>
+
+- **`master_still.py --finish hibit`**：平涂无线稿原画。**`finish_frames.py hibit`** / **`sprite_set.py plan --finish hibit`**：调色板、多数决缩图、迟滞与描边（80 px、12 fps）。**`hibit_plate.py`**：480x270 背景，14 色，附 shade map。
+- **特效两条路径**（`fx_pixelfx.py check` 自动选择，你指定的优先）：**A：推荐 Patch 制作的 [pixelfx](https://github.com/patch-gg/pixelfx)**（独立 MIT 项目，请自行 `git clone`，需要 Node 18+；每个特效 16-91 帧、免费，`render` 附 `CREDITS.txt`）；**B：生图路径**（2x2 特效 sheet → `process --scale-strategy registered` → `hibit_fx.py pixelize`，每个特效 4 帧，风格与配色和游戏一致）。
+
+<p align="center">
+  <img src="./src/hibit/hibit-fx-pixelfx.gif" alt="A 路径：pixelfx 特效" width="420" />
+  <img src="./src/hibit/hibit-fx-imagegen.gif" alt="B 路径：生图特效" width="420" />
+  <br />
+  <em>左：A（pixelfx）；右：B（生图）。完整 50 秒游玩：<a href="./src/hibit/pip-star-grove-pixelfx.mp4">pixelfx 版 MP4</a> · <a href="./src/hibit/pip-star-grove-imagegen.mp4">生图版 MP4</a>。详见 <a href="./README.md#new-hibit-real-pixel-art-from-flat-ai-art">English README</a>。</em>
+</p>
+
 ## 0.4 新功能：大升级
 
 | 实机测量 | 升级前 | 0.4 |
@@ -78,6 +103,10 @@ Key 放在环境变量（`OPENAI_API_KEY`、`GEMINI_API_KEY`、`XAI_API_KEY`、`
 - [流程与引擎导出](./README.md#pipeline-master--set--finish--export)、[地图](./README.md#maps)、[Showcase](./README.md#showcase-games-made-with-agent-sprite-forge)、[工具](./README.md#tools)、[需求](./README.md#requirements)
 - 引擎／编辑器导入尚未验证：见 [Engine exports](./README.md#engine-exports)
 - [已知限制](./docs/known-limitations.md)、[生成素材的授权说明](./README.md#generated-assets-and-licensing)
+
+## 第三方致谢
+
+可选的像素特效路径（`fx_pixelfx.py`，搭配 hibit 风格）调用 Patch 制作的 [pixelfx](https://github.com/patch-gg/pixelfx)：独立的 MIT 授权项目，需自行 clone，本仓库并未内置。pixelfx 另外致谢 Hugo Duprez 的 Sprite Fusion 像素特效（MIT）与 rehan-remade 的 Hollow Crown（MIT）。每次 render 都会写出附 pixelfx 授权与声明的 `CREDITS.txt`，请随 frames 一起保留，并在游戏中注明 pixelfx。详见 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
 
 ## 授权
 

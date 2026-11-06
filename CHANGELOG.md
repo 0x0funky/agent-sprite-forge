@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased — the hibit style
+
+Not yet tagged; tagging and publishing are the owner's.
+
+### Added
+
+- **Hibit finish: real pixel art from flat AI art.** `shared/forge_hibit.py` (vendored into generate2dsprite, video2dsprite and generate2dmap): k-means++ palettes on luminance-weighted RGB, majority-vote downsampling with temporal hysteresis, lone-pixel cleanup that keeps contrasting features, an outline colour taken from the image (the dominant saturated hue at OKLab L 0.22), shade maps, plate pixelization.
+- `master_still.py --finish hibit`: flat lineless cel-shaded masters (at most 3 tones per material, no outlines), the input the finish wants.
+- `finish_frames.py hibit`: one palette per character learned from the SOURCE pixels (16 colours by default), 8x8 supersampled majority vote (`--coverage 0.45`), hysteresis (the previous colour kept while it holds 80% of the winner), `--outline auto|#RRGGBB|selective|dark|none`; `palette.json` names the outline colour so a character's other clips reuse palette and outline with `--palette`. finish.json records a `hibit` block; flicker is measured against the same majority without hysteresis.
+- `sprite_set.py plan --finish hibit`: 80 px heroes, 12 fps, the "clean flat lineless cel-shaded" motion style, no colour lock, nearest-sampled packages.
+- `generate2dmap/scripts/hibit_plate.py`: 480x270 hibit backgrounds with a 14-colour palette (or a shared `--palette`), a paper-cut smoothing pass, `palette.json` and `shade-maps.json`.
+- Hibit FX on two routes, picked by `fx_pixelfx.py check`: **A**, `generate2dsprite/scripts/fx_pixelfx.py` (`check`, `list`, `render`) renders effects from the user's own clone of [pixelfx](https://github.com/patch-gg/pixelfx) (Patch, MIT; never vendored) with `--ramp` recolouring, `--snap` to a palette, binary alpha by default (pixelfx's additive glow exports as near-black translucent pixels), `fx.json` provenance and `CREDITS.txt` with pixelfx's license and notice; **B**, `generate2dsprite/scripts/hibit_fx.py pixelize` turns an image-generated 2x2 FX sheet, registered by `process --scale-strategy registered`, into hibit pixel art.
+- `THIRD_PARTY_NOTICES.md` and third-party credits in the five READMEs; `references/hibit.md`; the hibit showcase in `src/hibit/` (Pip's Star Grove demo, both FX routes, gameplay recordings).
+
+### Measured (2026-11-06 live run)
+
+- Pip (fox mage, 80 px; idle, walk, cast, hurt) and a magma slime (48 px; idle, crawl, attack) from Grok image-to-video clips: 16 learned colours plus the outline; the hysteresis removes 32-40% of the noise flicker on Pip's clips and 10-24% on the slime's; auto outline #380500 for both, #002131 for Forge Bot.
+- The same game with both FX routes: route B keeps the whole scene on 65 colours with 4 frames per effect; route A brings 16-91 frames per effect and about 6,700 colours (pixelfx light blending, effects not snapped).
+
 ## 0.4.0 — 2026-10-06 — the big upgrade
 
 One integrated release of the five skills (plugin version `0.4.0`). Not yet tagged; tagging and publishing are the owner's. Measured numbers come from the repository's fixtures and the 2026-10-06 live runs ([docs/validation-2026-10-06.md](./docs/validation-2026-10-06.md)); what the measurements do not prove is in [docs/known-limitations.md](./docs/known-limitations.md).

@@ -75,8 +75,12 @@ EXIT_NO_ROUTE = 3
 TOOL_TIMEOUT = 1800.0
 DEFAULT_ACTIONS = ("idle", "walk", "run", "attack", "jump", "hurt")
 VIEWS = ("side", "front", "back")
-FINISHES = ("hd", "pixel")
-TARGET_HEIGHT = {"hd": 256, "pixel": 80}      # finished body height in px for a hero
+FINISHES = ("hd", "pixel", "hibit")
+PALETTED = ("pixel", "hibit")                # finishes that write one palette, binary alpha, nearest sampling
+TARGET_HEIGHT = {"hd": 256, "pixel": 80, "hibit": 80}   # finished body height in px for a hero
+FINISH_STYLE = {"hd": "HD hand-drawn 2D game-art", "pixel": "16-bit pixel-art",
+                "hibit": "clean flat lineless cel-shaded 2D game-art"}   # the 'keep the exact <style> look' words
+HIBIT_OUTLINES = ("auto", "selective", "dark", "none")   # or a #RRGGBB colour (finish_frames.py hibit --outline)
 CLASS_HEIGHT = {"boss": 2.0}                 # cast rule: a boss is about twice the hero; mobs and spirits 1.0
 HOVER_CLASSES = ("spirit", "ghost", "hover", "flying")
 LUMA = np.array([0.299, 0.587, 0.114], np.float32)
@@ -1412,16 +1416,25 @@ def cmd_plan(args: argparse.Namespace) -> dict:
     elif args.fps is not None:
         fps = _fps_fraction(args.fps)
     else:
-        fps = Fraction(12) if finish == "pixel" else None
+        fps = Fraction(12) if finish in PALETTED else None
     if fps is not None and not 1 <= fps <= 60:
         raise ValueError("--fps must be 1-60 frames per second (--frame-ms 17-1000), or leave it out to keep the "
                          "clip's own rate")
-    if finish != "pixel" and (args.colors is not None or args.outline is not None):
-        raise ValueError("--colors and --outline belong to the pixel finish")
+    if finish not in PALETTED and (args.colors is not None or args.outline is not None):
+        raise ValueError("--colors and --outline belong to the pixel finish or the hibit finish")
     if args.colors is not None and args.palette:
         raise ValueError("--colors learns a palette; drop it when --palette is given")
-    if args.colors is not None and not 2 <= args.colors <= 255:
-        raise ValueError("--colors must be 2..255")
+    if args.colors is not None and not 2 <= args.colors <= (254 if finish == "hibit" else 255):
+        raise ValueError("--colors must be 2..255 (hibit: 2..254, the outline colour is one more)")
+    outline = args.outline
+    if outline is not None:
+        outline = outline.strip()
+        if finish == "pixel" and outline not in ("selective", "dark", "none"):
+            raise ValueError(f"pixel --outline must be selective, dark or none, got {outline!r}")
+        if finish == "hibit" and outline not in HIBIT_OUTLINES and not re.fullmatch(r"#?[0-9a-fA-F]{6}", outline):
+            raise ValueError(f"hibit --outline must be auto, selective, dark, none or #RRGGBB, got {outline!r}")
+        if finish == "hibit" and re.fullmatch(r"#?[0-9a-fA-F]{6}", outline):
+            outline = "#" + outline.lstrip("#").lower()
     canvas = None
     if args.canvas:
         match = re.fullmatch(r"\s*(\d+)\s*[xX]\s*(\d+)\s*", args.canvas)
@@ -1440,7 +1453,7 @@ def cmd_plan(args: argparse.Namespace) -> dict:
     formats = _parse_list(args.formats, ("png", "webm", "packed"), "--formats")
     if "png" not in formats:
         formats.insert(0, "png")
-    style = args.style or master.style or ("16-bit pixel-art" if finish == "pixel" else "HD hand-drawn 2D game-art")
+    style = args.style or master.style or FINISH_STYLE[finish]
     entries_spec = [(view, action) for view in views for action in actions]
     ref_action = "idle" if "idle" in actions else actions[0]
     ref_view = "side" if "side" in views else views[0]
@@ -1478,9 +1491,10 @@ def cmd_plan(args: argparse.Namespace) -> dict:
             "masters": records,
             "generation": {"duration": args.duration, "resolution": args.resolution, "maxTakes": args.max_takes,
                            "jobs": args.jobs, "pinLastFrame": args.pin_last, "timeoutSeconds": args.gen_timeout},
+            # hibit: no colour lock (its one character palette, learned from the source pixels, pins the colours)
             "finish": {"mode": finish, "targetHeight": int(target), "scaleRefAction": ref_id, "palette": palette,
-                       "colors": args.colors, "outline": args.outline, "canvas": canvas, "canvasAnchor": canvas_anchor,
-                       "colourLock": not args.no_colour_lock},
+                       "colors": args.colors, "outline": outline, "canvas": canvas, "canvasAnchor": canvas_anchor,
+                       "colourLock": not args.no_colour_lock and finish != "hibit"},
             "matteProfile": matte_profile,
             "package": {"formats": formats, "tiers": args.tiers,
                         "fps": None if fps is None else (int(fps) if fps.denominator == 1 else float(fps)),
@@ -1623,7 +1637,7 @@ def standin_finish(mode: str, frames_dir: Path, out: Path, target_height: int, s
             small[small[..., 3] == 0] = 0
         finished.append(small)
     palette_record = None
-    if mode == "pixel":
+    if mode in PALETTED:
         if palette is not None:
             table = _load_palette(palette)
             source = {"file": Path(palette).name, "sha256": forge_core.sha256_file(palette)}
@@ -2363,10 +2377,10 @@ class SetRunner:
         frames = self.root / record["stages"]["registered" + tag]["dir"] / "frames"
         scale_ref = self.scale_ref_file(ident)
         palette = self.root / finish["palette"]["path"] if finish.get("palette") else None
-        pixel = finish["mode"] == "pixel"
+        pixel = finish["mode"] in PALETTED
         shared = self.ref_palette_file(ident) if pixel and palette is None else None
         lock = None
-        if finish.get("colourLock", True):
+        if finish.get("colourLock", True) and finish["mode"] != "hibit":   # hibit takes no colour lock
             master = self.root / self.astate(ident)["job"]["dir"] / "master.png"
             if master.is_file():
                 with Image.open(master) as image:   # the keyed job master; an opaque one cannot be a lock master
@@ -2445,7 +2459,7 @@ class SetRunner:
         args += ["--max-side", min(4096, max(width, height, 2)),
                 "--source-size", f"{width},{height}", "--source-anchor", "{!r},{!r}".format(*finished["anchor"]),
                 "--body-height-px", self.plan["finish"]["targetHeight"], "--key", self.plan["key"]]
-        if self.plan["finish"]["mode"] == "pixel":
+        if self.plan["finish"]["mode"] in PALETTED:
             args += ["--pixel-art", "--sampling", "nearest"]
         if package.get("tiers"):
             args += ["--tiers", package["tiers"]]
@@ -2710,7 +2724,7 @@ def final_sheet(runner: SetRunner, ident: str, record: dict, tag: str) -> Image.
     files = _pngs(runner.root / finished["framesDir"])
     document = forge_core.read_json(runner.root / selection["selection"])
     played = list(document["sourceIndices"])
-    zoom = 3 if runner.plan["finish"]["mode"] == "pixel" else (2 if max(finished["size"]) < 96 else 1)
+    zoom = 3 if runner.plan["finish"]["mode"] in PALETTED else (2 if max(finished["size"]) < 96 else 1)
     anchor_y = forge_core.round_half_up(finished["anchor"][1] * zoom)
     tiles = []
     for index in list(dict.fromkeys(played))[:24]:
@@ -3070,25 +3084,27 @@ def build_parser() -> argparse.ArgumentParser:
     pl.add_argument("--views", default="side", help="comma list of side, front, back (default side)")
     pl.add_argument("--view-master", action="append", default=[], metavar="VIEW=FILE",
                     help="master.json of another view (front or back); repeatable")
-    pl.add_argument("--finish", choices=FINISHES, help="hd (full colour) or pixel (one palette); default: the "
-                                                       "master's finish, else hd")
+    pl.add_argument("--finish", choices=FINISHES, help="hd (full colour), pixel (one palette) or hibit (hi-bit pixel "
+                                                       "art from flat lineless art); default: the master's finish, "
+                                                       "else hd")
     pl.add_argument("--target-height", type=_positive_int(8, 4096),
-                    help="finished body height in px (default hd 256, pixel 80; a boss twice that)")
+                    help="finished body height in px (default hd 256, pixel and hibit 80; a boss twice that)")
     pl.add_argument("--fps",
                     help="playback rate of the finished frames: 1-60, fractions allowed (12.5 or 25/2); default: the "
-                         "clip's own rate for hd, 12 for pixel")
+                         "clip's own rate for hd, 12 for pixel and hibit")
     pl.add_argument("--frame-ms", type=float,
                     help="exact frame time instead of --fps, such as 80 (12.5 fps on a 25 Hz tick grid)")
     pl.add_argument("--colors", type=int,
-                    help="pixel finish without --palette: palette size learned from the scale-reference action and "
-                         "shared by every action (default 32)")
-    pl.add_argument("--outline", choices=("selective", "dark", "none"),
-                    help="pixel finish: 1 px outline (default selective; finish_frames.py --outline)")
+                    help="pixel and hibit without --palette: palette size learned by the scale-reference action and "
+                         "shared by every action (default pixel 32, hibit 16)")
+    pl.add_argument("--outline",
+                    help="1 px outline: pixel selective (default), dark or none; hibit auto (default: a colour taken "
+                         "from the sprite), #RRGGBB, selective, dark or none (finish_frames.py --outline)")
     pl.add_argument("--canvas", help="fixed cell WIDTHxHEIGHT for every finished frame, such as 48x64")
     pl.add_argument("--canvas-anchor", help="X,Y of the anchor inside the --canvas cell")
     pl.add_argument("--no-colour-lock", action="store_true",
                     help="do not lock the finished colours to the master (finish_frames.py --colour-lock, on by "
-                         "default for sets)")
+                         "default for hd and pixel sets; hibit never locks)")
     pl.add_argument("--oneshot-timing", choices=("auto", "source"), default="auto",
                     help="one-shots: auto (default) retimes the slow clip to game length (attack 0.7 s with the hit "
                          "at 40%%, jump 0.9 s, hurt 0.5 s, cast 0.9 s; retime.py --auto-oneshot); source keeps the "

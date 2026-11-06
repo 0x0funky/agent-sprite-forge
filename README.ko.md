@@ -30,6 +30,31 @@
   <em>원화 한 장(로컬 Codex CLI로 생성) → 액션마다 Grok image-to-video → 여섯 액션. 모든 프레임은 2026-10-06 실제 실행의 출력입니다.</em>
 </p>
 
+## 새 기능: hibit, 플랫한 AI 그림을 진짜 픽셀 아트로
+
+<p align="center">
+  <img src="./src/hibit/hibit-gameplay.gif" alt="Pip's Star Grove: 여우 마법사 Pip이 양쪽에서 기어오는 용암 슬라임에 별똥별을 떨어뜨리고 코인이 떨어진다" width="960" />
+  <br />
+  <em>Pip's Star Grove: hibit 결과물만으로 만든 한 화면 데모. 오토파일럿 실제 플레이(네이티브 480x270, 2배 표시). 이펙트: Patch의 <a href="https://github.com/patch-gg/pixelfx">pixelfx</a>(MIT).</em>
+</p>
+
+이미지 모델에게 "픽셀 아트"를 그리게 하지 마세요. **hibit** 스타일은 모델에게 깔끔한 플랫·무선 그림을 그리게 하고, 픽셀은 후처리에서 만듭니다. 캐릭터마다 원본 픽셀에서 학습한 팔레트 하나, 8x8 다수결 축소(색을 섞지 않음), 깜빡임을 줄이는 히스테리시스, 눈을 남기는 정리, 이진 알파, 그리고 캐릭터 자체의 색에서 가져오는 1 px 외곽선(`--outline auto`, 고정 주황색은 쓰지 않음).
+
+<p align="center">
+  <img src="./src/hibit/hibit-master-to-pixels.png" alt="Pip의 플랫 원화, 80 px hibit 마감(4배 표시)과 17색 팔레트" width="520" />
+  <img src="./src/hibit/hibit-cast.gif" alt="Pip과 용암 슬라임의 각 액션, 2배·실제 타이밍" width="360" />
+</p>
+
+- **`master_still.py --finish hibit`**: 플랫·무선 원화. **`finish_frames.py hibit`** / **`sprite_set.py plan --finish hibit`**: 팔레트, 다수결 축소, 히스테리시스, 외곽선(80 px, 12 fps). **`hibit_plate.py`**: 480x270 배경, 14색, 셰이드 맵 포함.
+- **이펙트는 두 경로**(`fx_pixelfx.py check`가 선택, 지정하면 그쪽 우선): **A: Patch의 [pixelfx](https://github.com/patch-gg/pixelfx) 추천**(독립 MIT 프로젝트, 직접 `git clone`, Node 18+ 필요; 이펙트당 16-91 프레임, 무료, `render`는 `CREDITS.txt` 포함). **B: 이미지 생성 경로**(2x2 이펙트 시트 → `process --scale-strategy registered` → `hibit_fx.py pixelize`, 이펙트당 4 프레임, 게임과 같은 화풍과 배색).
+
+<p align="center">
+  <img src="./src/hibit/hibit-fx-pixelfx.gif" alt="경로 A: pixelfx 이펙트" width="420" />
+  <img src="./src/hibit/hibit-fx-imagegen.gif" alt="경로 B: 이미지 생성 이펙트" width="420" />
+  <br />
+  <em>왼쪽: A(pixelfx), 오른쪽: B(이미지 생성). 50초 전체 플레이: <a href="./src/hibit/pip-star-grove-pixelfx.mp4">pixelfx 버전 MP4</a> · <a href="./src/hibit/pip-star-grove-imagegen.mp4">이미지 생성 버전 MP4</a>. 자세한 내용은 <a href="./README.md#new-hibit-real-pixel-art-from-flat-ai-art">English README</a>.</em>
+</p>
+
 ## 0.4 새 기능: 대규모 업그레이드
 
 | 실제 실행에서 측정 | 이전 | 0.4 |
@@ -78,6 +103,10 @@
 - [파이프라인과 엔진 내보내기](./README.md#pipeline-master--set--finish--export), [맵](./README.md#maps), [Showcase](./README.md#showcase-games-made-with-agent-sprite-forge), [도구](./README.md#tools), [요구 사항](./README.md#requirements)
 - 엔진／에디터 가져오기는 아직 검증되지 않음: [Engine exports](./README.md#engine-exports) 참고
 - [알려진 제한](./docs/known-limitations.md), [생성 에셋 라이선스](./README.md#generated-assets-and-licensing)
+
+## 서드파티 크레딧
+
+선택 사항인 픽셀 이펙트 경로(`fx_pixelfx.py`, hibit 스타일용)는 Patch가 만든 [pixelfx](https://github.com/patch-gg/pixelfx)를 실행합니다. pixelfx는 MIT 라이선스의 독립 프로젝트로, 직접 clone해서 사용하며 이 저장소에는 포함되어 있지 않습니다. pixelfx는 Hugo Duprez의 Sprite Fusion 픽셀 아트 VFX(MIT)와 rehan-remade의 Hollow Crown(MIT)에도 크레딧을 표기합니다. render할 때마다 pixelfx의 라이선스와 고지를 담은 `CREDITS.txt`가 생성되므로 프레임과 함께 보관하고, 게임에 pixelfx 크레딧을 표기하세요. 자세한 내용은 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
 
 ## 라이선스
 

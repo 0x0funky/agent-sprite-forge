@@ -19,7 +19,17 @@
                  and a 1 px outline (--outline selective|dark|none). --downscale box
                  --contrast 1 --saturation 1 --outline none is the plain v1 finish.
                  --indexed-sheet adds an indexed PNG sheet.
-  --canvas WxH   (hd and pixel) every frame on a fixed cell, the anchor at one point
+  hibit          Hi-bit pixel art (the hi-bit studio recipe, forge_hibit): one palette per
+                 character (--palette, or k-means++ on luminance-weighted RGB of the SOURCE
+                 pixels, --colors 16 by default), every 8x8 supersampled sub-pixel indexed
+                 and every output pixel the colour covering most of its cell (a majority
+                 vote, never a blend; --coverage 0.45 sets the transparency cut), temporal
+                 hysteresis, lone-pixel cleanup that keeps eyes, binary alpha and a 1 px
+                 outline whose colour comes from the image (--outline auto: the dominant
+                 saturated hue, very dark; or #RRGGBB, selective, dark, none). No lift, no
+                 dither. palette.json names the outline colour "outline", so the next clip of
+                 the character reuses it with --palette.
+  --canvas WxH   (hd, pixel and hibit) every frame on a fixed cell, the anchor at one point
                  (--canvas-anchor X,Y, or centred over the feet); a clip too big for the
                  cell is finished smaller so it fits (warned).
   --colour-lock  (hd and pixel) MASTER.png or rest: keeps every design colour on the
@@ -33,9 +43,9 @@
 
 Input frames are registered straight-alpha RGBA frames (register_clip apply: its frames/
 folder or its output folder). Finished frames keep the source file names, so a gait_loop
-or retime selection made on the registered frames still applies to them. hd and pixel
-write a new --output-dir (frames/, frames-<k>x/, review-contact.png, finish.json and, in
-pixel mode, palette.json); palette build and lineup write new files. Nothing is ever
+or retime selection made on the registered frames still applies to them. hd, pixel and
+hibit write a new --output-dir (frames/, frames-<k>x/, review-contact.png, finish.json and,
+in pixel and hibit mode, palette.json); palette build and lineup write new files. Nothing is ever
 replaced, and a failed run publishes nothing. Success prints one ASCII JSON line; errors
 print "error: ..." and exit 1 (a lineup whose rules fail still writes its report, then
 exits 1); usage errors exit 2. Library use: finish_clip(), build_cast_palette(), lineup().
@@ -63,6 +73,7 @@ if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 import forge_core  # noqa: E402  (this skill's vendored copies)
 import forge_palette as fp  # noqa: E402
+import forge_hibit as fh  # noqa: E402  (the hi-bit finish core)
 import colour_lock as colour_lock_module  # noqa: E402  (sibling: the colour lock)
 
 TOOL_NAME = "finish_frames"
@@ -74,7 +85,8 @@ CONTACT_FILE = "review-contact.png"
 PALETTE_FILE = "palette.json"
 SHEET_FILE = "sheet-indexed.png"
 
-MODES = ("hd", "pixel")
+MODES = ("hd", "pixel", "hibit")
+PALETTED = ("pixel", "hibit")   # modes that write palette-indexed, binary-alpha pixel art
 ANCHORS = ("feet", "center")
 LOOP_POLICIES = ("cycle", "pingpong", "oneshot")
 
@@ -106,6 +118,11 @@ PIXEL_CLEAN_PASSES = 2      # lone-pixel passes of the bold finish
 OUTLINE_MAX_L = 0.34        # an outline colour is at most this light (OKLab L) ...
 OUTLINE_DROP = 0.22         # ... and at least this much darker than the colour it outlines
 OUTLINE_PX = 1
+HIBIT_COLORS = fh.CHARACTER_COLORS   # hibit without --palette: 16 learned colours (+ the outline colour)
+HIBIT_SUPERSAMPLE = 8               # hibit: 8x8 indexed sub-pixels vote for every output pixel
+HIBIT_COVERAGE = fh.COVERAGE        # hibit: a cell less than 45% covered is transparent
+HIBIT_OUTLINES = ("auto", "selective", "dark", "none")   # or a #RRGGBB colour
+HIBIT_SAMPLES = 200000              # hibit palette: opaque source pixels sampled across the clip
 PIXEL_MIN_REDUCTION = 4.0   # a pixel finish reducing less than 4x warns (pixel art wants 1/8 to 1/12)
 STILL_ALPHA = 13            # source alpha change below 13/255 (5%) counts as still in the flicker QA
 REST_HEIGHT_TOLERANCE = 1.5  # output px between the measured and the nominal rest height before a warning
@@ -146,6 +163,18 @@ BOLD_METHOD = ("finish_frames pixel v2 (bold): the hd registration; alpha from t
                "a 1 px outline outside the 4-connected silhouette in the palette's dark shade of the darkest "
                "neighbour (selective) or its darkest colour (dark); the target height includes the outline and the "
                "feet anchor moves to the outline's bottom edge; no dither, binary alpha at 0.5")
+HIBIT_METHOD = ("finish_frames hibit v1 (the hi-bit studio recipe, forge_hibit): the hd registration; one palette per "
+                "character (given, or k-means++ on luminance-weighted RGB of up to 200000 opaque source pixels, 16 "
+                "colours by default); every sub-pixel of an 8x8 supersampled box downscale takes its nearest palette "
+                "colour and every output pixel the colour covering most of its cell (a majority vote, never a blend; "
+                "under 45% coverage transparent; the previous frame's colour kept while it holds 80% of the winner, "
+                "an opaque cell kept down to 33%); forge_palette.quantize_sequence and cleanup_alpha; "
+                "forge_hibit.clean_isolated (a lone pixel takes its 4-neighbours' majority unless 90 apart in "
+                "luminance-weighted RGB, so eyes and glints stay; 1 px islands dropped), 2 passes; a 1 px outline "
+                "outside the 4-connected silhouette in a colour taken from the image (auto: the dominant saturated "
+                "hue, OKLab L 0.22), a given #RRGGBB, the palette's dark shade (selective) or its darkest colour "
+                "(dark); the target height includes the outline; no lift, no dither, binary alpha; flicker counted "
+                "against the smooth box frames, held vs the same majority without hysteresis")
 
 
 class FinishError(ValueError):
@@ -503,12 +532,15 @@ def _resolve_palette(palette: Any) -> tuple[fp.Palette, Path | None]:
 
 
 def _quantize(frames: list[np.ndarray], pal: fp.Palette, loop_policy: str, margin: float,
-              orphans: int = PIXEL_ORPHANS) -> tuple[list[np.ndarray], list[dict[str, int]], list[np.ndarray]]:
-    """Hysteresis index maps with their per-frame stats, and the per-frame nearest baseline maps."""
+              orphans: int = PIXEL_ORPHANS, baseline_frames: Sequence[np.ndarray] | None = None
+              ) -> tuple[list[np.ndarray], list[dict[str, int]], list[np.ndarray]]:
+    """Hysteresis index maps with their per-frame stats, and the per-frame nearest baseline maps (of
+    ``baseline_frames`` when given: hibit's majority maps made without hysteresis)."""
     common = {"margin": margin, "alpha_threshold": PIXEL_ALPHA, "orphans": orphans, "despeckle": True}
     maps, stats = fp.quantize_sequence(frames, pal, loop=loop_policy == "cycle", pingpong=loop_policy == "pingpong",
                                        return_stats=True, **common)
-    baseline = [fp.quantize_sequence([frame], pal, loop=False, **common)[0] for frame in frames]
+    baseline = [fp.quantize_sequence([frame], pal, loop=False, **common)[0]
+                for frame in (frames if baseline_frames is None else baseline_frames)]
     return maps[:len(frames)], stats, baseline
 
 
@@ -729,14 +761,22 @@ def outline_shades(pal: fp.Palette) -> np.ndarray:
     return table
 
 
-def add_outline(idx: np.ndarray, pal: fp.Palette, mode: str, shades: np.ndarray | None = None
-                ) -> tuple[np.ndarray, int]:
+def add_outline(idx: np.ndarray, pal: fp.Palette, mode: str, shades: np.ndarray | None = None,
+                fixed_index: int | None = None) -> tuple[np.ndarray, int]:
     """A 1 px outline on the transparent pixels 4-adjacent to the sprite: ``selective`` paints each one in
     the dark shade (outline_shades) of the darkest of its 8 neighbours, ``dark`` in the palette's darkest
-    colour. Needs a transparent border of 1 px; returns the map and the number of outline pixels."""
+    colour, ``fixed`` in palette index ``fixed_index`` (the hibit outline colour). Needs a transparent border
+    of 1 px; returns the map and the number of outline pixels."""
     slot = pal.transparent_index
     if mode == "none":
         return idx, 0
+    if mode == "fixed":
+        if fixed_index is None:
+            raise FinishError("a fixed outline needs the palette index of its colour")
+        ring = fh.outline_ring(np.where(idx == slot, -1, idx.astype(np.int32)))
+        out = idx.copy()
+        out[ring] = fixed_index
+        return out, int(ring.sum())
     height, width = idx.shape
     lightness = np.full(256, np.inf)
     lightness[:len(pal)] = pal.lab[:, 0]
@@ -839,28 +879,142 @@ def cut_window(frame: np.ndarray, box: tuple[int, int, int, int]) -> np.ndarray:
 
 
 @dataclass
+class HibitSpec:
+    """What the hibit source pass needs: the body colours to index against (the palette minus its outline
+    and transparent slots), their palette indices and the coverage cut."""
+
+    colours: np.ndarray        # (n, 3) uint8
+    indices: np.ndarray        # (n,) palette index of each colour
+    coverage: float
+
+
+def hibit_layout(pal: fp.Palette) -> tuple[np.ndarray, np.ndarray, int | None]:
+    """(body colours, their palette indices, the outline colour's index or None): the outline colour is the
+    palette colour named "outline"; the transparent slot is never a body colour."""
+    outline_index = next((i for i, name in enumerate(pal.names) if name == "outline"), None)
+    body = [i for i in range(len(pal)) if i != outline_index and i != pal.transparent_index]
+    if not body:
+        raise FinishError("the hibit palette has no body colours")
+    return pal.rgb[body].copy(), np.array(body, np.int64), outline_index
+
+
+def hibit_samples(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray, dict[str, Any]],
+                  budget: int = HIBIT_SAMPLES, seed: int = 0) -> np.ndarray:
+    """Opaque (alpha >= 128) source pixels across the clip, evenly spread (the rest frame always included)."""
+    rng = np.random.default_rng(int(seed))
+    picks = sorted(set(np.linspace(0, len(files) - 1, num=min(len(files), 12)).round().astype(int).tolist())
+                   | {rest_frame})
+    per = max(1, budget // len(picks))
+    chunks = []
+    for index in picks:
+        pixels = rest[0] if index == rest_frame else _load(files[index])[0]
+        solid = pixels[..., :3][pixels[..., 3] >= 128]
+        if len(solid) > per:
+            solid = solid[rng.choice(len(solid), size=per, replace=False)]
+        chunks.append(solid)
+    samples = np.concatenate(chunks) if chunks else np.zeros((0, 3), np.uint8)
+    if len(samples) == 0:
+        raise FinishError("hibit: the clip has no opaque pixels to learn a palette from")
+    return samples
+
+
+def hibit_palette(samples: np.ndarray, colors: int, outline: str, seed: int, base: Any = None) -> fp.Palette:
+    """The character palette: ``base`` (a given palette's colours) or k-means++ of ``samples``, plus the outline
+    colour named "outline" (auto: taken from the image; a #RRGGBB as given; selective, dark, none: no extra slot)."""
+    try:
+        colours = np.asarray(base, np.uint8).reshape(-1, 3) if base is not None \
+            else fh.kmeans_palette(samples, colors, seed=seed)
+    except ValueError as error:
+        raise FinishError(f"hibit palette: {error}") from None
+    body = len(colours)
+    names: list[str | None] = [None] * body
+    extra = None
+    if outline not in ("selective", "dark", "none"):
+        if outline == "auto":
+            counts = np.bincount(fh.index_rgb(samples, colours).ravel(), minlength=body)
+            extra = fh.auto_outline_color(colours, counts)
+        else:
+            extra = fh.parse_hex(outline)
+        colours = np.vstack([colours, np.array([extra], np.uint8)])
+        names.append("outline")
+    if len(colours) > 255:
+        raise FinishError("a hibit palette has at most 254 body colours plus the outline colour")
+    learned = "the given palette's colours" if base is not None else (
+        f"k-means++ on luminance-weighted RGB of {len(samples)} opaque source pixel(s), seed {int(seed)}")
+    source = (f"finish_frames hibit: {body} body colour(s) ({learned}); outline {outline}"
+              + ("" if extra is None else f" {fh.hex_of(extra)}"))
+    return fp.Palette(tuple(map(tuple, colours.tolist())), names=tuple(names), transparent_index=255, source=source)
+
+
+def hibit_character_palette(palette: Any, colors: int | None, outline: str, seed: int,
+                            samples: np.ndarray) -> tuple[fp.Palette, Path | None, Path | None, bool]:
+    """(palette, its path when a given palette is used as is, the given palette's path when an outline colour
+    was added to it, built). A given palette that names an "outline" colour keeps it (outline auto, or the
+    same #RRGGBB): the second clip of a character reuses the first clip's palette.json unchanged."""
+    if palette is None:
+        return hibit_palette(samples, HIBIT_COLORS if colors is None else int(colors), outline, seed), None, None, True
+    given, path = _resolve_palette(palette)
+    named = next((i for i, name in enumerate(given.names) if name == "outline"), None)
+    if named is not None or outline in ("selective", "dark", "none"):
+        if named is not None and outline.startswith("#") and fh.hex_of(given.rgb[named]) != outline:
+            raise FinishError(f"the palette's outline colour is {fh.hex_of(given.rgb[named])}, not {outline}; drop "
+                              "--outline to keep it, or give a palette without an outline colour")
+        return given, path, None, False
+    body = [i for i in range(len(given)) if i != given.transparent_index]
+    derived = hibit_palette(samples, 0, outline, seed, base=given.rgb[body])
+    return derived.replace(source=f"{given.source}; {derived.source}"), None, path, False
+
+
+def hibit_clean(idx: np.ndarray, pal: fp.Palette) -> tuple[np.ndarray, int]:
+    """forge_hibit.clean_isolated on a palette index map: a lone pixel takes its 4-neighbours' majority
+    unless it differs from it by the keep contrast (eyes and glints stay); 1 px islands detached from the
+    body go. Returns the map and the number of pixels changed."""
+    slot = pal.transparent_index
+    data = np.where(idx == slot, fh.TRANSPARENT, idx.astype(np.int32))
+    cleaned = fh.clean_isolated(data, pal.rgb)
+    out = np.where(cleaned < 0, slot, cleaned).astype(idx.dtype)
+    return out, int((out != idx).sum())
+
+
+@dataclass
 class _Pass:
     """One pass over the source frames: per display size the box frames, the cleaned frames and, for the
-    crisp pixel downscale, the crisp frames (cleaned alpha, cluster colour)."""
+    crisp pixel downscale or the hibit majority downscale, the colour frames (cleaned alpha, cluster colour;
+    or majority palette colour with its own alpha)."""
 
     small: dict[float, list[np.ndarray]]
     cleaned: dict[float, list[np.ndarray]]
     crisp: dict[float, list[np.ndarray]] | None
     hygiene: dict[float, dict[str, int]]
     sources: list[dict[str, Any]]
+    plain: dict[float, list[np.ndarray]] | None = None   # hibit: the majority without hysteresis (flicker QA)
 
 
 def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray, dict[str, Any]],
                  source_size: tuple[int, int], anchor_src: Sequence[float], grids: Sequence[Grid], crisp: bool,
-                 seed_frame: int | None) -> _Pass:
+                 seed_frame: int | None, hibit: HibitSpec | None = None) -> _Pass:
     """Every display size is derived from the source frame, never from another size. ``seed_frame`` (cycles:
-    the last frame, pingpong: frame 1) seeds the crisp hysteresis of frame 0."""
+    the last frame, pingpong: frame 1) seeds the crisp or hibit hysteresis of frame 0."""
     small: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
     cleaned: dict[float, list[np.ndarray]] = {grid.factor: [] for grid in grids}
-    crisp_frames: dict[float, list[np.ndarray]] | None = {grid.factor: [] for grid in grids} if crisp else None
+    crisp_frames: dict[float, list[np.ndarray]] | None = {grid.factor: [] for grid in grids} \
+        if crisp or hibit is not None else None
     hygiene = {grid.factor: {"floor_px": 0, "detached_px": 0, "detached_components": 0} for grid in grids}
     previous: dict[float, np.ndarray | None] = {grid.factor: None for grid in grids}
-    subgrids = {grid.factor: supersampled(grid) for grid in grids}
+    subgrids = {grid.factor: supersampled(grid, HIBIT_SUPERSAMPLE if hibit is not None else SUPERSAMPLE)
+                for grid in grids}
+    plain: dict[float, list[np.ndarray]] | None = {grid.factor: [] for grid in grids} if hibit is not None else None
+
+    def hibit_map(pixels: np.ndarray, visible: tuple[int, int, int, int] | None, grid: Grid,
+                  with_plain: bool = False) -> tuple[np.ndarray, np.ndarray | None]:
+        """(the majority map held against the previous frame, the plain majority map or None)."""
+        sub = reduce_frame(pixels, visible, anchor_src, subgrids[grid.factor])
+        indexed = fh.index_rgba(sub, hibit.colours, 128)
+        held = fh.mode_downsample_blocks(indexed, HIBIT_SUPERSAMPLE, len(hibit.colours), coverage=hibit.coverage,
+                                         previous=previous[grid.factor])
+        free = fh.mode_downsample_blocks(indexed, HIBIT_SUPERSAMPLE, len(hibit.colours),
+                                         coverage=hibit.coverage) if with_plain else None
+        return held, free
 
     def load(index: int) -> tuple[np.ndarray, dict[str, Any]]:
         pixels, info = rest if index == rest_frame else _load(files[index])
@@ -869,12 +1023,15 @@ def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray,
                               f"{source_size[1]}: registered frames share one canvas")
         return pixels, info
 
-    if crisp and seed_frame is not None and len(files) > 1:
+    if (crisp or hibit is not None) and seed_frame is not None and len(files) > 1:
         pixels, _info = load(seed_frame)
         visible = _bbox(pixels[..., 3] > 0)
         for grid in grids:
-            sub = reduce_frame(pixels, visible, anchor_src, subgrids[grid.factor])
-            previous[grid.factor] = crisp_choice(crisp_clusters(sub), None)
+            if hibit is not None:
+                previous[grid.factor] = hibit_map(pixels, visible, grid)[0]
+            else:
+                sub = reduce_frame(pixels, visible, anchor_src, subgrids[grid.factor])
+                previous[grid.factor] = crisp_choice(crisp_clusters(sub), None)
         del pixels
     sources: list[dict[str, Any]] = []
     for index, path in enumerate(files):
@@ -889,7 +1046,12 @@ def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray,
             cleaned[grid.factor].append(clean)
             for key in hygiene[grid.factor]:
                 hygiene[grid.factor][key] += int(report[key])
-            if crisp_frames is not None:
+            if hibit is not None:
+                chosen, free = hibit_map(pixels, visible, grid, with_plain=True)
+                previous[grid.factor] = chosen
+                crisp_frames[grid.factor].append(fh.render(chosen, hibit.colours))
+                plain[grid.factor].append(fh.render(free, hibit.colours))
+            elif crisp_frames is not None:
                 sub = reduce_frame(pixels, visible, anchor_src, subgrids[grid.factor])
                 choice = crisp_choice(crisp_clusters(sub), previous[grid.factor])
                 previous[grid.factor] = choice
@@ -899,7 +1061,7 @@ def _source_pass(files: Sequence[Path], rest_frame: int, rest: tuple[np.ndarray,
                 frame[frame[..., 3] == 0] = 0
                 crisp_frames[grid.factor].append(frame)
         del pixels
-    return _Pass(small, cleaned, crisp_frames, hygiene, sources)
+    return _Pass(small, cleaned, crisp_frames, hygiene, sources, plain)
 
 
 def _source_extents(files: Sequence[Path], anchor_src: Sequence[float]) -> tuple[float, float, float, float]:
@@ -958,18 +1120,22 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 role: str | None = None, strict: bool = False, downscale: str | None = None,
                 contrast: float | None = None, saturation: float | None = None, outline: str | None = None,
                 canvas: Any = None, canvas_anchor: Any = None, colour_lock: Any = None,
-                lock_strength: float = 1.0, shade_gap: float | None = None) -> dict[str, Any]:
+                lock_strength: float = 1.0, shade_gap: float | None = None,
+                coverage: float | None = None) -> dict[str, Any]:
     """Finish one registered clip into ``out_dir`` (new; staged, published only after QA).
 
-    ``mode`` is ``hd`` (default) or ``pixel``. Exactly one of ``target_height`` (output px of the
-    rest-pose body at 1x; with a pixel outline the outline is included) and ``scale_ref`` (a sibling
-    clip's finish.json, its folder or the loaded document) sets the scale. ``palette`` (pixel only) is a
-    palette file, a forge_palette.Palette or a palette mapping; without it ``colors`` (default 32) colours
-    are learned from the finished frames, ``reserve`` colours first. Pixel only: ``downscale`` (crisp or
-    box), ``contrast`` and ``saturation`` (the lift; 1 is off), ``outline`` (selective, dark or none) and
-    ``shade_gap`` (a learned palette keeps no two colours closer than this OKLab dE; 0 is off); the
-    defaults are the bold finish. ``canvas`` (WxH) and ``canvas_anchor`` (X,Y) put every frame on a fixed
-    cell. ``colour_lock`` (a keyed master image or "rest") locks the design colours (colour_lock.py).
+    ``mode`` is ``hd`` (default), ``pixel`` or ``hibit``. Exactly one of ``target_height`` (output px of
+    the rest-pose body at 1x; with an outline the outline is included) and ``scale_ref`` (a sibling
+    clip's finish.json, its folder or the loaded document) sets the scale. ``palette`` (pixel and hibit)
+    is a palette file, a forge_palette.Palette or a palette mapping; without it ``colors`` colours are
+    learned (pixel: 32 from the finished frames, ``reserve`` colours first; hibit: 16 from the source
+    pixels). Pixel only: ``downscale`` (crisp or box), ``contrast`` and ``saturation`` (the lift; 1 is
+    off) and ``shade_gap`` (a learned palette keeps no two colours closer than this OKLab dE; 0 is off);
+    the defaults are the bold finish. ``outline``: pixel selective (default), dark or none; hibit auto
+    (default: a colour taken from the image), a #RRGGBB colour, selective, dark or none. Hibit only:
+    ``coverage`` (a cell less covered is transparent, default 0.45). ``canvas`` (WxH) and
+    ``canvas_anchor`` (X,Y) put every frame on a fixed cell. ``colour_lock`` (hd and pixel: a keyed
+    master image or "rest") locks the design colours (colour_lock.py).
     Returns the summary the CLI prints (paths, scale, palette colours, QA).
     """
     if mode not in MODES:
@@ -978,10 +1144,31 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         raise FinishError(f"anchor must be one of {', '.join(ANCHORS)}, got {anchor!r}")
     if loop_policy not in LOOP_POLICIES:
         raise FinishError(f"loop policy must be one of {', '.join(LOOP_POLICIES)}, got {loop_policy!r}")
-    pixel_only = (palette, colors, downscale, contrast, saturation, outline, shade_gap)
+    pixel_only = (palette, colors, downscale, contrast, saturation, outline, shade_gap, coverage)
     if mode == "hd" and (any(value is not None for value in pixel_only) or reserve or indexed_sheet):
-        raise FinishError("palette, colors, reserve, indexed sheets, downscale, contrast, saturation, outline and the "
-                          "shade gap belong to the pixel finish")
+        raise FinishError("palette, colors, reserve, indexed sheets, downscale, contrast, saturation, outline, the "
+                          "shade gap and coverage belong to the pixel finish or the hibit finish")
+    if mode == "pixel" and coverage is not None:
+        raise FinishError("coverage belongs to the hibit finish (the pixel finish cuts alpha at 0.5)")
+    if mode == "hibit":
+        foreign = [name for name, value in (("downscale", downscale), ("contrast", contrast),
+                                            ("saturation", saturation), ("the shade gap", shade_gap),
+                                            ("the colour lock", colour_lock)) if value is not None]
+        if reserve:
+            foreign.append("reserve")
+        if foreign:
+            raise FinishError(f"{', '.join(foreign)} belong to the pixel finish; hibit takes a palette or colors, "
+                              "coverage and an outline (its one character palette pins the colours)")
+        outline = "auto" if outline is None else str(outline)
+        if outline not in HIBIT_OUTLINES:
+            try:
+                outline = fh.hex_of(fh.parse_hex(outline))
+            except ValueError:
+                raise FinishError(f"hibit outline must be one of {', '.join(HIBIT_OUTLINES)} or a #RRGGBB colour, "
+                                  f"got {outline!r}") from None
+        coverage = HIBIT_COVERAGE if coverage is None else float(coverage)
+        if not (math.isfinite(coverage) and 0.05 <= coverage <= 0.95):
+            raise FinishError(f"coverage must be 0.05..0.95 (the share of a cell that makes it opaque), got {coverage!r}")
     if palette is not None and (colors is not None or reserve):
         raise FinishError("colors and reserve build a palette; drop them when a palette is given")
     if colors is not None and (isinstance(colors, bool) or not 2 <= int(colors) <= 255):
@@ -1012,9 +1199,10 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     if cell is not None and cell_anchor is not None and not (0 <= cell_anchor[0] <= cell[0]
                                                               and 0 <= cell_anchor[1] <= cell[1]):
         raise FinishError(f"canvas anchor {cell_anchor} lies outside the {cell[0]}x{cell[1]} canvas")
-    outline_px = OUTLINE_PX if mode == "pixel" and outline != "none" else 0
+    hibit = mode == "hibit"
+    outline_px = OUTLINE_PX if mode in PALETTED and outline != "none" else 0
     crisp = mode == "pixel" and downscale == "crisp"
-    bold = mode == "pixel" and (crisp or outline_px or contrast != 1.0 or saturation != 1.0)
+    bold = mode == "pixel" and bool(crisp or outline_px or contrast != 1.0 or saturation != 1.0)
     factors = parse_display_sizes(display_sizes)
     folder, files, registration = resolve_frames(frames_dir, pattern)
     if isinstance(rest_frame, bool) or not 0 <= int(rest_frame) < len(files):
@@ -1064,15 +1252,26 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                               "or regenerate the source larger")
     seed_frame = {"cycle": len(files) - 1, "pingpong": 1}.get(loop_policy) if len(files) > 1 else None
     rest = (rest_pixels, rest_info)
+    pal: fp.Palette | None = None
+    palette_path: Path | None = None    # a given palette used as is (referenced, not rewritten)
+    palette_base: Path | None = None    # hibit: a given palette that got an outline colour (palette.json is new)
+    built = False
+    spec: HibitSpec | None = None
+    outline_index: int | None = None
+    if hibit:   # the palette comes first: the hibit downscale indexes the source pixels against it
+        pal, palette_path, palette_base, built = hibit_character_palette(
+            palette, colors, outline, int(seed), hibit_samples(files, rest_frame, rest, seed=int(seed)))
+        body_colours, body_indices, outline_index = hibit_layout(pal)
+        spec = HibitSpec(body_colours, body_indices, coverage)
     sizes: list[dict[str, Any]] = []
     for attempt in range(3):
         grids = [full_grid(source_size, anchor_src, plan.scale * factor, factor) for factor in factors]
-        passed = _source_pass(files, rest_frame, rest, source_size, anchor_src, grids, crisp, seed_frame)
+        passed = _source_pass(files, rest_frame, rest, source_size, anchor_src, grids, crisp, seed_frame, spec)
         # Crop each size to the union of its visible pixels (plus the outline) plus 1 px, or place it on the
         # canvas; the anchor moves with the crop (and to the outline's bottom edge for the feet anchor).
         sizes, retry = [], None
         for grid in grids:
-            box = _union(passed.cleaned[grid.factor], HYGIENE_FLOOR)
+            box = _union(passed.crisp[grid.factor] if hibit else passed.cleaned[grid.factor], HYGIENE_FLOOR)
             if box is None:
                 raise FinishError("every frame is empty at the finished size; check the input frames and the target")
             content = (box[0] - outline_px, box[1] - outline_px, box[2] + outline_px, box[3] + outline_px)
@@ -1090,8 +1289,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 if window is None:
                     retry = factor_needed
                     break
-            for store in (passed.small, passed.cleaned) + ((passed.crisp,) if passed.crisp is not None else ()):
-                store[grid.factor] = [cut_window(frame, window) for frame in store[grid.factor]]
+            for store in (passed.small, passed.cleaned, passed.crisp, passed.plain):
+                if store is not None:
+                    store[grid.factor] = [cut_window(frame, window) for frame in store[grid.factor]]
             sizes.append({"factor": grid.factor, "label": _factor_label(grid.factor), "dir": _size_dir(grid.factor),
                           "scale": grid.scale, "size": [window[2] - window[0], window[3] - window[1]],
                           "anchor": [pin[0] - window[0], pin[1] - window[1]],
@@ -1133,12 +1333,11 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                                                                "regionSpreadMax", "foreignShare")})
             lock_doc["sizes"][entry["label"]] = item
 
-    pal: fp.Palette | None = None
-    palette_path: Path | None = None
-    built = False
     shade_merged = 0
     quantized: dict[float, list[np.ndarray]] = {}
     pivot = None
+    if hibit:   # already on the palette's body colours; quantize_sequence maps them to indices (no lift)
+        quantized = {entry["factor"]: passed.crisp[entry["factor"]] for entry in sizes}
     if mode == "pixel":
         colour_source = passed.crisp if passed.crisp is not None else cleaned
         rest_colours = colour_source[1.0][rest_frame]
@@ -1161,8 +1360,8 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             built = True
             if bold and shade_gap:   # flat colour clusters: no near-identical shades (a given palette is kept as is)
                 pal, shade_merged = space_palette(pal, quantized[1.0], shade_gap)
-        if pal.transparent_index is None:
-            raise FinishError("the pixel finish needs a palette with a transparent index (at most 255 colours)")
+    if mode in PALETTED and pal.transparent_index is None:
+        raise FinishError(f"the {mode} finish needs a palette with a transparent index (at most 255 colours)")
 
     count = len(files)
     outputs: dict[float, list[np.ndarray]] = {}
@@ -1180,18 +1379,25 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         else:
             frames_in = quantized[factor]
             maps, stats, baseline = _quantize(frames_in, pal, loop_policy, float(margin),
-                                              orphans=0 if bold else PIXEL_ORPHANS)
+                                              orphans=0 if (bold or hibit) else PIXEL_ORPHANS,
+                                              baseline_frames=passed.plain[factor] if hibit else None)
             lone = sum(item["orphans_fixed_px"] for item in stats)
             outlined_px = 0
-            if bold:   # the flicker is counted before the outline, which only follows the silhouette
-                maps = [clean_lone_pixels(frame, pal) for frame in maps]
+            if bold or hibit:   # the flicker is counted before the outline, which only follows the silhouette
+                clean_map = hibit_clean if hibit else clean_lone_pixels
+                maps = [clean_map(frame, pal) for frame in maps]
                 lone += sum(fixed for _, fixed in maps)
                 maps = [frame for frame, _ in maps]
-                baseline = [clean_lone_pixels(frame, pal)[0] for frame in baseline]
-            held = flicker(maps, frames_in, transparent=pal.transparent_index, loop=loop_policy == "cycle")
-            plain = flicker(baseline, frames_in, transparent=pal.transparent_index, loop=loop_policy == "cycle")
+                baseline = [clean_map(frame, pal)[0] for frame in baseline]
+            # hibit: motion is judged on the smooth (box) frames, since its colour frames already carry the hold
+            motion = cleaned[factor] if hibit else frames_in
+            held = flicker(maps, motion, transparent=pal.transparent_index, loop=loop_policy == "cycle")
+            plain = flicker(baseline, motion, transparent=pal.transparent_index, loop=loop_policy == "cycle")
             if outline_px:
-                outlined = [add_outline(frame, pal, outline, shades) for frame in maps]
+                if hibit and outline not in ("selective", "dark"):
+                    outlined = [add_outline(frame, pal, "fixed", fixed_index=outline_index) for frame in maps]
+                else:
+                    outlined = [add_outline(frame, pal, outline, shades) for frame in maps]
                 outlined_px = sum(ring for _, ring in outlined)
                 maps = [frame for frame, _ in outlined]
             outputs[factor] = [fp.render_indices(frame, pal) for frame in maps]
@@ -1257,6 +1463,11 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     if mode == "pixel":
         not_proven += ["hysteresis follows file order: the seam pair of a loop window chosen later is not held",
                        "the palette's fit to other clips of the cast (build one shared palette with palette build)"]
+    elif hibit:
+        not_proven += ["hysteresis follows file order: the seam pair of a loop window chosen later is not held",
+                       "the palette's fit to the character's other clips (finish them with --palette and this "
+                       "clip's palette.json)",
+                       "that the outline colour reads against the game's backgrounds (auto takes it from the sprite)"]
     else:
         not_proven += ["engine blending: draw with premultiplied alpha (RGB under alpha 0 is zeroed)"]
     if lock_doc is not None:
@@ -1280,7 +1491,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
         forge_core.save_png(contact_sheet([base[index] for index in shown]), stage / CONTACT_FILE)
         written.append(stage / CONTACT_FILE)
         palette_doc = None
-        if mode == "pixel":
+        if mode in PALETTED:
             if palette_path is None:
                 fp.write_palette(pal, stage / PALETTE_FILE, "json")
                 written.append(stage / PALETTE_FILE)
@@ -1289,8 +1500,12 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 palette_ref = forge_core.file_ref(palette_path, stage)
             palette_doc = {**palette_ref, "colors": len(pal), "built": built,
                            "reserved": int(sum(pal.reserved)), "transparentIndex": pal.transparent_index}
+            if hibit:
+                palette_doc["outlineIndex"] = outline_index
+                palette_doc["outlineColor"] = None if outline_index is None else fh.hex_of(pal.rgb[outline_index])
+                palette_doc["derivedFrom"] = None if palette_base is None else forge_core.file_ref(palette_base, stage)
         sheet_doc = None
-        if mode == "pixel" and indexed_sheet:
+        if mode in PALETTED and indexed_sheet:
             sheet, columns, rows = _indexed_sheet(qa1["maps"], pal.transparent_index)
             fp.save_indexed_png(sheet, pal, stage / SHEET_FILE, pal.transparent_index)
             written.append(stage / SHEET_FILE)
@@ -1303,8 +1518,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             inputs.append(forge_core.file_ref(registration, stage))
         if plan.reference_path is not None:
             inputs.append(forge_core.file_ref(plan.reference_path, stage))
-        if palette_path is not None:
-            inputs.append(forge_core.file_ref(palette_path, stage))
+        for given in (palette_path, palette_base):
+            if given is not None:
+                inputs.append(forge_core.file_ref(given, stage))
         if lock_source is not None and lock_source.get("path") is not None:
             lock_ref = forge_core.file_ref(lock_source["path"], stage)
             inputs.append(lock_ref)
@@ -1318,7 +1534,7 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             raise FinishError(f"finish QA failed ({', '.join(failed)}); nothing was published")
         if strict and warned:
             raise FinishError(f"finish QA warned under --strict ({', '.join(warned)}); nothing was published")
-        method = HD_METHOD if mode == "hd" else (BOLD_METHOD if bold else PIXEL_METHOD)
+        method = HD_METHOD if mode == "hd" else HIBIT_METHOD if hibit else (BOLD_METHOD if bold else PIXEL_METHOD)
         if lock_doc is not None:
             method += "; then " + colour_lock_module.METHOD
         qa = _envelope(checks, method, not_proven, inputs, output_refs)
@@ -1354,9 +1570,9 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
             "canvas": None if cell is None else {"size": list(cell), "anchor": list(sizes[0]["anchor"]),
                                                  "requestedAnchor": None if cell_anchor is None else list(cell_anchor)},
             "engine": {"sourceSize": list(sizes[0]["size"]), "sourceAnchor": list(sizes[0]["anchor"]),
-                       "sampling": "nearest" if mode == "pixel" else "linear", "pixelArt": mode == "pixel",
+                       "sampling": "nearest" if mode in PALETTED else "linear", "pixelArt": mode in PALETTED,
                        "note": "engine_export.py package --clean-dir <out>/frames --source-size W,H --source-anchor "
-                               "X,Y (no --registration; add --pixel-art --sampling nearest for pixel)"},
+                               "X,Y (no --registration; add --pixel-art --sampling nearest for pixel and hibit)"},
             "resampler": "box",
             "restOutput": rest_output,
             "displaySizes": display,
@@ -1373,6 +1589,15 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
                 "noiseFlipReduction": qa1["noiseFlipReduction"], "perFrameNearest": qa1["perFrameNearest"],
                 "heldIndexPx": qa1["heldIndexPx"], "heldAlphaPx": qa1["heldAlphaPx"],
                 "lonePixelsFixed": qa1["lonePixelsFixed"]},
+            "hibit": None if not hibit else {
+                "schema": fh.SCHEMA, "alphaThreshold": PIXEL_ALPHA, "dither": False, "loopPolicy": loop_policy,
+                "margin": float(margin), "supersample": HIBIT_SUPERSAMPLE, "coverage": coverage,
+                "holdShare": fh.HOLD_SHARE, "coverageHold": fh.COVERAGE_HOLD, "keepContrast": fh.KEEP_CONTRAST,
+                "rgbWeights": [round(float(v), 6) for v in fh.RGB_WEIGHTS], "despeckle": True,
+                "outline": outline, "outlineColor": palette_doc["outlineColor"], "outlinePx": qa1["outlinePx"],
+                "bodyColors": int(len(spec.colours)), "coloursPerFrameMax": qa1["coloursPerFrameMax"],
+                "noiseFlipReduction": qa1["noiseFlipReduction"], "plainMajority": qa1["perFrameNearest"],
+                "heldIndexPx": qa1["heldIndexPx"], "lonePixelsFixed": qa1["lonePixelsFixed"]},
             "colourLock": lock_doc,
             "indexedSheet": sheet_doc,
             "loopPolicy": loop_policy,
@@ -1390,17 +1615,19 @@ def finish_clip(frames_dir: str | os.PathLike, out_dir: str | os.PathLike, *, mo
     if qa1["flicker"] is not None:
         flips = {"alpha": qa1["flicker"]["alphaFlipsPerPair"], "index": qa1["flicker"]["indexFlipsPerPair"],
                  "noise": qa1["flicker"]["noiseFlipsPerPair"], "edge": qa1["flicker"]["edgeFlipsPerPair"]}
-    if mode == "pixel":
+    if mode in PALETTED:
         plain = qa1["perFrameNearest"]
         flips["noisePerFrameNearest"] = None if plain is None else plain["noiseFlipsPerPair"]
         flips["edgePerFrameNearest"] = None if plain is None else plain["edgeFlipsPerPair"]
         flips["noiseReduction"] = qa1["noiseFlipReduction"]
     summary_qa = {"status": qa["status"], "flipsPerPair": flips, "specksRemoved": qa1["specksRemoved"],
                   "alphaBinary": qa1["alphaBinary"], "warnings": warned}
-    if mode == "pixel":
+    if mode in PALETTED:
         summary_qa["lonePixelsFixed"] = qa1["lonePixelsFixed"]
         summary_qa["coloursPerFrameMax"] = qa1["coloursPerFrameMax"]
         summary_qa["outlinePx"] = qa1["outlinePx"]
+    if hibit:
+        summary_qa["outlineColor"] = None if outline_index is None else fh.hex_of(pal.rgb[outline_index])
     if lock_doc is not None:
         summary_qa["colourLock"] = lock_doc["sizes"].get("1x")
     return {
@@ -1896,6 +2123,34 @@ def build_parser() -> argparse.ArgumentParser:
                             f"--palette is used as given)")
     pixel.set_defaults(func=cmd_finish, mode="pixel")
 
+    hibit = sub.add_parser("hibit", help="hi-bit pixel art: one character palette, majority downscale, outline "
+                                         "colour from the image",
+                           description="Hi-bit finish (the hi-bit studio recipe, forge_hibit): one palette per "
+                                       "character learned from the source pixels, every output pixel the palette "
+                                       "colour covering most of its 8x8 sub-pixel cell (never a blend), temporal "
+                                       "hysteresis, lone-pixel cleanup that keeps eyes, binary alpha and a 1 px "
+                                       "outline. Wants flat lineless source art (master_still --finish hibit).")
+    _common_finish_args(hibit)
+    hibit.add_argument("--palette",
+                       help="the character's palette.json from its first finished clip (keeps its outline colour); "
+                            "or any palette file, which then gets the outline colour added")
+    hibit.add_argument("--colors", type=int,
+                       help=f"without --palette: learn this many colours from the source pixels (2..254, default "
+                            f"{HIBIT_COLORS}; the outline colour is one more)")
+    hibit.add_argument("--outline", default="auto", metavar="auto|#RRGGBB|selective|dark|none",
+                       help="1 px outline outside the silhouette: auto (default; the sprite's dominant saturated hue, "
+                            "very dark), a fixed #RRGGBB, selective (the palette's dark shade of each neighbour), "
+                            "dark (the darkest palette colour) or none; the target height includes it")
+    hibit.add_argument("--coverage", type=float, default=HIBIT_COVERAGE,
+                       help=f"share of an output pixel's cell that must be covered for it to be opaque (default "
+                            f"{HIBIT_COVERAGE:g}; lower keeps thin parts, higher trims the edge)")
+    hibit.add_argument("--seed", type=int, default=0, help="k-means++ seed of a learned palette (default 0)")
+    hibit.add_argument("--margin", type=float, default=fp.HYSTERESIS_MARGIN,
+                       help="index hysteresis margin, squared OKLab distance (default 0.0004 = dE 0.02)")
+    hibit.add_argument("--indexed-sheet", action="store_true",
+                       help="also write sheet-indexed.png (index 255 transparent) of the 1x frames")
+    hibit.set_defaults(func=cmd_finish, mode="hibit")
+
     palette = sub.add_parser("palette", help="palettes for the pixel finish (palette build)",
                              description="Palettes for the pixel finish.")
     palette_sub = palette.add_subparsers(dest="palette_command", required=True, metavar="COMMAND")
@@ -1942,18 +2197,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 def cmd_finish(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     pixel = args.mode == "pixel"
+    paletted = args.mode in PALETTED
     summary = finish_clip(
         args.frames, args.output_dir, mode=args.mode, target_height=args.target_height, scale_ref=args.scale_ref,
-        palette=getattr(args, "palette", None) if pixel else None, rest_frame=args.rest_frame, anchor=args.anchor,
-        display_sizes=args.display_sizes, colors=getattr(args, "colors", None) if pixel else None,
+        palette=getattr(args, "palette", None) if paletted else None, rest_frame=args.rest_frame, anchor=args.anchor,
+        display_sizes=args.display_sizes, colors=getattr(args, "colors", None) if paletted else None,
         reserve=getattr(args, "reserve", []) if pixel else (), seed=getattr(args, "seed", 0),
         loop_policy=args.loop_policy, margin=getattr(args, "margin", fp.HYSTERESIS_MARGIN),
         area_norm=not args.no_area_norm, indexed_sheet=getattr(args, "indexed_sheet", False), pattern=args.pattern,
         clip=args.clip, character=args.character, role=args.role, strict=args.strict,
         downscale=args.downscale if pixel else None, contrast=args.contrast if pixel else None,
-        saturation=args.saturation if pixel else None, outline=args.outline if pixel else None,
+        saturation=args.saturation if pixel else None, outline=args.outline if paletted else None,
         canvas=args.canvas, canvas_anchor=args.canvas_anchor, colour_lock=args.colour_lock,
-        lock_strength=args.lock_strength, shade_gap=args.shade_gap if pixel else None)
+        lock_strength=args.lock_strength, shade_gap=args.shade_gap if pixel else None,
+        coverage=args.coverage if args.mode == "hibit" else None)
     return summary, 0
 
 

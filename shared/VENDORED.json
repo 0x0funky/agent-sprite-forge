@@ -100,6 +100,15 @@
       "targets": [
         "skills/generate2dmedia/references/schemas/media.schema.json"
       ]
+    },
+    {
+      "canonical": "shared/forge_hibit.py",
+      "owner": "C1-hibit-finish",
+      "targets": [
+        "skills/generate2dsprite/scripts/forge_hibit.py",
+        "skills/video2dsprite/scripts/forge_hibit.py",
+        "skills/generate2dmap/scripts/forge_hibit.py"
+      ]
     }
   ]
 }

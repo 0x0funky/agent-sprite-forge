@@ -17,6 +17,7 @@ TEXT_SUFFIXES = {".py", ".json", ".md", ".js", ".mjs", ".txt"}
 EXPECTED_CANONICALS = {
     "shared/forge_core.py", "shared/forge_matte.py", "shared/forge_av.py", "shared/forge_palette.py",
     "shared/forge_nav.py", "shared/forge_schema.py",  # integration D4, D31
+    "shared/forge_hibit.py",  # the hibit finish: generate2dsprite, video2dsprite and generate2dmap
     *(f"shared/schemas/{domain}.schema.json" for domain in ("common", "sprite", "video", "map", "codeart", "media")),
 }
 

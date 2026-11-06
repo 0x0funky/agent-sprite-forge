@@ -52,6 +52,7 @@ Languages: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体�
 </p>
 
 <p align="center">
+  <a href="#new-hibit-real-pixel-art-from-flat-ai-art">Hibit style</a> ·
   <a href="#whats-new-in-04--the-big-upgrade">What's new</a> ·
   <a href="#quickstart">Quickstart</a> ·
   <a href="#routes-and-providers">Routes and providers</a> ·
@@ -59,6 +60,88 @@ Languages: [English](./README.md) | [繁體中文](./README.zh-TW.md) | [简体�
   <a href="#maps">Maps</a> ·
   <a href="#showcase-games-made-with-agent-sprite-forge">Showcase</a> ·
   <a href="#tools">Tools</a>
+</p>
+
+## New: hibit, real pixel art from flat AI art
+
+<p align="center">
+  <img src="./src/hibit/hibit-gameplay.gif" alt="Pip's Star Grove: Pip the fox mage casts falling stars at magma slimes crawling in from both sides while coins drop" width="960" />
+  <br />
+  <em>Pip's Star Grove, a one-screen demo built only from hibit output: autopilot gameplay captured from the game canvas (480x270, shown at 2x). FX: <a href="https://github.com/patch-gg/pixelfx">pixelfx</a> by Patch (MIT).</em>
+</p>
+
+Never ask an image model for "pixel art": it paints fake, uneven pixels. The **hibit** style asks it for clean flat lineless art (at most 3 tones per material, no outlines) and makes the pixels afterwards: one palette per character learned from the source pixels, an 8x8 majority-vote downscale (every pixel is the palette colour that covered most of its cell, never a blend), hysteresis against flicker, eyes and glints kept, binary alpha, and a 1 px outline whose colour comes from the sprite itself.
+
+<table>
+  <tr>
+    <td align="center" width="58%">
+      <img src="./src/hibit/hibit-master-to-pixels.png" alt="Pip's flat lineless master still, the hibit finish of her idle at 80 px shown at 4x, and her 17-colour palette with the outline colour" width="520" />
+      <br />
+      <strong>Flat art in, pixel art out</strong>
+      <br />
+      The approved master (Codex) and the hibit finish of the idle at 80 px: 16 colours learned from the source plus the outline colour, which <code>--outline auto</code> takes from the sprite's dominant hue (#380500, a deep red-brown from the orange fur). Never a fixed orange.
+    </td>
+    <td align="center" width="42%">
+      <img src="./src/hibit/hibit-cast.gif" alt="Pip idle, walk, cast and hurt, and the magma slime idle, crawl and attack, at 2x and real timing" width="360" />
+      <br />
+      <strong>Whole sets, one palette per character</strong>
+      <br />
+      Pip (idle, walk, cast, hurt) and a magma slime (idle, crawl, attack): Grok image-to-video clips through <code>sprite_set.py --finish hibit</code>, 12 fps. Every action reuses the first action's palette and outline.
+    </td>
+  </tr>
+</table>
+
+### FX: pixelfx (recommended) or the image route
+
+For hibit effects we recommend **[pixelfx](https://github.com/patch-gg/pixelfx)** by Patch: a library of code-driven pixel-art effects (fire, arcane, impacts, weather, pickups, UI) that fits the style and renders for free on your machine. It is a separate MIT project: clone it yourself (`git clone https://github.com/patch-gg/pixelfx`, Node 18+) and the skill finds it. `fx_pixelfx.py check` picks the route; a route you name wins.
+
+| | A: pixelfx installed (recommended) | B: image route (always available) |
+|---|---|---|
+| Frames per effect | 16-91 at 30 fps | 4 (one 2x2 sheet) |
+| Cost | free (local Node) | one generated image per effect |
+| Look | pixelfx's own style, recoloured with `--ramp` and `--snap` | your game's flat style and palette |
+| Credit | every render ships `CREDITS.txt` (pixelfx's MIT license and notice) | the image route, like every sprite |
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <img src="./src/hibit/hibit-fx-pixelfx.gif" alt="Route A: pixelfx star-fall recoloured to Pip's palette hits the slime, then a hit spark, a smoke poof and spilling coins" width="420" />
+      <br />
+      <strong>A: pixelfx</strong>
+      <br />
+      <code>arcane/star-fall</code> recoloured to Pip's palette, <code>impacts/hit-spark</code>, <code>spawn/poof</code>, <code>spawn/coin-drop</code>.
+    </td>
+    <td align="center" width="50%">
+      <img src="./src/hibit/hibit-fx-imagegen.gif" alt="Route B: image-generated falling stars hit the slime with a ground burst, then white puffs and bouncing coins" width="420" />
+      <br />
+      <strong>B: image route</strong>
+      <br />
+      Codex 2x2 FX sheets, keyed and registered by <code>process</code>, made pixel art by the <code>hibit_fx.py</code> step (Pip's palette for the stars and coins, 6 learned colours for the spark and the poof).
+    </td>
+  </tr>
+</table>
+
+Full 50 s of autopilot play, same seed: [with pixelfx FX (MP4)](./src/hibit/pip-star-grove-pixelfx.mp4) · [with image-route FX (MP4)](./src/hibit/pip-star-grove-imagegen.mp4).
+
+| Measured on the live run (2026-11-06) | |
+|---|---:|
+| Pip: palette (learned from the source pixels) | 16 + outline |
+| Noise flicker removed by the hysteresis (vs the same majority without it): Pip's 4 clips / the slime's 3 | 32-40% / 10-24% |
+| Auto outline colour: Pip / magma slime / Forge Bot | #380500 / #380500 / #002131 |
+| Colours in the whole game scene: route B / route A (pixelfx light blending; only the star-fall snapped) | 65 / about 6,700 |
+| Frames per effect: route B / route A | 4 / 16-91 |
+
+What's new:
+
+- **`master_still.py --finish hibit`**: masters as flat lineless cel-shaded art, the input the hibit finish wants.
+- **`finish_frames.py hibit`** and **`sprite_set.py plan --finish hibit`**: the palette, the 8x8 majority-vote downscale, hysteresis, lone-pixel cleanup and the outline (`auto`, a `#RRGGBB`, `selective`, `dark` or `none`); 80 px heroes, 12 fps, nearest sampling in the engine export.
+- **`hibit_plate.py`** (generate2dmap): 480x270 backgrounds (x4 = 1080p) with a 14-colour palette, a paper-cut smoothing pass and shade maps for lighting and hit flashes without new colours.
+- **`fx_pixelfx.py`** (`check`, `list`, `render`) for route A and **`hibit_fx.py pixelize`** for route B.
+
+<p align="center">
+  <img src="./src/hibit/hibit-outline-auto.png" alt="Forge Bot idle: the earlier bold pixel finish next to hibit with the auto, selective and fixed orange outlines" width="760" />
+  <br />
+  <em>Forge Bot: the earlier bold pixel finish, then hibit with the outline from the image (auto), the palette's shades (selective) and a fixed studio orange.</em>
 </p>
 
 ## What's new in 0.4 — the big upgrade
@@ -549,8 +632,9 @@ Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`. Ever
 | | `assemble_frames.py` | Packs whole frames losslessly; ownership slicing, loop seams, ambient crossfades |
 | | `palette_tool.py`, `pixel_reduce.py` | OKLab palettes, locks, variants, flicker-free clip quantizing; integer pixel-grid reduction |
 | | `export_engine.py` | Aseprite JSON, Godot SpriteFrames and AnimatedSprite3D (imports not yet verified) |
+| | `fx_pixelfx.py`, `hibit_fx.py` | Hibit FX: `check` picks route A (pixelfx installed) or B; `render` pixelfx effects with their credits; `pixelize` image-route FX sheets into hibit pixel art |
 | video2dsprite | `sprite_set.py` | `plan`, `run`, `review`, `accept`, `retake`, `report`: one clip per action from one master, gates, retakes, finish and packages |
-| | `finish_frames.py`, `colour_lock.py` | HD (default) or pixel finish, shared palettes, cast line-up; colour lock to the master and its measurement |
+| | `finish_frames.py`, `colour_lock.py` | HD (default), pixel or hibit finish, shared palettes, cast line-up; colour lock to the master and its measurement |
 | | `video2dsprite.py` | `key-plan`, `triage`, soft-matte `process`/`clean`, `package`, `verify`, `doctor` |
 | | `prepare_i2v_input.py`, `register_clip.py` | Registration by construction: input on a recorded transform, one inverse transform back, take QC |
 | | `gait_loop.py`, `retime.py`, `animation_review.py` | Measured walk/run/idle loops and stride; one-shot auto retime and impact/hold timing on ticks; classified candidates |
@@ -559,6 +643,7 @@ Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`. Ever
 | generate2dmap | `extract_prop_pack.py` | Anchored transparent props with footprints and despill (prop_pack.v2) |
 | | `extract_terrain_tiles.py`, `extract_platform_strip.py` | Terrain fills, overlays, iso/hex and Wang rows; platform caps with surface and seam QC |
 | | `compose_layered_preview.py`, `validate_parallax.py`, `conform_background.py` | Ground-line sorted previews with audit overlays; parallax coverage and seams; fitting paintings to screens |
+| | `hibit_plate.py` | Hibit backgrounds: 480x270, one palette, majority downsample, paper-cut smoothing, shade maps |
 | | `map_bundle.py`, `map_nav.py` | map_bundle.v2 validation; collision, reachability and portals from data |
 | | `export_tiled.py`, `export_godot.py`, `export_ldtk.py` | Tiled 1.10 (re-render verified), Godot 4.3+ and LDtk 1.5.3 (parse level only) |
 | | `validate_chunks.py`, `validate_layout.py` | Room-chunk sockets; side-scroll jumps, slopes and decks |
@@ -585,6 +670,7 @@ Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`. Ever
 | Image and video generation (one of) | An API key for OpenAI, Gemini, xAI, BytePlus or fal.ai ([Setting API keys](#setting-api-keys)), or your own signed-in Codex CLI or Grok CLI |
 | codeart2d SVG art | `python -m pip install -r requirements-codeart.txt` (resvg-py>=0.5,<0.6), or the resvg-js CLI, or Chrome/Edge. PixelSpec sprites need nothing extra |
 | JS runtimes, `fx_verify.mjs`, scene preview checks | node 22 (optional); `build_scene_preview.py --verify` also uses playwright when present |
+| Hibit FX route A (optional, recommended) | node 18+ and your own clone of [pixelfx](https://github.com/patch-gg/pixelfx) (`git clone https://github.com/patch-gg/pixelfx`, then `--pixelfx <dir>` or `PIXELFX_DIR`); without it hibit FX take the image route |
 | Contributors | `python -m pip install -r requirements-dev.txt`, then `python -m pytest -q` and `node --test "tests/js/*.test.mjs"` |
 
 ## Suggested prompts
@@ -597,6 +683,10 @@ Use $generate2dsprite to make a master still of a fox ranger for a 2D platformer
 
 ```text
 Use $video2dsprite to turn the approved fox master into idle, run, attack and hurt, pixel finish in 48x64 cells at 80 ms, and export it for Godot and Aseprite.
+```
+
+```text
+Use $generate2dsprite and $video2dsprite with the hibit finish: a fox mage master as flat lineless art, then idle, walk, cast and hurt at 80 px, and a falling-star cast FX in her palette (pixelfx if I have it, else the image route).
 ```
 
 ### Sprites and FX
@@ -643,6 +733,10 @@ Use $generate2dsprite to create a 2D monster-collecting RPG. You only need to bu
 
 The MIT license below covers this repository's code and documentation. It does not cover what you generate with it. Images and videos from an image or video model are subject to that provider's terms; code-drawn art is produced from specs you or your agent write. Do not trace or prompt for characters or people you do not own. For commercial projects, use original characters or IP you control, and check each provider's terms.
 
+## Third-party credits
+
+The optional pixel-FX route (`skills/generate2dsprite/scripts/fx_pixelfx.py`, route A for hibit games, and our recommendation when you can install it) runs [pixelfx](https://github.com/patch-gg/pixelfx) by Patch, a separate MIT-licensed project that you clone yourself; it is not bundled here. The pixelfx effects in the hibit showcase media are credited in [src/hibit/CREDITS-pixelfx.txt](./src/hibit/CREDITS-pixelfx.txt). pixelfx in turn credits Sprite Fusion's pixel-art VFX by Hugo Duprez (MIT) and Hollow Crown by rehan-remade (MIT). Every render writes `CREDITS.txt` with pixelfx's license and notice: keep it with the frames and credit pixelfx in your game. Details: [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
 ## Repository layout
 
 ```text
@@ -658,7 +752,7 @@ agent-sprite-forge/
   tools/                 install_skills.py, vendor_sync.py, check_links.py
   tests/                 pytest and node suites, fixtures with provenance
   docs/                  validation records, known limitations, audit
-  src/                   README media (src/v040: the 0.4 showcase)
+  src/                   README media (src/v040: the 0.4 showcase; src/hibit: the hibit showcase)
   CHANGELOG.md
 ```
 
