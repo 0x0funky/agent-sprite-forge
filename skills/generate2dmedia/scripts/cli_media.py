@@ -1630,7 +1630,7 @@ def execute(req: Request, cli: RouteCli, args: argparse.Namespace) -> dict:
             job["ledger"]["error"] = f"{type(exc).__name__}: outcome not committed; settle it with media_ledger.py"
         if state.exposed or outcome == "done":
             record_proof(req.project, req.capability, version, version_text, "VERIFIED" if outcome == "done" else "TOOL_EXPOSED",
-                         run_id, out_rel, job.get("artifact", {}).get("sha256"))
+                         run_id, media_ledger.published_dir(out_rel), job.get("artifact", {}).get("sha256"))
         with contextlib.suppress(OSError):
             record.save(threadId=state.cli_id if req.route == "codex-cli" else None,
                         sessionId=state.cli_id if req.route != "codex-cli" else None)

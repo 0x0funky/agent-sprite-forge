@@ -211,7 +211,8 @@ class Acp:
 def main(argv):
     secretish = sorted(k for k in os.environ if re.search(r"(?:^|_)(?:API_?KEY|TOKEN|SECRET|PASSWORD)(?:_|$)", k, re.I))
     isolation = {k: os.environ.get(k) for k in ("GROK_DISABLE_AUTOUPDATER", "GROK_MEMORY", "GROK_SUBAGENTS")}
-    log(cli="grok", argv=argv, cwd=os.getcwd(), credentialEnv=secretish, isolation=isolation)
+    homes = {k: os.environ.get(k) for k in ("HOME", "USERPROFILE", "GROK_HOME", "GIT_CONFIG_GLOBAL")}
+    log(cli="grok", argv=argv, cwd=os.getcwd(), credentialEnv=secretish, isolation=isolation, homes=homes)
     if argv[:1] == ["--version"]:
         print(os.environ.get("FAKE_GROK_VERSION", "grok 1.0.40"))
         return 0

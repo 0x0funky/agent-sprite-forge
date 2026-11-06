@@ -50,6 +50,7 @@ def env(tmp_path, monkeypatch):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
+    monkeypatch.setenv("FORGE_GROK_ISOLATED_HOME", str(tmp_path / "isolated-home"))  # the empty home of grok children
     monkeypatch.setenv("APPDATA", str(tmp_path / "appdata"))  # no real user config file is ever read
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     log = tmp_path / "fake.log"
@@ -229,6 +230,14 @@ def test_grok_image_edit_and_acp_video_succeed(env, capsys):
     log = entries(env.log)
     assert {"outcome": "selected", "optionId": "allow-once"} in [e.get("permission") for e in log]
     assert next(e for e in log if e.get("args"))["args"]["duration"] == 6
+    # Every grok child (headless image, edit, ACP video) ran in the isolated home: no ~/.claude plugins to load.
+    runs = [e for e in log if e.get("cli") == "grok" and "homes" in e and e.get("argv", ["--version"])[:1] != ["--version"]]
+    assert len(runs) >= 3
+    for entry in runs:
+        homes = entry["homes"]
+        assert homes["HOME"] == homes["USERPROFILE"] == str(env.tmp / "isolated-home")
+        assert homes["GROK_HOME"] == str(env.tmp / "grok-home")
+    assert (env.tmp / "isolated-home").is_dir() and not any((env.tmp / "isolated-home").iterdir())
     starts = [e for e in log if e.get("cli") == "grok" and "argv" in e]
     assert all(e["isolation"] == {"GROK_DISABLE_AUTOUPDATER": "true", "GROK_MEMORY": "false", "GROK_SUBAGENTS": "0"}
                for e in starts)
@@ -238,6 +247,38 @@ def test_grok_image_edit_and_acp_video_succeed(env, capsys):
     assert {(p["route"], p["tool"], p["level"]) for p in proofs["proofs"]} == {
         ("grok-cli", "image_gen", "VERIFIED"), ("grok-cli", "image_edit", "VERIFIED"),
         ("grok-acp", "image_to_video", "VERIFIED")}
+
+
+def test_grok_children_get_an_isolated_home_and_keep_grok_and_git(tmp_path, monkeypatch):
+    real = tmp_path / "real-user"
+    real.mkdir()
+    (real / ".gitconfig").write_text("[user]\n\tname = t\n", encoding="utf-8")
+    for name in ("HOME", "USERPROFILE"):
+        monkeypatch.setenv(name, str(real))
+    for name in ("GROK_HOME", "GIT_CONFIG_GLOBAL", "FORGE_GROK_ISOLATED_HOME", "XDG_STATE_HOME"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "localappdata"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "localappdata"))
+    expected = tmp_path / "localappdata" / "agent-sprite-forge" / "grok-home"  # LOCALAPPDATA or XDG_STATE_HOME
+    assert forge_doctor.grok_isolated_home() == expected
+    probe = forge_doctor.isolated_env("grok", create_home=False)
+    assert probe["HOME"] == probe["USERPROFILE"] == str(expected) and not expected.exists()  # --version writes nothing
+    env = forge_doctor.isolated_env("grok")
+    assert env["HOME"] == env["USERPROFILE"] == str(expected) and expected.is_dir()
+    assert env["GROK_HOME"] == str(real / ".grok")  # the real Grok folder: sign-in, sessions, skills
+    assert env["GIT_CONFIG_GLOBAL"] == str(real / ".gitconfig")
+    assert env["GROK_DISABLE_AUTOUPDATER"] == "true" and env["GROK_CLAUDE_MCPS_ENABLED"] == "false"
+    monkeypatch.setenv("GROK_HOME", str(tmp_path / "custom-grok"))
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "custom.gitconfig"))
+    monkeypatch.setenv("FORGE_GROK_ISOLATED_HOME", str(tmp_path / "chosen-home"))
+    env = forge_doctor.isolated_env("grok")
+    assert env["GROK_HOME"] == str(tmp_path / "custom-grok") and env["GIT_CONFIG_GLOBAL"] == str(tmp_path / "custom.gitconfig")
+    assert env["HOME"] == env["USERPROFILE"] == str(tmp_path / "chosen-home")
+    (real / ".gitconfig").unlink()
+    monkeypatch.delenv("GIT_CONFIG_GLOBAL")
+    assert "GIT_CONFIG_GLOBAL" not in forge_doctor.isolated_env("grok")
+    codex = forge_doctor.isolated_env("codex")  # only grok children move home
+    assert codex["HOME"] == codex["USERPROFILE"] == str(real) and "GROK_DISABLE_AUTOUPDATER" not in codex
 
 
 # --------------------------------------------------------------------------- kill switches and typed errors

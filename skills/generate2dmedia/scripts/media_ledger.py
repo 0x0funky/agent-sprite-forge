@@ -56,6 +56,10 @@ LINE_KEYS = ("ts", "reservationId", "status", *ENTRY_TEXT, "reservedUsd", "actua
 JOB_ID = re.compile(r"[A-Za-z0-9_.:-]{1,200}")
 SHA256 = re.compile(r"[0-9a-f]{64}")
 DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
+# A no-replace staging folder: '.<final name>.stage-<random>' beside the folder it is published as
+# (forge_core.staged_output, cli_media's local twin, finish_frames). Callers such as master_still.py
+# generate run route_media.py inside their stage, so the job folder they pass sits in one.
+STAGE_PART = re.compile(r"^\.(?P<name>.+)\.stage-[A-Za-z0-9_]{6,16}$")
 
 _THREAD_LOCKS = {}
 _THREAD_LOCKS_GUARD = threading.Lock()
@@ -96,6 +100,14 @@ def _parse_timestamp(text):
     except ValueError:
         return None
     return moment if moment.utcoffset() is not None else moment.replace(tzinfo=timezone.utc)
+
+
+def published_dir(job_dir):
+    """The job folder as it is published: every staging component ('.<name>.stage-<random>') becomes
+    the <name> it is renamed to, so the ledger names the folder that exists after the caller's publish
+    (not the .stage-XXXX folder that existed while the call ran). POSIX separators."""
+    parts = str(job_dir).replace("\\", "/").split("/")
+    return "/".join(match.group("name") if (match := STAGE_PART.match(part)) else part for part in parts)
 
 
 def session_kind(kind):
@@ -478,7 +490,7 @@ class Ledger:
         (None when unpriced) and optional quotaCall (default: route is a CLI
         route). Caps and FORGE_MAX_PAID_REQUESTS are checked under the lock, and
         so is ``session`` (session_limits()) for a quota call: the local CLI
-        routes' opt-in session cap.
+        routes' opt-in session cap. jobDir is recorded as published_dir(jobDir).
         """
         unknown = set(entry) - set(ENTRY_KEYS)
         if unknown:
@@ -486,6 +498,7 @@ class Ledger:
         for name in ENTRY_TEXT:
             if not isinstance(entry.get(name), str) or not entry[name]:
                 raise ValueError(f"Ledger entry needs a non-empty {name}")
+        entry = {**entry, "jobDir": published_dir(entry["jobDir"])}
         if entry["route"] not in ROUTES:
             raise ValueError("route must be one of " + ", ".join(ROUTES))
         if not SHA256.fullmatch(entry["fingerprint"]):

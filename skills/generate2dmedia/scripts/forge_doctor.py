@@ -116,6 +116,11 @@ GROK_ISOLATION = {
     **{f"GROK_{vendor}_{kind}_ENABLED": "false" for vendor in ("CLAUDE", "CURSOR", "CODEX")
        for kind in ("SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS")},
 }
+# Grok loads the Claude Code plugins, MCP servers, skills and permissions it finds under the user's home folder
+# (~/.claude, ~/.agents), whatever GROK_CLAUDE_*_ENABLED says: a real Telegram bot plugin was started by a
+# grok child. Every grok child therefore runs with HOME and USERPROFILE on an empty folder the Forge owns, GROK_HOME
+# on the real ~/.grok (its sign-in, sessions and skills) and git's global config kept (GIT_CONFIG_GLOBAL).
+ISOLATED_HOME_ENV = "FORGE_GROK_ISOLATED_HOME"   # override of the isolated home folder (tests, hosts)
 OVERRIDE_ENV = {"codex": "FORGE_CODEX_EXE", "grok": "FORGE_GROK_EXE"}
 NATIVE_MAGIC = (b"MZ", b"\x7fELF", b"\xfe\xed\xfa\xce", b"\xfe\xed\xfa\xcf", b"\xce\xfa\xed\xfe",
                 b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe")
@@ -299,15 +304,45 @@ def grok_home() -> Path:
     return Path(configured).expanduser() if configured else Path.home() / ".grok"
 
 
-def isolated_env(cli: str) -> dict:
+def grok_isolated_home() -> Path:
+    """The empty home folder every grok child gets: $FORGE_GROK_ISOLATED_HOME, else
+    %LOCALAPPDATA%/agent-sprite-forge/grok-home on Windows and
+    ${XDG_STATE_HOME:-~/.local/state}/agent-sprite-forge/grok-home elsewhere."""
+    override = os.environ.get(ISOLATED_HOME_ENV, "").strip()
+    if override:
+        return Path(override).expanduser()
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA", "").strip()
+        root = Path(base) if base else Path.home() / "AppData" / "Local"
+    else:
+        base = os.environ.get("XDG_STATE_HOME", "").strip()
+        root = Path(base).expanduser() if base else Path.home() / ".local" / "state"
+    return root / "agent-sprite-forge" / "grok-home"
+
+
+def isolated_env(cli: str, *, create_home: bool = True) -> dict:
     """Environment for a CLI child: API keys, credential-like variables and the calling
     agent's session variables removed; for Grok, memory, sub-agents, managed MCPs, foreign
-    agent rules and the auto-updater switched off."""
+    agent rules and the auto-updater switched off, and the home folder isolated: HOME and
+    USERPROFILE name grok_isolated_home() (created unless ``create_home`` is False), GROK_HOME
+    names the real Grok folder (grok_home(), read before the override) and GIT_CONFIG_GLOBAL
+    the user's real ~/.gitconfig when it exists and the variable is not set already. So Grok
+    keeps its sign-in, sessions and skills but never loads the user's Claude Code plugins,
+    MCP servers, skills or permissions from ~/.claude or ~/.agents."""
     env = {name: value for name, value in os.environ.items()
            if name.upper() not in STRIPPED_ENV and not CREDENTIAL_ENV.search(name) and not PARENT_AGENT_ENV.search(name)}
     env["NO_COLOR"] = "1"
     if cli == "grok":
         env.update(GROK_ISOLATION)
+        real_home = Path.home()
+        env["GROK_HOME"] = str(grok_home())
+        gitconfig = real_home / ".gitconfig"
+        if not env.get("GIT_CONFIG_GLOBAL") and gitconfig.is_file():
+            env["GIT_CONFIG_GLOBAL"] = str(gitconfig)
+        home = grok_isolated_home()
+        if create_home:
+            home.mkdir(parents=True, exist_ok=True)
+        env["HOME"] = env["USERPROFILE"] = str(home)
     return env
 
 
@@ -424,7 +459,7 @@ def package_version(info: CliInfo) -> str | None:
 
 def probe_version(argv: list[str], cli: str, *, timeout: float = VERSION_TIMEOUT) -> tuple[str | None, str | None]:
     """Run ``<cli> --version`` (local; never a network call) -> (first line, bare version)."""
-    result = run_quiet([*argv, "--version"], timeout=timeout, env=isolated_env(cli))
+    result = run_quiet([*argv, "--version"], timeout=timeout, env=isolated_env(cli, create_home=False))
     if result is None or result.returncode != 0:
         return None, None
     lines = [line.strip() for line in (result.stdout or result.stderr or "").splitlines() if line.strip()]

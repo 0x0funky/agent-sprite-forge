@@ -82,6 +82,7 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setenv("GROK_HOME", str(tmp_path / "grok-home"))
+    monkeypatch.setenv("FORGE_GROK_ISOLATED_HOME", str(tmp_path / "isolated-home"))
     log = tmp_path / "fake.log"
     monkeypatch.setenv("FAKE_CLI_LOG", str(log))
     project = tmp_path / "project"
