@@ -19,6 +19,7 @@ EXPECTED_CANONICALS = {
     "shared/forge_nav.py", "shared/forge_schema.py",  # integration D4, D31
     "shared/forge_hibit.py",  # the hibit finish: generate2dsprite, video2dsprite and generate2dmap
     "shared/forge_index.py",  # the host API: forge_index.py scan (forge.asset_index.v1)
+    "shared/forge_pixelgrid.py",  # the pixel looks: generate2dsprite pixel_look.py and video2dsprite pixel_motion.py
     *(f"shared/schemas/{domain}.schema.json"
       for domain in ("common", "sprite", "video", "map", "codeart", "media", "host")),
 }
