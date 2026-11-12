@@ -30,6 +30,28 @@
   <em>원화 한 장(로컬 Codex CLI로 생성) → 액션마다 Grok image-to-video → 여섯 액션. 모든 프레임은 2026-10-06 실제 실행의 출력입니다.</em>
 </p>
 
+## 새 기능: pixel looks, 참고 그림을 따르는 1x 픽셀 스프라이트
+
+<p align="center">
+  <img src="./src/pixel-looks/battle.gif" alt="384x216 배경 위의 전투: 검사가 등장해 스켈레톤 나이트에게 베이고 반격하며, 마법사의 마법에 나이트가 쓰러지고, 프로스트 드래곤이 포효하고 덮치다가 마지막 일격에 쓰러지고, 검사가 검을 들어 올린다" width="768" />
+  <br />
+  <em>이 전투의 캐릭터와 동작은 pixel looks 출력입니다(1x로 렌더링, 2배 표시): 1x 캐릭터 4개(마스터는 33x55~87x86), image-to-video에서 다시 읽어 온 14세트·168장의 동작. 뒤의 배경은 생성한 그림을 384x216, 40색으로 줄인 것입니다. 흰색 피격 플래시와 스켈레톤 나이트의 페이드는 데모가 넣은 연출입니다.</em>
+</p>
+
+이미지 모델에 "픽셀 아트"를 요청하면 "픽셀처럼 보이는 그림"이 나옵니다. 블록 크기가 제각각이고(이 그림에서는 15~30 px), 작은 캐릭터 하나에 88,410색이 들어 있으며, 가장자리는 흐립니다. 스프라이트 크기로 그대로 줄여도 1,033색이 남습니다. hibit은 애초에 픽셀 아트를 요청하지 않습니다. **pixel looks**는 그 반대로, "마음에 드는 룩을 따르는" 클래식한 작은 스프라이트를 위한 경로입니다. 룩은 말로 설명하지 않고, 마음에 드는 스프라이트 한 장을 캐스트 전체의 참고로 삼아, 모델이 그린 그림을 진짜 그리드로 다시 읽어 냅니다: 그림 자체의 그리드를 찾고, 블록마다 평평한 한 가지 색을 취하고, 캐릭터의 비율을 유지하고, 색을 팔레트로 줄이고, 규칙으로 외곽선을 닫습니다. 결과는 셀 수 있습니다: 33x55 픽셀, 48색, 알파는 0 또는 255뿐.
+
+<p align="center">
+  <img src="./src/pixel-looks/kael-picture.png" alt="이미지 모델이 그린 은발 검사" width="340" />
+  <img src="./src/pixel-looks/kael-plain-resize.png" alt="같은 그림을 그대로 33x55로 축소, 7배 표시" width="259" />
+  <img src="./src/pixel-looks/kael-master.png" alt="같은 그림으로 만든 1x 스프라이트, 7배 표시" width="259" />
+  <br />
+  <em>왼쪽: 모델이 그린 그림(1254x1254, 캐릭터만 88,410색). 가운데: 그대로 33x55로 축소(1,033색). 오른쪽: <code>pixel_look.py master</code>(33x55, 48색, 반투명 픽셀 없음).</em>
+</p>
+
+- **`pixel_look.py`**(generate2dsprite): `ask-master` / `master`로 1x 마스터 스프라이트를 만들고, `ask-cast` / `cast`로 다른 캐릭터를 마스터 옆에 그리게 해 픽셀 크기와 키를 맞추고, `ask-pose` / `pose`와 `ask-view` / `view`로 마스터에서 포즈와 옆·뒤 모습을 만들고, `lineup`으로 키를 확인합니다.
+- **`pixel_motion.py`**(video2dsprite): `prepare`, `frames`, `finish`, `measure`, `breath`. image-to-video의 모든 프레임을 스프라이트의 그리드와 팔레트로 다시 읽어(공격: 145프레임에서 21장) nearest 샘플링의 `animation.json` 3.0으로 내보냅니다.
+- **요청할 때만 실행됩니다.** 나머지는 그대로입니다: HD, 픽셀, hibit finish와 기본값은 바뀌지 않았습니다. 참고 그림은 룩만 정하며, 캐릭터는 자신의 것을 사용하세요. 자세한 내용은 [English README](./README.md#new-pixel-looks-1x-sprites-that-follow-a-reference)와 [references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md).
+
 ## 새 기능: hibit, 플랫한 AI 그림을 진짜 픽셀 아트로
 
 <p align="center">

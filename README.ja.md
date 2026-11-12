@@ -30,6 +30,28 @@
   <em>原画一枚（ローカル Codex CLI で生成）→ アクションごとに Grok の image-to-video → 6 アクション。すべてのフレームは 2026-10-06 の実機実行の出力です。</em>
 </p>
 
+## 新機能：pixel looks、参考画像に沿った 1x ピクセルスプライト
+
+<p align="center">
+  <img src="./src/pixel-looks/battle.gif" alt="384x216 の背景での戦闘：剣士が登場してスケルトンナイトに斬られ、反撃し、魔法使いの魔法でナイトが倒れ、フロストドラゴンが吠えて飛びかかり、最後の一撃で倒れ、剣士が剣を掲げる" width="768" />
+  <br />
+  <em>この戦闘のキャラクターと動作は pixel looks の出力です（1x でレンダリング、2 倍表示）：1x キャラクター 4 体（マスターは 33x55〜87x86）、image-to-video から読み戻した 14 セット・168 枚の動作。背後の背景は、生成した絵を 384x216・40 色に落としたものです。白いヒットフラッシュとスケルトンナイトのフェードはデモ側の演出です。</em>
+</p>
+
+画像モデルに「ピクセルアート」を頼むと、描かれるのは「ピクセルのように見える絵」です。ブロックの大きさは不揃い（この絵では 15〜30 px）、小さなキャラクター 1 体に 88,410 色、輪郭はぼやけています。スプライトのサイズにそのまま縮小しても 1,033 色が残ります。hibit はそもそもピクセルアートを頼みません。**pixel looks** はその逆で、「好きなルックに沿った」クラシックな小さなスプライトのための経路です。ルックは言葉で説明せず、気に入ったスプライト 1 枚をキャスト全体の参考にして、モデルが描いた絵を本物のグリッドに読み戻します：絵自身のグリッドを見つけ、ブロックごとにフラットな 1 色を取り、キャラクターの比率を保ち、色数をパレットにまとめ、輪郭線をルールで閉じます。結果は数えられます：33x55 ピクセル、48 色、アルファは 0 か 255 のみ。
+
+<p align="center">
+  <img src="./src/pixel-looks/kael-picture.png" alt="画像モデルが描いた銀髪の剣士" width="340" />
+  <img src="./src/pixel-looks/kael-plain-resize.png" alt="同じ絵をそのまま 33x55 に縮小、7 倍表示" width="259" />
+  <img src="./src/pixel-looks/kael-master.png" alt="同じ絵から作った 1x スプライト、7 倍表示" width="259" />
+  <br />
+  <em>左：モデルが描いた絵（1254x1254、キャラクターだけで 88,410 色）。中：そのまま 33x55 に縮小（1,033 色）。右：<code>pixel_look.py master</code>（33x55、48 色、半透明ピクセルなし）。</em>
+</p>
+
+- **`pixel_look.py`**（generate2dsprite）：`ask-master` / `master` で 1x のマスタースプライトを作り、`ask-cast` / `cast` で他のキャラクターをマスターの隣に描かせてピクセルサイズと身長を揃え、`ask-pose` / `pose` と `ask-view` / `view` でマスターからポーズと横・後ろ向きを作り、`lineup` で高さを確認します。
+- **`pixel_motion.py`**（video2dsprite）：`prepare`、`frames`、`finish`、`measure`、`breath`。image-to-video の各フレームをスプライトのグリッドとパレットに読み戻し（攻撃：145 フレームから 21 枚）、nearest サンプリングの `animation.json` 3.0 を出力します。
+- **指定したときだけ動きます。**他は何も変わりません：HD・ピクセル・hibit の各 finish と既定値はそのままです。参考画像が決めるのはルックだけで、キャラクターは自分のものを使ってください。詳細は [English README](./README.md#new-pixel-looks-1x-sprites-that-follow-a-reference) と [references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md)。
+
 ## 新機能：hibit、フラットな AI 画を本物のピクセルアートに
 
 <p align="center">

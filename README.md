@@ -52,6 +52,7 @@ Languages: [English](./README.md) | [绻侀珨涓枃](./README.zh-TW.md) | [绠�浣撲
 </p>
 
 <p align="center">
+  <a href="#new-pixel-looks-1x-sprites-that-follow-a-reference">Pixel looks</a> 路
   <a href="#new-hibit-real-pixel-art-from-flat-ai-art">Hibit style</a> 路
   <a href="#whats-new-in-04--the-big-upgrade">What's new</a> 路
   <a href="#quickstart">Quickstart</a> 路
@@ -61,6 +62,77 @@ Languages: [English](./README.md) | [绻侀珨涓枃](./README.zh-TW.md) | [绠�浣撲
   <a href="#showcase-games-made-with-agent-sprite-forge">Showcase</a> 路
   <a href="#tools">Tools</a>
 </p>
+
+## New: pixel looks, 1x sprites that follow a reference
+
+<p align="center">
+  <img src="./src/pixel-looks/battle.gif" alt="A fight on a 384x216 plate: a swordsman walks in and is struck by a skeleton knight, strikes back, a mage casts and the knight falls, a frost dragon roars and lunges, and after the last blow it falls and the swordsman raises his sword" width="768" />
+  <br />
+  <em>A whole fight from pixel-look sprites, rendered at 1x and shown at 2x: four 1x characters (masters of 33x55 to 87x86) and 14 sets with 168 drawings read back from image-to-video clips. The plate behind them is a generated painting brought down to 384x216 and 40 colours. The white hit flashes and the knight's fade are the demo's; nothing else is added.</em>
+</p>
+
+An image model asked for pixel art paints a picture of pixels: blocks of uneven size (15 to 30 px in the picture below), 88,410 colours in one small figure, soft edges. Shrinking it does not help: resized plainly to the sprite's size it still has 1,033 colours. Hibit gets round this by never asking for pixel art. **Pixel looks** go the other way, for the classic small sprite that follows a look you like: the look is never described in words, one sprite you like is the reference for the whole cast, and the picture the model paints is read back onto a real grid. `pixel_look.py master` finds the picture's own grid, takes one flat colour from every block, keeps the figure's proportions, brings the colours down to a palette and closes the outline by rule. What comes out can be counted: 33x55 pixels, 48 colours, alpha 0 or 255, a 2.5 KB PNG.
+
+<table>
+  <tr>
+    <td align="center" width="40%">
+      <img src="./src/pixel-looks/kael-picture.png" alt="The picture an image model painted of a silver-haired swordsman in a dark coat, on a flat green ground: it looks like pixel art" width="340" />
+      <br />
+      <strong>What the image model painted</strong>
+      <br />
+      1254x1254 px. The figure alone has 88,410 colours and its blocks are 15 to 30 px: no grid fits it.
+    </td>
+    <td align="center" width="30%">
+      <img src="./src/pixel-looks/kael-plain-resize.png" alt="The same picture resized plainly to 33x55 and shown at 7x: a smudged eye, uneven edges and green specks at the hair" width="259" />
+      <br />
+      <strong>Resized plainly to 33x55</strong>
+      <br />
+      Nearest sampling, shown at 7x: 1,033 colours, the ground's green left in 3 cells. Bilinear gives 1,275 colours and 413 soft pixels.
+    </td>
+    <td align="center" width="30%">
+      <img src="./src/pixel-looks/kael-master.png" alt="The 1x sprite made from the same picture, shown at 7x: clean cells, a closed outline, a clear face" width="259" />
+      <br />
+      <strong><code>pixel_look.py master</code></strong>
+      <br />
+      The same picture read on its own grid, shown at 7x: 33x55, 48 colours, no soft pixel.
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="./src/pixel-looks/closeup.png" alt="The same part of the face twice: in the picture the blocks have uneven sizes and soft, stained edges; in the sprite every cell is one flat colour" width="742" />
+  <br />
+  <em>The same part of the face: the picture at 2x (left) and the sprite at 40x (right).</em>
+</p>
+
+<p align="center">
+  <img src="./src/pixel-looks/cast.gif" alt="The swordsman, the mage, the skeleton knight and the frost dragon on one ground line; each idles and plays one action in turn: a sword strike, a cast, a strike, a roar" width="808" />
+  <br />
+  <em><strong>The cast follows the first sprite.</strong> Every further character is drawn beside the first sprite in one picture (<code>ask-cast</code>, <code>cast</code>), so it keeps the pixel size and stands as tall: a mage, a skeleton knight and a frost dragon, 48 colours each.</em>
+</p>
+
+<p align="center">
+  <img src="./src/pixel-looks/sets.gif" alt="The swordsman's idle, walk, attack, hurt and victory sets and the dragon's roar, lunge and fall, each with its number of drawings" width="812" />
+  <br />
+  <em><strong>Poses, views and motion from the master.</strong> A pose is the master reproduced with one change (the sword pose: 217 cells changed, 91% of the master kept); a view is drawn beside the master. Motion comes from an image-to-video clip of that sprite: <code>pixel_motion.py</code> reads every frame back on the sprite's lattice and palette (the attack: 21 drawings picked from 145 video frames). The number is the drawings of each set.</em>
+</p>
+
+| Measured on the run (2026-11-12) | |
+|---|---:|
+| The swordsman's generated picture (the figure) | 1254x1254, 88,410 colours, blocks 15-30 px |
+| The same picture resized to 33x55: nearest / bilinear | 1,033 colours / 1,275 colours and 413 soft pixels |
+| `pixel_look.py master` | 33x55, 48 colours, 0 soft pixels, 2.5 KB |
+| The cast: mage / skeleton knight / frost dragon | 45x56 / 50x55 / 87x86, 48 colours each |
+| The sword pose from the master | 217 cells changed, 91% of the master kept |
+| The attack set from one clip | 21 drawings from 145 video frames |
+| The fight | 14 sets, 168 drawings; every drawing has only its sprite's own colours and no soft pixel |
+
+What's new:
+
+- **`pixel_look.py`** (generate2dsprite): `ask-master` and `master` draw the figure you like again, alone and large, and read it as the 1x master; `ask-cast` and `cast` draw every further character beside the master; `ask-pose`, `pose`, `ask-view` and `view` make poses and side or back views from the master; `lineup` puts everything on one ground line and reports the heights.
+- **`pixel_motion.py`** (video2dsprite): `prepare`, `frames`, `finish`, `measure`, `breath`: the frames of an image-to-video clip read back on the sprite's lattice and palette, a loop or an action picked from them, and an `animation.json` 3.0 package with nearest sampling.
+- **Only on request.** Nothing else changes: the HD, pixel and hibit finishes and their defaults are untouched.
+- The reference sets the look (pixel size, shading, outline); the characters are your own. The whole route, what you accept and when, and its limits: [references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md).
 
 ## New: hibit, real pixel art from flat AI art
 
@@ -633,8 +705,10 @@ Run from your project root as `python "<skill-dir>/scripts/<tool>.py" ...`. Ever
 | | `palette_tool.py`, `pixel_reduce.py` | OKLab palettes, locks, variants, flicker-free clip quantizing; integer pixel-grid reduction |
 | | `export_engine.py` | Aseprite JSON, Godot SpriteFrames and AnimatedSprite3D (imports not yet verified) |
 | | `fx_pixelfx.py`, `hibit_fx.py` | Hibit FX: `check` picks route A (pixelfx installed) or B; `render` pixelfx effects with their credits; `pixelize` image-route FX sheets into hibit pixel art |
+| | `pixel_look.py` | Pixel looks (on request): `ask-master`/`master`, `ask-cast`/`cast`, `ask-pose`/`pose`, `ask-view`/`view`, `lineup`: 1x sprites that follow a reference, read on the picture's own grid; the cast, the poses and the views all come from one master |
 | video2dsprite | `sprite_set.py` | `plan`, `run`, `review`, `accept`, `retake`, `report`: one clip per action from one master, gates, retakes, finish and packages |
 | | `finish_frames.py`, `colour_lock.py` | HD (default), pixel or hibit finish, shared palettes, cast line-up; colour lock to the master and its measurement |
+| | `pixel_motion.py` | Pixel looks motion: `prepare`, `frames`, `finish`, `measure`, `breath`: clip frames read back on the sprite's lattice and palette, sets packaged with nearest sampling |
 | | `video2dsprite.py` | `key-plan`, `triage`, soft-matte `process`/`clean`, `package`, `verify`, `doctor` |
 | | `prepare_i2v_input.py`, `register_clip.py` | Registration by construction: input on a recorded transform, one inverse transform back, take QC |
 | | `gait_loop.py`, `retime.py`, `animation_review.py` | Measured walk/run/idle loops and stride; one-shot auto retime and impact/hold timing on ticks; classified candidates |
@@ -689,6 +763,10 @@ Use $video2dsprite to turn the approved fox master into idle, run, attack and hu
 Use $generate2dsprite and $video2dsprite with the hibit finish: a fox mage master as flat lineless art, then idle, walk, cast and hurt at 80 px, and a falling-star cast FX in her palette (pixelfx if I have it, else the image route).
 ```
 
+```text
+Use $generate2dsprite with the pixel-looks route: ref.png is a sprite whose look I like. Make my own swordsman as a 1x sprite in that look, then a mage and a skeleton knight beside him, and use $video2dsprite for idle, walk and attack sets on the same pixel grid.
+```
+
 ### Sprites and FX
 
 ```text
@@ -728,6 +806,7 @@ Use $generate2dsprite to create a 2D monster-collecting RPG. You only need to bu
 - Image-to-video models drift on fast limbs and jumps. Expect retakes on run and jump; the gates and fix clauses exist for that, and the live record shows how many it took.
 - What is and is not proven is in [docs/known-limitations.md](./docs/known-limitations.md); live results are in [docs/validation-2026-10-06.md](./docs/validation-2026-10-06.md).
 - Engine and editor imports of the 0.4.0 exporters are not verified yet (see [Engine exports](#engine-exports)).
+- Pixel looks: an image-to-video clip is 720p, so a sprite of about 80x110 with a wide swing gets only 4 px a sprite pixel there and its dark shades flip more. The limits are in [references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md).
 
 ## Generated assets and licensing
 
@@ -752,7 +831,7 @@ agent-sprite-forge/
   tools/                 install_skills.py, vendor_sync.py, check_links.py
   tests/                 pytest and node suites, fixtures with provenance
   docs/                  validation records, known limitations, audit
-  src/                   README media (src/v040: the 0.4 showcase; src/hibit: the hibit showcase)
+  src/                   README media (src/v040: the 0.4 showcase; src/hibit: the hibit showcase; src/pixel-looks: the pixel-looks showcase)
   CHANGELOG.md
 ```
 

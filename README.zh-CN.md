@@ -30,6 +30,28 @@
   <em>一张原画（本机 Codex CLI 生成）→ 每个动作一段 Grok 图生视频 → 六个动作。每一帧都来自 2026-10-06 的实机运行。</em>
 </p>
 
+## 新功能：pixel looks，照着一张参考图做出 1x 像素小人
+
+<p align="center">
+  <img src="./src/pixel-looks/battle.gif" alt="384x216 背景上的一场战斗：剑士进场被骷髅骑士砍中、反击，法师施法后骑士倒下，冰龙咆哮、扑咬，最后一击后冰龙倒下，剑士举剑" width="768" />
+  <br />
+  <em>这场战斗的角色和动作都是 pixel looks 的产出，以 1x 渲染、2 倍显示：四个 1x 角色（母图 33x55 到 87x86）、14 组动作共 168 张图（从图生视频读回来）。后面的背景是一张生成的图，缩成 384x216、40 色。白色的受击闪光和骷髅骑士的淡出是 demo 加的。</em>
+</p>
+
+让图像模型画“像素画”，它画出来的是一张“长得像像素”的图：方块大小不一（15 到 30 px）、一个小角色就有 88,410 种颜色、边缘发糊；直接缩小到 sprite 的尺寸，还是有 1,033 种颜色。hibit 的做法是根本不让模型画像素；**pixel looks** 反过来，专门做“照着你喜欢的风格”的经典像素小人：风格不用文字描述，由一张你喜欢的 sprite 作为整组角色的参考，再把模型画的图读回真正的网格：找出图里自己的网格、每个方块取一个平涂色、保留角色比例、把颜色收敛成调色板、按规则封闭描边。结果数得出来：33x55 格、48 色、alpha 只有 0 或 255。
+
+<p align="center">
+  <img src="./src/pixel-looks/kael-picture.png" alt="图像模型画的银发剑士" width="340" />
+  <img src="./src/pixel-looks/kael-plain-resize.png" alt="同一张图直接缩成 33x55，7 倍显示" width="259" />
+  <img src="./src/pixel-looks/kael-master.png" alt="同一张图做出的 1x sprite，7 倍显示" width="259" />
+  <br />
+  <em>左：模型画的图（1254x1254，角色本身 88,410 色）。中：直接缩成 33x55（1,033 色）。右：<code>pixel_look.py master</code>（33x55、48 色、没有半透明像素）。</em>
+</p>
+
+- **`pixel_look.py`**（generate2dsprite）：`ask-master` / `master` 做出 1x 母图；`ask-cast` / `cast` 让其他角色站在母图旁边画，像素大小与身高一致；`ask-pose` / `pose`、`ask-view` / `view` 从母图做出姿势与侧面、背面；`lineup` 核对身高。
+- **`pixel_motion.py`**（video2dsprite）：`prepare`、`frames`、`finish`、`measure`、`breath`：把图生视频的每一帧读回 sprite 的网格与调色板（攻击：从 145 帧视频挑出 21 张），导出 nearest 采样的 `animation.json` 3.0。
+- **需要你指定才会运行。**其他都不变：HD、像素、hibit 三种后期及其默认值没有改动。参考图只决定风格，角色必须是你自己的。详见 [English README](./README.md#new-pixel-looks-1x-sprites-that-follow-a-reference) 与 [references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md)。
+
 ## 新功能：hibit，把平涂 AI 图变成真正的像素画
 
 <p align="center">

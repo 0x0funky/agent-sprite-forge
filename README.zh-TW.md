@@ -52,6 +52,7 @@
 </p>
 
 <p align="center">
+  <a href="#新功能pixel-looks照著一張參考圖做出-1x-像素小人">Pixel looks</a> ·
   <a href="#新功能hibit把平塗-ai-圖變成真正的像素畫">Hibit 風格</a> ·
   <a href="#04-新功能大升級">新功能</a> ·
   <a href="#快速開始">快速開始</a> ·
@@ -61,6 +62,77 @@
   <a href="#showcase用-agent-sprite-forge-做的遊戲">Showcase</a> ·
   <a href="#工具">工具</a>
 </p>
+
+## 新功能：pixel looks，照著一張參考圖做出 1x 像素小人
+
+<p align="center">
+  <img src="./src/pixel-looks/battle.gif" alt="384x216 背景上的一場戰鬥：劍士走進場被骷髏騎士砍中、反擊，法師施法後騎士倒下，冰龍咆哮、撲咬，最後一擊後冰龍倒下，劍士舉劍" width="768" />
+  <br />
+  <em>這場戰鬥的角色和動作都是 pixel looks 的產出，以 1x 算圖、2 倍顯示：四個 1x 角色（母圖 33x55 到 87x86）、14 組動作共 168 張圖（從圖生影片讀回來）。後面的背景是一張生成的圖，縮成 384x216、40 色。白色的受擊閃光和骷髏騎士的淡出是 demo 加的，其他什麼都沒加。</em>
+</p>
+
+叫圖像模型畫「像素圖」，它畫出來的是一張「長得像像素」的圖：方塊大小不一（下面這張是 15 到 30 px）、一個小小的角色就有 88,410 種顏色、邊緣是糊的。直接縮小也沒用：照 sprite 的尺寸硬縮，還是有 1,033 種顏色。hibit 的做法是根本不叫模型畫像素；**pixel looks** 反過來，專門做「照著你喜歡的風格」的經典像素小人：風格從不用文字描述，由一張你喜歡的 sprite 當整組角色的參考，再把模型畫出來的圖讀回真正的格線上。`pixel_look.py master` 會找出圖裡自己的格線、每個方塊取一個平塗色、保留角色的比例、把顏色收斂成調色盤，並用規則把描邊封起來。結果數得出來：33x55 格、48 色、alpha 只有 0 或 255、一張 2.5 KB 的 PNG。
+
+<table>
+  <tr>
+    <td align="center" width="40%">
+      <img src="./src/pixel-looks/kael-picture.png" alt="圖像模型畫的銀髮劍士，深色大衣，平塗綠底：看起來像像素圖" width="340" />
+      <br />
+      <strong>圖像模型畫出來的圖</strong>
+      <br />
+      1254x1254 px。光是角色就有 88,410 種顏色，方塊是 15 到 30 px：沒有任何格線對得上。
+    </td>
+    <td align="center" width="30%">
+      <img src="./src/pixel-looks/kael-plain-resize.png" alt="同一張圖直接縮成 33x55、7 倍顯示：眼睛糊成一團、邊緣不整齊、頭髮旁有綠色雜點" width="259" />
+      <br />
+      <strong>直接縮成 33x55</strong>
+      <br />
+      最近鄰取樣，7 倍顯示：1,033 種顏色，還有 3 格留著背景的綠。雙線性則是 1,275 種顏色、413 個半透明像素。
+    </td>
+    <td align="center" width="30%">
+      <img src="./src/pixel-looks/kael-master.png" alt="同一張圖做出的 1x sprite、7 倍顯示：格子乾淨、描邊封閉、臉清楚" width="259" />
+      <br />
+      <strong><code>pixel_look.py master</code></strong>
+      <br />
+      同一張圖照它自己的格線讀出來，7 倍顯示：33x55、48 色、沒有半透明像素。
+    </td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="./src/pixel-looks/closeup.png" alt="臉上的同一塊畫兩次：模型畫的圖方塊大小不一、邊緣糊且沾色；sprite 每一格都是一個平塗色" width="742" />
+  <br />
+  <em>臉上的同一塊：左邊是模型畫的圖（2 倍），右邊是 sprite（40 倍）。</em>
+</p>
+
+<p align="center">
+  <img src="./src/pixel-looks/cast.gif" alt="劍士、法師、骷髏騎士和冰龍站在同一條地平線上，輪流待機並各做一個動作：揮劍、施法、揮砍、咆哮" width="808" />
+  <br />
+  <em><strong>整組角色都跟著第一張走。</strong>之後的每個角色都和第一張 sprite 畫在同一張圖裡（<code>ask-cast</code>、<code>cast</code>），像素大小和身高才會一致：法師、骷髏騎士、冰龍，各 48 色。</em>
+</p>
+
+<p align="center">
+  <img src="./src/pixel-looks/sets.gif" alt="劍士的待機、走路、攻擊、受擊、勝利，以及冰龍的咆哮、撲咬、倒下，各標出張數" width="812" />
+  <br />
+  <em><strong>姿勢、視角和動作都從母圖出發。</strong>姿勢是「母圖只改一處」（拿劍的姿勢：改了 217 格，母圖保留 91%），視角是和母圖畫在同一張圖裡。動作來自這張 sprite 的圖生影片：<code>pixel_motion.py</code> 把每一格讀回 sprite 自己的格線和調色盤（攻擊：從 145 格影片挑出 21 張）。數字是每組動作的張數。</em>
+</p>
+
+| 實機量測（2026-11-12） | |
+|---|---:|
+| 劍士的生成圖（角色本身） | 1254x1254、88,410 色、方塊 15-30 px |
+| 同一張圖縮成 33x55：最近鄰 / 雙線性 | 1,033 色 / 1,275 色與 413 個半透明像素 |
+| `pixel_look.py master` | 33x55、48 色、0 個半透明像素、2.5 KB |
+| 其他角色：法師 / 骷髏騎士 / 冰龍 | 45x56 / 50x55 / 87x86，各 48 色 |
+| 從母圖做拿劍姿勢 | 改 217 格，母圖保留 91% |
+| 一段影片做出攻擊動作 | 從 145 格影片挑出 21 張 |
+| 整場戰鬥 | 14 組動作、168 張圖；每張都只用自己那張 sprite 的顏色，沒有半透明像素 |
+
+新增內容：
+
+- **`pixel_look.py`**（generate2dsprite）：`ask-master` 與 `master` 把你喜歡的角色單獨、放大重畫一次，再讀成 1x 母圖；`ask-cast` 與 `cast` 讓之後的角色都站在母圖旁邊畫；`ask-pose`、`pose`、`ask-view`、`view` 從母圖做出姿勢與側面、背面；`lineup` 把所有圖排在同一條地平線上並回報身高。
+- **`pixel_motion.py`**（video2dsprite）：`prepare`、`frames`、`finish`、`measure`、`breath`：把圖生影片的每一格讀回 sprite 的格線與調色盤，從中挑出循環或動作，輸出 nearest 取樣的 `animation.json` 3.0。
+- **要你指定才會跑。**其他都不變：HD、像素、hibit 三種後製與它們的預設值完全沒動。
+- 參考圖只決定風格（像素大小、上色方式、描邊）；角色要是你自己的。完整流程、你在哪幾步點頭、以及限制：[references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md)。
 
 ## 新功能：hibit，把平塗 AI 圖變成真正的像素畫
 
@@ -633,8 +705,10 @@ approve             gates, retakes, soft     --auto-oneshot          pixel, colo
 | | `palette_tool.py`、`pixel_reduce.py` | OKLab 調色盤、鎖色、變體、不閃爍的 clip 量化；整數像素網格縮減 |
 | | `export_engine.py` | Aseprite JSON、Godot SpriteFrames 與 AnimatedSprite3D（尚未在編輯器驗證匯入） |
 | | `fx_pixelfx.py`、`hibit_fx.py` | hibit 特效：`check` 選 A 路徑（有裝 pixelfx）或 B 路徑；`render` 產生 pixelfx 特效並附出處；`pixelize` 把生圖特效 sheet 轉成 hibit 像素 |
+| | `pixel_look.py` | pixel looks（需指定）：`ask-master`/`master`、`ask-cast`/`cast`、`ask-pose`/`pose`、`ask-view`/`view`、`lineup`：照著參考圖的 1x 像素小人，照圖裡自己的格線讀出來；整組角色、姿勢與視角都從一張母圖出發 |
 | video2dsprite | `sprite_set.py` | `plan`、`run`、`review`、`accept`、`retake`、`report`：從一張原畫為每個動作做一支影片，把關、重拍、後製與打包 |
 | | `finish_frames.py`、`colour_lock.py` | HD（預設）、像素或 hibit 後製、共用調色盤、角色身高對照；顏色鎖定到原畫與其量測 |
+| | `pixel_motion.py` | pixel looks 的動作：`prepare`、`frames`、`finish`、`measure`、`breath`：影片每一格讀回 sprite 的格線與調色盤，以 nearest 取樣打包動作組 |
 | | `video2dsprite.py` | `key-plan`、`triage`、soft matte `process`/`clean`、`package`、`verify`、`doctor` |
 | | `prepare_i2v_input.py`、`register_clip.py` | 建構式對位：以記錄的轉換放置輸入，再用一次反向轉換拉回，並做 take QC |
 | | `gait_loop.py`、`retime.py`、`animation_review.py` | 量測挑選走路／跑步／idle 循環與步幅；單次動作自動重新計時，以及 tick 上的 impact/hold 計時；分類候選 |
@@ -689,6 +763,10 @@ Use $video2dsprite to turn the approved fox master into idle, run, attack and hu
 Use $generate2dsprite and $video2dsprite with the hibit finish: a fox mage master as flat lineless art, then idle, walk, cast and hurt at 80 px, and a falling-star cast FX in her palette (pixelfx if I have it, else the image route).
 ```
 
+```text
+Use $generate2dsprite with the pixel-looks route: ref.png is a sprite whose look I like. Make my own swordsman as a 1x sprite in that look, then a mage and a skeleton knight beside him, and use $video2dsprite for idle, walk and attack sets on the same pixel grid.
+```
+
 ### Sprite 與特效
 
 ```text
@@ -728,6 +806,7 @@ Use $generate2dsprite to create a 2D monster-collecting RPG. You only need to bu
 - 圖生影片模型在快速擺動的四肢與跳躍上會漂移。跑步與跳躍通常需要重拍；把關與修正條款就是為此存在，實機紀錄裡寫了實際花了幾次。
 - 已證明與未證明的事項見 [docs/known-limitations.md](./docs/known-limitations.md)；實機結果見 [docs/validation-2026-10-06.md](./docs/validation-2026-10-06.md)。
 - 0.4.0 匯出檔在引擎與編輯器中的匯入尚未驗證（見 [引擎匯出](#引擎匯出)）。
+- pixel looks：圖生影片是 720p，約 80x110、動作幅度大的 sprite 在影片裡每個 sprite 像素只有 4 px，暗部的色階比較容易跳動。限制寫在 [references/pixel-looks.md](./skills/generate2dsprite/references/pixel-looks.md)。
 
 ## 生成素材與授權
 
@@ -752,7 +831,7 @@ agent-sprite-forge/
   tools/                 install_skills.py, vendor_sync.py, check_links.py
   tests/                 pytest and node suites, fixtures with provenance
   docs/                  validation records, known limitations, audit
-  src/                   README media (src/v040: the 0.4 showcase; src/hibit: the hibit showcase)
+  src/                   README media (src/v040: the 0.4 showcase; src/hibit: the hibit showcase; src/pixel-looks: the pixel-looks showcase)
   CHANGELOG.md
 ```
 
