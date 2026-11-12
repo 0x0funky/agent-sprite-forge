@@ -121,6 +121,29 @@ def test_frames_puts_every_frame_back_on_the_sprites_grid_and_palette(clip):
 
 
 @pytest.mark.ffmpeg
+def test_frames_reads_a_clip_whose_lattice_lies_a_little_before_the_jobs_where_the_sprite_is(tmp_path):
+    require_ffmpeg()
+    sprite = toy_sprite()
+    Image.fromarray(sprite, "RGBA").save(tmp_path / "hero.png")
+    ok("prepare", "--sprite", tmp_path / "hero.png", "--action", "walk", "--canvas", "%d,%d" % CANVAS, "--scale", 8, "--subject",
+       "a toy knight", "--output-dir", tmp_path / "job")
+    job = json.loads((tmp_path / "job" / "registration_job.json").read_text(encoding="utf-8"))
+    scale, (ox, oy) = job["referenceScale"], job["referenceOffset"]
+    size = (16 + 2 * MINE[0], 24 + 2 * MINE[1])
+    key = tuple(int(v) for v in rgba(tmp_path / "job" / "input.png")[0, 0, :3])
+    corner = (ox - MINE[0] * scale - 3, oy - MINE[1] * scale - 3)             # the model drew everything 3 px up and to the left
+    frames = [video_frame(pose(n, size, MINE), scale, corner, CANVAS, key) for n in (0, 0, 0, 1, 1, 1, 2, 2, 2, 0, 0, 0)]
+    av.encode_h264_loop(frames, tmp_path / "clip.mp4", "24/1", crf=10)
+    read = ok("frames", "--clip", tmp_path / "clip.mp4", "--job", tmp_path / "job", "--output-dir", tmp_path / "frames")
+    assert scale == 8 and read["firstFrameDiffers"] == 0 and read["warnings"] == []
+    record = json.loads((tmp_path / "frames" / "frames.json").read_text(encoding="utf-8"))
+    assert all(-8 < v < 0 for v in record["frames"][0]["shift"])                 # a shift backwards, not 5 px forward
+    at = tuple(record["spriteAt"])
+    assert (rgba(tmp_path / "frames" / "frames" / "frame_000.png") == pose(0, tuple(record["canvas"]), at)).all()
+    assert (rgba(tmp_path / "frames" / "frames" / "frame_007.png") == pose(2, tuple(record["canvas"]), at)).all()
+
+
+@pytest.mark.ffmpeg
 def test_finish_picks_one_cycle_cleans_it_and_packages_it(clip):
     root = clip["root"]
     out = root / "walk"
@@ -232,6 +255,25 @@ def test_prepare_roots_the_sprite_at_its_feet_and_not_at_a_blade(tmp_path):
     assert job["anchorMode"] == "explicit" and job["sourceAnchor"] == [16.0, 24.0]
     named = ok(*base, "--anchor", "12,24", "--output-dir", tmp_path / "named")
     assert named["anchor"] == [12.0, 24.0]
+    assert motion.PIXEL_PARAGRAPH in Path(named["prompt"]).read_text(encoding="utf-8")
+    assert prepared["keyColor"] == "magenta" and motion.quiet_key(armed) == "magenta"
+    purplish = armed.copy()                                    # a lit, purplish edge: on magenta the package would count it
+    ring = (purplish[..., 3] > 0) & (purplish[..., :3] == np.asarray(LINE)).all(axis=2)
+    purplish[ring, :3] = (123, 96, 118)
+    green = (purplish[..., 3] > 0) & (purplish[..., :3] == np.asarray((92, 160, 84))).all(axis=2)
+    purplish[green, :3] = (226, 178, 132)                      # no green of its own: green is a key it does not fight
+    Image.fromarray(purplish, "RGBA").save(tmp_path / "purplish.png")
+    quiet = ok("prepare", "--sprite", tmp_path / "purplish.png", "--action", "attack", "--canvas", "%d,%d" % CANVAS,
+               "--output-dir", tmp_path / "quiet")
+    assert quiet["keyColor"] == "green" and motion.quiet_key(purplish) == "green" and quiet["warnings"] == []
+    leans = motion.key_leanings(purplish)
+    assert leans["magenta"][0] > 0.9 and leans["green"] == (0.0, 0.0) and leans["blue"][1] > motion.OWN_MOST
+    asked = ok("prepare", "--sprite", tmp_path / "purplish.png", "--action", "attack", "--canvas", "%d,%d" % CANVAS, "--key",
+               "magenta", "--output-dir", tmp_path / "asked")
+    assert asked["keyColor"] == "magenta" and "lean to the magenta key" in asked["warnings"][0]
+    drawn = ok(*base, "--outline", "drawn", "--output-dir", tmp_path / "drawn")       # a look without an outline
+    words = Path(drawn["prompt"]).read_text(encoding="utf-8")
+    assert motion.PIXEL_PARAGRAPH_DRAWN in words and "the dark outline" not in words
     fails(*base, "--anchor", "left", "--output-dir", tmp_path / "bad", code=2)
     assert not (tmp_path / "bad").exists()
 

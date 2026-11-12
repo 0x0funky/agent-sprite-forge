@@ -9,8 +9,12 @@ image model drew freely, or from your own art), or a sprite this tool made befor
               again, once and large, on a flat key colour. Nothing is generated here: give prompt.txt and the
               reference to generate2dmedia/scripts/route_media.py image.
   master      The picture -> the master sprite: the picture's own grid is found and every cell gives one colour,
-              what is left of the key colour on the edge goes, the outline is closed by rule, and the colours are
-              brought down without losing a hue. A picture whose cells are under 8 px is refused: small soft
+              what is left of the key colour on the edge goes, the outline is closed by rule (--outline drawn, for
+              a look without an outline, keeps the edge as the picture has it), and the colours are brought down
+              without losing a hue. The figure keeps the proportions it has in the picture: an image model's blocks
+              are often a tenth to a fifth taller than wide, and one pixel a block would give a flatter figure,
+              so the rows that show least are doubled (--proportions blocks: one pixel a block, as it comes). A
+              picture whose cells are under 8 px is refused: small soft
               cells give no edge (ask for ONE figure, large). Writes <name>.png (1x), <name>-how.png (the sprite
               on one exact grid: the --how of the next character), <name>-review.png (the picture beside the
               sprite), <name>-grounds.png (the sprite on a pale, a grey and a dark ground: look at its edge on
@@ -40,9 +44,9 @@ image model drew freely, or from your own art), or a sprite this tool made befor
               the master's top, neck and feet: lineup.png and the heights as numbers. Run it before any motion is
               shown: a figure that grew, shrank or got thinner shows at once.
 
-An image model paints "pixel art" as squares that are not all one size and do not sit on a grid. `master` follows
-the picture's own grid, so the sprite's size is what the picture had, not a number from a prompt: look at the
-review picture and at the size in <name>.json.
+An image model paints "pixel art" as blocks that are not all one size, not always square, and do not sit on a
+grid. `master` follows the picture's own grid, so the sprite's size is what the picture had, not a number from a
+prompt: look at the review picture and at the size in <name>.json.
 
 Names and texts name no title. Success prints one ASCII JSON line; errors print "error: ..." and exit 1 and leave
 nothing behind; usage errors exit 2. Nothing is ever replaced.
@@ -159,13 +163,18 @@ def _picture_colours(path: Path) -> np.ndarray:
 
 
 BACKGROUND = ("The background is one perfectly flat pure {name} everywhere outside the figure, and there is no {avoid} "
-              "on the figure. No shadow, no floor, no glow, no effect, no text, no frame. The figure ends in a crisp, "
-              "closed dark outline against the background, with no soft halo around it.")
+              "on the figure. No shadow, no floor, no glow, no effect, no text, no frame. {edge}")
+OUTLINES = ("rule", "drawn")       # rule: a look with a dark outline, closed by rule; drawn: the edge is kept as the picture has it
+EDGE = {"rule": "The figure ends in a crisp, closed dark outline against the background, with no soft halo around it.",
+        "drawn": "The figure's edge against the background is crisp and is drawn exactly as in the attached image: no "
+                 "outline is added around it, and there is no soft halo."}
+SAME_EDGE = {"rule": "the same dark outline one pixel wide", "drawn": "the same edges with no outline added"}
+KIND_OF_EDGE = {"rule": "the same kind of outline", "drawn": "the same kind of edges (no outline around the figure)"}
 
 
 # --------------------------------------------------------------------------- ask-master
 
-def master_prompt(subject: str, key: str) -> str:
+def master_prompt(subject: str, key: str, outline: str = "rule") -> str:
     name, avoid = KEYS[key][1], KEYS[key][2]
     return "\n\n".join([
         "Create exactly ONE square image.",
@@ -177,8 +186,8 @@ def master_prompt(subject: str, key: str) -> str:
         "quarters of the picture's height.",
         "It is real pixel art: the figure is built from square pixel blocks, each block clearly visible, with sharp "
         "edges between the blocks.",
-        "The only changes from the attached image: " + BACKGROUND.format(name=name, avoid=avoid) + " Nothing else is "
-        "in the picture.",
+        "The only changes from the attached image: " + BACKGROUND.format(name=name, avoid=avoid, edge=EDGE[outline])
+        + " Nothing else is in the picture.",
     ]) + "\n"
 
 
@@ -187,13 +196,14 @@ def cmd_ask_master(o: argparse.Namespace) -> dict:
     if not how.is_file():
         raise LookError(f"reference {how} does not exist")
     key = o.key if o.key != "auto" else far_key(_picture_colours(how))
-    text = master_prompt(o.subject, key)
+    text = master_prompt(o.subject, key, o.outline)
     out = _new_dir(o.output_dir)
     (out / "prompt.txt").write_text(text, encoding="utf-8", newline="\n")
     record = {"schema": REQUEST_SCHEMA, "tool": TOOL_NAME, "kind": "master", "subject": o.subject, "key": key,
-              "references": [str(how)], "size": f"{PICTURE}x{PICTURE}",
+              "outline": o.outline, "references": [str(how)], "size": f"{PICTURE}x{PICTURE}",
               "next": f"route_media.py image --prompt-file prompt.txt --reference {how} --size {PICTURE}x{PICTURE} "
-                      "--out-dir <take>; then pixel_look.py master --image <take>/generated.png"}
+                      "--out-dir <take>; then pixel_look.py master --image <take>/generated.png"
+                      + (" --outline drawn" if o.outline == "drawn" else "")}
     _write_json(out / "request.json", record)
     return {"status": "ok", "prompt": str(out / "prompt.txt"), "request": str(out / "request.json"), "key": key,
             "references": record["references"], "words": len(text.split())}
@@ -201,28 +211,74 @@ def cmd_ask_master(o: argparse.Namespace) -> dict:
 
 # --------------------------------------------------------------------------- master
 
-def clean_edge(sprite: np.ndarray, key: Sequence[float]) -> dict:
+def clean_edge(sprite: np.ndarray, key: Sequence[float], outline: str = "rule") -> dict:
     """What a key-colour ground leaves on a read sprite (in place): edge cells mixed with the key, rare colours
-    tinted by it, edge cells that are still nearly the key, small gaps inside the figure that are, and islands."""
-    line = pg.outline_colour(sprite)
+    tinted by it, edge cells that are still nearly the key, small gaps inside the figure that are, edge cells that
+    still carry key by the package gate's measure, and islands. A
+    look with an outline (``outline`` "rule") knows its line colour: a cell that is that colour mixed with key is a
+    line cell again. A look without one has no such colour, and those two steps are left out."""
+    line = pg.outline_colour(sprite) if outline == "rule" else None
     mixed = pg.drop_key_mixed(sprite, key, line=line)
     return {"keyMixed": mixed, "keyTinted": int(pg.drop_key_tinted(sprite, key)), "keyNear": int(pg.drop_key_near(sprite, key)),
-            "keyHoles": int(pg.drop_key_holes(sprite, key)), "keyInked": int(pg.ink_key_mixed(sprite, key, line)),
-            "islandCells": int(pg.remove_islands(sprite, 4))}
+            "keyHoles": int(pg.drop_key_holes(sprite, key)),
+            "keyInked": int(pg.ink_key_mixed(sprite, key, line)) if line is not None else 0,
+            "keySpill": pg.drop_key_spill(sprite, key), "islandCells": int(pg.remove_islands(sprite, 4))}
 
 
-def finish_colours(sprite: np.ndarray, colors: int, line: Sequence[int]) -> None:
-    """The sprite's colours brought down to ``colors`` (in place), the line colour kept as it is."""
+def finish_colours(sprite: np.ndarray, colors: int, line: Sequence[int] | None) -> None:
+    """The sprite's colours brought down to ``colors`` (in place); the line colour of a look that has one is kept."""
     if not colors:
         return
-    opaque = sprite[..., 3] > 0
-    is_line = opaque & (sprite[..., :3] == np.asarray(line, np.uint8)).all(axis=2)
-    rest = opaque & ~is_line
-    if rest.any():
-        sprite[rest, :3] = pg.fewer_colours(sprite[rest][:, :3], max(1, colors - 1))
+    rest = sprite[..., 3] > 0
+    if line is not None:
+        rest &= ~(sprite[..., :3] == np.asarray(line, np.uint8)).all(axis=2)
+    if rest.any():           # a small palette counts hue more than lightness (a skin tone is not lost among greys) and
+        few = colors <= pg.FEW_COLOURS                    # keeps colours the picture had
+        sprite[rest, :3] = pg.fewer_colours(sprite[rest][:, :3], max(1, colors - (1 if line is not None else 0)),
+                                            hue=pg.FEW_HUE if few else 1.0, common=few)
 
 
-def master_from(picture: np.ndarray, *, colors: int = 48, line: Sequence[int] | None = None) -> tuple[np.ndarray, dict]:
+def close_outline(sprite: np.ndarray, line: Sequence[int] | None, outline: str = "rule", only: np.ndarray | None = None
+                  ) -> tuple[np.ndarray, dict]:
+    """The sprite with its outline closed by rule (a look with an outline), or as it is, cropped to the figure (a look
+    whose edge is kept as drawn). The record is rule_outline's, with "mode"; "offset" is where the input's cell (0, 0)
+    lies in the result."""
+    if outline == "rule":
+        result, record = pg.rule_outline(sprite, line, only=only)
+        return result, dict(record, mode="rule")
+    ys, xs = np.where(sprite[..., 3] > 0)
+    if not len(xs):
+        raise LookError("the sprite is empty")
+    x0, y0 = int(xs.min()), int(ys.min())
+    result = np.ascontiguousarray(sprite[y0:int(ys.max()) + 1, x0:int(xs.max()) + 1])
+    return result, {"mode": "drawn", "line": None, "specks": 0, "bareCells": 0, "lineCellsAdded": 0, "closed": False,
+                    "offset": [-x0, -y0]}
+
+
+PROPORTIONS = ("picture", "blocks")   # picture: the figure keeps the proportions it has in the picture; blocks: one pixel a block
+SAME_SHAPE = 0.04                  # blocks whose height and width differ by less than this share count as square
+
+
+def keep_proportions(sprite: np.ndarray, cell: Sequence[float], mode: str = "picture", line: Sequence[int] | None = None
+                     ) -> tuple[np.ndarray, dict]:
+    """The sprite with the proportions the figure has in the picture. ``cell`` is the mean size of the picture's
+    blocks, [px, py]. An image model's blocks are often not square (a tenth to a fifth taller than wide): one pixel
+    a block then gives a flatter figure than the picture shows. No cell is dropped or redrawn: the rows (or the
+    columns) that show least are doubled until the proportions are the picture's, and an outline (``line``, its
+    colour) stays one cell thick. With ``mode`` "blocks" nothing is doubled and only the record is made."""
+    taller = float(cell[1]) / float(cell[0])
+    h, w = sprite.shape[:2]
+    report = {"mode": mode, "blockPx": [round(float(cell[0]), 2), round(float(cell[1]), 2)],
+              "blocksTallerBy": round(taller, 4), "sizeInBlocks": [int(w), int(h)], "rowsDoubled": [], "columnsDoubled": []}
+    if mode == "picture" and taller > 1.0 + SAME_SHAPE:
+        sprite, report["rowsDoubled"] = pg.add_rows(sprite, int(round(h * (taller - 1.0))), line)
+    elif mode == "picture" and 1.0 / taller > 1.0 + SAME_SHAPE:
+        sprite, report["columnsDoubled"] = pg.add_columns(sprite, int(round(w * (1.0 / taller - 1.0))), line)
+    return sprite, report
+
+
+def master_from(picture: np.ndarray, *, colors: int = 48, line: Sequence[int] | None = None, outline: str = "rule",
+                proportions: str = "picture") -> tuple[np.ndarray, dict]:
     """The model's picture -> the master and the record of what was done."""
     snap = pg.snap_picture(picture, colors=4096, gap=0.0)
     cell = min(float(v) for v in snap["period"])
@@ -230,12 +286,13 @@ def master_from(picture: np.ndarray, *, colors: int = 48, line: Sequence[int] | 
         raise LookError(f"the picture's cells are only about {cell:.1f} px: cells this small are soft and give no clean edge. "
                         f"Ask for ONE figure, large (cells of {MIN_CELL} px or more)")
     sprite = snap["sprite"].copy()
-    edge = clean_edge(sprite, snap["key"])
+    edge = clean_edge(sprite, snap["key"], outline)
     sprite = pg.crop_to_figure(sprite).copy()
-    sprite, outline = pg.rule_outline(sprite, line)
-    finish_colours(sprite, colors, outline["line"])
+    sprite, closed = close_outline(sprite, line, outline)
+    finish_colours(sprite, colors, closed["line"])
+    sprite, shape = keep_proportions(sprite, snap["cell"], proportions, closed["line"])     # on the finished colours
     info = {"method": snap["method"], "cellPx": snap["period"], "purity": snap["purity"], "key": snap["key"], "edge": edge,
-            "outline": outline}
+            "outline": closed, "proportions": shape}
     return sprite, info
 
 
@@ -283,7 +340,8 @@ def cmd_master(o: argparse.Namespace) -> dict:
         raise LookError(f"{source} does not exist")
     picture = np.asarray(Image.open(source).convert("RGB"))
     try:
-        sprite, info = master_from(picture, colors=o.colors, line=_rgb(o.line) if o.line else None)
+        sprite, info = master_from(picture, colors=o.colors, line=_rgb(o.line) if o.line else None, outline=o.outline,
+                                   proportions=o.proportions)
     except ValueError as error:
         raise LookError(str(error)) from None
     out = _new_dir(o.output_dir)
@@ -298,11 +356,16 @@ def cmd_master(o: argparse.Namespace) -> dict:
     record.update({"key": key_name, "howZoom": zoom, "read": info, "source": {"image": str(source), "sha256": _sha256(source)},
                    "files": {"sprite": f"{name}.png", "how": f"{name}-how.png", "review": f"{name}-review.png",
                              "grounds": f"{name}-grounds.png"},
-                   "note": "The sprite's size is what the picture had. Look at the review picture, and at the sprite's edge on "
-                           "every ground, before anything is made from it."})
+                   "note": "The sprite's size comes from the picture: one pixel a block, and where the picture's blocks are "
+                           "not square, rows or columns doubled so that the figure keeps its proportions (read.proportions). "
+                           "Look at the review picture, and at the sprite's edge on every ground, before anything is made "
+                           "from it."})
     _write_json(out / f"{name}.json", record)
+    shape = info["proportions"]
     return {"status": "ok", "sprite": str(out / f"{name}.png"), "size": record["size"], "colours": record["colours"],
-            "cellPx": info["cellPx"], "outlineClosed": info["outline"]["closed"], "how": str(out / f"{name}-how.png"),
+            "cellPx": info["cellPx"], "blockPx": shape["blockPx"], "rowsDoubled": len(shape["rowsDoubled"]),
+            "columnsDoubled": len(shape["columnsDoubled"]), "outlineClosed": info["outline"]["closed"],
+            "how": str(out / f"{name}-how.png"),
             "review": str(out / f"{name}-review.png"), "grounds": str(out / f"{name}-grounds.png"),
             "record": str(out / f"{name}.json")}
 
@@ -348,12 +411,13 @@ def _ask_common(o: argparse.Namespace, kind: str, canvas: Sequence[int], cell: i
               "next": f"route_media.py image --prompt-file prompt.txt --reference reference.png --size {size} --out-dir <take>; "
                       f"then pixel_look.py {kind} --image <take>/generated.png --request <this folder>"}
     record.update(extra)
+    record["outline"] = getattr(o, "outline", "rule")
     _write_json(out / "request.json", record)
     return {"status": "ok", "reference": str(out / "reference.png"), "prompt": str(out / "prompt.txt"),
             "request": str(out / "request.json"), "key": key, "cell": int(cell), "size": size, "words": len(text.split())}
 
 
-def pose_prompt(change: str, cell: int, key: str) -> str:
+def pose_prompt(change: str, cell: int, key: str, outline: str = "rule") -> str:
     name = KEYS[key][1]
     return "\n\n".join([
         "Create exactly ONE square image.",
@@ -361,7 +425,7 @@ def pose_prompt(change: str, cell: int, key: str) -> str:
         f"{cell} px in it is one pixel of the sprite.",
         "Reproduce the attached image: the same single figure at exactly the same size and in the same place on the "
         "canvas, the same pixel art on the same coarse, regular square pixel grid, every pixel exactly as large as in "
-        "the attached image, one flat colour per pixel, hard edges, the same dark outline one pixel wide, the same colours.",
+        f"the attached image, one flat colour per pixel, hard edges, {SAME_EDGE[outline]}, the same colours.",
         "THE ONLY CHANGE: " + _sentence(change),
         "Everything that the change does not name is NOT redrawn: it stays exactly as it is, pixel for pixel, in the "
         f"same place. The background stays the same flat pure {name} everywhere, with no shadow and nothing else in the "
@@ -392,25 +456,25 @@ def cmd_ask_pose(o: argparse.Namespace) -> dict:
     spare_y = PICTURE // cell - (h + top + bottom)
     at = (left + spare_x // 2, top + spare_y // 2)
     key = o.key if o.key != "auto" else far_key(master[master[..., 3] > 0][:, :3])
-    return _ask_common(o, "pose", (PICTURE, PICTURE), cell, at, pose_prompt(o.change, cell, key), master, key,
+    return _ask_common(o, "pose", (PICTURE, PICTURE), cell, at, pose_prompt(o.change, cell, key, o.outline), master, key,
                        {"change": o.change})
 
 
-def view_prompt(view: str, details: Sequence[str], cell: int, key: str) -> str:
+def view_prompt(view: str, details: Sequence[str], cell: int, key: str, outline: str = "rule") -> str:
     name = KEYS[key][1]
     parts = [
         "Create exactly ONE wide landscape image (3:2), the same size and layout as the attached image.",
         f"One image is attached: on its left half stands a pixel-art game sprite on a flat {name} background, shown "
         f"enlarged. Every square of {cell} px in it is one pixel of the sprite. The right half is empty.",
         "Reproduce the attached image: the same figure on the left, at exactly the same size and in the same place, the "
-        "same pixel art on the same coarse, regular square pixel grid, one flat colour per pixel, hard edges, the same "
-        "dark outline one pixel wide, the same colours.",
+        "same pixel art on the same coarse, regular square pixel grid, one flat colour per pixel, hard edges, "
+        f"{SAME_EDGE[outline]}, the same colours.",
         "THE ONLY CHANGE: in the empty right half, add a SECOND figure: the SAME character " + _sentence(view),
         "The second figure is drawn by the same pixel artist on the same pixel grid, with pixels exactly as large as the "
         "first figure's. It is exactly as tall as the first figure: its highest point and the soles of its feet are on "
         "the same two horizontal lines as the first figure's. It has the same head size, the same body and legs, the "
-        "same colours, the same kind of outline and shading. It is not taller, not thinner and not more detailed than "
-        "the first figure.",
+        f"same colours, {KIND_OF_EDGE[outline]} and the same kind of shading. It is not taller, not thinner and not "
+        "more detailed than the first figure.",
     ]
     if details:
         parts.append("In this view: " + " ".join(_sentence(d) for d in details))
@@ -434,7 +498,7 @@ def cmd_ask_view(o: argparse.Namespace) -> dict:
         raise LookError(f"--cell {cell} does not fit the sprite on half of the picture")
     at = (max(1, (half // cell - w) // 2), max(1, (WIDE[1] // cell - h) // 2))
     key = o.key if o.key != "auto" else far_key(master[master[..., 3] > 0][:, :3])
-    return _ask_common(o, "view", WIDE, cell, at, view_prompt(words, o.detail or (), cell, key), master, key,
+    return _ask_common(o, "view", WIDE, cell, at, view_prompt(words, o.detail or (), cell, key, o.outline), master, key,
                        {"view": o.view or "custom", "viewWords": words})
 
 
@@ -443,7 +507,7 @@ SAME_HEIGHT = ("It is exactly as tall as the first figure: the top of its head a
                "staff, a blade, horns, a hat) may rise above that line.")
 
 
-def cast_prompt(subject: str, pose: str | None, size: str | None, cell: int, key: str) -> str:
+def cast_prompt(subject: str, pose: str | None, size: str | None, cell: int, key: str, outline: str = "rule") -> str:
     name, avoid = KEYS[key][1], KEYS[key][2]
     return "\n\n".join([
         "Create exactly ONE wide landscape image (3:2), the same size and layout as the FIRST attached image.",
@@ -453,14 +517,14 @@ def cast_prompt(subject: str, pose: str | None, size: str | None, cell: int, key
         f"The SECOND image is a picture of another character of the same game: {subject.strip().rstrip('.')}. It shows "
         "WHO to draw: the design and the colours, not its style and not its proportions.",
         "Reproduce the FIRST image: the same figure at the left, at exactly the same size and in the same place, the "
-        "same pixel art on the same coarse, regular square pixel grid, one flat colour per pixel, hard edges, the same "
-        "dark outline one pixel wide, the same colours.",
+        "same pixel art on the same coarse, regular square pixel grid, one flat colour per pixel, hard edges, "
+        f"{SAME_EDGE[outline]}, the same colours.",
         "THE ONLY CHANGE: in the empty area to the right, add a SECOND figure: the character of the SECOND image, "
         "drawn as a sprite of the same game by the same pixel artist, right after the first sprite.",
         "The second figure is drawn on the same pixel grid, with pixels exactly as large as the first figure's, and it "
         "stands on the same ground line: the soles of its feet are on the same horizontal line as the first figure's. "
         + _sentence(size or SAME_HEIGHT) + " It has the same kind of body build and head size as the first figure, "
-        "the same kind of outline, the same kind of shading and the same colour mood. It is not more detailed than "
+        f"{KIND_OF_EDGE[outline]}, the same kind of shading and the same colour mood. It is not more detailed than "
         "the first figure.",
         "Pose: " + _sentence(pose or "the same view and the same stance as the first figure"),
         f"The two figures stand well apart and do not touch. The background stays the same flat pure {name} "
@@ -487,7 +551,7 @@ def cmd_ask_cast(o: argparse.Namespace) -> dict:
     at = (2, rows - h - 4)                                   # at the left, on a ground line near the bottom: room above
     colours = np.concatenate([master[master[..., 3] > 0][:, :3].astype(np.float32), _picture_colours(who)])
     key = o.key if o.key != "auto" else far_key(colours)
-    text = cast_prompt(o.subject, o.pose, o.size, cell, key)
+    text = cast_prompt(o.subject, o.pose, o.size, cell, key, o.outline)
     size = f"{WIDE[0]}x{WIDE[1]}"
     return _ask_common(o, "cast", WIDE, cell, at, text, master, key,
                        {"subject": o.subject, "sameHeight": not o.size, "references": ["reference.png", str(who)],
@@ -569,8 +633,9 @@ def cmd_pose(o: argparse.Namespace) -> dict:
         raise LookError("the picture shows no change: every cell is the master's. Generate again, or say the change more plainly")
     # the taken part only: the key colour left on it (as on a master), its colours, its outline; every other cell
     # stays the master's
+    mode = request.get("outline", "rule")
     cleaned = out.copy()
-    edge = clean_edge(cleaned, key)
+    edge = clean_edge(cleaned, key, mode)
     out[region] = cleaned[region]
     opaque = out[..., 3] > 0
     take = region & opaque
@@ -584,7 +649,7 @@ def cmd_pose(o: argparse.Namespace) -> dict:
     x0, y0 = int(xs.min()), int(ys.min())
     cropped = np.ascontiguousarray(out[y0:int(ys.max()) + 1, x0:int(xs.max()) + 1])
     only = np.ascontiguousarray((region & opaque)[y0:int(ys.max()) + 1, x0:int(xs.max()) + 1])
-    sprite, outline = pg.rule_outline(cropped, pg.outline_colour(master), only=only)
+    sprite, outline = close_outline(cropped, pg.outline_colour(master), mode, only=only)
     where = [at[0] - x0 + outline["offset"][0], at[1] - y0 + outline["offset"][1]]       # the master's cell (0, 0) in the pose
     part = sprite[where[1]:where[1] + mh, where[0]:where[0] + mw]
     kept = int(((master[..., 3] > 0) & (part[..., 3] > 0) & (part[..., :3] == master[..., :3]).all(axis=2)).sum())
@@ -641,7 +706,7 @@ def second_figure(picture: np.ndarray, request: dict, master: np.ndarray) -> tup
     lattice = np.zeros((rows, cols, 4), dtype=np.uint8)
     lattice[mask, :3] = np.round(cells[mask])
     lattice[mask, 3] = 255
-    edge = clean_edge(lattice, key)
+    edge = clean_edge(lattice, key, request.get("outline", "rule"))
     ys, xs = np.where(lattice[..., 3] > 0)
     x0, y0 = int(xs.min()), int(ys.min())
     cropped = np.ascontiguousarray(lattice[y0:int(ys.max()) + 1, x0:int(xs.max()) + 1])
@@ -684,7 +749,7 @@ def cmd_view(o: argparse.Namespace) -> dict:
     opaque = cropped[..., 3] > 0
     colours, new_colours = pg.to_palette(cropped[opaque][:, :3], pg.palette_of(master), extra=o.new_colours)
     cropped[opaque, :3] = colours
-    sprite, outline = pg.rule_outline(cropped, pg.outline_colour(master))
+    sprite, outline = close_outline(cropped, pg.outline_colour(master), request.get("outline", "rule"))
     tall, ruler_tall = _heights(sprite, master)
     soles = read["top"] - outline["offset"][1] + pg.boots(sprite)[1] - pg.boots(master)[1]     # under the master's, in cells
     warnings = []
@@ -716,7 +781,7 @@ def cmd_cast(o: argparse.Namespace) -> dict:
         raise LookError(f"{source} does not exist")
     picture = np.asarray(Image.open(source).convert("RGB"))
     cropped, read = second_figure(picture, request, master)
-    sprite, outline = pg.rule_outline(cropped, pg.outline_colour(master))
+    sprite, outline = close_outline(cropped, pg.outline_colour(master), request.get("outline", "rule"))
     finish_colours(sprite, o.colors, outline["line"])
     tall, ruler_tall = _heights(sprite, master)
     soles = read["top"] - outline["offset"][1] + pg.boots(sprite)[1] - pg.boots(master)[1]
@@ -871,17 +936,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = parser.add_subparsers(dest="command", required=True)
     keys = ["auto"] + sorted(KEYS)
+    edge_help = ("rule: the look has a dark outline, which is closed by rule (default); drawn: the look has no outline, "
+                 "the figure's edge is kept as the picture has it")
     a = sub.add_parser("ask-master", help="the prompt of the first master's picture")
     a.add_argument("--how", required=True, help="the picture that shows how to draw: one figure in the manner wanted (cut "
                                                 "from a style picture, or a sprite of your own)")
     a.add_argument("--subject", required=True, help="who the figure is, in one sentence")
     a.add_argument("--key", default="auto", choices=keys, help="the flat ground colour (default: the one the figure has least of)")
+    a.add_argument("--outline", default="rule", choices=OUTLINES, help=edge_help)
     a.add_argument("--output-dir", "--out-dir", required=True, help="new folder for prompt.txt and request.json")
     m = sub.add_parser("master", help="the picture -> the master sprite")
     m.add_argument("--image", required=True, help="the picture the image model drew (one figure on a flat key colour)")
     m.add_argument("--name", default="master", help="file stem (default master)")
     m.add_argument("--colors", type=int, default=48, help="the most colours the sprite keeps (default 48; 0 keeps all)")
     m.add_argument("--line", help="the outline colour #rrggbb (default: the picture's own)")
+    m.add_argument("--outline", default="rule", choices=OUTLINES, help=edge_help)
+    m.add_argument("--proportions", default="picture", choices=PROPORTIONS,
+                   help="picture: the figure keeps the proportions it has in the picture; where the picture's blocks are "
+                        "not square, the rows or columns that show least are doubled (default). blocks: one pixel a block, "
+                        "whatever the blocks' shape")
     m.add_argument("--ground", help="#rrggbb: the game's ground colour, as a fourth ground of *-grounds.png")
     m.add_argument("--output-dir", "--out-dir", required=True, help="new folder for the sprite and its files")
     c = sub.add_parser("ask-cast", help="the reference and the prompt of 'a second figure: another character, beside the master'")
@@ -893,6 +966,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--cell", type=int, help=f"px a sprite pixel in the reference (default: the largest up to {VIEW_CELL} that "
                                             "fits; smaller gives a wide or tall figure more room)")
     c.add_argument("--key", default="auto", choices=keys)
+    c.add_argument("--outline", default="rule", choices=OUTLINES, help=edge_help + " (cast follows the request)")
     c.add_argument("--output-dir", "--out-dir", required=True, help="new folder for reference.png, prompt.txt, request.json")
     d = sub.add_parser("cast", help="the picture -> the new character's master, read beside the first master")
     d.add_argument("--image", required=True, help="the picture the image model drew from the request's references")
@@ -908,6 +982,7 @@ def build_parser() -> argparse.ArgumentParser:
                                   "of its larger side left and right, 6 above, 3 below)")
     p.add_argument("--cell", type=int, help=f"px a sprite pixel in the reference (default: the largest up to {POSE_CELL} that fits)")
     p.add_argument("--key", default="auto", choices=keys)
+    p.add_argument("--outline", default="rule", choices=OUTLINES, help=edge_help + " (pose follows the request)")
     p.add_argument("--output-dir", "--out-dir", required=True, help="new folder for reference.png, prompt.txt, request.json")
     q = sub.add_parser("pose", help="the picture -> the master with only the changed part taken")
     q.add_argument("--image", required=True, help="the picture the image model drew from the request's reference")
@@ -925,6 +1000,7 @@ def build_parser() -> argparse.ArgumentParser:
                                                      "cloak does); repeat")
     v.add_argument("--cell", type=int, help=f"px a sprite pixel in the reference (default: the largest up to {VIEW_CELL} that fits)")
     v.add_argument("--key", default="auto", choices=keys)
+    v.add_argument("--outline", default="rule", choices=OUTLINES, help=edge_help + " (view follows the request)")
     v.add_argument("--output-dir", "--out-dir", required=True, help="new folder for reference.png, prompt.txt, request.json")
     w = sub.add_parser("view", help="the picture -> the second figure as a sprite on the master's lattice")
     w.add_argument("--image", required=True, help="the picture the image model drew from the request's reference")

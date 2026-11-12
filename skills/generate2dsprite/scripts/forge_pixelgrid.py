@@ -366,6 +366,12 @@ def _sample_cells(a: np.ndarray, background: np.ndarray, left: np.ndarray, right
     return colour, alpha, purity
 
 
+def _mean_step(lines: np.ndarray, lo: int, hi: int) -> float:
+    """The mean distance between the grid lines that lie over [lo, hi] (between all lines when under three do)."""
+    inside = lines[(lines >= lo - 1) & (lines <= hi + 1)]
+    return float(np.diff(inside if len(inside) >= 3 else lines).mean())
+
+
 def _walk_cells(a: np.ndarray, background: np.ndarray, profile_x: np.ndarray, profile_y: np.ndarray,
                 period_x: float, period_y: float, box: tuple[int, int, int, int]) -> dict | None:
     x0, x1, y0, y1 = box
@@ -378,7 +384,7 @@ def _walk_cells(a: np.ndarray, background: np.ndarray, profile_x: np.ndarray, pr
     top, bottom = np.tile(ly[:-1, None], (1, len(lx) - 1)), np.tile(ly[1:, None], (1, len(lx) - 1))
     colour, alpha, purity = _sample_cells(a, background, left, right, top, bottom)
     return {"colour": colour, "alpha": alpha, "purity": purity, "snapped": [snapped_x, snapped_y],
-            "period": [period_x, period_y]}
+            "period": [period_x, period_y], "cell": [_mean_step(lx, x0, x1), _mean_step(ly, y0, y1)]}
 
 
 def _lattice_cells(a: np.ndarray, background: np.ndarray, period_x: float, period_y: float,
@@ -414,7 +420,8 @@ def _lattice_cells(a: np.ndarray, background: np.ndarray, period_x: float, perio
     left = np.tile(origin_x + np.arange(cols) * per_x, (rows, 1)) + spread(field_x)
     top = np.tile((origin_y + np.arange(rows) * per_y)[:, None], (1, cols)) + spread(field_y)
     colour, alpha, purity = _sample_cells(a, background, left, left + per_x, top, top + per_y)
-    return {"colour": colour, "alpha": alpha, "purity": purity, "snapped": None, "period": [per_x, per_y]}
+    return {"colour": colour, "alpha": alpha, "purity": purity, "snapped": None, "period": [per_x, per_y],
+            "cell": [per_x, per_y]}
 
 
 def snap_picture(rgb: np.ndarray, *, colors: int = 32, gap: float = MERGE_GAP, key: Any = None,
@@ -427,9 +434,10 @@ def snap_picture(rgb: np.ndarray, *, colors: int = 32, gap: float = MERGE_GAP, k
     else the walk. (Purity, the share of a cell's pixels that have the cell's colour, is reported but is not
     the judge: a grid with too many lines is purer.)
 
-    Returns {"sprite": RGBA uint8 cropped to the figure, "method", "period": [px, py], "purity": {method: mean},
-    "snapped", "key": [r, g, b], "palette": uint8 (n, 3)}. Raises ValueError when the picture has no figure or
-    no grid."""
+    Returns {"sprite": RGBA uint8 cropped to the figure, "method", "period": [px, py] (what the search for the
+    grid started from), "cell": [px, py] (the mean size of the grid's cells over the figure, as measured: an image
+    model's blocks are often not square), "purity": {method: mean}, "snapped", "key": [r, g, b], "palette":
+    uint8 (n, 3)}. Raises ValueError when the picture has no figure or no grid."""
     if method not in ("auto", "walk", "lattice"):
         raise ValueError("method must be auto, walk or lattice")
     a = np.asarray(rgb, np.float32)[..., :3]
@@ -466,6 +474,7 @@ def snap_picture(rgb: np.ndarray, *, colors: int = 32, gap: float = MERGE_GAP, k
     sprite[opaque, 3] = 255
     sprite = crop_to_figure(sprite)
     return {"sprite": sprite, "method": chosen, "period": [round(float(v), 3) for v in grid["period"]],
+            "cell": [round(float(v), 3) for v in grid["cell"]],
             "purity": {name: round(v, 4) for name, v in purity.items()}, "snapped": grid["snapped"],
             "key": [int(round(v)) for v in key], "palette": palette_of(sprite)}
 
@@ -650,9 +659,11 @@ def _cells(frame: np.ndarray, x0: int, y0: int, width: int, height: int, scale: 
 
 def lattice_shift(frame: np.ndarray, x0: int, y0: int, width: int, height: int, scale: int, key: Any,
                   key_distance: float = VIDEO_KEY_DISTANCE) -> tuple[int, int]:
-    """The shift (sx, sy), 0 .. scale-1 px each, at which the cells of ``frame`` are flattest. The inner part of a
-    cell stays flat a few px off the true lattice, so among the shifts that are as flat as the flattest the one
-    nearest to (0, 0) is taken: otherwise the whole sprite can land one cell off."""
+    """The shift (sx, sy) at which the cells of ``frame`` are flattest, within half a cell each way (more than
+    -scale/2, at most scale/2 px): a lattice that lies 1 px before (x0, y0) is -1, not scale - 1, at which every
+    cell would be read one cell further on. The inner part of a cell stays flat a few px off the true lattice, so
+    among the shifts that are as flat as the flattest the one nearest to (0, 0) is taken. A caller that reads at
+    (x0 + sx, y0 + sy) needs room for a shift backwards (pixel_motion.py pads the frame by one cell)."""
     frame = np.asarray(frame, np.float32)[..., :3]
     key = np.asarray(key, np.float32)
     found = []
@@ -667,7 +678,7 @@ def lattice_shift(frame: np.ndarray, x0: int, y0: int, width: int, height: int, 
     low = min(f[0] for f in found)
     best = min((f for f in found if f[0] <= low + 0.5),
                key=lambda f: (max(min(f[1], scale - f[1]), min(f[2], scale - f[2])), f[0]))
-    return best[1], best[2]
+    return tuple(int(s - scale if 2 * s > scale else s) for s in best[1:])
 
 
 def _unmix(cells: Any, key: Any, palette: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -876,7 +887,12 @@ LINE_DARK = 48.0          # a cell at most this light, or 24 above the line colo
 EQUAL = 60.0              # channel differences (summed) under which a picture's cell is the cell of the sprite it shows
 NEAR_KEY = 1.8            # an edge cell nearer to the key colour than this many KEY_DISTANCEs is key left on the edge
 LEG_SHARE = 0.16          # a column this tall (a share of the sprite's height) above the ground is a leg, not a blade's tip
+FEW_COLOURS = 16          # a palette of at most this many colours ...
+FEW_HUE = 3.0             # ... counts hue this much more than lightness when it is brought down (fewer_colours)
 FLAT_RANGE = 36.0         # the range of a cell's colours (max - min of every channel, summed) under which the cell is flat
+SPILL = 20.0              # an edge cell whose key channels lead the others by more than this carries key (the package's gate)
+SPILL_BALANCE = 0.5       # ... for a key of two channels, only where min/max of those two is at least this
+CLEAR = 0.2               # OKLab distance from which two colours are clearly apart (what a doubled row shows)
 _LIGHT = np.array([0.299, 0.587, 0.114], dtype=np.float32)
 
 
@@ -885,15 +901,19 @@ def lightness(rgb: Any) -> np.ndarray:
     return np.asarray(rgb, np.float32)[..., :3] @ _LIGHT
 
 
-def fewer_colours(colours: Any, count: int, rounds: int = 30) -> np.ndarray:
+def fewer_colours(colours: Any, count: int, rounds: int = 30, hue: float = 1.0, common: bool = False) -> np.ndarray:
     """Colours (n, 3) brought down to at most ``count``: k-means in OKLab from a farthest-point start, so every
     hue keeps a centre and the result is the same on every run; a centre takes the median RGB of its colours.
     (Merging the closest pair again and again runs dark navy, brown and black together: that is ``merge_palette``,
-    which is right for the few flat tones of a small sprite and wrong for a softly shaded one.)"""
+    which is right for the few flat tones of a small sprite and wrong for a softly shaded one.) ``hue`` weighs
+    the two colour axes against lightness: above 1, the steps of a grey ramp merge before a pale skin tone is
+    lost among them, which a palette of a dozen colours needs. With ``common`` a centre takes the most common
+    colour of its group instead of the median: a few flat colours stay colours the picture had (the median of
+    each channel on its own can be a colour no cell has)."""
     colours = np.asarray(colours, np.uint8).reshape(-1, 3)
     if count < 1:
         raise ValueError("count is at least 1")
-    lab = np.asarray(to_oklab(colours.astype(np.float32)), np.float64)
+    lab = np.asarray(to_oklab(colours.astype(np.float32)), np.float64) * np.array([1.0, hue, hue])
     uniq = np.unique(np.round(lab, 4), axis=0)
     if len(uniq) <= count:
         return colours.copy()
@@ -915,8 +935,115 @@ def fewer_colours(colours: Any, count: int, rounds: int = 30) -> np.ndarray:
     out = colours.copy()
     for k in range(count):
         if (near == k).any():
-            out[near == k] = np.round(np.median(colours[near == k], axis=0))
+            if common:
+                members, counts = np.unique(colours[near == k], axis=0, return_counts=True)
+                out[near == k] = members[int(counts.argmax())]
+            else:
+                out[near == k] = np.round(np.median(colours[near == k], axis=0))
     return out
+
+
+def _shows(cells: np.ndarray) -> np.ndarray:
+    """Per cell, what one more row of it would show: the growth of the run of equal cells it lies in (1/n for a run
+    of n rows) times how clearly that run stands out from what lies above it and below it (0..1: the smaller of
+    the two OKLab distances over CLEAR; the outside counts as 1). A one-row line on another colour is 1 a cell;
+    a cell of a long run, or of a soft step of shading, is nearly 0."""
+    height, width = cells.shape[:2]
+    lab = to_oklab(cells[..., :3])
+    out = np.zeros((height, width), dtype=np.float64)
+
+    def apart(y: int, x: int, other: int) -> float:
+        if other < 0 or other >= height or cells[other, x, 3] == 0:
+            return 1.0
+        return min(1.0, float(np.sqrt(((lab[y, x] - lab[other, x]) ** 2).sum())) / CLEAR)
+
+    for x in range(width):
+        y = 0
+        while y < height:
+            end = y + 1
+            while end < height and (cells[end, x] == cells[y, x]).all():
+                end += 1
+            if cells[y, x, 3] > 0:
+                out[y:end, x] = min(apart(y, x, y - 1), apart(end - 1, x, end)) / (end - y)
+            y = end
+    return out
+
+
+def _doubled(cells: np.ndarray, row: int, line: Sequence[int] | None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Row ``row`` as the two rows it becomes when it is doubled, and per column which run grows by it (0: the
+    cell's own, 1: the run below, -1: the run above). Both rows are the row itself, except where that would make
+    the outline two cells thick: a cell of the ``line`` colour that touches the outside above, and whose copy
+    underneath would touch it nowhere, gives that copy the colour of the cell below; and the same the other way
+    round. So the figure's inside grows, not its outline."""
+    height, width = cells.shape[:2]
+    upper, lower = cells[row].copy(), cells[row].copy()
+    grown = np.zeros(width, dtype=np.int64)
+    if line is None:
+        return upper, lower, grown
+    ink = np.asarray(line, np.uint8)
+    empty = np.zeros((width, 4), dtype=np.uint8)
+    here = cells[row]
+    above = cells[row - 1] if row > 0 else empty
+    below = cells[row + 1] if row + 1 < height else empty
+    opaque = here[:, 3] > 0
+    padded = np.pad(opaque, 1, constant_values=False)
+    inked = opaque & (here[:, :3] == ink).all(axis=1) & padded[:-2] & padded[2:]        # ... with a cell on both sides
+
+    def inside(cells_: np.ndarray) -> np.ndarray:
+        return (cells_[:, 3] > 0) & ~(cells_[:, :3] == ink).all(axis=1)
+
+    take_below = inked & (above[:, 3] == 0) & inside(below)
+    take_above = inked & (below[:, 3] == 0) & inside(above)
+    lower[take_below] = below[take_below]
+    upper[take_above] = above[take_above]
+    grown[take_below], grown[take_above] = 1, -1
+    return upper, lower, grown
+
+
+def doubling_cost(rgba: np.ndarray, line: Sequence[int] | None = None) -> np.ndarray:
+    """Per row, how much doubling that row would show: the sum over its cells of what one more row of the run that
+    grows there shows (``_shows``; with ``line``, the outline does not grow, see ``_doubled``). A row across an
+    eye, a belt or a thin blade is dear, a row across flat colour and upright outline is cheap."""
+    cells = np.asarray(rgba, np.uint8)
+    height, width = cells.shape[:2]
+    shows = _shows(cells)
+    columns = np.arange(width)
+    return np.array([shows[np.clip(row + _doubled(cells, row, line)[2], 0, height - 1), columns].sum()
+                     for row in range(height)], dtype=np.float64)
+
+
+def add_rows(rgba: np.ndarray, count: int, line: Sequence[int] | None = None) -> tuple[np.ndarray, list[int]]:
+    """A sprite made ``count`` rows taller without redrawing it: the figure is cut into ``count`` stretches of equal
+    height and in each the row that shows least when doubled (``doubling_cost``) is doubled, so the figure grows
+    evenly, its one-row lines stay one row and, with ``line`` (the colour of its outline), its outline stays one
+    cell thick. Returns the sprite and the rows of the input that were doubled."""
+    cells = np.asarray(rgba, np.uint8)
+    height = cells.shape[0]
+    count = int(min(max(0, count), height))
+    if count == 0:
+        return cells.copy(), []
+    cost = doubling_cost(cells, line)
+    edges = np.linspace(0, height, count + 1)
+    picks = []
+    for k in range(count):
+        lo = int(round(edges[k]))
+        hi = max(lo + 1, int(round(edges[k + 1])))
+        part = cost[lo:hi]
+        cheapest = np.where(part <= part.min() + 1e-9)[0]
+        picks.append(lo + int(cheapest[len(cheapest) // 2]))
+    rows = []
+    for row in range(height):
+        if row in picks:
+            rows.extend(_doubled(cells, row, line)[:2])
+        else:
+            rows.append(cells[row])
+    return np.ascontiguousarray(np.stack(rows)), picks
+
+
+def add_columns(rgba: np.ndarray, count: int, line: Sequence[int] | None = None) -> tuple[np.ndarray, list[int]]:
+    """``add_rows`` for the other axis: the sprite made ``count`` columns wider."""
+    wider, picks = add_rows(np.swapaxes(np.asarray(rgba, np.uint8), 0, 1), count, line)
+    return np.ascontiguousarray(np.swapaxes(wider, 0, 1)), picks
 
 
 def feet_runs(rgba: np.ndarray) -> tuple[list[tuple[int, int]], int]:
@@ -979,6 +1106,49 @@ def drop_key_near(rgba: np.ndarray, key: Any, times: float = NEAR_KEY, passes: i
         rgba[near, 3] = 0
         dropped += int(near.sum())
     return dropped
+
+
+def key_lead(rgb: Any, key: Any) -> np.ndarray:
+    """How far a colour's key channels lead its other channels: min(the key's channels) - max(the others), the
+    measure of the package's residue gate (forge_matte.matte_qa). For a key of two channels (magenta) only where
+    those two are balanced: a crimson leads green by as much and is no spill."""
+    key = np.asarray(key, np.float32)[:3]
+    high = key > 127.5
+    colours = np.asarray(rgb, np.float32)[..., :3]
+    if high.all() or not high.any():
+        return np.zeros(colours.shape[:-1], dtype=np.float32)
+    lead = colours[..., high].min(axis=-1) - colours[..., ~high].max(axis=-1)
+    if int(high.sum()) == 2:
+        two = colours[..., high]
+        lead = np.where(two.min(axis=-1) / np.maximum(two.max(axis=-1), 1.0) >= SPILL_BALANCE, lead, 0.0)
+    return lead
+
+
+def drop_key_spill(rgba: np.ndarray, key: Any, passes: int = 3) -> dict:
+    """Edge cells that carry key colour by the package gate's measure (``key_lead`` above SPILL), in place. Each is
+    explained as a colour the figure has elsewhere plus a share of key (``unmix_edge``): a cell that is more key
+    than figure goes, the others take that colour. A look with a dark outline hides a tinted edge; a look
+    without one shows it, and one percent of such cells fails the package."""
+    removed = recoloured = 0
+    for _ in range(passes):
+        opaque = rgba[..., 3] > 0
+        spill = opaque & edge_mask(opaque) & (key_lead(rgba, key) > SPILL)
+        if not spill.any():
+            break
+        palette = np.unique(rgba[opaque & ~spill][:, :3], axis=0) if (opaque & ~spill).any() else np.zeros((0, 3), np.uint8)
+        clean = palette[key_lead(palette, key) <= SPILL] if len(palette) else palette
+        cells = np.argwhere(spill)
+        if not len(clean):
+            rgba[spill, 3] = 0
+            removed += len(cells)
+            break
+        best, share = unmix_edge(rgba[spill][:, :3], key, clean)
+        gone = share > UNMIX_MOST
+        rgba[cells[gone, 0], cells[gone, 1], 3] = 0
+        rgba[cells[~gone, 0], cells[~gone, 1], :3] = clean[best[~gone]]
+        removed += int(gone.sum())
+        recoloured += int((~gone).sum())
+    return {"removed": removed, "recoloured": recoloured}
 
 
 def drop_key_holes(rgba: np.ndarray, key: Any, times: float = NEAR_KEY, most: int = 3) -> int:

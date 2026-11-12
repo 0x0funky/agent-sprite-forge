@@ -33,6 +33,16 @@ def test_snap_picture_gives_the_sprite_back(size, base, spread, method):
     assert {tuple(c) for c in snap["palette"].tolist()} == {LINE, *COLOURS}
 
 
+@pytest.mark.parametrize("base,tall,spread", [(20, 24, 2), (24, 20, 2), (22, 22, 2), (9, 11, 1)])
+def test_snap_picture_measures_blocks_that_are_not_square(base, tall, spread):
+    sprite = toy_sprite()
+    snap = pg.snap_picture(fake_picture(sprite, base, spread, tall=tall), colors=16)
+    assert same(snap["sprite"], sprite)                                             # one cell a block, whatever its shape
+    assert abs(snap["cell"][0] - base) < 0.3 and abs(snap["cell"][1] - tall) < 0.3   # ... and the blocks as they are
+    lattice = pg.snap_picture(fake_picture(toy_sprite(40, 60), 6, 0), colors=16)
+    assert lattice["method"] == "lattice" and lattice["cell"] == lattice["period"]
+
+
 def test_snap_picture_merges_down_to_the_asked_colours():
     sprite = toy_sprite()
     snap = pg.snap_picture(fake_picture(sprite), colors=4)
@@ -208,6 +218,11 @@ def test_lattice_shift_finds_a_moved_lattice_and_prefers_the_jobs_own():
     at_job = pg.snap_frame(moved, CORNER[0], CORNER[1], cols, rows, SCALE, KEY, palette)[1]
     at_shift = pg.snap_frame(moved, CORNER[0] + shift[0], CORNER[1] + shift[1], cols, rows, SCALE, KEY, palette)[1]
     assert shift != (0, 0) and at_shift["notFlat"] == 0 < at_job["notFlat"]
+    before = video_frame(pose, SCALE, (CORNER[0] - 3, CORNER[1] - 3), SIZE)[..., :3]     # the lattice lies before the job's
+    back = pg.lattice_shift(before, CORNER[0], CORNER[1], cols, rows, SCALE, KEY)
+    assert -SCALE // 2 < back[0] < 0 and -SCALE // 2 < back[1] < 0                       # a shift backwards, not 5 px forward
+    read = pg.snap_frame(before, CORNER[0] + back[0], CORNER[1] + back[1], cols, rows, SCALE, KEY, palette)[0]
+    assert same(read, pose)                                                              # every cell where the pose has it
 
 
 def test_find_cycle_and_the_picks():
@@ -259,6 +274,71 @@ def test_fewer_colours_keeps_every_hue_and_is_the_same_on_every_run():
     assert (pg.fewer_colours(colours, 5) == out).all() and (pg.fewer_colours(colours, 400) == colours).all()
     with pytest.raises(ValueError, match="at least 1"):
         pg.fewer_colours(colours, 0)
+    # a few colours: five greys and one pale skin tone, brought down to five. By lightness alone the skin goes into
+    # the lightest grey; with hue counted more, two greys merge and the skin stays a colour of its own
+    greys = [[v, v, v] for v in (40, 90, 140, 190, 235)]
+    few = np.asarray(greys * 20 + [[250, 215, 190]] * 6, dtype=np.uint8)
+    plain = pg.fewer_colours(few, 5, common=True)
+    hued = pg.fewer_colours(few, 5, hue=pg.FEW_HUE, common=True)
+    assert plain[-1].tolist() == [235, 235, 235] and hued[-1].tolist() == [250, 215, 190]
+    assert len(np.unique(hued, axis=0)) == 5 and {tuple(c) for c in hued.tolist()} <= {tuple(c) for c in few.tolist()}
+    mixed = pg.fewer_colours(few, 4)[-1].tolist()                # down to four, the median of each channel on its own
+    assert mixed == [235, 215, 190] and mixed not in few.tolist()        # is a colour no cell has; the common one is
+    assert pg.fewer_colours(few, 4, common=True)[-1].tolist() in few.tolist()
+
+
+def boxed(width: int = 10, height: int = 12) -> np.ndarray:
+    """A box of one flat colour with a closed outline, two eyes of one cell each (row 3) and a belt of one row (7)."""
+    sprite = np.zeros((height, width, 4), dtype=np.uint8)
+    sprite[...] = (*COLOURS[0], 255)
+    sprite[0] = sprite[-1] = sprite[:, 0] = sprite[:, -1] = (*LINE, 255)
+    sprite[3, 3] = sprite[3, 6] = (*COLOURS[3], 255)
+    sprite[7, 1:-1] = (*COLOURS[2], 255)
+    return sprite
+
+
+def outline_faults(sprite: np.ndarray) -> tuple[int, int]:
+    """Cells of the line colour that do not touch the outside, and cells on the edge that are not the line colour."""
+    opaque = sprite[..., 3] > 0
+    inked = opaque & (sprite[..., :3] == np.asarray(LINE, np.uint8)).all(axis=2)
+    edge = pg.edge_mask(opaque)
+    return int((inked & ~edge).sum()), int((edge & ~inked).sum())
+
+
+def test_doubling_cost_is_dear_across_an_eye_or_a_belt_and_cheap_across_flat_colour():
+    sprite = boxed()
+    cost = pg.doubling_cost(sprite, LINE)
+    assert int(cost.argmax()) == 7 and cost[7] > 8.0                                 # the belt: eight cells of a one-row line
+    assert cost[3] > cost[4] + 1.0 and cost[4] == cost[5] == cost[6] == cost.min()   # the eyes; flat colour between them and the belt
+    assert cost[0] < 3.0 and cost[11] < 3.0                  # the outline's own rows: the inside grows there, not the line
+    plain = pg.doubling_cost(sprite)                         # no outline colour known: the line would be doubled
+    assert plain[0] > 8.0 and plain[11] > 8.0 and (plain[1:11] == cost[1:11]).all()
+
+
+def test_add_rows_doubles_the_rows_that_show_least_evenly_and_redraws_nothing():
+    sprite = boxed()
+    taller, rows = pg.add_rows(sprite, 2, LINE)
+    assert taller.shape == (14, 10, 4) and rows == [5, 6]                              # one row in each half, neither the eyes nor the belt
+    assert same(np.delete(taller, [row + 1 + k for k, row in enumerate(rows)], axis=0), sprite)
+    assert int((taller[..., :3] == COLOURS[3]).all(axis=2).sum()) == 2                # the eyes are one cell each
+    assert int((taller[..., :3] == COLOURS[2]).all(axis=2).any(axis=1).sum()) == 1    # the belt is one row
+    assert outline_faults(taller) == (0, 0)
+    same_again, none = pg.add_rows(sprite, 0, LINE)
+    assert same(same_again, sprite) and none == []
+    assert pg.add_rows(sprite, 99, LINE)[0].shape[0] == 24                             # at most every row once
+
+
+def test_add_rows_and_add_columns_keep_the_outline_one_cell_thick():
+    sprite = boxed()
+    every, rows = pg.add_rows(sprite, 12, LINE)                                        # every row doubled, the outline's too
+    assert every.shape == (24, 10, 4) and rows == list(range(12)) and outline_faults(every) == (0, 0)
+    assert tuple(every[1, 4]) == (*COLOURS[0], 255) and tuple(every[1, 0]) == (*LINE, 255)     # under the top line: the inside
+    assert outline_faults(pg.add_rows(sprite, 12)[0]) == (16, 0)                       # without the colour: a line two cells thick
+    toy = toy_sprite()
+    wider, columns = pg.add_columns(toy, 3, LINE)
+    assert wider.shape == (24, 19, 4) and len(columns) == 3 and outline_faults(wider) == (0, 0)
+    assert outline_faults(pg.add_columns(toy, 3)[0])[0] > 0
+    assert set(map(tuple, pg.palette_of(wider).tolist())) == set(map(tuple, pg.palette_of(toy).tolist()))
 
 
 def test_boots_are_the_feet_and_a_blade_on_the_ground_does_not_move_them():
@@ -290,6 +370,22 @@ def test_drop_key_mixed_makes_a_half_covered_outline_cell_an_outline_cell_again(
     alone = half.copy()                                        # without the line colour the cell is judged by its inner
     assert pg.drop_key_mixed(alone, KEY) == {"removed": 0, "darkened": 0} and same(alone, half)     # neighbours: no blend of those
     assert pg.drop_key_mixed(sprite.copy(), KEY, line=LINE) == {"removed": 0, "darkened": 0}
+
+
+def test_drop_key_spill_unmixes_edge_cells_that_carry_key_by_the_gates_measure():
+    green = (0, 255, 0)
+    sprite = toy_sprite()
+    assert pg.drop_key_spill(sprite.copy(), green) == {"removed": 0, "recoloured": 0}
+    assert pg.key_lead(np.asarray([(40, 90, 40), (200, 44, 52), (120, 120, 120)]), green).tolist() == [50.0, -156.0, 0.0]
+    assert pg.key_lead(np.asarray([(186, 12, 33), (200, 60, 190)]), KEY).tolist() == [0.0, 130.0]      # a crimson is no magenta
+    tinted = sprite.copy()
+    skin = np.asarray(COLOURS[0], np.float32)
+    tinted[0, 7, :3] = np.round(0.75 * skin + 0.25 * np.asarray(green))       # a lit edge cell, a quarter key
+    tinted[23, 2, :3] = np.round(0.3 * np.asarray(LINE) + 0.7 * np.asarray(green))   # mostly key
+    report = pg.drop_key_spill(tinted, green)
+    assert report == {"removed": 1, "recoloured": 1} and tinted[23, 2, 3] == 0
+    assert tuple(int(v) for v in tinted[0, 7, :3]) == COLOURS[0]
+    assert float(pg.key_lead(tinted, green)[(tinted[..., 3] > 0) & pg.edge_mask(tinted[..., 3] > 0)].max()) <= pg.SPILL
 
 
 def test_drop_key_holes_opens_a_small_gap_inside_the_figure_and_leaves_a_patch_of_its_own_colour():

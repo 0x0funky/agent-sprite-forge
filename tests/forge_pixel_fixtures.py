@@ -39,9 +39,11 @@ def cell_sizes(count: int, base: int, spread: int) -> list[int]:
     return [base + ((i * 7) % (2 * spread + 1)) - spread for i in range(count)] if spread else [base] * count
 
 
-def fake_picture(sprite: np.ndarray, base: int = 22, spread: int = 2, margin: int = 60, soften: bool = True) -> np.ndarray:
-    """The picture an image model paints of ``sprite``: RGB uint8 on the key colour."""
-    widths, heights = cell_sizes(sprite.shape[1], base, spread), cell_sizes(sprite.shape[0], base, spread)
+def fake_picture(sprite: np.ndarray, base: int = 22, spread: int = 2, margin: int = 60, soften: bool = True,
+                 tall: int | None = None) -> np.ndarray:
+    """The picture an image model paints of ``sprite``: RGB uint8 on the key colour. Its blocks are about ``base`` px
+    wide and ``tall`` px high (``base`` when not given: square blocks)."""
+    widths, heights = cell_sizes(sprite.shape[1], base, spread), cell_sizes(sprite.shape[0], tall or base, spread)
     xs, ys = np.concatenate([[0], np.cumsum(widths)]) + margin, np.concatenate([[0], np.cumsum(heights)]) + margin
     picture = np.empty((int(ys[-1]) + margin, int(xs[-1]) + margin, 3), dtype=np.float64)
     picture[...] = KEY

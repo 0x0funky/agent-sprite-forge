@@ -105,6 +105,7 @@ def test_master_reads_the_pictures_own_grid_and_writes_the_sprite_and_what_shows
     out = tmp_path / "hero"
     result = ok("master", "--image", source, "--name", "hero", "--output-dir", out)
     assert result["size"] == [16, 24] and result["colours"] == 7 and result["outlineClosed"] is True
+    assert result["rowsDoubled"] == 0 and result["columnsDoubled"] == 0                # square blocks: one pixel a block
     assert sorted(p.name for p in out.iterdir()) == ["hero-grounds.png", "hero-how.png", "hero-review.png", "hero.json", "hero.png"]
     assert (rgba(out / "hero.png") == sprite).all()
     info = record(out / "hero.json")
@@ -142,6 +143,43 @@ def test_master_closes_the_outline_by_rule_and_brings_the_colours_down(tmp_path)
     assert (rgba(tmp_path / "green" / "master.png") == sprite).all()
     assert tuple(np.asarray(Image.open(tmp_path / "green" / "master-how.png").convert("RGB"))[0, 0]) == (0, 255, 0)
     assert record(tmp_path / "green" / "master.json")["key"] == "green"
+
+
+def figure_aspect(picture_path: Path) -> float:
+    """Width over height of the figure in a picture on the key colour."""
+    far = (np.asarray(Image.open(picture_path).convert("RGB")).astype(int) - np.asarray(KEY)).__abs__().sum(axis=2) > 120
+    ys, xs = np.where(far)
+    return (xs.max() + 1 - xs.min()) / float(ys.max() + 1 - ys.min())
+
+
+def test_master_keeps_the_figures_proportions_when_the_pictures_blocks_are_not_square(tmp_path):
+    sprite = toy_sprite()
+    line = np.asarray(LINE, np.uint8)
+    tall = picture(tmp_path / "tall.png", sprite, base=20, tall=24)                  # blocks a fifth taller than wide
+    result = ok("master", "--image", tall, "--output-dir", tmp_path / "kept")
+    assert result["size"] == [16, 29] and result["rowsDoubled"] == 5 and result["columnsDoubled"] == 0
+    assert result["outlineClosed"] is True and result["colours"] == 7
+    kept = rgba(tmp_path / "kept" / "master.png")
+    assert abs(16 / 29.0 - figure_aspect(tall)) < 0.02 < abs(16 / 24.0 - figure_aspect(tall))      # the picture's figure, not a flatter one
+    opaque = kept[..., 3] > 0
+    assert ((opaque & (kept[..., :3] == line).all(axis=2)) == look.pg.edge_mask(opaque)).all()      # the outline is one cell thick
+    shape = record(tmp_path / "kept" / "master.json")["read"]["proportions"]
+    assert shape["mode"] == "picture" and shape["sizeInBlocks"] == [16, 24] and abs(shape["blocksTallerBy"] - 1.2) < 0.02
+    assert len(shape["rowsDoubled"]) == 5 and shape["columnsDoubled"] == [] and abs(shape["blockPx"][1] - 24.0) < 0.3
+    assert (np.delete(kept, [row + 1 + k for k, row in enumerate(shape["rowsDoubled"])], axis=0) == sprite).all()
+    as_it_comes = ok("master", "--image", tall, "--proportions", "blocks", "--output-dir", tmp_path / "blocks")
+    assert as_it_comes["size"] == [16, 24] and as_it_comes["rowsDoubled"] == 0
+    assert (rgba(tmp_path / "blocks" / "master.png") == sprite).all()                # one pixel a block, as before
+    told = record(tmp_path / "blocks" / "master.json")["read"]["proportions"]
+    assert told["mode"] == "blocks" and abs(told["blocksTallerBy"] - 1.2) < 0.02 and told["rowsDoubled"] == []
+    wide = picture(tmp_path / "wide.png", sprite, base=24, tall=20)
+    widened = ok("master", "--image", wide, "--output-dir", tmp_path / "wide")
+    assert widened["size"] == [19, 24] and widened["columnsDoubled"] == 3 and widened["rowsDoubled"] == 0
+    assert abs(19 / 24.0 - figure_aspect(wide)) < 0.03
+    nearly = ok("master", "--image", picture(tmp_path / "nearly.png", sprite, base=22, tall=22, spread=3), "--output-dir", tmp_path / "nearly")
+    assert nearly["size"] == [16, 24] and nearly["rowsDoubled"] == 0                # uneven blocks that are square on the whole
+    fails("master", "--image", tall, "--proportions", "wide", "--output-dir", tmp_path / "no", code=2)
+    assert not (tmp_path / "no").exists()
 
 
 def test_master_refusals(tmp_path):
@@ -241,9 +279,67 @@ def test_ask_cast_and_cast_draw_another_character_beside_the_master_at_its_pixel
     assert not any((tmp_path / name).exists() for name in ("c1", "c2", "c3", "c4", "c5"))
 
 
+# --------------------------------------------------------------------------- a look without an outline
+
+def lineless(sprite: np.ndarray) -> np.ndarray:
+    """The figure with no dark line around it: every line cell takes one of the lit colours, in small patches."""
+    out = sprite.copy()
+    y, x = np.mgrid[0:out.shape[0], 0:out.shape[1]]
+    line = (out[..., 3] > 0) & (out[..., :3] == np.asarray(LINE)).all(axis=2)
+    out[line, :3] = np.asarray(COLOURS, np.uint8)[((x // 3 + y // 2) % len(COLOURS))[line]]
+    return out
+
+
+def test_a_look_without_an_outline_keeps_its_edge_as_the_picture_has_it(tmp_path):
+    figure = lineless(toy_sprite())
+    source = picture(tmp_path / "lineless.png", figure)
+    ok("master", "--image", source, "--output-dir", tmp_path / "ruled")
+    ruled = rgba(tmp_path / "ruled" / "master.png")
+    assert ruled.shape != figure.shape or not (ruled == figure).all()          # the rule draws a line where there is none
+    drawn = ok("master", "--image", source, "--outline", "drawn", "--output-dir", tmp_path / "drawn")
+    assert drawn["size"] == [16, 24] and drawn["outlineClosed"] is False
+    assert (rgba(tmp_path / "drawn" / "master.png") == figure).all()
+    info = record(tmp_path / "drawn" / "master.json")["read"]
+    assert info["outline"]["mode"] == "drawn" and info["outline"]["lineCellsAdded"] == 0 and info["edge"]["keyInked"] == 0
+
+    asked = ok("ask-master", "--how", source, "--subject", "a knight", "--outline", "drawn", "--output-dir", tmp_path / "ask")
+    text = (tmp_path / "ask" / "prompt.txt").read_text(encoding="utf-8")
+    assert "no outline is added around it" in text and "closed dark outline" not in text and asked["key"] == "magenta"
+    request = record(tmp_path / "ask" / "request.json")
+    assert request["outline"] == "drawn" and request["next"].endswith("--outline drawn")
+
+    master = save(tmp_path / "hero.png", figure)
+    who = tmp_path / "design.png"
+    Image.new("RGB", (64, 64), (60, 200, 190)).save(who)
+    out = tmp_path / "ask-cast"
+    ok("ask-cast", "--master", master, "--who", who, "--subject", "a mage", "--outline", "drawn", "--output-dir", out)
+    request = record(out / "request.json")
+    text = (out / "prompt.txt").read_text(encoding="utf-8")
+    assert request["outline"] == "drawn" and "the same edges with no outline added" in text
+    assert "the same kind of edges (no outline around the figure)" in text and "dark outline" not in text
+    other = lineless(other_character())
+    at = request["masterAt"]
+    drawn_picture = lattice_picture(on_canvas(figure, (109, 73), tuple(at)), 14, (1536, 1024)).astype(np.int32)
+    drawn_picture[:, 600:] = lattice_picture(on_canvas(other, (109, 73), (60, at[1])), 14, (1536, 1024), shift=(7, 0))[:, 600:]
+    Image.fromarray(drawn_picture.astype(np.uint8), "RGB").save(tmp_path / "pair.png")
+    done = ok("cast", "--image", tmp_path / "pair.png", "--request", out, "--name", "mage", "--output-dir", tmp_path / "mage")
+    assert done["size"] == [24, 24] and done["outlineClosed"] is False and done["warnings"] == []
+    assert (rgba(tmp_path / "mage" / "mage.png") == other).all()               # no line is drawn around the second figure
+
+    for command in ("ask-pose", "ask-view"):
+        folder = tmp_path / command
+        extra = ("--change", "it raises one arm") if command == "ask-pose" else ("--view", "back")
+        ok(command, "--master", master, *extra, "--outline", "drawn", "--output-dir", folder)
+        assert record(folder / "request.json")["outline"] == "drawn"
+        assert "the same edges with no outline added" in (folder / "prompt.txt").read_text(encoding="utf-8")
+    assert record(asked_pose(tmp_path / "ruled-look")[0] / "request.json")["outline"] == "rule"
+    fails("master", "--image", source, "--outline", "none", "--output-dir", tmp_path / "x1", code=2)
+
+
 # --------------------------------------------------------------------------- ask-pose, pose
 
 def asked_pose(tmp_path: Path) -> tuple[Path, dict]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     master = save(tmp_path / "hero.png", toy_sprite())
     out = tmp_path / "ask-pose"
     result = ok("ask-pose", "--master", master, "--change", "it now holds a bar in the hand on the viewer's left", "--room",

@@ -9,7 +9,9 @@
            folder; give its prompt.txt and input.png to generate2dmedia/scripts/route_media.py video (this script
            calls no provider).
   frames   The clip -> every frame as a 1x picture: the lattice is the job's (the first frame's shift is found once
-           and kept for the whole clip, so what stands still stays on its cells), every cell gives the median of its
+           and kept for the whole clip, so what stands still stays on its cells; a model gives the picture back a
+           few px beside the job's place, to either side, and the first frame shows the sprite: the lattice is the
+           one on which the sprite lies where the job put it), every cell gives the median of its
            inner part, a cell that is mostly key colour is empty, the key colour that compression blends into the
            figure's edge is unmixed, and every colour goes to the nearest colour of the sprite. Writes a new --output-dir: frames/frame_000.png ..., frames.json (per frame: cells, cells that
            were not flat, whether the figure touches the edge; the loop found in the clip) and frames-sheet.png
@@ -77,6 +79,9 @@ LOOPS = ("cycle", "oneshot", "pingpong")
 PIXEL_PARAGRAPH = ("This is low-resolution pixel art shown enlarged: in every frame keep the big square pixels, the flat "
                    "colours, the dark outline and the hard edges exactly as in the first frame; no smoothing, no blur, no "
                    "anti-aliasing, no new detail, no change of light.")
+PIXEL_PARAGRAPH_DRAWN = ("This is low-resolution pixel art shown enlarged: in every frame keep the big square pixels, the flat "
+                         "colours and the hard edges exactly as in the first frame, with no outline added around the figure; "
+                         "no smoothing, no blur, no anti-aliasing, no new detail, no change of light.")
 
 
 class MotionError(ValueError):
@@ -118,6 +123,33 @@ def _run_json(argv: Sequence[str]) -> dict:
 
 # --------------------------------------------------------------------------- prepare
 
+KEYS = (("magenta", (255, 0, 255)), ("green", (0, 255, 0)), ("blue", (0, 0, 255)))
+LEANS = 40.0              # a cell whose key channels lead the others by this much is a colour of that key's family ...
+OWN_MOST = 0.005          # ... and a sprite with more than this share of such cells fights that key (prepare_i2v_input)
+RING_MOST = 0.01          # the share of edge cells that may lean to the key before the package counts key residue
+
+
+def key_leanings(sprite: np.ndarray) -> dict:
+    """Per key colour: the share of the sprite's edge cells that lean to it by the package gate's measure, and the
+    share of all its cells that are a colour of that key's family."""
+    opaque = sprite[..., 3] > 0
+    ring = opaque & pg.edge_mask(opaque)
+    if not ring.any():
+        return {name: (0.0, 0.0) for name, _ in KEYS}
+    edge, cells = sprite[ring][:, :3], sprite[opaque][:, :3]
+    return {name: (round(float((pg.key_lead(edge, rgb) > pg.SPILL).mean()), 4),
+                   round(float((pg.key_lead(cells, rgb) >= LEANS).mean()), 4)) for name, rgb in KEYS}
+
+
+def quiet_key(sprite: np.ndarray) -> str | None:
+    """The key colour for a sprite's clips: of the keys the sprite's own colours do not fight, the one its edge
+    cells lean to least (a purplish edge on a magenta ground is counted as key residue in every frame), then
+    magenta, green, blue in that order. None when it fights all three: the preparation then says so."""
+    leans = key_leanings(sprite)
+    free = [name for name, _ in KEYS if leans[name][1] <= OWN_MOST]
+    return min(free, key=lambda name: leans[name][0]) if free else None
+
+
 def fitting_scale(job: dict) -> int:
     """The largest whole scale, at most the job's, at which the action's padded room lies inside the canvas margin."""
     width, height = job["referenceCanvas"]
@@ -140,17 +172,20 @@ def cmd_prepare(o: argparse.Namespace) -> dict:
         raise MotionError(f"{sprite} does not exist")
     if Path(o.output_dir).exists():
         raise MotionError(f"{o.output_dir} exists already; name a new folder (nothing is ever replaced)")
-    extra = PIXEL_PARAGRAPH + (" " + o.extra.strip() if o.extra else "")
+    extra = (PIXEL_PARAGRAPH_DRAWN if o.outline == "drawn" else PIXEL_PARAGRAPH) + (" " + o.extra.strip() if o.extra else "")
+    try:
+        cells = np.asarray(Image.open(sprite).convert("RGBA"))
+    except (OSError, ValueError) as error:
+        raise MotionError(f"cannot read {sprite.name}: {error}") from None
     anchor = o.anchor
     if anchor is None:       # the middle of the feet, not of the picture: a sword held to one side is no part of the root
-        try:
-            middle, row = pg.boots(np.asarray(Image.open(sprite).convert("RGBA")))
-        except (OSError, ValueError) as error:
-            raise MotionError(f"cannot read {sprite.name}: {error}") from None
+        middle, row = pg.boots(cells)
         anchor = f"{middle + 0.5:g},{row + 1}"
+    key = o.key if o.key not in (None, "auto") else quiet_key(cells)
+    leaning = key_leanings(cells).get(key or "", (0.0, 0.0))[0]
     base = [sys.executable, str(HERE / "prepare_i2v_input.py"), "prepare", "--master", str(sprite), "--action", o.action,
             "--pixel-art", "--anchor", anchor, "--extra", extra]
-    for flag, value in (("--subject", o.subject), ("--facing", o.facing), ("--key", o.key), ("--duration", o.duration),
+    for flag, value in (("--subject", o.subject), ("--facing", o.facing), ("--key", key), ("--duration", o.duration),
                         ("--subject-height", o.subject_height), ("--canvas", o.canvas)):
         if value is not None:
             base += [flag, str(value)]
@@ -168,6 +203,9 @@ def cmd_prepare(o: argparse.Namespace) -> dict:
     if scale < SMALL_CELL:
         warnings.append(f"a sprite pixel is only {scale} px of the video: video models blur cells this small; use a "
                         "smaller sprite or a larger canvas if the frames do not come back on the grid")
+    if leaning > RING_MOST:
+        warnings.append(f"{round(100 * leaning, 1)} percent of the sprite's edge cells lean to the {key} key: the package "
+                        "counts them as key residue in every drawing; another --key, if the sprite's colours allow one")
     if any(v > 0 for v in job["workRegionClipped"]):
         warnings.append("the action's room does not fit the canvas even at this scale; a wide motion may leave the picture")
     return {"status": "ok", "output": result["output"], "metadata": result["metadata"], "input": result["input"],
@@ -289,10 +327,30 @@ def cmd_frames(o: argparse.Namespace) -> dict:
                     tinted = pg.drop_key_tinted(sprite, key)
                 palette = pg.palette_of(sprite)
                 Image.fromarray(sprite, "RGBA").save(out / "sprite.png")
-            if index == 0 or o.refit:
-                shift = pg.lattice_shift(rgb, x0, y0, cols, rows, scale, key)
-            frame, cells = pg.snap_frame(rgb, x0 + shift[0], y0 + shift[1], cols, rows, scale, key, palette,
-                                         key_mixed=not o.raw_edges)
+            pad = 2 * scale                                      # two cells of key around: room for a lattice that lies
+            padded = np.empty((rgb.shape[0] + 2 * pad, rgb.shape[1] + 2 * pad, 3), dtype=rgb.dtype)     # before the job's
+            padded[...] = np.round(key).astype(rgb.dtype)
+            padded[pad:-pad, pad:-pad] = rgb
+
+            def read(at: Sequence[int]) -> tuple[np.ndarray, dict]:
+                return pg.snap_frame(padded, x0 + pad + at[0], y0 + pad + at[1], cols, rows, scale, key, palette,
+                                     key_mixed=not o.raw_edges)
+
+            if index == 0:
+                # The lattice is known to a cell's phase only, and the first frame shows the sprite: of the lattices
+                # one cell either way, the one on which the sprite lies where the job put it.
+                phase = pg.lattice_shift(rgb, x0, y0, cols, rows, scale, key)
+                tries = []
+                for dy in (0, -1, 1):
+                    for dx in (0, -1, 1):
+                        at = (phase[0] + dx * scale, phase[1] + dy * scale)
+                        there = read(at)[0][top:top + h, left:left + w]
+                        tries.append((int((there != sprite).any(axis=2).sum()), abs(dx) + abs(dy), at))
+                shift = min(tries)[2]
+            elif o.refit:                # the cells stay the first frame's: of this frame's phases, the one nearest the last
+                phase = pg.lattice_shift(rgb, x0, y0, cols, rows, scale, key)
+                shift = tuple(p + scale * forge_core.round_half_up((s - p) / float(scale)) for p, s in zip(phase, shift))
+            frame, cells = read(shift)
             opaque = frame[..., 3] > 0
             touches = bool(opaque[0].any() or opaque[-1].any() or opaque[:, 0].any() or opaque[:, -1].any())
             Image.fromarray(frame, "RGBA").save(out / "frames" / f"frame_{index:03d}.png")
@@ -992,9 +1050,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--extra", help="what the action is, in words; added after the pixel paragraph")
     p.add_argument("--scale", type=int, help="video px a sprite pixel (default: the largest at which the action's room fits)")
     p.add_argument("--anchor", help="the root X,Y in sprite pixels (default: the middle of the feet, on the ground line)")
+    p.add_argument("--outline", default="rule", choices=("rule", "drawn"),
+                   help="drawn: the sprite's look has no outline, and the prompt does not speak of one (default rule)")
     p.add_argument("--subject-height", type=float, help="the sprite's height as a share of the canvas height")
     p.add_argument("--canvas", help="provider canvas W,H (default 1280,720)")
-    p.add_argument("--key", help="key colour: auto, magenta, green or blue (default auto)")
+    p.add_argument("--key", help="key colour: auto, magenta, green or blue (default auto: the one the sprite's own edge "
+                                 "and colours lean to least)")
     p.add_argument("--duration", type=float, help="the take's length in seconds (default 6)")
     f = sub.add_parser("frames", help="every frame of the clip on the sprite's grid and palette")
     f.add_argument("--clip", required=True, help="the image-to-video clip made from the job's input.png")
