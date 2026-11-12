@@ -38,7 +38,7 @@ EPSILON = 1e-6
 def test_api_version_and_package_version():
     """D29, D30: API 1.1 is additive; the package version is the integrated release."""
     assert fc.FORGE_CORE_API_VERSION == "1.1"
-    assert fc.FORGE_PACKAGE_VERSION == "0.5.0"
+    assert fc.FORGE_PACKAGE_VERSION == "0.6.0"
     assert fc.EDGE_SEAM_VERDICTS == ("continuous", "seam", "duplicate_edge", "flat", "too_small")
     assert fc.EDGE_SEAM_DEFECTS == ("seam", "duplicate_edge") and fc.EDGE_SEAM_NOMINAL_RATIO == 1.25
     assert fc.HAZE_POLICIES == ("keep", "drop")

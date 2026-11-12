@@ -6,7 +6,7 @@
     {
       "name": "agent-sprite-forge",
       "source": "./",
-      "version": "0.5.0",
+      "version": "0.6.0",
       "description": "Sprites, maps, code art, video-to-sprite and media API skills"
     }
   ]

@@ -47,7 +47,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 INDEX_SCHEMA = "forge.asset_index.v1"
-FORGE_PACKAGE_VERSION = "0.5.0"   # the package release (D29); a test keeps it equal to forge_core's
+FORGE_PACKAGE_VERSION = "0.6.0"   # the package release (D29); a test keeps it equal to forge_core's
 TOOL = {"name": "forge_index", "version": FORGE_PACKAGE_VERSION}
 MASTER_SCHEMA = "generate2dsprite.master.v1"
 PLAN_SCHEMA = "video2dsprite.sprite_set_plan.v1"

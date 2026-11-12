@@ -293,7 +293,7 @@ def test_engine_export_document_and_contracts(tmp_path):
     assert_valid_sprite(record, "engine_export_v1")
     assert record["qa"]["status"] == summary["status"] == "pass"
     # D29: the QA envelope and the document name the package version.
-    assert record["tool"]["version"] == record["qa"]["tool"]["version"] == E.forge_core.FORGE_PACKAGE_VERSION == "0.5.0"
+    assert record["tool"]["version"] == record["qa"]["tool"]["version"] == E.forge_core.FORGE_PACKAGE_VERSION == "0.6.0"
     assert {c["id"] for c in record["qa"]["checks"]} >= {"aseprite_roundtrip", "godot_spriteframes_roundtrip",
                                                          "godot_sprite3d_frames_roundtrip", "sprite3d_paths_relative"}
     assert any("not run" in text for text in record["qa"]["notProven"])

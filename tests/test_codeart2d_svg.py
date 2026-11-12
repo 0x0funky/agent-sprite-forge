@@ -337,7 +337,7 @@ def test_doctor_passes_on_resvg_py_and_writes_a_qa_envelope(tmp_path, capsys):
     assert_valid_contract(data, "common", "qaEnvelope", skill="codeart2d")
     assert data["schema"] == "codeart2d.doctor_report.v1"
     assert_valid_contract(data, "codeart", "doctor_report_v1", skill="codeart2d")
-    assert data["tool"] == {"name": "svg_render.py doctor", "version": "0.5.0"}  # D29
+    assert data["tool"] == {"name": "svg_render.py doctor", "version": "0.6.0"}  # D29
     assert {"cases", "backends", "primary", "lint"} <= set(data), "the codeart_core.run_doctor shape is kept"
     ids = {check["id"]: check["status"] for check in data["checks"]}
     assert ids["primary"] == "pass" and ids["resvg_py:t01@4x"] == "pass" and ids["resvg_py:t17@1x"] == "pass"

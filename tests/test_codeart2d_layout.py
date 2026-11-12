@@ -484,8 +484,8 @@ def test_bundle_and_sidecars_validate(meadow):
         assert sha256_of(meadow["a"] / ref["path"]) == ref["sha256"], ref["path"]
     assert bundle["art_source"] == "code" and bundle["placeholder"] is True  # flat-colour ground, no tileset
     assert out["codeart-meta.json"]["placeholder"] is True
-    assert out["layout-qa.json"]["tool"] == {"name": "layout_build", "version": "0.5.0"}  # D29
-    assert bundle["provenance"]["version"] == "0.5.0"
+    assert out["layout-qa.json"]["tool"] == {"name": "layout_build", "version": "0.6.0"}  # D29
+    assert bundle["provenance"]["version"] == "0.6.0"
     assert bundle["layers"][0] == {"name": "ground", "kind": "image", "image": "ground.png",
                                    "sha256": sha256_of(meadow["a"] / "ground.png")}
     assert bundle["terrain"]["sha256"] == sha256_of(meadow["a"] / "terrain-vertices.json")

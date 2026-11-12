@@ -897,7 +897,7 @@ class ContractTests(TerrainCase):
         result = self.run_extract("--rows", "1", "--cols", "1", "--terrain-row", "grass=0", "--tile-size", "32")
         qa = result["qa"]
         self.assertEqual(qa["status"], "pass")
-        self.assertEqual(qa["tool"], {"name": "extract_terrain_tiles.py", "version": "0.5.0"})  # D29
+        self.assertEqual(qa["tool"], {"name": "extract_terrain_tiles.py", "version": "0.6.0"})  # D29
         self.assertEqual(qa["inputs"][0]["path"], "../atlas.png")
         for ref in qa["inputs"] + qa["outputs"]:
             path = (self.root / "tiles" / ref["path"]).resolve()

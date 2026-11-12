@@ -887,7 +887,7 @@ def test_meta_wraps_qa_pixels_metrics_in_an_envelope(tmp_path):
     assert qa["outputs"] == meta["outputs"] == [file_ref(kwargs["outputs"][0], tmp_path)]
     assert qa["inputs"] == [file_ref(spec, tmp_path)] and qa["inputs"][0]["sha256"] == meta["spec_sha256"]
     assert qa["tool"] == {"name": "codeart_core", "version": core.FORGE_PACKAGE_VERSION} == {
-        "name": "codeart_core", "version": "0.5.0"}  # D29: the package version, not the library API version
+        "name": "codeart_core", "version": "0.6.0"}  # D29: the package version, not the library API version
     assert qa["metrics"] == metrics  # the raw metrics ride along; the qaEnvelope is open
 
     # Gates qa_pixels could not measure (no palette, no outline colour) are skipped, not passed,
@@ -986,8 +986,8 @@ def test_meta_placeholder_keyword_and_package_version(tmp_path):
     if validator is not None:
         assert not list(validator.iter_errors(stand_in))
     vendored = (ROOT / "skills" / "codeart2d" / "scripts" / "forge_core.py").read_text(encoding="utf-8")
-    assert core.FORGE_PACKAGE_VERSION == core.forge_core.FORGE_PACKAGE_VERSION == "0.5.0"
-    assert 'FORGE_PACKAGE_VERSION = "0.5.0"' in vendored and core.CODEART_CORE_API_VERSION == "1.1"
+    assert core.FORGE_PACKAGE_VERSION == core.forge_core.FORGE_PACKAGE_VERSION == "0.6.0"
+    assert 'FORGE_PACKAGE_VERSION = "0.6.0"' in vendored and core.CODEART_CORE_API_VERSION == "1.1"
 
 
 def test_meta_is_written_by_forge_core_write_json(tmp_path):

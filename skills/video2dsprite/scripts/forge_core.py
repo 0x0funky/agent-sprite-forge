@@ -18,7 +18,7 @@ behaviour:
   ``merge_rects``.
 * Sheets and seams: ``ownership_slice`` (D14) and ``edge_seam_report`` (D9).
 
-The host API (unreleased, after 0.5.0) adds, again without changing a 1.x name:
+The host API (0.6.0) adds, again without changing a 1.x name:
 
 * ``EXIT_PUBLISHED_FAIL`` (4): the exit status of a CLI that published its output
   with status ``fail`` (D26 used 1 for this; 1 now always means nothing usable).
@@ -82,7 +82,7 @@ from PIL import Image
 
 
 FORGE_CORE_API_VERSION = "1.1"
-FORGE_PACKAGE_VERSION = "0.5.0"  # the integrated release; QA envelopes record it as tool.version (D29)
+FORGE_PACKAGE_VERSION = "0.6.0"  # the integrated release; QA envelopes record it as tool.version (D29)
 ALPHA_GEOMETRY_THRESHOLD = 16
 BODY_ALPHA_THRESHOLD = 32
 

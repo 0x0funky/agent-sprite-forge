@@ -636,7 +636,7 @@ class ContractTests(PreviewCase):
         assert_valid_contract(report, "common", "qaEnvelope", skill=SKILL)
         assert_valid_contract(report, "map", "scene_preview_qa_v1", skill=SKILL)
         self.assertEqual(report["schema"], "generate2dmap.scene_preview_qa.v1")
-        self.assertEqual(report["tool"], {"name": "build_scene_preview", "version": "0.5.0"}, "D29")
+        self.assertEqual(report["tool"], {"name": "build_scene_preview", "version": "0.6.0"}, "D29")
         self.assertTrue(report["notProven"])
         self.assertEqual(report["outputs"][0]["path"], "preview.html")
         self.assertEqual(report["outputs"][0]["sha256"], report["preview"]["sha256"])

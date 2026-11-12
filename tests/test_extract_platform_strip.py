@@ -781,7 +781,7 @@ class ContractTests(StripCase):
         self.assertTrue(result["qc"]["passed"])
         checks = {check["id"]: check["status"] for check in result["qa"]["checks"]}
         self.assertEqual((checks["seam_ratio"], checks["duplicate_edges"]), ("pass", "pass"))
-        self.assertEqual(result["qa"]["tool"], {"name": "extract_platform_strip.py", "version": "0.5.0"})
+        self.assertEqual(result["qa"]["tool"], {"name": "extract_platform_strip.py", "version": "0.6.0"})
 
     def test_output_is_deterministic(self):
         first = self.produce()
